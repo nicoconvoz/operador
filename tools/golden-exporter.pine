@@ -12,9 +12,12 @@
 //   MODE 1 "Seed probe only" (DEFAULT) — emits ~13 short lines.
 //     This alone settles the single open parity question. Copy these first.
 //
-//   MODE 2 "Full export" — emits the recent window as a handful of CHUNK
-//     blocks instead of one line per bar, so copying is a few selections
-//     rather than hundreds.
+//   MODE 2 "Full export" — one CSV row per bar.
+//     Use the DOWNLOAD button in the Pine Logs pane, not copy-paste.
+//     Set "last N bars" high enough to reach bar 0 of the symbol's history:
+//     recursive indicators (EMA-200, ADX/DMI, Supertrend) carry state from
+//     before the window and CANNOT be verified from a short one.
+//     Pine Logs keeps the last 10,000 messages — stay under it.
 //
 //   1. Open the chart: your symbol, 1H timeframe.
 //   2. Pine Editor -> paste this -> "Add to chart".
@@ -34,7 +37,7 @@ indicator("CASCADE DCA — Golden Data Exporter", overlay = false)
 export_mode     = input.string("Seed probe only", "Mode",
                    options = ["Seed probe only", "Full export"])
 seed_probe_bars = input.int(12,  "SEED probe: first N bars of history", minval = 5, maxval = 50)
-export_bars     = input.int(300, "Full export: last N bars",            minval = 10, maxval = 3000)
+export_bars     = input.int(9000, "Full export: last N bars",           minval = 10, maxval = 9500)
 
 full_export = export_mode == "Full export"
 
@@ -95,40 +98,22 @@ if bar_index < seed_probe_bars
     log.info("SEED=" + str.tostring(bar_index) + "," + f(close) + "," +
              f(ema3) + "," + f(sma3) + "," + f(ema5) + "," + f(sma5))
 
-// ── FULL EXPORT — batched into chunks so copying stays practical ─────────────
-// One log line per bar would mean hundreds of selections. Rows are buffered
-// and flushed just under the 4096-character per-message limit instead.
-var string buf       = ""
-var int    chunk_num = 0
-
-flush() =>
-    if str.length(buf) > 0
-        log.info("CHUNK-" + str.tostring(chunk_num) + "
-" + buf)
-        chunk_num += 1
-        buf := ""
-
+// ── FULL EXPORT — one row per bar ────────────────────────────────────────────
+// TradingView's Pine Logs pane has a download button, so the log arrives as a
+// CSV file and there is no reason to batch rows for copy-paste ergonomics.
 if full_export and bar_index >= last_bar_index - export_bars
     if bar_index == last_bar_index - export_bars
-        log.info("CSV-HEADER=time,open,high,low,close,volume,bb_basis,bb_upper,bb_lower,bbw_as_written,bbw_textbook," +
-                 "dip,dim,adx,swing_high,roc,vol_ma,rel_vol,vwm,st_line,st_dir," +
-                 "ema_trend,atr")
-
-    row = str.tostring(time) + "," +
-          f(open) + "," + f(high) + "," + f(low) + "," + f(close) + "," + f(volume) + "," +
-          f(bb_basis) + "," + f(bb_upper) + "," + f(bb_lower) + "," + f(bbw_as_written) + "," + f(bbw_textbook) + "," +
-          f(dip) + "," + f(dim) + "," + f(adx_val) + "," + f(swing_high) + "," +
-          f(roc_raw) + "," + f(vol_ma) + "," + f(rel_vol) + "," + f(vwm) + "," +
-          f(st_line) + "," + str.tostring(st_dir) + "," +
-          f(ema_trend) + "," + f(atr_val) + "
-"
-
-    if str.length(buf) + str.length(row) > 3800
-        flush()
-    buf := buf + row
-
-    if barstate.islast
-        flush()
+        log.info("CSV=time,open,high,low,close,volume,bb_basis,bb_upper,bb_lower," +
+                 "bbw_as_written,bbw_textbook,dip,dim,adx,swing_high,roc,vol_ma," +
+                 "rel_vol,vwm,st_line,st_dir,ema_trend,atr")
+    log.info("CSV=" + str.tostring(time) + "," +
+             f(open) + "," + f(high) + "," + f(low) + "," + f(close) + "," + f(volume) + "," +
+             f(bb_basis) + "," + f(bb_upper) + "," + f(bb_lower) + "," +
+             f(bbw_as_written) + "," + f(bbw_textbook) + "," +
+             f(dip) + "," + f(dim) + "," + f(adx_val) + "," + f(swing_high) + "," +
+             f(roc_raw) + "," + f(vol_ma) + "," + f(rel_vol) + "," + f(vwm) + "," +
+             f(st_line) + "," + str.tostring(st_dir) + "," +
+             f(ema_trend) + "," + f(atr_val))
 
 // Keeps the indicator pane from being empty and confusing.
 plot(vwm, "VWM", color = color.new(color.teal, 0))
