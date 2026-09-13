@@ -51,8 +51,16 @@ st_factor  = input.float(3.0, "Supertrend factor",group = "Mirror of DCA.pine")
 tr_ema_len = input.int(200,   "Trend EMA length", group = "Mirror of DCA.pine")
 
 // ── Indicators, computed exactly as the strategy does ────────────────────────
-[bb_up, bb_mid, bb_lo] = ta.bb(close, bb_len, bb_dev)
-bbw = (bb_up - bb_lo) / bb_mid * 100
+// ⚠️ ta.bb returns [basis, upper, lower] — the BASIS comes FIRST.
+// DCA.pine destructures it as [bb_up, bb_mid, bb_lo], which mislabels all
+// three. Proven by golden data: element 0 equals ta.sma(close, length) to
+// 0.0000000000%, and the bands are exactly symmetric around it.
+[bb_basis, bb_upper, bb_lower] = ta.bb(close, bb_len, bb_dev)
+
+// Both formulas are exported so the port can reproduce the strategy as
+// written AND measure the corrected filter against it.
+bbw_as_written = (bb_basis - bb_lower) / bb_upper  * 100   // what DCA.pine computes
+bbw_textbook   = (bb_upper - bb_lower) / bb_basis  * 100   // what it intends
 
 [dip, dim, adx_val] = ta.dmi(adx_len, adx_len)
 
@@ -102,13 +110,13 @@ flush() =>
 
 if full_export and bar_index >= last_bar_index - export_bars
     if bar_index == last_bar_index - export_bars
-        log.info("CSV-HEADER=time,open,high,low,close,volume,bb_up,bb_mid,bb_lo,bbw," +
+        log.info("CSV-HEADER=time,open,high,low,close,volume,bb_basis,bb_upper,bb_lower,bbw_as_written,bbw_textbook," +
                  "dip,dim,adx,swing_high,roc,vol_ma,rel_vol,vwm,st_line,st_dir," +
                  "ema_trend,atr")
 
     row = str.tostring(time) + "," +
           f(open) + "," + f(high) + "," + f(low) + "," + f(close) + "," + f(volume) + "," +
-          f(bb_up) + "," + f(bb_mid) + "," + f(bb_lo) + "," + f(bbw) + "," +
+          f(bb_basis) + "," + f(bb_upper) + "," + f(bb_lower) + "," + f(bbw_as_written) + "," + f(bbw_textbook) + "," +
           f(dip) + "," + f(dim) + "," + f(adx_val) + "," + f(swing_high) + "," +
           f(roc_raw) + "," + f(vol_ma) + "," + f(rel_vol) + "," + f(vwm) + "," +
           f(st_line) + "," + str.tostring(st_dir) + "," +

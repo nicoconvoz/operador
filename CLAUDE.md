@@ -247,7 +247,10 @@ Rules:
 
 Test first. Always. Non-negotiable for anything that can move money.
 
-- **Indicators**: golden-file tests against TradingView-exported values.
+- **Indicators**: golden-file tests against TradingView-exported values,
+  captured via `tools/golden-exporter.pine` (Pine Logs — works on the free
+  plan). Golden values are an EXTERNAL oracle: never regenerate them from our
+  own output, or the test becomes a mirror instead of a check.
 - **State machine**: unit tests per transition, including every rebound lock
   and the one-fill-per-bar rule.
 - **Parity**: replay compared against the TradingView trade list, same OHLCV.
@@ -281,6 +284,46 @@ Decided, not accidental:
 | 3 | `min_gap_pct` dominating early DCA drops | Confirm against the tuned 10-level parameter set. |
 | 4 | `confirm_bars` default vs tooltip | Confirm which value is the tested one. |
 | 5 | Timeframe | 1H in the reference. Revisit for small caps, which move faster. |
+| 6 | **`ta.bb` tuple mislabelled → wrong BBW** | See below. Port the behaviour as written; the fix is a separate, retuned experiment. |
+
+### Finding: the BBW filter is inert
+
+`DCA.pine:415` destructures Bollinger Bands as:
+
+```pine
+[bb_up, bb_mid, bb_lo] = ta.bb(close, bb_len, bb_dev)
+bbw = (bb_up - bb_lo) / bb_mid * 100
+```
+
+**Pine's `ta.bb` returns `[basis, upper, lower]` — the basis comes FIRST.**
+Proven against TradingView's own exported values (`sma.golden.test.ts`):
+
+- Element 0 equals `ta.sma(close, 50)` to **0.0000000000%**
+- The other two sit **exactly symmetrically** around it
+- As labelled, `bb_up < bb_mid` — an upper band below its own basis is impossible
+
+So all three names are shifted, and the BBW line actually computes
+`(basis - lower) / upper * 100` instead of `(upper - lower) / basis * 100`.
+
+**Measured impact** over 301 bars of BLESS 1H:
+
+| | As written | Textbook |
+|---|---|---|
+| Mean BBW | 4.004 | 8.494 (**2.12×**) |
+| `bbw < bbw_max(14)` | **100.0% of bars** | 88.0% |
+
+The BBW half of `is_lateral` **never blocks anything** — it is true on every
+single bar. OR'd with `ADX < 40`, the lateral filter is effectively a constant
+`true`. This is the hard evidence for the permissiveness flagged earlier.
+
+**Decision: port the behaviour exactly as written.** The strategy's parameters
+were tuned against this behaviour, and parity with the validated backtest is
+the acceptance test. Silently "fixing" it changes entry timing on ~10.6% of
+bars against a baseline that was never tested.
+
+The corrected formula ships alongside it as `bbwTextbook`, unused by the
+strategy, so the fix can later be evaluated as an explicit A/B with retuned
+`bbw_max` — not smuggled in as a bugfix.
 
 ## Runtime & Deployment
 
