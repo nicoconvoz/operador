@@ -7,23 +7,36 @@
 //
 //  Works on the FREE plan: this is Pine Script logging, not chart-data export.
 //
-//  HOW TO USE
-//   1. Open the chart: same symbol and 1H timeframe as the strategy.
-//   2. Pine Editor → paste this → "Add to chart".
-//   3. Open the "Pine Logs" tab in the bottom pane.
-//   4. Select all the log text, copy it.
-//   5. Save it as tools/golden/<SYMBOL>-1H.csv in this repo.
+//  HOW TO USE — two modes, start with the first one
 //
-//  Lines prefixed SEED= answer the single open parity question: whether
-//  ta.ema starts at bar 0 from the source value, or at bar length-1 from
-//  the SMA of that window. Do not skip them.
+//   MODE 1 "Seed probe only" (DEFAULT) — emits ~13 short lines.
+//     This alone settles the single open parity question. Copy these first.
+//
+//   MODE 2 "Full export" — emits the recent window as a handful of CHUNK
+//     blocks instead of one line per bar, so copying is a few selections
+//     rather than hundreds.
+//
+//   1. Open the chart: your symbol, 1H timeframe.
+//   2. Pine Editor -> paste this -> "Add to chart".
+//   3. Open the "Pine Logs" tab in the bottom pane (next to Pine Editor
+//      and Strategy Tester). Drag the pane divider up to enlarge it.
+//   4. Click inside the pane, select the text, Ctrl+C.
+//   5. Paste into tools/golden/<SYMBOL>-1H.txt in this repo.
+//
+//  Lines prefixed SEED= answer whether ta.ema starts at bar 0 from the
+//  source value, or at bar length-1 from the SMA of that window. Public
+//  sources disagree, and every EMA-derived indicator depends on the answer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 indicator("CASCADE DCA — Golden Data Exporter", overlay = false)
 
 // ── Export window ────────────────────────────────────────────────────────────
+export_mode     = input.string("Seed probe only", "Mode",
+                   options = ["Seed probe only", "Full export"])
 seed_probe_bars = input.int(12,  "SEED probe: first N bars of history", minval = 5, maxval = 50)
-export_bars     = input.int(300, "Export: last N bars",                 minval = 10, maxval = 3000)
+export_bars     = input.int(300, "Full export: last N bars",            minval = 10, maxval = 3000)
+
+full_export = export_mode == "Full export"
 
 // ── Strategy parameters — MUST mirror DCA.pine defaults ──────────────────────
 bb_len     = input.int(50,    "BB length",        group = "Mirror of DCA.pine")
@@ -74,21 +87,40 @@ if bar_index < seed_probe_bars
     log.info("SEED=" + str.tostring(bar_index) + "," + f(close) + "," +
              f(ema3) + "," + f(sma3) + "," + f(ema5) + "," + f(sma5))
 
-// ── FULL EXPORT — the recent window used for indicator parity ────────────────
-in_window = bar_index >= last_bar_index - export_bars
+// ── FULL EXPORT — batched into chunks so copying stays practical ─────────────
+// One log line per bar would mean hundreds of selections. Rows are buffered
+// and flushed just under the 4096-character per-message limit instead.
+var string buf       = ""
+var int    chunk_num = 0
 
-if in_window
+flush() =>
+    if str.length(buf) > 0
+        log.info("CHUNK-" + str.tostring(chunk_num) + "
+" + buf)
+        chunk_num += 1
+        buf := ""
+
+if full_export and bar_index >= last_bar_index - export_bars
     if bar_index == last_bar_index - export_bars
-        log.info("CSV=time,open,high,low,close,volume,bb_up,bb_mid,bb_lo,bbw," +
+        log.info("CSV-HEADER=time,open,high,low,close,volume,bb_up,bb_mid,bb_lo,bbw," +
                  "dip,dim,adx,swing_high,roc,vol_ma,rel_vol,vwm,st_line,st_dir," +
                  "ema_trend,atr")
-    log.info("CSV=" + str.tostring(time) + "," +
-             f(open) + "," + f(high) + "," + f(low) + "," + f(close) + "," + f(volume) + "," +
-             f(bb_up) + "," + f(bb_mid) + "," + f(bb_lo) + "," + f(bbw) + "," +
-             f(dip) + "," + f(dim) + "," + f(adx_val) + "," + f(swing_high) + "," +
-             f(roc_raw) + "," + f(vol_ma) + "," + f(rel_vol) + "," + f(vwm) + "," +
-             f(st_line) + "," + str.tostring(st_dir) + "," +
-             f(ema_trend) + "," + f(atr_val))
+
+    row = str.tostring(time) + "," +
+          f(open) + "," + f(high) + "," + f(low) + "," + f(close) + "," + f(volume) + "," +
+          f(bb_up) + "," + f(bb_mid) + "," + f(bb_lo) + "," + f(bbw) + "," +
+          f(dip) + "," + f(dim) + "," + f(adx_val) + "," + f(swing_high) + "," +
+          f(roc_raw) + "," + f(vol_ma) + "," + f(rel_vol) + "," + f(vwm) + "," +
+          f(st_line) + "," + str.tostring(st_dir) + "," +
+          f(ema_trend) + "," + f(atr_val) + "
+"
+
+    if str.length(buf) + str.length(row) > 3800
+        flush()
+    buf := buf + row
+
+    if barstate.islast
+        flush()
 
 // Keeps the indicator pane from being empty and confusing.
 plot(vwm, "VWM", color = color.new(color.teal, 0))
