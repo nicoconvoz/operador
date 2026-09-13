@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.log
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+wallet.json
