@@ -1,0 +1,94 @@
+//@version=6
+// ─────────────────────────────────────────────────────────────────────────────
+//  CASCADE DCA — GOLDEN DATA EXPORTER
+//
+//  Emits TradingView's own indicator values as CSV through the Pine Logs pane,
+//  so the TypeScript port can be diffed against them bar for bar.
+//
+//  Works on the FREE plan: this is Pine Script logging, not chart-data export.
+//
+//  HOW TO USE
+//   1. Open the chart: same symbol and 1H timeframe as the strategy.
+//   2. Pine Editor → paste this → "Add to chart".
+//   3. Open the "Pine Logs" tab in the bottom pane.
+//   4. Select all the log text, copy it.
+//   5. Save it as tools/golden/<SYMBOL>-1H.csv in this repo.
+//
+//  Lines prefixed SEED= answer the single open parity question: whether
+//  ta.ema starts at bar 0 from the source value, or at bar length-1 from
+//  the SMA of that window. Do not skip them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+indicator("CASCADE DCA — Golden Data Exporter", overlay = false)
+
+// ── Export window ────────────────────────────────────────────────────────────
+seed_probe_bars = input.int(12,  "SEED probe: first N bars of history", minval = 5, maxval = 50)
+export_bars     = input.int(300, "Export: last N bars",                 minval = 10, maxval = 3000)
+
+// ── Strategy parameters — MUST mirror DCA.pine defaults ──────────────────────
+bb_len     = input.int(50,    "BB length",        group = "Mirror of DCA.pine")
+bb_dev     = input.float(1.0, "BB stdev",         group = "Mirror of DCA.pine")
+adx_len    = input.int(15,    "ADX length",       group = "Mirror of DCA.pine")
+swing_lb   = input.int(20,    "Swing lookback",   group = "Mirror of DCA.pine")
+roc_len    = input.int(10,    "ROC length",       group = "Mirror of DCA.pine")
+roc_sm     = input.int(5,     "VWM EMA smooth",   group = "Mirror of DCA.pine")
+vol_sm_len = input.int(10,    "Volume MA length", group = "Mirror of DCA.pine")
+st_atr_len = input.int(10,    "Supertrend ATR",   group = "Mirror of DCA.pine")
+st_factor  = input.float(3.0, "Supertrend factor",group = "Mirror of DCA.pine")
+tr_ema_len = input.int(200,   "Trend EMA length", group = "Mirror of DCA.pine")
+
+// ── Indicators, computed exactly as the strategy does ────────────────────────
+[bb_up, bb_mid, bb_lo] = ta.bb(close, bb_len, bb_dev)
+bbw = (bb_up - bb_lo) / bb_mid * 100
+
+[dip, dim, adx_val] = ta.dmi(adx_len, adx_len)
+
+swing_high = ta.highest(high, swing_lb)
+
+roc_raw = ta.roc(close, roc_len)
+vol_ma  = ta.sma(volume, vol_sm_len)
+rel_vol = volume / math.max(vol_ma, 1)
+vwm     = ta.ema(roc_raw * rel_vol, roc_sm)
+
+[st_line, st_dir] = ta.supertrend(st_factor, st_atr_len)
+
+ema_trend = ta.ema(close, tr_ema_len)
+atr_val   = ta.atr(st_atr_len)
+
+// ── EMA seed probe: short windows, so the seed is visible in early history ───
+ema5  = ta.ema(close, 5)
+sma5  = ta.sma(close, 5)
+ema3  = ta.ema(close, 3)
+sma3  = ta.sma(close, 3)
+
+// ── Formatting: fixed high precision, "na" preserved as itself ───────────────
+f(float x) => na(x) ? "na" : str.tostring(x, "#.##########")
+
+// ── SEED PROBE — the first bars of available history ─────────────────────────
+// Decisive: if ema5 is na until bar 4 and then equals sma5, the port's
+// sma-seeded implementation is correct. If ema5 equals close at bar 0,
+// it is not, and every EMA-derived indicator must be rebuilt.
+if bar_index < seed_probe_bars
+    if bar_index == 0
+        log.info("SEED=bar_index,close,ema3,sma3,ema5,sma5")
+    log.info("SEED=" + str.tostring(bar_index) + "," + f(close) + "," +
+             f(ema3) + "," + f(sma3) + "," + f(ema5) + "," + f(sma5))
+
+// ── FULL EXPORT — the recent window used for indicator parity ────────────────
+in_window = bar_index >= last_bar_index - export_bars
+
+if in_window
+    if bar_index == last_bar_index - export_bars
+        log.info("CSV=time,open,high,low,close,volume,bb_up,bb_mid,bb_lo,bbw," +
+                 "dip,dim,adx,swing_high,roc,vol_ma,rel_vol,vwm,st_line,st_dir," +
+                 "ema_trend,atr")
+    log.info("CSV=" + str.tostring(time) + "," +
+             f(open) + "," + f(high) + "," + f(low) + "," + f(close) + "," + f(volume) + "," +
+             f(bb_up) + "," + f(bb_mid) + "," + f(bb_lo) + "," + f(bbw) + "," +
+             f(dip) + "," + f(dim) + "," + f(adx_val) + "," + f(swing_high) + "," +
+             f(roc_raw) + "," + f(vol_ma) + "," + f(rel_vol) + "," + f(vwm) + "," +
+             f(st_line) + "," + str.tostring(st_dir) + "," +
+             f(ema_trend) + "," + f(atr_val))
+
+// Keeps the indicator pane from being empty and confusing.
+plot(vwm, "VWM", color = color.new(color.teal, 0))
