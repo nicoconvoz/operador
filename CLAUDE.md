@@ -437,6 +437,30 @@ scanner, and neither is a reason to keep buying.
 - `fills` deliberately has **no foreign key** to `positions`: a closed position
   leaves the working set, and its trade history has to survive that.
 
+## The dashboard
+
+`dashboard/` — a Next.js app for Vercel's Hobby tier, and
+`application/dashboard.ts` is the read model behind it.
+
+**The numbers live in the application layer, not in the web app.** Two
+implementations of "how much are we up" will eventually disagree, and the one
+on the screen is the one you will believe. The page imports `buildDashboard`
+directly; it writes no queries of its own.
+
+**There is no write path in the app at all.** No order can be placed from it,
+no position closed, no switch thrown. A dashboard that could trade would be a
+second attack surface on the money, guarded by a URL people paste into chats —
+which is exactly why the kill switch lives in Telegram, authenticated to one
+chat id.
+
+It renders **warnings, not a green badge**: kill switch engaged, orders in
+flight unconfirmed, frozen positions, and — the one that matters most — a
+position nobody has updated in hours. That last case is the shape of a silently
+dead engine, the failure that looks identical to "nothing is happening".
+
+Rendering is `force-dynamic`: a cached view of a trading system is worse than
+no view, because a stale "all healthy" reads exactly like a live one.
+
 ## The phone
 
 `telegram-bot.ts` — `/status`, `/stop`, `/start`, `/positions`, `/help` —
@@ -626,7 +650,7 @@ The whole system runs on free tiers. Verified September 2026.
 |---|---|---|---|
 | **Engine** — scanner, executors, death-exit monitor | Oracle Cloud **Always Free** ARM (Ampere A1) | $0 | 2 OCPU / 12 GB RAM / 200 GB. See gotchas below. |
 | **State & event log** | Postgres — Supabase or Neon free tier | $0 | Durable truth. Engine memory is a cache, never the source. |
-| **Dashboard** — positions, P&L, shortlist, death-exit log | **Vercel** Hobby (Next.js, read-only) | $0 | This is where Vercel belongs, and it fits well |
+| **Dashboard** — positions, death watch, warnings | **Vercel** Hobby (Next.js, read-only) | $0 | This is where Vercel belongs. **✅ built** |
 | **Alerts** — death exits, crashes, kill-switch | Telegram bot | $0 | Unattended ≠ unobservable. **✅ built** |
 
 Fallback if Oracle capacity is unavailable: **GCP e2-micro**, genuinely always
