@@ -10,6 +10,12 @@ import { type Order, type PositionSnapshot } from '../../domain/strategy/state.j
 export interface TradingViewSimConfig {
   /** `syminfo.mintick` — slippage is expressed in ticks. */
   readonly mintick: number
+  /**
+   * Quantity step of the contract. TradingView TRUNCATES `strategy.entry`
+   * quantities to it: 1000 / 0.01374 = 72780.2038… filled as 72780.203.
+   * Not in `syminfo` for Pine to log; read it off the trade list.
+   */
+  readonly qtyStep: number
   /** `slippage = 1` in the strategy() header. */
   readonly slippageTicks: number
   /** `commission_value = 0.1` with `commission.percent`. */
@@ -19,19 +25,44 @@ export interface TradingViewSimConfig {
   /** `initial_capital = 10000`. */
   readonly initialCapital: number
   /**
-   * Whether an entry that exceeds available cash is rejected. TradingView's
-   * behaviour here depends on margin settings and is not certain from the
-   * script alone — the parity diff against the real trade list decides it.
+   * How TradingView decides an entry is unaffordable.
+   *
+   *  - 'none'   — never rejects for funds.
+   *  - 'cash'   — rejects when notional + commission exceeds free cash.
+   *  - 'margin' — Pine v5+ default `margin_long = 100`: an entry is rejected
+   *               when its notional exceeds AVAILABLE FUNDS, i.e. equity
+   *               (cash + open position marked at the fill bar's open) minus
+   *               the margin already used by open trades (their cost).
+   *
+   * The BLESS trade list settles it: DCA-4 ($5,000) filled with $11,200
+   * already deployed against $10,000 initial capital — so not 'cash' — and
+   * DCA-5..8 were signalled but never filled once price fell and equity no
+   * longer covered them — so not 'none'. That is exactly 'margin'.
    */
-  readonly enforceCapital: boolean
+  readonly capitalRule: 'none' | 'cash' | 'margin'
 }
 
-export const DCA_PINE_SIM_CONFIG: Omit<TradingViewSimConfig, 'mintick'> = {
+export const DCA_PINE_SIM_CONFIG: Omit<TradingViewSimConfig, 'mintick' | 'qtyStep'> = {
   slippageTicks: 1,
   commissionPct: 0.1,
   pyramiding: 10,
   initialCapital: 10_000,
-  enforceCapital: false,
+  capitalRule: 'margin',
+}
+
+/** Floors to a multiple of `step`, guarding against 0.1 + 0.2 style drift. */
+export function truncateToStep(qty: number, step: number): number {
+  if (!(step > 0)) return qty
+  const decimals = Math.max(0, Math.ceil(-Math.log10(step)))
+  return Number((Math.floor(qty / step + 1e-9) * step).toFixed(decimals))
+}
+
+export interface MarginState {
+  readonly cash: number
+  readonly openQty: number
+  readonly usedMargin: number
+  readonly equity: number
+  readonly available: number
 }
 
 /**
@@ -76,6 +107,17 @@ export class TradingViewSim implements BrokerPort {
     return this.cash
   }
 
+  /**
+   * Resume from a known cash balance — a paper session restarting from
+   * persisted state, or a parity replay picking up TradingView's realised
+   * P&L at a resync point. Only meaningful while flat: with trades open the
+   * balance and the position would disagree about what equity is.
+   */
+  seedCash(cash: number): void {
+    if (this.open.length > 0) throw new Error('seedCash: cannot reseed cash with open trades')
+    this.cash = cash
+  }
+
   execute(orders: readonly Order[], open: number, time: number): readonly Fill[] {
     const fills: Fill[] = []
     const slip = this.config.slippageTicks * this.config.mintick
@@ -88,9 +130,10 @@ export class TradingViewSim implements BrokerPort {
           continue
         }
         const price = open + slip
-        const notional = price * order.qty
+        const qty = truncateToStep(order.qty, this.config.qtyStep)
+        const notional = price * qty
         const commission = notional * feeRate
-        if (this.config.enforceCapital && this.cash < notional + commission) {
+        if (!this.affordable(notional + commission, open)) {
           this.rejected.push({ time, order, reason: 'capital' })
           continue
         }
@@ -99,11 +142,11 @@ export class TradingViewSim implements BrokerPort {
           id: order.id,
           entryTime: time,
           entryPrice: price,
-          qty: order.qty,
+          qty,
           entryCommission: commission,
           comment: order.comment,
         })
-        fills.push({ time, id: order.id, side: 'buy', price, qty: order.qty, commission, comment: order.comment })
+        fills.push({ time, id: order.id, side: 'buy', price, qty, commission, comment: order.comment })
         continue
       }
 
@@ -132,6 +175,29 @@ export class TradingViewSim implements BrokerPort {
     }
 
     return fills
+  }
+
+  /** Equity, used margin and available funds with the open position marked at `markPrice`. */
+  marginState(markPrice: number): MarginState {
+    let openQty = 0
+    let usedMargin = 0
+    for (const trade of this.open) {
+      openQty += trade.qty
+      usedMargin += trade.entryPrice * trade.qty
+    }
+    const equity = this.cash + openQty * markPrice
+    return { cash: this.cash, openQty, usedMargin, equity, available: equity - usedMargin }
+  }
+
+  private affordable(cost: number, markPrice: number): boolean {
+    switch (this.config.capitalRule) {
+      case 'none':
+        return true
+      case 'cash':
+        return this.cash >= cost
+      case 'margin':
+        return this.marginState(markPrice).available >= cost
+    }
   }
 
   snapshot(close: number): PositionSnapshot {

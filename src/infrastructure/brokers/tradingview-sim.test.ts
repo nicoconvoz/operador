@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { TradingViewSim, DCA_PINE_SIM_CONFIG } from './tradingview-sim.js'
 import { type Order } from '../../domain/strategy/state.js'
 
-const cfg = { ...DCA_PINE_SIM_CONFIG, mintick: 0.01 }
+const cfg = { ...DCA_PINE_SIM_CONFIG, mintick: 0.01, qtyStep: 0.001 }
 const entry = (id: string, qty: number, level = 0): Order => ({
   kind: 'entry', id, level, usd: qty * 100, qty, comment: id,
 })
@@ -57,13 +57,26 @@ describe('TradingViewSim — fills', () => {
     expect(sim.rejections[0]?.reason).toBe('flat')
   })
 
-  it('optionally rejects entries the cash cannot cover', () => {
-    const strict = new TradingViewSim({ ...cfg, enforceCapital: true, initialCapital: 500 })
+  it("capital rule 'cash' rejects what free cash cannot cover; 'none' never rejects", () => {
+    const strict = new TradingViewSim({ ...cfg, capitalRule: 'cash', initialCapital: 500 })
     expect(strict.execute([entry('Entry', 10)], 100, 0)).toEqual([])
     expect(strict.rejections[0]?.reason).toBe('capital')
 
-    const lax = new TradingViewSim({ ...cfg, enforceCapital: false, initialCapital: 500 })
+    const lax = new TradingViewSim({ ...cfg, capitalRule: 'none', initialCapital: 500 })
     expect(lax.execute([entry('Entry', 10)], 100, 0)).toHaveLength(1)
+  })
+
+  it("capital rule 'margin' uses equity minus used margin, so profits fund bigger entries and drawdowns block them", () => {
+    const sim = new TradingViewSim({ ...cfg, capitalRule: 'margin', initialCapital: 1000 })
+    // Buy 5 @ ~100 → cost ~500, cash ~500, used margin ~500.
+    sim.execute([entry('Entry', 5)], 100, 0)
+    // Price doubles: equity = 500 cash + 5*200 = 1500; available = 1500 - 500 = 1000.
+    // A $900 entry fits — even though free cash is only ~$500.
+    expect(sim.execute([entry('DCA-1', 4.5, 1)], 200, 1)).toHaveLength(1)
+    // Now cost ~1400, cash ~-400 (margin), price crashes to 50:
+    // equity = -400 + 9.5*50 = 75; available = 75 - 1400 < 0 → rejected.
+    expect(sim.execute([entry('DCA-2', 1, 2)], 50, 2)).toEqual([])
+    expect(sim.rejections.at(-1)?.reason).toBe('capital')
   })
 
   it('processes orders in emission order within one bar', () => {

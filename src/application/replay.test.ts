@@ -21,7 +21,7 @@ const candles: Candles = {
 
 // BLESS quotes to 6 decimals in the fixture; the real mintick comes from the
 // SYMINFO line of the trade log. Until then, a plausible tick.
-const sim = () => new TradingViewSim({ ...DCA_PINE_SIM_CONFIG, mintick: 0.000001 })
+const sim = () => new TradingViewSim({ ...DCA_PINE_SIM_CONFIG, mintick: 0.000001, qtyStep: 0.001 })
 
 describe('replay — execution model wiring', () => {
   const result = replay(candles, DEFAULT_PARAMS, sim())

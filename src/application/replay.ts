@@ -37,7 +37,17 @@ export interface ReplayResult {
  * Nothing in this loop is specific to backtesting: the live engine runs the
  * same three steps per closed bar with a DEX adapter as the broker.
  */
-export function replay(candles: Candles, params: CascadeParams, broker: BrokerPort): ReplayResult {
+export interface ReplayHooks {
+  /** Runs before bar `i` is processed — before pending orders execute. */
+  readonly beforeBar?: (i: number, time: number, broker: BrokerPort) => void
+}
+
+export function replay(
+  candles: Candles,
+  params: CascadeParams,
+  broker: BrokerPort,
+  hooks: ReplayHooks = {},
+): ReplayResult {
   assertParams(params)
   const n = candles.close.length
   const signals = computeSignals(candles, params)
@@ -51,6 +61,7 @@ export function replay(candles: Candles, params: CascadeParams, broker: BrokerPo
 
   for (let i = 0; i < n; i++) {
     const time = candles.time[i]!
+    hooks.beforeBar?.(i, time, broker)
     if (pending.length > 0) {
       fills.push(...broker.execute(pending, candles.open[i]!, time))
     }

@@ -523,7 +523,22 @@ Build what can be verified. Then build what must be discovered.
 4. **Death exit** — two-stage, with the price-is-never-a-death-signal guardrail.
 5. **Economics** — gas, swap fee, depth-based slippage models, driven by the
    scanner's `MarketQuality` (contract defined; sizing and paper fills next).
-6. **Parity harness** — full replay vs the TradingView trade list.
+6. **Parity harness** — full replay vs the TradingView trade list. **✅ GREEN.**
+   `src/application/parity.test.ts` reproduces TradingView's Strategy Tester
+   trade for trade from the resync point to the end of history: entry bar,
+   entry price, exit bar, exit price, size, net profit, exit comment — and the
+   five-entry position still open at the end. Three execution facts had to be
+   learned from the real trade list, none derivable from the script:
+   - **Capital rule is margin, not cash.** `margin_long = 100` rejects an
+     entry when its notional exceeds equity (cash + open position marked at
+     the fill bar's open) minus margin already used. DCA-4 ($5,000) filled
+     with $11,200 deployed against $10,000 initial capital; DCA-5..8 were
+     signalled and rejected once price fell. `TradingViewSim.capitalRule`.
+   - **Quantities are truncated** to the contract step (0.001 here):
+     1000 / 0.01374 = 72780.2038… fills as 72780.203. Floor, not round.
+   - **Equity carries history.** The margin rule depends on every realised
+     trade since the chart began, so the replay seeds TradingView's cash at
+     the resync bar (both sides flat) before walking in lockstep.
 7. **Persistence + crash recovery** — resume mid-position, idempotent orders.
 
 Scanner work starts only once the parity harness is green.
