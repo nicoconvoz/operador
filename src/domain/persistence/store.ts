@@ -154,6 +154,10 @@ export interface StatePort {
    */
   latestAlertSeq(): Promise<number>
 
+  /** How many bars a pool had when last measured, or null if never. */
+  historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null>
+  recordHistoryBars(chain: Chain, poolAddress: string, bars: number, measuredAt: number): Promise<void>
+
   /** Tokens the death exit has condemned. Never traded again. */
   blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void>
   blacklisted(): Promise<ReadonlySet<string>>

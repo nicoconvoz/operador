@@ -226,6 +226,25 @@ export class PostgresStore implements StatePort {
     }))
   }
 
+  async historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null> {
+    const { rows } = await this.sql.query<{ bars: string | number; measured_at: string | number }>(
+      'SELECT bars, measured_at FROM pool_history WHERE chain = $1 AND pool_address = $2',
+      [chain, poolAddress],
+    )
+    const row = rows[0]
+    return row ? { bars: num(row.bars), measuredAt: num(row.measured_at) } : null
+  }
+
+  async recordHistoryBars(chain: string, poolAddress: string, bars: number, measuredAt: number): Promise<void> {
+    // DO UPDATE, unlike the blacklist: this is a measurement that improves, not
+    // a verdict that must keep its first answer.
+    await this.sql.query(
+      `INSERT INTO pool_history (chain, pool_address, bars, measured_at) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (chain, pool_address) DO UPDATE SET bars = EXCLUDED.bars, measured_at = EXCLUDED.measured_at`,
+      [chain, poolAddress, bars, measuredAt],
+    )
+  }
+
   async latestAlertSeq(): Promise<number> {
     const { rows } = await this.sql.query<{ seq: string | number }>('SELECT seq FROM alerts ORDER BY seq DESC LIMIT 1')
     return rows.length === 0 ? 0 : num(rows[0]!.seq)

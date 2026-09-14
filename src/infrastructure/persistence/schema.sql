@@ -92,3 +92,18 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 
 CREATE INDEX IF NOT EXISTS alerts_level_idx ON alerts (level, seq);
+
+-- How much history a pool has, so we stop asking.
+--
+-- Counting a pool's bars costs a full candle download — a thousand rows to
+-- learn one integer — and it was 80% of a cycle's wall time in rate-limit
+-- backoff. What makes caching it CORRECT rather than merely convenient is that
+-- a pool cannot lose candles: once it has enough for the strategy, it has
+-- enough forever. Only a short count can change, so only a short count expires.
+CREATE TABLE IF NOT EXISTS pool_history (
+  chain        TEXT   NOT NULL,
+  pool_address TEXT   NOT NULL,
+  bars         INT    NOT NULL,
+  measured_at  BIGINT NOT NULL,
+  PRIMARY KEY (chain, pool_address)
+);

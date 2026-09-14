@@ -15,6 +15,7 @@ import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { GeckoTerminal } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { CachedHistory } from '../infrastructure/adapters/geckoterminal/cached-history.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
@@ -68,6 +69,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const jupiter = new Jupiter(http, jupiterThrottle)
   const jupiterTokens = new JupiterTokens(http, jupiterThrottle)
   const gecko = new GeckoTerminal(http, geckoThrottle)
+
+  // Counting a pool's bars is the heaviest GeckoTerminal call in a cycle and
+  // it was 80% of the wall time in rate-limit backoff — measured, not guessed.
+  // A pool cannot lose candles, so the answer is worth keeping.
+  const cachedHistory = new CachedHistory(gecko, store, {
+    now: () => Date.now(),
+    minBars: DEFAULT_GATE_POLICY.minHistoryBars,
+  })
+  const history = {
+    historyBars: (chain: Parameters<typeof gecko.historyBars>[0], pool: string) => cachedHistory.historyBars(chain, pool),
+    discoverPools: (chain: Parameters<typeof gecko.discoverPools>[0]) => gecko.discoverPools(chain),
+  }
 
   // One port, the right implementation PER CHAIN. BSC quotes PancakeSwap's
   // router directly; without this its honeypot answer would be a third party's
@@ -161,7 +174,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               goplus,
               sellProbe: sellProbeFor(chain),
               decimals: jupiterTokens,
-              history: gecko,
+              history,
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),
