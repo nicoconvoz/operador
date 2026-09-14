@@ -9,7 +9,13 @@ export default {
   // browser ("__webpack_modules__[moduleId] is not a function"). Dev gets its
   // own directory; build and start keep the conventional `.next`, so Vercel
   // and `next start` are untouched.
-  distDir: process.argv.includes('dev') ? '.next-dev' : '.next',
+  //
+  // NODE_ENV and not process.argv: Next renders in CHILD processes whose argv
+  // no longer says `dev`, so an argv check makes the router resolve
+  // `.next-dev` while the worker looks in `.next` — which fails as a missing
+  // chunk ("Cannot find module './873.js'") rather than as a config mistake.
+  // The environment is inherited; the command line is not.
+  distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
 

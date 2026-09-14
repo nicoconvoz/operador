@@ -487,7 +487,7 @@ token moves. The numbers it produces are the ones worth arguing about.
 ## Running it
 
 ```bash
-cp .env.example .env      # fill in DATABASE_URL and the Telegram pair
+cp .env.example .env      # fill in DATABASE_URL and OPERADOR_CONTROL_TOKEN
 docker compose up -d --build
 ```
 
@@ -578,8 +578,8 @@ directly; it writes no queries of its own.
 **There is no write path in the app at all.** No order can be placed from it,
 no position closed, no switch thrown. A dashboard that could trade would be a
 second attack surface on the money, guarded by a URL people paste into chats —
-which is exactly why the kill switch lives in Telegram, authenticated to one
-chat id.
+which is why the single write path is a separate, token-authenticated endpoint
+that can only ever make the system safer.
 
 ### The universe view
 
@@ -629,24 +629,68 @@ no view, because a stale "all healthy" reads exactly like a live one.
 
 ## The phone
 
-`telegram-bot.ts` — `/status`, `/stop`, `/start`, `/positions`, `/help` —
-wired to Telegram by `telegram-poller.ts` and run alongside the trading loop.
+`android/` — an Android app, and `dashboard/app/api/` the endpoints it reads.
+**This replaced Telegram entirely.**
 
-Every command is authorised against a single chat id, and an unauthorised chat
-gets **nothing back at all** — not an error, not a hint. An error message would
-confirm the bot exists and does something worth doing, which is free
-reconnaissance for whoever found the token.
+Telegram was a PIPE: the engine pushed, and whatever was not delivered was
+gone. A phone that was off, out of signal, or not yet installed missed the
+death exit entirely — and nothing recorded that it had. The replacement is a
+LOG. `StoredAlertSink` writes every alert to the `alerts` table; the app reads
+forward from a cursor. Being asleep costs latency, never the message, and the
+same table is the audit trail the pipe never was.
 
-Three properties of the poller:
+The cursor is a **sequence**, not a timestamp. Two alerts can share a
+millisecond, and a timestamp cursor then has to choose between skipping one and
+replaying it forever — on a channel whose whole job is to deliver a death exit
+exactly once, neither is acceptable.
 
-- **Long-polling, not webhooks.** A webhook needs a public URL and a TLS
-  certificate on a box whose whole appeal is being free and unexposed. Polling
-  costs one idle connection and opens no ports.
-- **The offset only advances past an update that was processed.** Telegram
-  replays anything unacknowledged, so a crash mid-command retries it rather
-  than losing it — which for `/stop` is exactly the behaviour you want.
-- **A failed poll never ends the loop.** The channel that can stop trading has
-  to outlive a bad network, or it is not a safety control.
+Three properties worth naming:
+
+- **A critical that fails to write is retried.** Swallowing the error is right
+  for a heartbeat and wrong for a death exit. `StoredAlertSink` spools
+  criticals, bounded, and drains them on the next send — so "the database
+  blinked" is not a reason to lose the one message the channel exists for.
+- **Sending still never throws into the engine.** A notification channel that
+  can stop trading is a worse problem than a missed notification.
+- **`info` alerts never become notifications.** They are in the feed and on the
+  dashboard. A phone that buzzes on every heartbeat is a phone whose
+  notifications get turned off, and then the death exit does not arrive either.
+
+### The one write path
+
+Removing Telegram removed the phone kill switch, which CLAUDE.md lists as
+mandatory. `POST /api/control` restores it, and earns its exception to the
+read-only rule by being **one-way safe**: it can stop the engine from opening
+new positions and release that stop, and it cannot place an order, size one,
+close one, or touch a wallet.
+
+Authorisation **fails closed**. With no `OPERADOR_CONTROL_TOKEN` set, or one
+under 24 characters, the endpoint refuses everything — because "we forgot to
+set it" and "anyone may stop the engine" must not be the same state. The
+comparison is constant-time; a plain `===` on a secret returns as soon as it
+finds a differing byte, which over enough requests leaks the prefix.
+
+### The app
+
+Kotlin, one dependency (`androidx.appcompat`). `HttpURLConnection` and
+`org.json` ship with Android; three libraries to poll two endpoints would be
+more dependency than program.
+
+A **foreground service** does the watching, typed `specialUse` rather than
+`dataSync` — Android 15 caps `dataSync` at six hours per day, which is exactly
+the wrong limit for something whose job is to be watching at 3am. It restarts
+on boot, but only if watching was not deliberately paused.
+
+The API distinguishes **"the server refused"** from **"could not reach it"**,
+and the ongoing notification says which. A monitor that cannot tell "nothing
+happened" from "I cannot see" is worse than no monitor.
+
+See `android/README.md` for building and pointing it at an engine.
+
+### Language
+
+The interface is **Spanish** — app, dashboard and alert text. Code,
+identifiers, comments and documentation stay English.
 
 ## The engine tick
 
@@ -817,7 +861,7 @@ The whole system runs on free tiers. Verified September 2026.
 | **Engine** — scanner, executors, death-exit monitor | Oracle Cloud **Always Free** ARM (Ampere A1) | $0 | 2 OCPU / 12 GB RAM / 200 GB. See gotchas below. |
 | **State & event log** | Postgres — Supabase or Neon free tier | $0 | Durable truth. Engine memory is a cache, never the source. |
 | **Dashboard** — positions, death watch, warnings | **Vercel** Hobby (Next.js, read-only) | $0 | This is where Vercel belongs. **✅ built** |
-| **Alerts** — death exits, crashes, kill-switch | Telegram bot | $0 | Unattended ≠ unobservable. **✅ built** |
+| **Alerts + kill switch** — on the phone | Android app (`android/`), reading the alert log | $0 | Unattended ≠ unobservable. **✅ built** |
 
 Fallback if Oracle capacity is unavailable: **GCP e2-micro**, genuinely always
 free but a shared core with a ~0.25 vCPU entitlement. Enough for the executor
@@ -878,7 +922,8 @@ Running 24/7 with no human in the loop changes what "correct" means.
    against on-chain state before acting.
 5. **Reconcile on startup.** Compare believed positions against actual wallet
    balances before resuming. Disagreement halts and alerts — it never guesses.
-6. **Kill switch reachable from a phone**, independent of the engine process.
+6. **Kill switch reachable from a phone**, independent of the engine process —
+   the Android app, writing to the store the engine reads.
 7. **Heartbeat + alerting.** A silent engine is indistinguishable from a dead
    one. It must say it is alive, and shout when it is not.
 8. **Dead-man behavior on feed loss.** If market data goes stale, the engine

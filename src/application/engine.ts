@@ -79,9 +79,9 @@ export async function tickPosition(
 
     if (assessment.verdict === 'exit') {
       await store.blacklist(position.chain, position.tokenAddress, assessment.signals.map((s) => s.detail).join('; '), barTime)
-      await alerts.send(alert('death-exit', `☠️ ${position.symbol} is dead`, assessment.signals.map((s) => s.detail).join('\n'), barTime, { position: position.id }))
+      await alerts.send(alert('death-exit', `☠️ ${position.symbol} murió`, assessment.signals.map((s) => s.detail).join('\n'), barTime, { position: position.id }))
     } else if (assessment.verdict === 'freeze') {
-      const frozen = alert('ladder-frozen', `❄️ ${position.symbol} frozen`, assessment.signals.map((s) => s.detail).join('\n'), barTime, { position: position.id })
+      const frozen = alert('ladder-frozen', `❄️ ${position.symbol} congelada`, assessment.signals.map((s) => s.detail).join('\n'), barTime, { position: position.id })
       if (throttle.shouldSend(frozen, `${frozen.kind}:${position.id}`)) await alerts.send(frozen)
     }
   }
@@ -124,7 +124,7 @@ export async function tickPosition(
       const opened = position.cascade.level === 0
       await alerts.send(alert(opened ? 'position-opened' : 'dca-filled', `${opened ? '🟢' : '➕'} ${position.symbol} ${order.id}`, `$${order.usd.toFixed(2)} at ${candles.close[barIndex]!.toPrecision(6)}`, barTime, { position: position.id, key: idempotencyKeyFor(position.id, barTime, orderKeyPart(order)) }))
     } else {
-      await alerts.send(alert('position-closed', `🏁 ${position.symbol} closed`, order.comment, barTime, { position: position.id }))
+      await alerts.send(alert('position-closed', `🏁 ${position.symbol} cerrada`, order.comment, barTime, { position: position.id }))
     }
   }
 

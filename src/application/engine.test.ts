@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { tickPosition, type EngineConfig, type TickInput } from './engine.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { RecordingAlerts } from '../infrastructure/notifications/telegram.js'
+import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'

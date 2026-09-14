@@ -1,3 +1,4 @@
+import { type Alert } from '../notifications/alerts.js'
 import { type DeathWatchState } from '../risk/death-exit.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
@@ -93,6 +94,18 @@ export interface EngineCheckpoint {
  * Every write is idempotent by key so a retry after an ambiguous failure is
  * safe — the same discipline the order path needs, applied to storage.
  */
+/**
+ * An alert as stored: the domain alert, plus the position it holds in the log.
+ *
+ * The cursor is a SEQUENCE, not a timestamp. Two alerts can share a
+ * millisecond, and a timestamp cursor then has to choose between skipping one
+ * and replaying it forever — on a channel whose whole job is to deliver a
+ * death exit exactly once, neither is acceptable.
+ */
+export interface StoredAlert extends Alert {
+  readonly seq: number
+}
+
 export interface StatePort {
   loadPositions(): Promise<readonly PersistedPosition[]>
   savePosition(position: PersistedPosition): Promise<void>
@@ -110,6 +123,25 @@ export interface StatePort {
 
   saveCheckpoint(checkpoint: EngineCheckpoint): Promise<void>
   loadCheckpoint(): Promise<EngineCheckpoint | null>
+
+  /**
+   * Appends to the alert log. Returns the alert with the sequence it was
+   * given, so the writer can report where it landed.
+   */
+  recordAlert(alert: Alert): Promise<StoredAlert>
+  /**
+   * Alerts newer than `seq`, oldest first — the cursor is EXCLUSIVE, so a
+   * client that passes back the last sequence it received never sees it twice.
+   */
+  alertsSince(seq: number, limit?: number): Promise<readonly StoredAlert[]>
+  /**
+   * The newest sequence in the log, or 0 when it is empty.
+   *
+   * Separate from `alertsSince` because a client asking "am I behind?" must
+   * not have to read a page to find out — and reading the FIRST page to learn
+   * the LAST sequence is wrong the moment the log outgrows one page.
+   */
+  latestAlertSeq(): Promise<number>
 
   /** Tokens the death exit has condemned. Never traded again. */
   blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void>

@@ -4,7 +4,9 @@ import {
   type PersistedPosition,
   type PersistedScan,
   type StatePort,
+  type StoredAlert,
 } from '../../domain/persistence/store.js'
+import { type Alert, type AlertKind, type AlertLevel } from '../../domain/notifications/alerts.js'
 import { type CascadeState } from '../../domain/strategy/state.js'
 import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
@@ -25,6 +27,16 @@ import { type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 
 export interface SqlClient {
   query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<{ rows: T[] }>
+}
+
+interface AlertRow {
+  seq: string | number
+  kind: AlertKind
+  level: AlertLevel
+  at: string | number
+  title: string
+  body: string
+  data: Record<string, unknown> | null
 }
 
 interface PositionRow {
@@ -168,6 +180,39 @@ export class PostgresStore implements StatePort {
     )
     const row = rows[0]
     return row ? { savedAt: num(row.saved_at), lastCompletedBar: num(row.last_completed_bar), killSwitchEngaged: row.kill_switch_engaged } : null
+  }
+
+  async recordAlert(alert: Alert): Promise<StoredAlert> {
+    // RETURNING seq: the database assigns the order, so two engine instances
+    // writing at once still produce one unambiguous sequence.
+    const { rows } = await this.sql.query<{ seq: string | number }>(
+      `INSERT INTO alerts (kind, level, at, title, body, data)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING seq`,
+      [alert.kind, alert.level, alert.at, alert.title, alert.body, alert.data ? JSON.stringify(alert.data) : null],
+    )
+    return { ...alert, seq: num(rows[0]!.seq) }
+  }
+
+  async alertsSince(seq: number, limit = 100): Promise<readonly StoredAlert[]> {
+    const { rows } = await this.sql.query<AlertRow>(
+      `SELECT seq, kind, level, at, title, body, data FROM alerts
+       WHERE seq > $1 ORDER BY seq ASC LIMIT $2`,
+      [seq, limit],
+    )
+    return rows.map((row) => ({
+      seq: num(row.seq),
+      kind: row.kind,
+      level: row.level,
+      at: num(row.at),
+      title: row.title,
+      body: row.body,
+      ...(row.data ? { data: row.data } : {}),
+    }))
+  }
+
+  async latestAlertSeq(): Promise<number> {
+    const { rows } = await this.sql.query<{ seq: string | number }>('SELECT seq FROM alerts ORDER BY seq DESC LIMIT 1')
+    return rows.length === 0 ? 0 : num(rows[0]!.seq)
   }
 
   async blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void> {

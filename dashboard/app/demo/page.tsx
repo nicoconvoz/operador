@@ -139,11 +139,11 @@ export default async function Demo() {
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 14 }}>
         <h1 style={{ fontSize: 17, margin: 0 }}>Operador by Open Doors</h1>
-        <span style={{ color: '#ffb454' }}>DEMO — synthetic data</span>
+        <span style={{ color: '#ffb454' }}>DEMO — datos sintéticos</span>
       </header>
       <Console universe={view} operations={operations} />
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
-        size = liquidity · rings = opportunity · glow = in position · ◆ bsc ● solana
+        tamaño = liquidez · anillos = oportunidad · brillo = en posición · ◆ bsc ● solana
       </footer>
     </>
   )

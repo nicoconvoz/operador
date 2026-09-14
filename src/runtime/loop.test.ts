@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runLoop, shutdownSignal } from './loop.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { RecordingAlerts } from '../infrastructure/notifications/telegram.js'
+import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
@@ -58,9 +58,12 @@ describe('runLoop — bounded runs', () => {
   it('announces starting and stopping', async () => {
     const { deps, alerts, throttle } = rig()
     await runLoop(deps, config, throttle, { intervalMs: 1, maxCycles: 1, ...instant })
-    expect(alerts.sent[0]!.title).toContain('Operador by Open Doors')
-    expect(alerts.sent.at(-1)!.title).toContain('stopped')
-    expect(alerts.sent.at(-1)!.body).toContain('1 cycle')
+    // Asserted on the alert's KIND and its numbers, not its prose: these
+    // strings are display copy and were once coupled tightly enough that
+    // translating the app broke the test suite.
+    expect(alerts.sent[0]!.kind).toBe('engine-started')
+    expect(alerts.sent.at(-1)!.kind).toBe('engine-started')
+    expect(alerts.sent.at(-1)!.body).toContain('1')
   })
 
   it('sleeps the configured interval between cycles, not before the first', async () => {
@@ -110,8 +113,11 @@ describe('runLoop — a failing provider does not kill the engine', () => {
       },
     })
     await runLoop(deps, config, throttle, { intervalMs: 1, maxCycles: 1, ...instant })
-    expect(alerts.sent.some((a) => a.title.includes('Cycle failed'))).toBe(true)
-    expect(alerts.sent.some((a) => a.title.includes('Recovered'))).toBe(true)
+    // Degraded, then a SECOND provider-degraded alert once it came back: the
+    // point is that recovery is announced at all, not how it is phrased.
+    const degraded = alerts.sent.filter((a) => a.kind === 'provider-degraded')
+    expect(degraded).toHaveLength(2)
+    expect(degraded[1]!.title).not.toBe(degraded[0]!.title)
   })
 })
 

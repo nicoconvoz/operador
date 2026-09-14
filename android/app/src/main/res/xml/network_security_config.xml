@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is permitted because during the paper phase the engine runs on a
+  machine on the same LAN, reached as http://192.168.x.x:3100 — an address that
+  cannot hold a certificate. The app only ever loads the one URL its owner
+  typed in, so the exposure is that URL and nothing else.
+
+  Once the dashboard is behind HTTPS, set cleartextTrafficPermitted to false.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

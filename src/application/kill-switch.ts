@@ -44,7 +44,7 @@ export async function engageKillSwitch(
     killSwitchEngaged: true,
   })
   // Critical, so it is never throttled: the one message that must always land.
-  await alerts.send(alert('kill-switch', '🛑 Kill switch ENGAGED', detail, at, { reason }))
+  await alerts.send(alert('kill-switch', '🛑 Corte de emergencia ACTIVADO', detail, at, { reason }))
 }
 
 export async function disengageKillSwitch(store: StatePort, alerts: AlertPort, at: number): Promise<void> {
@@ -54,7 +54,7 @@ export async function disengageKillSwitch(store: StatePort, alerts: AlertPort, a
     lastCompletedBar: previous?.lastCompletedBar ?? 0,
     killSwitchEngaged: false,
   })
-  await alerts.send(alert('kill-switch', '▶️ Kill switch released', 'New positions may be opened again.', at))
+  await alerts.send(alert('kill-switch', '▶️ Corte de emergencia liberado', 'Se pueden volver a abrir posiciones.', at))
 }
 
 export async function killSwitchStatus(store: StatePort): Promise<KillSwitchStatus> {

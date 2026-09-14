@@ -21,9 +21,7 @@ import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { PostgresStore, type SqlClient } from '../infrastructure/persistence/postgres-store.js'
-import { TelegramAlerts } from '../infrastructure/notifications/telegram.js'
-import { botApiTransport, pollCommands } from '../infrastructure/notifications/telegram-poller.js'
-import { type BotContext } from '../infrastructure/notifications/telegram-bot.js'
+import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js'
 
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { runLoop, shutdownSignal } from './loop.js'
@@ -44,10 +42,6 @@ export interface Runtime {
 
 export interface RuntimePorts {
   readonly sql: SqlClient
-  /** POST for Telegram. Injected so main() stays testable. */
-  readonly post: (url: string, body: unknown) => Promise<{ status: number }>
-  /** GET returning JSON, for Telegram long-polling. */
-  readonly fetchJson: (url: string) => Promise<unknown>
   /** POST returning a parsed body, for JSON-RPC. */
   readonly postJson: (url: string, body: unknown) => Promise<{ status: number; json: () => Promise<unknown> }>
 }
@@ -59,11 +53,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const geckoThrottle = makeThrottle(2_500)
 
   const store = new PostgresStore(ports.sql)
-  const alerts = new TelegramAlerts(
-    { botToken: config.telegramBotToken, chatId: config.telegramChatId },
-    ports.post,
-    (error) => console.error('[alerts]', error),
-  )
+  // Alerts go into the store, not down a wire.
+  //
+  // Telegram was a pipe: the engine pushed, and whatever was not delivered was
+  // gone — a phone that was off missed the death exit entirely, and nothing
+  // recorded that it had. The log is read from a cursor by the Android app, so
+  // being asleep costs latency rather than the message. It is also the audit
+  // trail, which the pipe never was.
+  const alerts = new StoredAlertSink(store, (error) => console.error('[alerts]', error))
 
   const dex = new DexScreener(http)
   const goplus = new GoPlus(http)
@@ -185,35 +182,12 @@ export async function main(ports: RuntimePorts): Promise<void> {
 
   const { deps, cycleConfig, throttle } = buildRuntime(config, ports)
 
-  // One signal, two consumers: the trading loop and the command poller stop
-  // together. A poller that outlived the engine would answer /status about a
-  // system that is no longer running.
   const stopSignal = shutdownSignal()
 
-  const botContext: BotContext = {
-    store,
-    alerts: deps.alerts,
-    authorisedChatId: config.telegramChatId,
-    now: () => Date.now(),
-    equity: async () => {
-      // Cash held by each position's broker is not visible from the store, so
-      // equity is reported from committed capital until a live wallet can be
-      // queried. Stated plainly rather than guessed at.
-      const positions = await store.loadPositions()
-      return {
-        equityUsd: positions.reduce((sum, p) => sum + p.capitalUsd, 0),
-        startingCapitalUsd: config.totalCapitalUsd,
-      }
-    },
-  }
-
-  const transport = botApiTransport(config.telegramBotToken, ports.fetchJson, ports.post)
-
-  // Run both; whichever stops first, the other is already stopping.
-  const [report] = await Promise.all([
-    runLoop(deps, cycleConfig, throttle, { intervalMs: config.cycleIntervalMs, stopSignal }),
-    pollCommands(transport, botContext, { stopSignal, onError: (error) => console.error('[telegram]', error) }),
-  ])
+  const report = await runLoop(deps, cycleConfig, throttle, {
+    intervalMs: config.cycleIntervalMs,
+    stopSignal,
+  })
 
   console.log('[exit]', JSON.stringify(report.stoppedBy), report.cycles, 'cycles')
 }

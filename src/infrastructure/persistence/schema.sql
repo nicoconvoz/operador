@@ -71,3 +71,24 @@ CREATE TABLE IF NOT EXISTS blacklist (
   at            BIGINT NOT NULL,
   PRIMARY KEY (chain, token_address)
 );
+
+-- The alert log — what replaced the Telegram pipe.
+--
+-- A pipe delivers to whoever is listening and forgets the rest; a phone that
+-- was off missed the death exit entirely. A LOG lets a client read from a
+-- cursor and catch up, so being asleep costs latency rather than the message.
+--
+-- `seq` is a BIGSERIAL and not the timestamp, because two alerts can share a
+-- millisecond and a timestamp cursor would then have to choose between
+-- skipping one and replaying it forever.
+CREATE TABLE IF NOT EXISTS alerts (
+  seq   BIGSERIAL PRIMARY KEY,
+  kind  TEXT   NOT NULL,
+  level TEXT   NOT NULL CHECK (level IN ('info', 'warn', 'critical')),
+  at    BIGINT NOT NULL,
+  title TEXT   NOT NULL,
+  body  TEXT   NOT NULL,
+  data  JSONB
+);
+
+CREATE INDEX IF NOT EXISTS alerts_level_idx ON alerts (level, seq);

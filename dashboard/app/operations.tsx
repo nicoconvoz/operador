@@ -21,7 +21,7 @@ const signed = (n: number) => `${n >= 0 ? '+' : ''}${money(n)}`
 const price = (n: number) => n.toPrecision(5)
 const ago = (ms: number) => {
   const m = Math.round((Date.now() - ms) / 60_000)
-  return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`
+  return m < 1 ? 'ahora' : m < 60 ? `${m}m` : m < 2880 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`
 }
 
 const UP = '#63e6a5'
@@ -35,8 +35,9 @@ export function Operations({ view }: { view: OperationsView }) {
     return (
       <section style={card()}>
         <div style={{ color: DIM }}>
-          No open positions. The engine is scanning; it opens one when a token clears every gate AND the strategy's own
-          entry conditions fire — a 10% drop from the swing high inside a lateral zone.
+          Sin posiciones abiertas. El motor está escaneando; abre una cuando un token pasa todos los filtros Y se
+          disparan las condiciones de entrada de la estrategia: una caída del 10% desde el máximo reciente dentro de
+          una zona lateral.
         </div>
       </section>
     )
@@ -48,12 +49,12 @@ export function Operations({ view }: { view: OperationsView }) {
   return (
     <>
       <section style={{ ...card(), display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 12 }}>
-        <Figure label="deployed" value={money(totals.deployedUsd)} />
-        <Figure label="market value" value={money(totals.marketValueUsd)} />
-        <Figure label="unrealised" value={signed(net)} color={net >= 0 ? UP : DOWN} />
+        <Figure label="desplegado" value={money(totals.deployedUsd)} />
+        <Figure label="valor de mercado" value={money(totals.marketValueUsd)} />
+        <Figure label="no realizado" value={signed(net)} color={net >= 0 ? UP : DOWN} />
         {/* Costs sit beside P&L on purpose: they are the same story. */}
-        <Figure label="paid to the chain" value={money(totals.costsUsd)} color={DIM} />
-        <Figure label="fills" value={`${totals.buys} buy / ${totals.sells} sell`} color={DIM} />
+        <Figure label="pagado a la cadena" value={money(totals.costsUsd)} color={DIM} />
+        <Figure label="ejecuciones" value={`${totals.buys} compra / ${totals.sells} venta`} color={DIM} />
       </section>
 
       {view.positions.map((position) => (
@@ -62,14 +63,14 @@ export function Operations({ view }: { view: OperationsView }) {
 
       {view.recentFills.length > 0 && (
         <section style={{ ...card(), marginTop: 12 }}>
-          <div style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>tape</div>
+          <div style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>cinta</div>
           {view.recentFills.map((fill) => (
             <div
               key={fill.idempotencyKey}
               style={{ display: 'flex', gap: 8, fontSize: 12, padding: '3px 0', borderBottom: '1px solid #14181f' }}
             >
               <span style={{ color: DIM, width: 34 }}>{ago(fill.time)}</span>
-              <span style={{ color: fill.side === 'buy' ? UP : DOWN, width: 34 }}>{fill.side === 'buy' ? 'BUY' : 'SELL'}</span>
+              <span style={{ color: fill.side === 'buy' ? UP : DOWN, width: 34 }}>{fill.side === 'buy' ? 'COMPRA' : 'VENTA'}</span>
               <span style={{ width: 70 }}>{fill.symbol}</span>
               <span style={{ color: DIM, width: 58 }}>{fill.orderId}</span>
               <span style={{ flex: 1, textAlign: 'right' }}>{price(fill.price)}</span>
@@ -104,7 +105,7 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
           <span style={{ color: DIM }}>{open ? '▾' : '▸'}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
-          <span style={{ color: DIM, fontSize: 12 }}>{money(position.deployedUsd)} in</span>
+          <span style={{ color: DIM, fontSize: 12 }}>{money(position.deployedUsd)} dentro</span>
           <span style={{ flex: 1 }} />
           <span style={{ color: colour }}>
             {pnl === null ? '—' : signed(pnl)}
@@ -120,20 +121,22 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
 
       {open && (
         <div style={{ marginTop: 10, fontSize: 13 }}>
-          <Line label="average cost" value={position.avgCostUsd === null ? '—' : price(position.avgCostUsd)} />
-          <Line label="last price" value={position.lastPriceUsd === null ? '—' : price(position.lastPriceUsd)} />
-          <Line label="market value" value={position.marketValueUsd === null ? '—' : money(position.marketValueUsd)} />
-          <Line label="paid to the chain" value={money(position.costsUsd, 3)} />
-          <Line label="capital allotted" value={money(position.capitalUsd, 0)} />
-          <Line label="open" value={ago(position.openedAt)} />
+          <Line label="costo promedio" value={position.avgCostUsd === null ? '—' : price(position.avgCostUsd)} />
+          <Line label="último precio" value={position.lastPriceUsd === null ? '—' : price(position.lastPriceUsd)} />
+          <Line label="valor de mercado" value={position.marketValueUsd === null ? '—' : money(position.marketValueUsd)} />
+          <Line label="pagado a la cadena" value={money(position.costsUsd, 3)} />
+          <Line label="capital asignado" value={money(position.capitalUsd, 0)} />
+          <Line label="abierta hace" value={ago(position.openedAt)} />
 
           {position.fills.length > 0 && (
             <>
-              <div style={{ color: DIM, fontSize: 12, margin: '10px 0 4px' }}>fills</div>
+              <div style={{ color: DIM, fontSize: 12, margin: '10px 0 4px' }}>ejecuciones</div>
               {position.fills.map((fill) => (
                 <div key={fill.idempotencyKey} style={{ display: 'flex', gap: 8, fontSize: 12, color: DIM }}>
                   <span style={{ width: 34 }}>{ago(fill.time)}</span>
-                  <span style={{ color: fill.side === 'buy' ? UP : DOWN, width: 36 }}>{fill.side}</span>
+                  <span style={{ color: fill.side === 'buy' ? UP : DOWN, width: 42 }}>
+                    {fill.side === 'buy' ? 'compra' : 'venta'}
+                  </span>
                   <span style={{ width: 58 }}>{fill.orderId}</span>
                   <span style={{ flex: 1, textAlign: 'right' }}>{price(fill.price)}</span>
                   <span style={{ width: 70, textAlign: 'right' }}>{money(fill.price * fill.qty)}</span>
@@ -160,10 +163,10 @@ function Ladder({ rungs }: { rungs: readonly LadderRung[] }) {
     <div style={{ display: 'flex', gap: 3, marginTop: 10, alignItems: 'flex-end' }}>
       {rungs.map((rung) => {
         const title = rung.filled
-          ? `L${rung.level} filled at ${price(rung.fillPrice!)} · ${money(rung.fillUsd!)}`
+          ? `N${rung.level} ejecutado a ${price(rung.fillPrice!)} · ${money(rung.fillUsd!)}`
           : rung.triggerPrice === null
-            ? `L${rung.level} entry`
-            : `L${rung.level} arms at ${price(rung.triggerPrice)} · ${money(rung.nominalUsd, 0)} nominal`
+            ? `N${rung.level} entrada`
+            : `N${rung.level} se arma en ${price(rung.triggerPrice)} · ${money(rung.nominalUsd, 0)} nominal`
         return (
           <div
             key={rung.level}

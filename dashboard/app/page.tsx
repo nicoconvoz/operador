@@ -44,9 +44,9 @@ async function load(): Promise<Loaded | { error: string }> {
 const money = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 const ago = (ms: number) => {
   const minutes = Math.round((Date.now() - ms) / 60_000)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return `hace ${minutes}m`
   const hours = Math.round(minutes / 60)
-  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`
+  return hours < 48 ? `hace ${hours}h` : `hace ${Math.round(hours / 24)}d`
 }
 
 export default async function Page() {
@@ -56,7 +56,7 @@ export default async function Page() {
     return (
       <>
         <h1 style={{ fontSize: 17, margin: '0 0 8px' }}>Operador by Open Doors</h1>
-        <p style={{ color: '#ff6b6b' }}>Cannot read state: {data.error}</p>
+        <p style={{ color: '#ff6b6b' }}>No se puede leer el estado: {data.error}</p>
       </>
     )
   }
@@ -77,7 +77,7 @@ export default async function Page() {
       >
         <h1 style={{ fontSize: 17, margin: 0 }}>Operador by Open Doors</h1>
         <span style={{ color: dashboard.killSwitchEngaged ? '#ff6b6b' : '#63e6a5' }}>
-          {dashboard.killSwitchEngaged ? '🛑 STOPPED' : '▶️ Running'}
+          {dashboard.killSwitchEngaged ? '🛑 DETENIDO' : '▶️ Funcionando'}
         </span>
       </header>
 
@@ -92,23 +92,23 @@ export default async function Page() {
       )}
 
       <section style={{ display: 'flex', gap: 22, marginBottom: 14, flexWrap: 'wrap' }}>
-        <Stat label="Positions" value={String(dashboard.totals.positions)} />
-        <Stat label="Committed" value={money(dashboard.totals.committedUsd)} />
+        <Stat label="Posiciones" value={String(dashboard.totals.positions)} />
+        <Stat label="Comprometido" value={money(dashboard.totals.committedUsd)} />
         <Stat
-          label="Unrealised"
+          label="No realizado"
           value={`${operations.totals.unrealisedUsd >= 0 ? '+' : ''}${money(operations.totals.unrealisedUsd)}`}
           color={operations.totals.unrealisedUsd >= 0 ? '#63e6a5' : '#ff6b6b'}
         />
-        <Stat label="Universe" value={String(universe.tokens.length)} />
-        <Stat label="Frozen" value={String(dashboard.totals.frozen)} />
-        <Stat label="Blacklisted" value={String(dashboard.blacklistedCount)} />
+        <Stat label="Universo" value={String(universe.tokens.length)} />
+        <Stat label="Congeladas" value={String(dashboard.totals.frozen)} />
+        <Stat label="En lista negra" value={String(dashboard.blacklistedCount)} />
       </section>
 
       <Console universe={universe} operations={operations} />
 
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
-        {universe.scannedAt ? `Scanned ${ago(universe.scannedAt)}` : 'No scan recorded yet'}
-        {' · size = liquidity · rings = opportunity · glow = in position · read-only'}
+        {universe.scannedAt ? `Escaneado ${ago(universe.scannedAt)}` : 'Todavía no se registró ningún escaneo'}
+        {' · tamaño = liquidez · anillos = oportunidad · brillo = en posición · solo lectura'}
       </footer>
     </>
   )

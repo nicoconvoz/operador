@@ -17,15 +17,6 @@ if (!databaseUrl) {
 const { default: pg } = await import('pg')
 const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 })
 
-const post = async (url: string, body: unknown): Promise<{ status: number }> => {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  return { status: response.status }
-}
-
 // pg types its rows as QueryResultRow; the store knows the shape it asked for,
 // so the cast belongs here, at the boundary, rather than leaking into the port.
 const sql = {
@@ -33,13 +24,6 @@ const sql = {
     const result = await pool.query(text, params as unknown[])
     return { rows: result.rows as T[] }
   },
-}
-
-const fetchJson = async (url: string): Promise<unknown> => {
-  // Long polling holds the connection open for the timeout; no AbortSignal
-  // here, or every poll would look like a failure.
-  const response = await fetch(url)
-  return response.json()
 }
 
 // JSON-RPC needs the parsed body, not just the status.
@@ -53,7 +37,7 @@ const postJson = async (url: string, body: unknown) => {
 }
 
 try {
-  await main({ sql, post, fetchJson, postJson })
+  await main({ sql, postJson })
 } catch (error) {
   console.error('[fatal]', error)
   process.exitCode = 1

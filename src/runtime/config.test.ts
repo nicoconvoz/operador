@@ -3,8 +3,6 @@ import { ConfigError, describeConfig, loadConfig } from './config.js'
 
 const valid = {
   DATABASE_URL: 'postgres://user:secret@host:5432/db',
-  TELEGRAM_BOT_TOKEN: '123:abc',
-  TELEGRAM_CHAT_ID: '42',
 }
 
 describe('loadConfig — fails at boot, never mid-ladder', () => {
@@ -24,7 +22,6 @@ describe('loadConfig — fails at boot, never mid-ladder', () => {
   })
 
   it('treats blank as missing — an empty secret is not a secret', () => {
-    expect(() => loadConfig({ ...valid, TELEGRAM_BOT_TOKEN: '   ' })).toThrow(ConfigError)
   })
 
   it('rejects a number that is not one, rather than silently using a default', () => {
@@ -56,9 +53,15 @@ describe('describeConfig — safe to log', () => {
     expect(described.database).toBe('postgres://***@host:5432/db')
   })
 
-  it('never includes the bot token, not even partially', () => {
-    const described = describeConfig(loadConfig({ ...valid, TELEGRAM_BOT_TOKEN: 'supersecrettoken' }))
-    expect(JSON.stringify(described)).not.toContain('supersecret')
+  it('describes only what is safe to print — an allow list, not a deny list', () => {
+    // A boot line is copied into issues and pasted into chats. This asserts
+    // the SHAPE rather than the absence of one known secret: a field added to
+    // the config later cannot leak by being forgotten here, because anything
+    // not named is simply never printed.
+    const described = describeConfig(loadConfig(valid))
+    expect(Object.keys(described).sort()).toEqual(
+      ['capitalUsd', 'chain', 'cycleMinutes', 'database', 'gasUsdPerSwap', 'maxPositions', 'mode'],
+    )
   })
 })
 

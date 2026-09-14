@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_LOSS_LIMITS as L, disengageKillSwitch, engageKillSwitch, killSwitchStatus, shouldEngage } from './kill-switch.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { RecordingAlerts } from '../infrastructure/notifications/telegram.js'
+import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000

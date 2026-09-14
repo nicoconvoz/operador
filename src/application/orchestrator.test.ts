@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runCycle, type CycleConfig, type CycleDeps } from './orchestrator.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { RecordingAlerts } from '../infrastructure/notifications/telegram.js'
+import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
@@ -184,7 +184,9 @@ describe('runCycle — liveness', () => {
     await runCycle(deps, config, throttle)
     const beat = alerts.sent.find((a) => a.kind === 'heartbeat')
     expect(beat).toBeDefined()
-    expect(beat!.body).toContain('opened')
+    // The COUNTS, not the wording. A heartbeat that stops naming how many
+    // positions ran is broken; one that says it in another language is not.
+    expect(beat!.body).toMatch(/\d+.*\d+.*\d+/)
   })
 
   it('checkpoints the furthest bar any position reached', async () => {

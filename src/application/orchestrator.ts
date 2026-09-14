@@ -87,7 +87,7 @@ export async function runCycle(
   // death watches keep running, because a stopped engine that leaves a dying
   // token unattended has stopped the wrong thing.
   if (recovery.killSwitchEngaged) {
-    const killed = alert('kill-switch', '🛑 Kill switch engaged', 'No new positions will be opened. Open positions keep their death watch.', at)
+    const killed = alert('kill-switch', '🛑 Corte de emergencia activo', 'No se abrirán posiciones nuevas. Las abiertas mantienen su vigilancia de muerte.', at)
     if (throttle.shouldSend(killed)) await deps.alerts.send(killed)
   }
 
@@ -122,7 +122,7 @@ export async function runCycle(
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
     if (candidates.length === 0) {
-      const empty = alert('scan-empty', '🔍 Nothing passed the gates', 'The scanner returned no tradeable candidates this cycle.', at)
+      const empty = alert('scan-empty', '🔍 Nada pasó los filtros', 'El escáner no devolvió candidatos operables en este ciclo.', at)
       if (throttle.shouldSend(empty)) await deps.alerts.send(empty)
     }
 
@@ -134,7 +134,7 @@ export async function runCycle(
       )
 
       if (plan.floorOverrodeCap) {
-        const concentrated = alert('provider-degraded', '⚠️ Running over the concentration target', `Capital allows only ${plan.allocations.length} slots, so each exceeds the ${config.portfolio.maxPositionPct}% cap.`, at)
+        const concentrated = alert('provider-degraded', '⚠️ Por encima del objetivo de concentración', `El capital solo alcanza para ${plan.allocations.length} ranuras, así que cada una supera el límite del ${config.portfolio.maxPositionPct}%.`, at)
         if (throttle.shouldSend(concentrated)) await deps.alerts.send(concentrated)
       }
 
@@ -166,7 +166,7 @@ export async function runCycle(
   const lastCompletedBar = ticks.reduce((latest, t) => Math.max(latest, t.position.lastBarTime), recovery.resumedFromBar ?? 0)
   await deps.store.saveCheckpoint({ savedAt: at, lastCompletedBar, killSwitchEngaged: recovery.killSwitchEngaged })
 
-  const beat = alert('heartbeat', '💓 Operador by Open Doors', `${recovery.positions.length} running · ${recovery.halted.length} halted · ${opened.length} opened`, at, {
+  const beat = alert('heartbeat', '💓 Operador by Open Doors', `${recovery.positions.length} en curso · ${recovery.halted.length} detenidas · ${opened.length} abiertas`, at, {
     killSwitch: recovery.killSwitchEngaged,
   })
   if (throttle.shouldSend(beat)) await deps.alerts.send(beat)

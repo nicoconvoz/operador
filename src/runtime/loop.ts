@@ -57,7 +57,7 @@ export async function runLoop(
   let lastResult: CycleResult | null = null
   let stoppedBy: LoopReport['stoppedBy'] = 'signal'
 
-  await deps.alerts.send(alert('engine-started', '🚀 Operador by Open Doors', 'Engine started.', deps.now()))
+  await deps.alerts.send(alert('engine-started', '🚀 Operador by Open Doors', 'Motor iniciado.', deps.now()))
 
   for (;;) {
     if (stop) break
@@ -73,13 +73,13 @@ export async function runLoop(
       if (consecutiveFailures > 0) {
         // Say when it comes back. An error with no resolution is an error the
         // human keeps carrying.
-        await deps.alerts.send(alert('provider-degraded', '✅ Recovered', `Back to normal after ${consecutiveFailures} failed cycle(s).`, deps.now()))
+        await deps.alerts.send(alert('provider-degraded', '✅ Recuperado', `De vuelta a la normalidad tras ${consecutiveFailures} ciclo(s) fallido(s).`, deps.now()))
         consecutiveFailures = 0
       }
     } catch (error) {
       failures++
       consecutiveFailures++
-      const degraded = alert('provider-degraded', '⚠️ Cycle failed', String(error).slice(0, 300), deps.now(), { consecutiveFailures })
+      const degraded = alert('provider-degraded', '⚠️ Ciclo fallido', String(error).slice(0, 300), deps.now(), { consecutiveFailures })
       if (throttle.shouldSend(degraded)) await deps.alerts.send(degraded)
 
       // Back off before retrying: hammering a provider that is already failing
@@ -95,7 +95,7 @@ export async function runLoop(
     await sleep(options.intervalMs)
   }
 
-  await deps.alerts.send(alert('engine-started', '🛑 Engine stopped', `${cycles} cycle(s), ${failures} failure(s).`, deps.now()))
+  await deps.alerts.send(alert('engine-started', '🛑 Motor detenido', `${cycles} ciclo(s), ${failures} fallo(s).`, deps.now()))
   return { cycles, failures, lastResult, stoppedBy }
 }
 

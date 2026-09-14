@@ -13,8 +13,6 @@ export interface RuntimeConfig {
   readonly chain: 'solana' | 'bsc'
 
   readonly databaseUrl: string
-  readonly telegramBotToken: string
-  readonly telegramChatId: string
 
   readonly totalCapitalUsd: number
   readonly maxPositions: number
@@ -79,8 +77,6 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     mode,
     chain,
     databaseUrl: required(env, 'DATABASE_URL'),
-    telegramBotToken: required(env, 'TELEGRAM_BOT_TOKEN'),
-    telegramChatId: required(env, 'TELEGRAM_CHAT_ID'),
     totalCapitalUsd: number(env, 'OPERADOR_CAPITAL_USD', 1_000),
     maxPositions: number(env, 'OPERADOR_MAX_POSITIONS', 5),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
@@ -109,7 +105,6 @@ export const describeConfig = (config: RuntimeConfig): Record<string, unknown> =
   mode: config.mode,
   chain: config.chain,
   database: config.databaseUrl.replace(/:\/\/[^@]*@/, '://***@'),
-  telegramChat: config.telegramChatId,
   capitalUsd: config.totalCapitalUsd,
   maxPositions: config.maxPositions,
   gasUsdPerSwap: config.gasUsdPerSwap,

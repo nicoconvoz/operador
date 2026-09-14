@@ -31,12 +31,22 @@ import type { UniverseToken, UniverseView, TokenTier } from '../../src/applicati
  */
 
 const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string; ring: number }> = {
-  held: { core: '#63e6a5', halo: '99,230,165', label: 'IN POSITION', ring: 0.2 },
-  prime: { core: '#ffd166', halo: '255,209,102', label: 'PRIME', ring: 0.42 },
-  eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELIGIBLE', ring: 0.62 },
-  filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTERED', ring: 0.8 },
-  unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'UNSAFE', ring: 0.93 },
-  dead: { core: '#3a2030', halo: '90,40,60', label: 'DEAD', ring: 1.02 },
+  held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', ring: 0.2 },
+  prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', ring: 0.42 },
+  eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', ring: 0.62 },
+  filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', ring: 0.8 },
+  unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'INSEGURA', ring: 0.93 },
+  dead: { core: '#3a2030', halo: '90,40,60', label: 'MUERTA', ring: 1.02 },
+}
+
+/** The score's own vocabulary, in the language the reader speaks. */
+const COMPONENT_LABEL: Record<string, string> = {
+  volumeExpansion: 'expansión de volumen',
+  buyPressure: 'presión compradora',
+  liquidityGrowth: 'crecimiento de liquidez',
+  activity: 'actividad',
+  volatility: 'volatilidad',
+  costEfficiency: 'eficiencia de costo',
 }
 
 const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'filtered', 'unsafe', 'dead']
@@ -299,7 +309,7 @@ export function Universe({ view }: { view: UniverseView }) {
     <div style={{ position: 'relative' }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
         <Chip active={chainFilter === 'all'} onClick={() => setChainFilter('all')}>
-          all
+          todas
         </Chip>
         {view.chains.map((chain) => (
           <Chip key={chain} active={chainFilter === chain} onClick={() => setChainFilter(chain)}>
@@ -405,25 +415,25 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
       {token.position && (
         <div style={{ marginBottom: 10 }}>
           ${token.position.capitalUsd.toFixed(0)} · {token.position.filledDcas} DCA
-          {token.position.deathStage !== 'healthy' && <span> · {token.position.deathStage === 'frozen' ? '❄️ frozen' : '☠️ dead'}</span>}
+          {token.position.deathStage !== 'healthy' && <span> · {token.position.deathStage === 'frozen' ? '❄️ congelada' : '☠️ muerta'}</span>}
         </div>
       )}
 
-      <Row label="score" value={token.score.toFixed(1)} />
-      <Row label="liquidity" value={money(token.liquidityUsd)} />
-      <Row label="24h volume" value={money(token.volume24hUsd)} />
-      <Row label="24h change" value={token.change24hPct === null ? '—' : `${token.change24hPct.toFixed(1)}%`} />
-      <Row label="age" value={token.ageHours === null ? '—' : `${(token.ageHours / 24).toFixed(1)}d`} />
-      <Row label="round trip" value={`${token.frictionPct.toFixed(2)}%`} />
+      <Row label="puntaje" value={token.score.toFixed(1)} />
+      <Row label="liquidez" value={money(token.liquidityUsd)} />
+      <Row label="volumen 24h" value={money(token.volume24hUsd)} />
+      <Row label="cambio 24h" value={token.change24hPct === null ? '—' : `${token.change24hPct.toFixed(1)}%`} />
+      <Row label="antigüedad" value={token.ageHours === null ? '—' : `${(token.ageHours / 24).toFixed(1)}d`} />
+      <Row label="ida y vuelta" value={`${token.frictionPct.toFixed(2)}%`} />
 
-      <div style={{ marginTop: 12, marginBottom: 6, color: '#8b949e', fontSize: 12 }}>why this score</div>
+      <div style={{ marginTop: 12, marginBottom: 6, color: '#8b949e', fontSize: 12 }}>por qué este puntaje</div>
       {Object.entries(token.components).map(([name, value]) => (
-        <Bar key={name} label={name} value={value} color={style.core} />
+        <Bar key={name} label={COMPONENT_LABEL[name] ?? name} value={value} color={style.core} />
       ))}
 
       {token.blockers.length > 0 && (
         <div style={{ marginTop: 12 }}>
-          <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 4 }}>blocked by</div>
+          <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 4 }}>bloqueada por</div>
           {token.blockers.map((blocker) => (
             <div key={blocker} style={{ color: '#ff6b6b', fontSize: 12 }}>
               • {blocker}

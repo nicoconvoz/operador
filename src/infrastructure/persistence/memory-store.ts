@@ -4,7 +4,9 @@ import {
   type PersistedPosition,
   type PersistedScan,
   type StatePort,
+  type StoredAlert,
 } from '../../domain/persistence/store.js'
+import { type Alert } from '../../domain/notifications/alerts.js'
 
 /**
  * In-memory StatePort — for tests, paper runs, and as the reference that
@@ -19,6 +21,7 @@ export class MemoryStore implements StatePort {
   private readonly positions = new Map<string, PersistedPosition>()
   private readonly fills = new Map<string, PersistedFill>()
   private readonly blacklistEntries = new Map<string, { reason: string; at: number }>()
+  private readonly alerts: StoredAlert[] = []
   private scan: PersistedScan | null = null
   private checkpoint: EngineCheckpoint | null = null
 
@@ -32,6 +35,22 @@ export class MemoryStore implements StatePort {
 
   async closePosition(positionId: string): Promise<void> {
     this.positions.delete(positionId)
+  }
+
+  async recordAlert(alert: Alert): Promise<StoredAlert> {
+    // The sequence comes from the log's own length, never from the clock:
+    // ordering must survive two alerts raised in the same millisecond.
+    const stored: StoredAlert = { ...alert, seq: this.alerts.length + 1 }
+    this.alerts.push(structuredClone(stored))
+    return stored
+  }
+
+  async alertsSince(seq: number, limit = 100): Promise<readonly StoredAlert[]> {
+    return this.alerts.filter((a) => a.seq > seq).slice(0, limit).map((a) => structuredClone(a))
+  }
+
+  async latestAlertSeq(): Promise<number> {
+    return this.alerts.at(-1)?.seq ?? 0
   }
 
   async recordFill(fill: PersistedFill): Promise<void> {

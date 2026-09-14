@@ -22,10 +22,10 @@ export function Console({ universe, operations }: { universe: UniverseView; oper
     <>
       <nav style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
         <Tab active={tab === 'universe'} onClick={() => setTab('universe')}>
-          Universe <Count>{universe.tokens.length}</Count>
+          Universo <Count>{universe.tokens.length}</Count>
         </Tab>
         <Tab active={tab === 'operations'} onClick={() => setTab('operations')}>
-          Operations {open > 0 && <Count>{open}</Count>}
+          Operaciones {open > 0 && <Count>{open}</Count>}
         </Tab>
       </nav>
 
