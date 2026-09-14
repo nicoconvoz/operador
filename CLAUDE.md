@@ -356,6 +356,18 @@ Deriving that floor from the simulator is an explicit project deliverable.
 7. **Bar-close semantics are sacred.** Signals evaluate on **closed** bars only.
 8. **Position isolation.** One token dying must not affect any other position.
 
+## Paper mode is the whole system, minus the spending
+
+Everything that DECIDES is real: discovery, gates, the honeypot sell quote,
+candles, the strategy, the death watch's sell probes. Only the FILL is
+simulated — and pessimistically, paying the venue spread, the impact its own
+size causes against measured depth, and gas per swap. A round trip at a flat
+price loses money, because on a real chain it would.
+
+That means a paper run is not a rehearsal of the decisions. It IS the
+decisions, against the real market, with the only difference being that no
+token moves. The numbers it produces are the ones worth arguing about.
+
 ## Running it
 
 ```bash
