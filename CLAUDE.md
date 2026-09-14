@@ -443,20 +443,27 @@ Build what can be verified. Then build what must be discovered.
    Pure functions, golden-file tested against TradingView exports. Parity breaks
    here first, so nothing proceeds until these match.
 
-   **Proven so far** (golden source: BLESS 1H, 4001 bars + 12 seed bars):
-   - `ta.sma` — exact, on both price and volume scales
-   - `ta.ema` — seeding SETTLED (na until the window fills, then seeded with
-     the SMA of that window) and the recursion verified at length 200 over
-     4001 bars
-   - `ta.bb` tuple order — `[basis, upper, lower]`, proven three ways
+   **✅ COMPLETE** — every indicator the strategy uses is pinned against
+   TradingView's own values (BLESS 1H, 4001 bars + 12 seed bars):
+
+   | Pine | Port | Parity note |
+   |---|---|---|
+   | `ta.sma` | `sma` | exact, price and volume scales |
+   | `ta.ema` | `ema` | seed SETTLED (na until window fills, then SMA); recursion verified at length 200 |
+   | `ta.rma` | `rma` | same seeded recursion, alpha 1/n |
+   | `ta.roc` | `roc` | exact |
+   | `ta.highest` | `highest` | exact |
+   | `ta.stdev` | `stdev` | **population** (biased) — sample is off by 1% |
+   | `ta.bb` | via `sma` + `stdev` | tuple is `[basis, upper, lower]` — see the BBW finding |
+   | `ta.tr` / `ta.atr` | `trueRange` / `atr` | `atr` uses `handle_na` (bar 0 = high-low) |
+   | `ta.supertrend` | `supertrend` | Pine direction kept: **-1 = uptrend**; 0 direction mismatches over 3001 bars |
+   | `ta.dmi` | `dmi` | uses `ta.tr` WITHOUT `handle_na` (bar 0 = na); `fixnan` carry reproduced |
+   | VWM (strategy's own) | `vwm` | composition pinned |
 
    Parity is asserted against the **export grid** (10 decimal places), not a
-   fuzzy percentage. A correct implementation lands on the same grid point; a
-   wrong one misses by orders of magnitude.
+   fuzzy percentage — see `__golden__/harness.ts`. Recursive indicators are
+   compared once converged; a wrong recursion cannot converge onto the right one.
 
-   **Still unverified** — these carry recursive state and need their own
-   golden columns: `ta.atr`/RMA, `ta.supertrend`, `ta.dmi`/ADX, `ta.roc`,
-   `ta.stdev`, and the composed VWM.
 2. **State machine** — `level` transitions, both entry gates, the DCA ladder,
    all five rebound locks, one-fill-per-bar.
 3. **Exits** — normal (VWM / Supertrend) and rescue breakeven.
