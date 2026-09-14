@@ -1,6 +1,8 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
+import { mergeSecurity } from '../domain/scanner/security-merge.js'
+import { lpLockFromVenue } from '../infrastructure/adapters/solana/lp-heuristics.js'
 import { type DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { type GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { type Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
@@ -8,6 +10,8 @@ import { type Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 /** Token decimals — needed to size a reference sell in base units. */
 export interface DecimalsPort {
   decimals(chain: Chain, address: string): Promise<number | null>
+  /** Optional second opinion on security facts (e.g. Jupiter's audit block). */
+  security?(chain: Chain, address: string): Promise<Partial<SecurityReport> | null>
 }
 
 export interface ScanDeps {
@@ -82,12 +86,25 @@ export async function scanOnce(
   const quality = new Map<string, MarketQuality>()
 
   for (const market of markets) {
-    let security: SecurityReport = UNKNOWN_SECURITY
+    // Sources in trust order: GoPlus, then the metadata provider's audit,
+    // then venue heuristics. Danger from any source wins; unknowns fill in.
+    const opinions: Partial<SecurityReport>[] = []
     try {
-      security = (await deps.goplus.securityReport(config.chain, market.address)) ?? UNKNOWN_SECURITY
+      const primary = await deps.goplus.securityReport(config.chain, market.address)
+      if (primary) opinions.push(primary)
     } catch (error) {
       errors.push({ address: market.address, stage: 'security', error: String(error) })
     }
+    if (deps.decimals.security) {
+      try {
+        const second = await deps.decimals.security(config.chain, market.address)
+        if (second) opinions.push(second)
+      } catch (error) {
+        errors.push({ address: market.address, stage: 'security', error: String(error) })
+      }
+    }
+    if (config.chain === 'solana') opinions.push(lpLockFromVenue(market.dexId))
+    let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
 
     let slippagePct: number | null = null
     if (config.chain === 'solana') {

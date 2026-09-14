@@ -50,6 +50,8 @@ export interface TokenSnapshot {
   readonly address: string
   readonly symbol: string
   readonly pairAddress: string
+  /** Venue of the deepest pool, e.g. 'raydium', 'pumpswap', 'orca'. */
+  readonly dexId?: string
   readonly observedAt: number
 
   readonly priceUsd: number

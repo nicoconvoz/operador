@@ -103,6 +103,7 @@ export class DexScreener {
       address: pair.baseToken.address,
       symbol: pair.baseToken.symbol,
       pairAddress: pair.pairAddress,
+      dexId: pair.dexId,
       observedAt: this.now(),
       priceUsd: Number(pair.priceUsd),
       liquidityUsd: pair.liquidity?.usd ?? 0,

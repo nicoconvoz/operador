@@ -1,5 +1,5 @@
 import { type HttpGet } from '../../http.js'
-import { type Chain } from '../../../domain/scanner/snapshot.js'
+import { type Chain, type SecurityReport } from '../../../domain/scanner/snapshot.js'
 import { type DecimalsPort } from '../../../application/scan.js'
 import { JUPITER_LITE_BASE } from './jupiter.js'
 
@@ -29,6 +29,8 @@ export interface JupiterTokenInfo {
     readonly mintAuthorityDisabled?: boolean
     readonly freezeAuthorityDisabled?: boolean
     readonly topHoldersPercentage?: number
+    readonly devBalancePercentage?: number
+    readonly devMints?: number
   }
 }
 
@@ -58,5 +60,24 @@ export class JupiterTokens implements DecimalsPort {
     if (chain !== 'solana') return null
     const info = await this.info(address)
     return info && Number.isInteger(info.decimals) ? info.decimals : null
+  }
+
+  /**
+   * The audit block as a partial SecurityReport — a second opinion on mint
+   * and freeze authorities and on holder concentration, which GoPlus often
+   * leaves blank for Solana tokens. Confirmed live: BONK reports
+   * mintAuthorityDisabled, freezeAuthorityDisabled and topHoldersPercentage.
+   */
+  async security(chain: Chain, address: string): Promise<Partial<SecurityReport> | null> {
+    if (chain !== 'solana') return null
+    const info = await this.info(address)
+    if (!info?.audit) return null
+    const a = info.audit
+    return {
+      mintAuthorityActive: a.mintAuthorityDisabled === undefined ? null : !a.mintAuthorityDisabled,
+      freezeAuthorityActive: a.freezeAuthorityDisabled === undefined ? null : !a.freezeAuthorityDisabled,
+      topHoldersPct: typeof a.topHoldersPercentage === 'number' ? a.topHoldersPercentage : null,
+      creatorPct: typeof a.devBalancePercentage === 'number' ? a.devBalancePercentage : null,
+    }
   }
 }
