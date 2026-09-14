@@ -1,0 +1,1736 @@
+{
+  "source": "tools/golden/BLESS-1H.trades.raw.csv",
+  "inputs": {
+    "base_usd": 1000,
+    "amt_inc": 1.2,
+    "max_usd_cap": 5000,
+    "drop_init": 10,
+    "max_levels": 50,
+    "dca_base_pct": 1,
+    "progression": "Linear (+)",
+    "lin_inc": 3,
+    "geo_mult": 10,
+    "use_rebound": true,
+    "rebound_pct": 2.5,
+    "require_green": true,
+    "min_gap_pct": 5,
+    "confirm_bars": 20,
+    "rescue_levels": 10,
+    "be_arm_pct": 1,
+    "use_trend_reentry": true,
+    "tr_adx_min": 30,
+    "tr_ema_len": 200,
+    "tr_slope": 1,
+    "swing_lb": 20,
+    "bb_len": 50,
+    "bb_dev": 1,
+    "bbw_max": 14,
+    "adx_len": 15,
+    "adx_max": 40,
+    "require_both": false,
+    "min_profit": 2,
+    "roc_len": 10,
+    "roc_sm": 5,
+    "vol_sm_len": 10,
+    "decay_req": 2,
+    "use_st_exit": true,
+    "st_atr_len": 10,
+    "st_factor": 3
+  },
+  "syminfo": {
+    "mintick": 0.000001,
+    "ticker": "BLESSUSDT.P",
+    "timeframe": 60,
+    "initial_capital": 10000
+  },
+  "states": [
+    {
+      "time": 1767445200000,
+      "level": 1,
+      "ep1": 0.01374,
+      "totalInv": 1000,
+      "close": 0.01374
+    },
+    {
+      "time": 1767679200000,
+      "level": 2,
+      "ep1": 0.01374,
+      "totalInv": 3200,
+      "close": 0.01333
+    },
+    {
+      "time": 1767859200000,
+      "level": 1,
+      "ep1": 0.013,
+      "totalInv": 1000,
+      "close": 0.013
+    },
+    {
+      "time": 1767952800000,
+      "level": 2,
+      "ep1": 0.013,
+      "totalInv": 3200,
+      "close": 0.01178
+    },
+    {
+      "time": 1768060800000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.01259
+    },
+    {
+      "time": 1768780800000,
+      "level": 1,
+      "ep1": 0.0091,
+      "totalInv": 1000,
+      "close": 0.0091
+    },
+    {
+      "time": 1769018400000,
+      "level": 2,
+      "ep1": 0.0091,
+      "totalInv": 3200,
+      "close": 0.00894
+    },
+    {
+      "time": 1769443200000,
+      "level": 3,
+      "ep1": 0.0091,
+      "totalInv": 6600,
+      "close": 0.00791
+    },
+    {
+      "time": 1769814000000,
+      "level": 4,
+      "ep1": 0.0091,
+      "totalInv": 11200,
+      "close": 0.00732
+    },
+    {
+      "time": 1769954400000,
+      "level": 5,
+      "ep1": 0.0091,
+      "totalInv": 16200,
+      "close": 0.00608
+    },
+    {
+      "time": 1770091200000,
+      "level": 6,
+      "ep1": 0.0091,
+      "totalInv": 21200,
+      "close": 0.00593
+    },
+    {
+      "time": 1770411600000,
+      "level": 7,
+      "ep1": 0.0091,
+      "totalInv": 26200,
+      "close": 0.00509
+    },
+    {
+      "time": 1770523200000,
+      "level": 8,
+      "ep1": 0.0091,
+      "totalInv": 31200,
+      "close": 0.00515
+    },
+    {
+      "time": 1770807600000,
+      "level": 9,
+      "ep1": 0.0091,
+      "totalInv": 36200,
+      "close": 0.00482
+    },
+    {
+      "time": 1770912000000,
+      "level": 10,
+      "ep1": 0.0091,
+      "totalInv": 41200,
+      "close": 0.005773
+    },
+    {
+      "time": 1771268400000,
+      "level": 11,
+      "ep1": 0.0091,
+      "totalInv": 46200,
+      "close": 0.005672
+    },
+    {
+      "time": 1771524000000,
+      "level": 12,
+      "ep1": 0.0091,
+      "totalInv": 51200,
+      "close": 0.005556
+    },
+    {
+      "time": 1771880400000,
+      "level": 13,
+      "ep1": 0.0091,
+      "totalInv": 56200,
+      "close": 0.004939
+    },
+    {
+      "time": 1772049600000,
+      "level": 14,
+      "ep1": 0.0091,
+      "totalInv": 61200,
+      "close": 0.005009
+    },
+    {
+      "time": 1772348400000,
+      "level": 15,
+      "ep1": 0.0091,
+      "totalInv": 66200,
+      "close": 0.004561
+    },
+    {
+      "time": 1772467200000,
+      "level": 16,
+      "ep1": 0.0091,
+      "totalInv": 71200,
+      "close": 0.004595
+    },
+    {
+      "time": 1772622000000,
+      "level": 17,
+      "ep1": 0.0091,
+      "totalInv": 76200,
+      "close": 0.00452
+    },
+    {
+      "time": 1775980800000,
+      "level": 1,
+      "ep1": 0.008409,
+      "totalInv": 1000,
+      "close": 0.008409
+    },
+    {
+      "time": 1775995200000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.008689
+    },
+    {
+      "time": 1775998800000,
+      "level": 1,
+      "ep1": 0.008312,
+      "totalInv": 1000,
+      "close": 0.008312
+    },
+    {
+      "time": 1776063600000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.009482
+    },
+    {
+      "time": 1776074400000,
+      "level": 1,
+      "ep1": 0.010471,
+      "totalInv": 1000,
+      "close": 0.010471
+    },
+    {
+      "time": 1776132000000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.019137
+    },
+    {
+      "time": 1776240000000,
+      "level": 1,
+      "ep1": 0.028999,
+      "totalInv": 1000,
+      "close": 0.028999
+    },
+    {
+      "time": 1776348000000,
+      "level": 2,
+      "ep1": 0.028999,
+      "totalInv": 3200,
+      "close": 0.011147
+    },
+    {
+      "time": 1776704400000,
+      "level": 3,
+      "ep1": 0.028999,
+      "totalInv": 6600,
+      "close": 0.00558
+    },
+    {
+      "time": 1779130800000,
+      "level": 4,
+      "ep1": 0.028999,
+      "totalInv": 11200,
+      "close": 0.005284
+    },
+    {
+      "time": 1779433200000,
+      "level": 5,
+      "ep1": 0.028999,
+      "totalInv": 16200,
+      "close": 0.005221
+    },
+    {
+      "time": 1779602400000,
+      "level": 6,
+      "ep1": 0.028999,
+      "totalInv": 21200,
+      "close": 0.005107
+    },
+    {
+      "time": 1780020000000,
+      "level": 7,
+      "ep1": 0.028999,
+      "totalInv": 26200,
+      "close": 0.00481
+    },
+    {
+      "time": 1780142400000,
+      "level": 8,
+      "ep1": 0.028999,
+      "totalInv": 31200,
+      "close": 0.005199
+    },
+    {
+      "time": 1780315200000,
+      "level": 9,
+      "ep1": 0.028999,
+      "totalInv": 36200,
+      "close": 0.005141
+    },
+    {
+      "time": 1780491600000,
+      "level": 10,
+      "ep1": 0.028999,
+      "totalInv": 41200,
+      "close": 0.005216
+    },
+    {
+      "time": 1780610400000,
+      "level": 11,
+      "ep1": 0.028999,
+      "totalInv": 46200,
+      "close": 0.004316
+    },
+    {
+      "time": 1780758000000,
+      "level": 12,
+      "ep1": 0.028999,
+      "totalInv": 51200,
+      "close": 0.004983
+    },
+    {
+      "time": 1780866000000,
+      "level": 1,
+      "ep1": 0.007702,
+      "totalInv": 1000,
+      "close": 0.007702
+    },
+    {
+      "time": 1780894800000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.007877
+    },
+    {
+      "time": 1780898400000,
+      "level": 1,
+      "ep1": 0.008306,
+      "totalInv": 1000,
+      "close": 0.008306
+    },
+    {
+      "time": 1781092800000,
+      "level": 2,
+      "ep1": 0.009408,
+      "totalInv": 3200,
+      "close": 0.006482
+    },
+    {
+      "time": 1781316000000,
+      "level": 3,
+      "ep1": 0.009408,
+      "totalInv": 6600,
+      "close": 0.005568
+    },
+    {
+      "time": 1781413200000,
+      "level": 4,
+      "ep1": 0.009408,
+      "totalInv": 11200,
+      "close": 0.005393
+    },
+    {
+      "time": 1781539200000,
+      "level": 5,
+      "ep1": 0.009408,
+      "totalInv": 16200,
+      "close": 0.005536
+    },
+    {
+      "time": 1781629200000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.006387
+    },
+    {
+      "time": 1781676000000,
+      "level": 1,
+      "ep1": 0.007359,
+      "totalInv": 1000,
+      "close": 0.007359
+    },
+    {
+      "time": 1781866800000,
+      "level": 2,
+      "ep1": 0.007534,
+      "totalInv": 3200,
+      "close": 0.006455
+    },
+    {
+      "time": 1781906400000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.007901
+    },
+    {
+      "time": 1781938800000,
+      "level": 1,
+      "ep1": 0.007637,
+      "totalInv": 1000,
+      "close": 0.007637
+    },
+    {
+      "time": 1782036000000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.007928
+    },
+    {
+      "time": 1782180000000,
+      "level": 1,
+      "ep1": 0.010118,
+      "totalInv": 1000,
+      "close": 0.010118
+    },
+    {
+      "time": 1782363600000,
+      "level": 2,
+      "ep1": 0.0102,
+      "totalInv": 3200,
+      "close": 0.007978
+    },
+    {
+      "time": 1782468000000,
+      "level": 3,
+      "ep1": 0.0102,
+      "totalInv": 6600,
+      "close": 0.008011
+    },
+    {
+      "time": 1782662400000,
+      "level": 4,
+      "ep1": 0.0102,
+      "totalInv": 11200,
+      "close": 0.007948
+    },
+    {
+      "time": 1782936000000,
+      "level": 5,
+      "ep1": 0.0102,
+      "totalInv": 16200,
+      "close": 0.006853
+    },
+    {
+      "time": 1783076400000,
+      "level": 1,
+      "ep1": 0.009139,
+      "totalInv": 1000,
+      "close": 0.009139
+    },
+    {
+      "time": 1783238400000,
+      "level": 2,
+      "ep1": 0.009139,
+      "totalInv": 3200,
+      "close": 0.008988
+    },
+    {
+      "time": 1783414800000,
+      "level": 3,
+      "ep1": 0.009139,
+      "totalInv": 6600,
+      "close": 0.008156
+    },
+    {
+      "time": 1783598400000,
+      "level": 4,
+      "ep1": 0.009139,
+      "totalInv": 11200,
+      "close": 0.007763
+    },
+    {
+      "time": 1784048400000,
+      "level": 5,
+      "ep1": 0.009139,
+      "totalInv": 16200,
+      "close": 0.008093
+    },
+    {
+      "time": 1784170800000,
+      "level": 6,
+      "ep1": 0.009139,
+      "totalInv": 21200,
+      "close": 0.00821
+    },
+    {
+      "time": 1784365200000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.008384
+    },
+    {
+      "time": 1784498400000,
+      "level": 1,
+      "ep1": 0.009056,
+      "totalInv": 1000,
+      "close": 0.009056
+    },
+    {
+      "time": 1784610000000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.009847
+    },
+    {
+      "time": 1784613600000,
+      "level": 1,
+      "ep1": 0.009755,
+      "totalInv": 1000,
+      "close": 0.009755
+    },
+    {
+      "time": 1784718000000,
+      "level": 2,
+      "ep1": 0.009755,
+      "totalInv": 3200,
+      "close": 0.010241
+    },
+    {
+      "time": 1784854800000,
+      "level": 3,
+      "ep1": 0.009755,
+      "totalInv": 6600,
+      "close": 0.007859
+    },
+    {
+      "time": 1785002400000,
+      "level": 4,
+      "ep1": 0.009755,
+      "totalInv": 11200,
+      "close": 0.007899
+    },
+    {
+      "time": 1785056400000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.008497
+    },
+    {
+      "time": 1785265200000,
+      "level": 1,
+      "ep1": 0.008241,
+      "totalInv": 1000,
+      "close": 0.008241
+    },
+    {
+      "time": 1785362400000,
+      "level": 2,
+      "ep1": 0.008241,
+      "totalInv": 3200,
+      "close": 0.008013
+    },
+    {
+      "time": 1785384000000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.008506
+    },
+    {
+      "time": 1785420000000,
+      "level": 1,
+      "ep1": 0.008133,
+      "totalInv": 1000,
+      "close": 0.008133
+    },
+    {
+      "time": 1785578400000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.008778
+    },
+    {
+      "time": 1785632400000,
+      "level": 1,
+      "ep1": 0.010568,
+      "totalInv": 1000,
+      "close": 0.010568
+    },
+    {
+      "time": 1785697200000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.018121
+    },
+    {
+      "time": 1785704400000,
+      "level": 1,
+      "ep1": 0.019529,
+      "totalInv": 1000,
+      "close": 0.019529
+    },
+    {
+      "time": 1785729600000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.020895
+    },
+    {
+      "time": 1785736800000,
+      "level": 1,
+      "ep1": 0.019396,
+      "totalInv": 1000,
+      "close": 0.019396
+    },
+    {
+      "time": 1785891600000,
+      "level": 2,
+      "ep1": 0.020133,
+      "totalInv": 3200,
+      "close": 0.011281
+    },
+    {
+      "time": 1785927600000,
+      "level": 1,
+      "ep1": 0.020489,
+      "totalInv": 1000,
+      "close": 0.020489
+    },
+    {
+      "time": 1785992400000,
+      "level": 0,
+      "ep1": null,
+      "totalInv": 0,
+      "close": 0.026595
+    },
+    {
+      "time": 1785999600000,
+      "level": 1,
+      "ep1": 0.027564,
+      "totalInv": 1000,
+      "close": 0.027564
+    },
+    {
+      "time": 1786165200000,
+      "level": 2,
+      "ep1": 0.027564,
+      "totalInv": 3200,
+      "close": 0.017262
+    },
+    {
+      "time": 1786323600000,
+      "level": 3,
+      "ep1": 0.027564,
+      "totalInv": 6600,
+      "close": 0.012233
+    },
+    {
+      "time": 1786402800000,
+      "level": 4,
+      "ep1": 0.027564,
+      "totalInv": 11200,
+      "close": 0.013548
+    },
+    {
+      "time": 1786507200000,
+      "level": 5,
+      "ep1": 0.027564,
+      "totalInv": 16200,
+      "close": 0.012513
+    },
+    {
+      "time": 1786712400000,
+      "level": 6,
+      "ep1": 0.027564,
+      "totalInv": 21200,
+      "close": 0.010248
+    },
+    {
+      "time": 1786935600000,
+      "level": 7,
+      "ep1": 0.027564,
+      "totalInv": 26200,
+      "close": 0.008701
+    },
+    {
+      "time": 1787097600000,
+      "level": 8,
+      "ep1": 0.027564,
+      "totalInv": 31200,
+      "close": 0.007767
+    },
+    {
+      "time": 1787284800000,
+      "level": 9,
+      "ep1": 0.027564,
+      "totalInv": 36200,
+      "close": 0.007315
+    }
+  ],
+  "entries": [
+    {
+      "time": 1767448800000,
+      "id": "Entry",
+      "price": 0.013731,
+      "size": 72780.20300000001,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1767682800000,
+      "id": "DCA-1",
+      "price": 0.013321,
+      "size": 165041.26,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1767862800000,
+      "id": "Entry",
+      "price": 0.013001,
+      "size": 76923.076,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1767956400000,
+      "id": "DCA-1",
+      "price": 0.011791,
+      "size": 186757.215,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1768784400000,
+      "id": "Entry",
+      "price": 0.009101,
+      "size": 109890.109,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1769022000000,
+      "id": "DCA-1",
+      "price": 0.008951,
+      "size": 246085.011,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1769446800000,
+      "id": "DCA-2",
+      "price": 0.007911,
+      "size": 429835.651,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1775984400000,
+      "id": "Entry",
+      "price": 0.008417,
+      "size": 118920.204,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1776002400000,
+      "id": "Entry",
+      "price": 0.008318,
+      "size": 120307.988,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1776078000000,
+      "id": "Entry",
+      "price": 0.010472,
+      "size": 95501.86200000001,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1776085200000,
+      "id": "Entry",
+      "price": 0.011864,
+      "size": 84388.185,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1776092400000,
+      "id": "Entry",
+      "price": 0.01362,
+      "size": 73416.048,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1776243600000,
+      "id": "Entry",
+      "price": 0.02899,
+      "size": 34483.947,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1776351600000,
+      "id": "DCA-1",
+      "price": 0.011151,
+      "size": 197362.519,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1776708000000,
+      "id": "DCA-2",
+      "price": 0.005581,
+      "size": 609318.996,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1779134400000,
+      "id": "DCA-3",
+      "price": 0.005282,
+      "size": 870552.611,
+      "comment": "DCA-3"
+    },
+    {
+      "time": 1780869600000,
+      "id": "Entry",
+      "price": 0.007703,
+      "size": 129836.406,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1780902000000,
+      "id": "Entry",
+      "price": 0.008304,
+      "size": 120394.895,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1780938000000,
+      "id": "Entry",
+      "price": 0.009416,
+      "size": 106292.517,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1781096400000,
+      "id": "DCA-1",
+      "price": 0.006482,
+      "size": 339401.419,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1781319600000,
+      "id": "DCA-2",
+      "price": 0.005567,
+      "size": 610632.183,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1781416800000,
+      "id": "DCA-3",
+      "price": 0.005396,
+      "size": 852957.537,
+      "comment": "DCA-3"
+    },
+    {
+      "time": 1781679600000,
+      "id": "Entry",
+      "price": 0.00736,
+      "size": 135888.028,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1781737200000,
+      "id": "Entry",
+      "price": 0.007533,
+      "size": 132766.861,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1781744400000,
+      "id": "Entry",
+      "price": 0.007535,
+      "size": 132731.616,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1781870400000,
+      "id": "DCA-1",
+      "price": 0.006457,
+      "size": 340821.068,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1781942400000,
+      "id": "Entry",
+      "price": 0.007637,
+      "size": 130941.469,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1781953200000,
+      "id": "Entry",
+      "price": 0.007573,
+      "size": 132048.065,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1782183600000,
+      "id": "Entry",
+      "price": 0.010119,
+      "size": 98833.761,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1782190800000,
+      "id": "Entry",
+      "price": 0.010195,
+      "size": 98039.215,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1782367200000,
+      "id": "DCA-1",
+      "price": 0.007979,
+      "size": 275758.335,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1782471600000,
+      "id": "DCA-2",
+      "price": 0.008008,
+      "size": 424416.427,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1782666000000,
+      "id": "DCA-3",
+      "price": 0.007949,
+      "size": 578761.952,
+      "comment": "DCA-3"
+    },
+    {
+      "time": 1783080000000,
+      "id": "Entry",
+      "price": 0.009141,
+      "size": 109421.162,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1783242000000,
+      "id": "DCA-1",
+      "price": 0.008988,
+      "size": 244770.805,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1783418400000,
+      "id": "DCA-2",
+      "price": 0.008156,
+      "size": 416871.015,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1783602000000,
+      "id": "DCA-3",
+      "price": 0.007761,
+      "size": 592554.424,
+      "comment": "DCA-3"
+    },
+    {
+      "time": 1784502000000,
+      "id": "Entry",
+      "price": 0.009057,
+      "size": 110424.028,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1784617200000,
+      "id": "Entry",
+      "price": 0.009759,
+      "size": 102511.532,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1784721600000,
+      "id": "DCA-1",
+      "price": 0.010243,
+      "size": 214822.771,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1784858400000,
+      "id": "DCA-2",
+      "price": 0.007859,
+      "size": 432625.015,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1785006000000,
+      "id": "DCA-3",
+      "price": 0.007902,
+      "size": 582352.196,
+      "comment": "DCA-3"
+    },
+    {
+      "time": 1785268800000,
+      "id": "Entry",
+      "price": 0.008242,
+      "size": 121344.497,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1785366000000,
+      "id": "DCA-1",
+      "price": 0.008008,
+      "size": 274553.849,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1785423600000,
+      "id": "Entry",
+      "price": 0.008135,
+      "size": 122955.85800000001,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1785636000000,
+      "id": "Entry",
+      "price": 0.010561,
+      "size": 94625.283,
+      "comment": "🟢 Entry"
+    },
+    {
+      "time": 1785654000000,
+      "id": "Entry",
+      "price": 0.013345,
+      "size": 74934.432,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785661200000,
+      "id": "Entry",
+      "price": 0.014032,
+      "size": 71255.522,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785682800000,
+      "id": "Entry",
+      "price": 0.016937,
+      "size": 59077.213,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785708000000,
+      "id": "Entry",
+      "price": 0.019531,
+      "size": 51205.898,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785740400000,
+      "id": "Entry",
+      "price": 0.019401,
+      "size": 51557.022000000004,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785754800000,
+      "id": "Entry",
+      "price": 0.020139,
+      "size": 49669.696,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785895200000,
+      "id": "DCA-1",
+      "price": 0.011285,
+      "size": 195018.172,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1785931200000,
+      "id": "Entry",
+      "price": 0.02049,
+      "size": 48806.676,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1785956400000,
+      "id": "Entry",
+      "price": 0.025293,
+      "size": 39542.884,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1786003200000,
+      "id": "Entry",
+      "price": 0.027565,
+      "size": 36279.204,
+      "comment": "🚀 Re-Entry"
+    },
+    {
+      "time": 1786168800000,
+      "id": "DCA-1",
+      "price": 0.017261,
+      "size": 127447.572,
+      "comment": "DCA-1"
+    },
+    {
+      "time": 1786327200000,
+      "id": "DCA-2",
+      "price": 0.012235,
+      "size": 277936.728,
+      "comment": "DCA-2"
+    },
+    {
+      "time": 1786406400000,
+      "id": "DCA-3",
+      "price": 0.013549,
+      "size": 339533.51,
+      "comment": "DCA-3"
+    },
+    {
+      "time": 1786510800000,
+      "id": "DCA-4",
+      "price": 0.012515,
+      "size": 399584.43200000003,
+      "comment": "DCA-4"
+    }
+  ],
+  "closed": [
+    {
+      "id": "Entry",
+      "entryTime": 1767448800000,
+      "entryPrice": 0.013731,
+      "exitTime": 1767859200000,
+      "exitPrice": 0.013809,
+      "size": 72780.20300000001,
+      "profit": 3.672489043599997,
+      "commission": 2.0043667904,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1767682800000,
+      "entryPrice": 0.013321,
+      "exitTime": 1767859200000,
+      "exitPrice": 0.013809,
+      "size": 165041.26,
+      "profit": 76.0625654960001,
+      "commission": 4.477569384000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1767862800000,
+      "entryPrice": 0.013001,
+      "exitTime": 1768060800000,
+      "exitPrice": 0.012509,
+      "size": 76923.076,
+      "profit": -39.80846106059995,
+      "commission": 1.9623076686,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1767956400000,
+      "entryPrice": 0.011791,
+      "exitTime": 1768060800000,
+      "exitPrice": 0.012509,
+      "size": 186757.215,
+      "profit": 129.55348004599998,
+      "commission": 4.538200324,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1768784400000,
+      "entryPrice": 0.009101,
+      "exitTime": 1775980800000,
+      "exitPrice": 0.008679,
+      "size": 109890.109,
+      "profit": -48.32747213610005,
+      "commission": 1.9538461381,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1769022000000,
+      "entryPrice": 0.008951,
+      "exitTime": 1775980800000,
+      "exitPrice": 0.008679,
+      "size": 246085.011,
+      "profit": -71.27360173599992,
+      "commission": 4.338478744,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-2",
+      "entryTime": 1769446800000,
+      "entryPrice": 0.007911,
+      "exitTime": 1775980800000,
+      "exitPrice": 0.008679,
+      "size": 429835.651,
+      "profit": 322.98280651799985,
+      "commission": 7.130973450000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1775984400000,
+      "entryPrice": 0.008417,
+      "exitTime": 1775995200000,
+      "exitPrice": 0.008713,
+      "size": 118920.204,
+      "profit": 33.16327729000014,
+      "commission": 2.037103094,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1776002400000,
+      "entryPrice": 0.008318,
+      "exitTime": 1776063600000,
+      "exitPrice": 0.00912,
+      "size": 120307.988,
+      "profit": 94.38907568100007,
+      "commission": 2.097930695,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1776078000000,
+      "entryPrice": 0.010472,
+      "exitTime": 1776081600000,
+      "exitPrice": 0.012378,
+      "size": 95501.86200000001,
+      "profit": 179.84433142500015,
+      "commission": 2.182217547,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1776085200000,
+      "entryPrice": 0.011864,
+      "exitTime": 1776088800000,
+      "exitPrice": 0.012689,
+      "size": 84388.185,
+      "profit": 67.54826951899994,
+      "commission": 2.071983106,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1776092400000,
+      "entryPrice": 0.01362,
+      "exitTime": 1776132000000,
+      "exitPrice": 0.020558,
+      "size": 73416.048,
+      "profit": 506.8513273351999,
+      "commission": 2.5092136888,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1776243600000,
+      "entryPrice": 0.02899,
+      "exitTime": 1780866000000,
+      "exitPrice": 0.007619,
+      "size": 34483.947,
+      "profit": -738.2188541526999,
+      "commission": 1.2624228157,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1776351600000,
+      "entryPrice": 0.011151,
+      "exitTime": 1780866000000,
+      "exitPrice": 0.007619,
+      "size": 197362.519,
+      "profit": -700.7889115889999,
+      "commission": 3.704494481,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-2",
+      "entryTime": 1776708000000,
+      "entryPrice": 0.005581,
+      "exitTime": 1780866000000,
+      "exitPrice": 0.007619,
+      "size": 609318.996,
+      "profit": 1233.7491031,
+      "commission": 8.043010748,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-3",
+      "entryTime": 1779134400000,
+      "entryPrice": 0.005282,
+      "exitTime": 1780866000000,
+      "exitPrice": 0.007619,
+      "size": 870552.611,
+      "profit": 2023.2504526720004,
+      "commission": 11.230999235,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1780869600000,
+      "entryPrice": 0.007703,
+      "exitTime": 1780894800000,
+      "exitPrice": 0.008106,
+      "size": 129836.406,
+      "profit": 50.27148787600007,
+      "commission": 2.052583742,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1780902000000,
+      "entryPrice": 0.008304,
+      "exitTime": 1780934400000,
+      "exitPrice": 0.008819,
+      "size": 120394.895,
+      "profit": 59.941849137900185,
+      "commission": 2.0615217871,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1780938000000,
+      "entryPrice": 0.009416,
+      "exitTime": 1781629200000,
+      "exitPrice": 0.00615,
+      "size": 106292.517,
+      "profit": -348.80590984129987,
+      "commission": 1.6545493193,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1781096400000,
+      "entryPrice": 0.006482,
+      "exitTime": 1781629200000,
+      "exitPrice": 0.00615,
+      "size": 339401.419,
+      "profit": -116.96858983199995,
+      "commission": 4.287318724,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-2",
+      "entryTime": 1781319600000,
+      "entryPrice": 0.005567,
+      "exitTime": 1781629200000,
+      "exitPrice": 0.00615,
+      "size": 610632.183,
+      "profit": 348.8437854020001,
+      "commission": 7.154777287,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-3",
+      "entryTime": 1781416800000,
+      "entryPrice": 0.005396,
+      "exitTime": 1781629200000,
+      "exitPrice": 0.00615,
+      "size": 852957.537,
+      "profit": 633.2817351770003,
+      "commission": 9.848247721,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1781679600000,
+      "entryPrice": 0.00736,
+      "exitTime": 1781733600000,
+      "exitPrice": 0.007601,
+      "size": 135888.028,
+      "profit": 30.715993960999988,
+      "commission": 2.033020787,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1781737200000,
+      "entryPrice": 0.007533,
+      "exitTime": 1781740800000,
+      "exitPrice": 0.007791,
+      "size": 132766.861,
+      "profit": 32.21933075999994,
+      "commission": 2.034519378,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1781744400000,
+      "entryPrice": 0.007535,
+      "exitTime": 1781906400000,
+      "exitPrice": 0.007727,
+      "size": 132731.616,
+      "profit": 23.458720347999932,
+      "commission": 2.025749924,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1781870400000,
+      "entryPrice": 0.006457,
+      "exitTime": 1781906400000,
+      "exitPrice": 0.007727,
+      "size": 340821.068,
+      "profit": 428.0085503319998,
+      "commission": 4.834206028000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1781942400000,
+      "entryPrice": 0.007637,
+      "exitTime": 1781949600000,
+      "exitPrice": 0.007835,
+      "size": 130941.469,
+      "profit": 23.900484453200033,
+      "commission": 2.0259264088,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1781953200000,
+      "entryPrice": 0.007573,
+      "exitTime": 1782036000000,
+      "exitPrice": 0.007777,
+      "size": 132048.065,
+      "profit": 24.910867461800027,
+      "commission": 2.0269377982,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1782183600000,
+      "entryPrice": 0.010119,
+      "exitTime": 1782187200000,
+      "exitPrice": 0.010574,
+      "size": 98833.761,
+      "profit": 42.924194238000055,
+      "commission": 2.045167017,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1782190800000,
+      "entryPrice": 0.010195,
+      "exitTime": 1783076400000,
+      "exitPrice": 0.009094,
+      "size": 98039.215,
+      "profit": -109.83225413319995,
+      "commission": 1.8910784182,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1782367200000,
+      "entryPrice": 0.007979,
+      "exitTime": 1783076400000,
+      "exitPrice": 0.009094,
+      "size": 275758.335,
+      "profit": 302.7625214709999,
+      "commission": 4.708022054,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-2",
+      "entryTime": 1782471600000,
+      "entryPrice": 0.008008,
+      "exitTime": 1783076400000,
+      "exitPrice": 0.009094,
+      "size": 424416.427,
+      "profit": 453.6578699870001,
+      "commission": 7.258369735000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-3",
+      "entryTime": 1782666000000,
+      "entryPrice": 0.007949,
+      "exitTime": 1783076400000,
+      "exitPrice": 0.009094,
+      "size": 578761.952,
+      "profit": 652.8185950920002,
+      "commission": 9.863839947999999,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1783080000000,
+      "entryPrice": 0.009141,
+      "exitTime": 1784365200000,
+      "exitPrice": 0.008425,
+      "size": 109421.162,
+      "profit": -80.26764412419995,
+      "commission": 1.9220921322,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1783242000000,
+      "entryPrice": 0.008988,
+      "exitTime": 1784365200000,
+      "exitPrice": 0.008425,
+      "size": 244770.805,
+      "profit": -142.06815724299983,
+      "commission": 4.262194028,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-2",
+      "entryTime": 1783418400000,
+      "entryPrice": 0.008156,
+      "exitTime": 1784365200000,
+      "exitPrice": 0.008425,
+      "size": 416871.015,
+      "profit": 105.22616473400006,
+      "commission": 6.912138301000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-3",
+      "entryTime": 1783602000000,
+      "entryPrice": 0.007761,
+      "exitTime": 1784365200000,
+      "exitPrice": 0.008425,
+      "size": 592554.424,
+      "profit": 383.8650516270003,
+      "commission": 9.591085909,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1784502000000,
+      "entryPrice": 0.009057,
+      "exitTime": 1784610000000,
+      "exitPrice": 0.009794,
+      "size": 110424.028,
+      "profit": 79.30090528399998,
+      "commission": 2.081603352,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1784617200000,
+      "entryPrice": 0.009759,
+      "exitTime": 1785056400000,
+      "exitPrice": 0.008638,
+      "size": 102511.532,
+      "profit": -116.80133202660005,
+      "commission": 1.8859046546,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1784721600000,
+      "entryPrice": 0.010243,
+      "exitTime": 1785056400000,
+      "exitPrice": 0.008638,
+      "size": 214822.771,
+      "profit": -348.84661619400015,
+      "commission": 4.056068739000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-2",
+      "entryTime": 1784858400000,
+      "entryPrice": 0.007859,
+      "exitTime": 1785056400000,
+      "exitPrice": 0.008638,
+      "size": 432625.015,
+      "profit": 329.8778718120001,
+      "commission": 7.137014873,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-3",
+      "entryTime": 1785006000000,
+      "entryPrice": 0.007902,
+      "exitTime": 1785056400000,
+      "exitPrice": 0.008638,
+      "size": 582352.196,
+      "profit": 418.9791109330003,
+      "commission": 9.632105323000001,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785268800000,
+      "entryPrice": 0.008242,
+      "exitTime": 1785384000000,
+      "exitPrice": 0.008331,
+      "size": 121344.497,
+      "profit": 8.788617884000065,
+      "commission": 2.011042349,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1785366000000,
+      "entryPrice": 0.008008,
+      "exitTime": 1785384000000,
+      "exitPrice": 0.008331,
+      "size": 274553.849,
+      "profit": 84.19495788800009,
+      "commission": 4.485935339,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785423600000,
+      "entryPrice": 0.008135,
+      "exitTime": 1785578400000,
+      "exitPrice": 0.008618,
+      "size": 122955.85800000001,
+      "profit": 57.327799924999894,
+      "commission": 2.059879489,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785636000000,
+      "entryPrice": 0.010561,
+      "exitTime": 1785650400000,
+      "exitPrice": 0.012923,
+      "size": 94625.283,
+      "profit": 221.28273830019995,
+      "commission": 2.2221801458,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785654000000,
+      "entryPrice": 0.013345,
+      "exitTime": 1785657600000,
+      "exitPrice": 0.013769,
+      "size": 74934.432,
+      "profit": 29.74042697900006,
+      "commission": 2.031772189,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785661200000,
+      "entryPrice": 0.014032,
+      "exitTime": 1785679200000,
+      "exitPrice": 0.01591,
+      "size": 71255.522,
+      "profit": 131.68433747630007,
+      "commission": 2.1335328397,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785682800000,
+      "entryPrice": 0.016937,
+      "exitTime": 1785697200000,
+      "exitPrice": 0.018373,
+      "size": 59077.213,
+      "profit": 82.74886147699999,
+      "commission": 2.086016391,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785708000000,
+      "entryPrice": 0.019531,
+      "exitTime": 1785729600000,
+      "exitPrice": 0.021146,
+      "size": 51205.898,
+      "profit": 80.61462295699992,
+      "commission": 2.082902313,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785740400000,
+      "entryPrice": 0.019401,
+      "exitTime": 1785751200000,
+      "exitPrice": 0.020059,
+      "size": 51557.022000000004,
+      "profit": 31.890080388000126,
+      "commission": 2.034440088,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785754800000,
+      "entryPrice": 0.020139,
+      "exitTime": 1785927600000,
+      "exitPrice": 0.01956,
+      "size": 49669.696,
+      "profit": -30.73059124570016,
+      "commission": 1.9718372617,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "DCA-1",
+      "entryTime": 1785895200000,
+      "entryPrice": 0.011285,
+      "exitTime": 1785927600000,
+      "exitPrice": 0.01956,
+      "size": 195018.172,
+      "profit": 1607.7600377849994,
+      "commission": 6.015335515,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785931200000,
+      "entryPrice": 0.02049,
+      "exitTime": 1785952800000,
+      "exitPrice": 0.02413,
+      "size": 48806.676,
+      "profit": 175.47854675700003,
+      "commission": 2.177753883,
+      "exitComment": "🏁 Exit"
+    },
+    {
+      "id": "Entry",
+      "entryTime": 1785956400000,
+      "entryPrice": 0.025293,
+      "exitTime": 1785992400000,
+      "exitPrice": 0.027292,
+      "size": 39542.884,
+      "profit": 76.96686256100003,
+      "commission": 2.079362555,
+      "exitComment": "🏁 Exit"
+    }
+  ],
+  "open": []
+}
