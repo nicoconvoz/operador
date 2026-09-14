@@ -397,6 +397,31 @@ store): drawdown past 35%, or **3 death exits in 24 hours** — several tokens
 dying at once is rarely a coincidence. It is either a bad market or a bad
 scanner, and neither is a reason to keep buying.
 
+## Durable state, in Postgres
+
+`schema.sql` + `PostgresStore`. Two decisions worth knowing:
+
+- **Domain objects are stored as JSONB** (`cascade`, `death_watch`, `quality`).
+  A column per field would turn every strategy change into a migration; these
+  types are meant to keep evolving.
+- **Idempotency lives in SQL, not in TypeScript.** `fills` is keyed by the
+  CLIENT's idempotency key and inserts `ON CONFLICT DO NOTHING`, so a retry
+  after an ambiguous network failure collides instead of buying twice — even
+  if two engine instances race. A guarantee the database enforces cannot be
+  forgotten by a caller. The blacklist uses the same clause, because a death
+  exit is terminal and the FIRST verdict is the one that explains why.
+- `fills` deliberately has **no foreign key** to `positions`: a closed position
+  leaves the working set, and its trade history has to survive that.
+
+## The phone
+
+`telegram-bot.ts` — `/status`, `/stop`, `/start`, `/positions`, `/help`.
+
+Every command is authorised against a single chat id, and an unauthorised chat
+gets **nothing back at all** — not an error, not a hint. An error message would
+confirm the bot exists and does something worth doing, which is free
+reconnaissance for whoever found the token.
+
 ## The engine tick
 
 `application/engine.ts` advances ONE position by ONE closed bar. The order of
