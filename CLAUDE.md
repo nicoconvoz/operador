@@ -356,6 +356,32 @@ Deriving that floor from the simulator is an explicit project deliverable.
 7. **Bar-close semantics are sacred.** Signals evaluate on **closed** bars only.
 8. **Position isolation.** One token dying must not affect any other position.
 
+## The engine tick
+
+`application/engine.ts` advances ONE position by ONE closed bar. The order of
+its four steps is the design:
+
+1. **The death watch speaks first.** Health is assessed before the strategy
+   runs, so a freeze or a death is already in force when orders are decided.
+2. **The strategy evaluates the closed bar** — the same `stepCascade` that
+   reproduces the TradingView backtest, unchanged.
+3. **The death watch gets the last word.** `applyDeathVerdict` filters what
+   the strategy wanted; vetoed orders are reported, not silently dropped.
+4. **Write before sending.** Orders are persisted as `pendingOrders` BEFORE
+   submission. A process that dies at this exact point is recoverable only
+   because the intent was written down first.
+
+Two guards worth naming:
+
+- **`lastBarTime` prevents deciding twice.** A crash after saving but before
+  submitting comes back, sees the bar is processed, and does nothing — rather
+  than re-emitting an order it cannot know was already sent.
+- **Alert levels are conservative.** Risk events (death exit, halted position,
+  kill switch) are critical and are NEVER throttled. Everything else is
+  throttled per position, because a channel where everything screams is a
+  channel nobody reads — and the one night it matters, the message is lost in
+  the noise.
+
 ## Architecture
 
 Hexagonal / ports & adapters. Domain is pure, deterministic, network-free.
@@ -499,7 +525,7 @@ The whole system runs on free tiers. Verified September 2026.
 | **Engine** — scanner, executors, death-exit monitor | Oracle Cloud **Always Free** ARM (Ampere A1) | $0 | 2 OCPU / 12 GB RAM / 200 GB. See gotchas below. |
 | **State & event log** | Postgres — Supabase or Neon free tier | $0 | Durable truth. Engine memory is a cache, never the source. |
 | **Dashboard** — positions, P&L, shortlist, death-exit log | **Vercel** Hobby (Next.js, read-only) | $0 | This is where Vercel belongs, and it fits well |
-| **Alerts** — death exits, crashes, kill-switch | Telegram bot | $0 | Unattended ≠ unobservable |
+| **Alerts** — death exits, crashes, kill-switch | Telegram bot | $0 | Unattended ≠ unobservable. **✅ built** |
 
 Fallback if Oracle capacity is unavailable: **GCP e2-micro**, genuinely always
 free but a shared core with a ~0.25 vCPU entitlement. Enough for the executor
