@@ -28,12 +28,28 @@ interface OhlcvResponse {
   readonly data?: { readonly attributes?: { readonly ohlcv_list?: readonly (readonly number[])[] } }
 }
 
+export interface GeckoTerminalOptions {
+  /** Retries on HTTP 429, with doubling backoff from `backoffMs`. */
+  readonly maxRetries?: number
+  readonly backoffMs?: number
+  readonly sleep?: (ms: number) => Promise<void>
+}
+
 export class GeckoTerminal {
+  private readonly maxRetries: number
+  private readonly backoffMs: number
+  private readonly sleep: (ms: number) => Promise<void>
+
   constructor(
     private readonly http: HttpGet,
     private readonly throttle: Throttle = NO_THROTTLE,
     private readonly base: string = GECKOTERMINAL_BASE,
-  ) {}
+    options: GeckoTerminalOptions = {},
+  ) {
+    this.maxRetries = options.maxRetries ?? 3
+    this.backoffMs = options.backoffMs ?? 4_000
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  }
 
   /**
    * Candles for a pool, OLDEST FIRST, timestamps in milliseconds.
@@ -45,10 +61,7 @@ export class GeckoTerminal {
     if (beforeSeconds !== undefined) query.set('before_timestamp', String(beforeSeconds))
     const url = `${this.base}/networks/${NETWORK[chain]}/pools/${poolAddress}/ohlcv/${timeframe}?${query}`
 
-    await this.throttle.wait()
-    const response = await this.http(url)
-    if (response.status !== 200) throw new HttpError(url, response.status)
-    const body = (await response.json()) as OhlcvResponse
+    const body = (await this.getWithBackoff(url)) as OhlcvResponse
     const rows = body.data?.attributes?.ohlcv_list ?? []
 
     const time: number[] = []
@@ -75,6 +88,20 @@ export class GeckoTerminal {
     }
 
     return { time, open, high, low, close, volume }
+  }
+
+  /** GET with a doubling backoff on 429 — the free tier limits around 30/min. */
+  private async getWithBackoff(url: string): Promise<unknown> {
+    for (let attempt = 0; ; attempt++) {
+      await this.throttle.wait()
+      const response = await this.http(url)
+      if (response.status === 200) return response.json()
+      if (response.status === 429 && attempt < this.maxRetries) {
+        await this.sleep(this.backoffMs * 2 ** attempt)
+        continue
+      }
+      throw new HttpError(url, response.status)
+    }
   }
 
   /**

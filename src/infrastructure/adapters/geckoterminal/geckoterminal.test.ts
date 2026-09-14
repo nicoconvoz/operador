@@ -43,8 +43,28 @@ describe('GeckoTerminal — candles', () => {
   it('returns empty candles for an empty response, and throws on HTTP errors', async () => {
     const empty = new GeckoTerminal(stubHttp({ [url]: { body: body([]) } }))
     expect((await empty.candles('solana', POOL)).time).toEqual([])
-    const down = new GeckoTerminal(stubHttp({ [url]: { status: 429, body: {} } }))
-    await expect(down.candles('solana', POOL)).rejects.toMatchObject({ name: 'HttpError', status: 429 })
+    const down = new GeckoTerminal(stubHttp({ [url]: { status: 500, body: {} } }))
+    await expect(down.candles('solana', POOL)).rejects.toMatchObject({ name: 'HttpError', status: 500 })
+  })
+
+  it('retries a 429 with doubling backoff, then succeeds', async () => {
+    let calls = 0
+    const http = async () => {
+      calls++
+      return calls < 3 ? { status: 429, json: async () => ({}) } : { status: 200, json: async () => live }
+    }
+    const sleeps: number[] = []
+    const gt = new GeckoTerminal(http, undefined, undefined, { backoffMs: 4_000, sleep: async (ms) => { sleeps.push(ms) } })
+    expect((await gt.candles('solana', POOL)).time).toHaveLength(3)
+    expect(sleeps).toEqual([4_000, 8_000])
+  })
+
+  it('gives up after maxRetries so a scan does not hang forever', async () => {
+    const sleeps: number[] = []
+    const gt = new GeckoTerminal(stubHttp({ [url]: { status: 429, body: {} } }), undefined, undefined,
+      { maxRetries: 2, backoffMs: 1_000, sleep: async (ms) => { sleeps.push(ms) } })
+    await expect(gt.candles('solana', POOL)).rejects.toMatchObject({ status: 429 })
+    expect(sleeps).toHaveLength(2)
   })
 })
 
