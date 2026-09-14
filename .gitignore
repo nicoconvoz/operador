@@ -10,3 +10,14 @@ coverage/
 *.key
 *.pem
 wallet.json
+
+# Anything that looks like a credential, blocked by pattern rather than by
+# name. This repository is PUBLIC: a single `git add -A` is all that stands
+# between a file left in the working tree and the whole internet, and "I will
+# remember not to commit it" is not a control.
+tools/acceso/
+**/acceso/
+pass.txt
+*password*
+*credential*
+*.secret
