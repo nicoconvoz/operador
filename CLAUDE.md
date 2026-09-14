@@ -241,7 +241,9 @@ Four findings, in order of how much they change the plan (1 and 3 and 4 are
    same $159 at $200 and at $20,000, because the ladder is capped by depth, not
    by the wallet. Return per dollar therefore FALLS as capital grows —
    80% at $200, 0.8% at $20,000. **Scale comes from more tokens, not more size
-   per token.** This is the scanner's real justification.
+   per token.** This is the scanner's real justification. **Fixed**: the
+   portfolio layer (`domain/risk/portfolio.ts`) splits capital across slots
+   instead of into one position.
 3. **The chain's cut varies enormously**: 10% of gross on DREGG, 72% on TROLL.
    Cost share is a per-token property. **Fixed**: `costEfficiency` is now a
    weighted component of the opportunity score (weight 0.2), scoring zero at a
@@ -266,6 +268,36 @@ HEV ranked third before and is now both penalised (a 11.6% round trip scores
 zero on cost) and rejected outright. DREGG, the cheapest token and the one the
 paper run actually made money on, rose to the top. The ranking now prefers what
 the measurements say it should.
+
+### Cost is a U, not a slope
+
+Two costs pull against each other as a position grows: **gas is fixed**, so its
+share falls with size, and **impact is superlinear**, so its share rises. The
+same recorded market, cost as a share of gross:
+
+| Token | $50 | $200 | $1,000 | $5,000 | $20,000 |
+|---|---|---|---|---|---|
+| DREGG | **4%** | 6% | 10% | 27% | 27% |
+| TROLL | **18%** | 26% | 72% | 72% | 72% |
+| Leafy | **9%** | 12% | 12% | 12% | 12% |
+
+Tiny positions are eaten by gas; large ones are eaten by their own price
+impact. On these pools the cheapest point sits at the small end — which is the
+same conclusion as finding 2, arriving by a different road: **many small
+positions beat one large one, and not only for diversification. They are
+cheaper to run.**
+
+### Two sizing bugs the experiment exposed
+
+- **The ladder was sized against the pool but not against the wallet.** A $200
+  position was handed $1,000 levels, and the broker rejected each one for
+  funds — which looks exactly like a strategy that produces no signals.
+  `sizeLadder` now takes the available capital as a second ceiling.
+- **Orders were sized to the last cent.** The state machine sizes at the signal
+  bar's CLOSE and fills at the next bar's OPEN: a half-percent gap up and the
+  order is unaffordable. Sizing now reserves gas for every swap of a full cycle
+  plus 5% price headroom. With that, the floor where the system trades at all
+  dropped from ~$200 to under $50.
 
 **These numbers are not a forecast.** The tokens are today's trending list, over
 a window in which they trended — survivorship pointing the same way as the

@@ -51,6 +51,29 @@ export interface PaperSummary {
 }
 
 /**
+ * Price headroom kept back when sizing against capital.
+ *
+ * The state machine sizes an order at the signal bar's CLOSE, and it fills at
+ * the next bar's OPEN plus slippage. Sizing to the last cent therefore makes
+ * every order a coin flip on affordability: a gap up of half a percent and the
+ * broker rejects it for funds. A position that silently fails to open is the
+ * worst failure mode there is — it looks exactly like a strategy with no
+ * signals.
+ */
+const PRICE_HEADROOM_PCT = 5
+
+/**
+ * Capital the ladder may actually be sized against: the wallet, minus gas for
+ * every swap the full cycle will need, minus headroom for the gap between
+ * signal and fill.
+ */
+export function deployableCapital(config: PaperRunConfig): number {
+  const swaps = Math.min(config.params.maxLevels + 1, config.maxOpenEntries) + 1 // entries + one exit
+  const gasReserve = config.gasUsdPerSwap * swaps
+  return Math.max(0, (config.initialCapital - gasReserve) * (1 - PRICE_HEADROOM_PCT / 100))
+}
+
+/**
  * Scales the strategy's nominal ladder down to what the pool can take.
  *
  * `usd(n)` is multiplied by the ratio the sizing allows for that level, so the
@@ -79,7 +102,7 @@ export function paperRun(
   config: PaperRunConfig,
 ): PaperRunResult {
   const sizingPolicy = config.sizing ?? DEFAULT_SIZING_POLICY
-  const sizing = sizeLadder(config.params, quality, sizingPolicy)
+  const sizing = sizeLadder(config.params, quality, sizingPolicy, deployableCapital(config))
 
   if (!sizing.tradeable) {
     return { token: snapshot.symbol, tradeable: false, reason: sizing.reason, sizing, replay: null, broker: null, summary: null }

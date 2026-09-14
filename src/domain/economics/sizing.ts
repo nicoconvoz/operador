@@ -41,7 +41,7 @@ export const DEFAULT_SIZING_POLICY: SizingPolicy = {
   minFillUsd: 20,
 }
 
-export type SizingLimit = 'none' | 'fillCost' | 'exitCost'
+export type SizingLimit = 'none' | 'fillCost' | 'exitCost' | 'capital'
 
 export interface LevelSizing {
   readonly level: number
@@ -99,11 +99,17 @@ const maxOrderUsd = (budgetPct: number, depth: number): number => (budgetPct <= 
  * grows: an early level may take its full nominal size while a later one is
  * cut or dropped entirely, which is exactly the shape a DCA ladder needs —
  * the scouting entry matters less than being able to leave.
+ *
+ * @param availableCapitalUsd capital this position may deploy in total. The
+ *        pool bounds what the market can absorb; this bounds what the wallet
+ *        actually has. Omitting it sizes against the pool alone — useful for
+ *        asking "what could this token carry", not for placing orders.
  */
 export function sizeLadder(
   params: CascadeParams,
   quality: MarketQuality,
   policy: SizingPolicy = DEFAULT_SIZING_POLICY,
+  availableCapitalUsd = Infinity,
 ): LadderSizing {
   const depth = effectiveDepth(quality)
   // Both budgets are TOTAL cost, so the venue's fee comes out of each before
@@ -112,7 +118,12 @@ export function sizeLadder(
   const fillImpactBudget = policy.maxFillCostPct - quality.spreadPct
   const exitImpactBudget = policy.maxExitCostPct - quality.spreadPct
   const perFillCap = maxOrderUsd(fillImpactBudget, depth.usd)
-  const positionCap = maxOrderUsd(exitImpactBudget, depth.usd)
+  // Two ceilings on the total, and the binding one is whichever is smaller:
+  // what the pool can absorb on the way out, and what the wallet holds. A
+  // ladder sized past the capital does not fail gracefully — every level
+  // beyond it is simply rejected for funds, which reads as a strategy that
+  // does not trade rather than a position that was sized wrong.
+  const positionCap = Math.min(maxOrderUsd(exitImpactBudget, depth.usd), availableCapitalUsd)
 
   const fillable = Math.min(params.maxLevels + 1, PYRAMIDING)
   const nominalTotalUsd = Array.from({ length: fillable }, (_, level) => usdForLevel(params, level)).reduce((a, b) => a + b, 0)
@@ -129,7 +140,8 @@ export function sizeLadder(
     return empty(`a ${policy.maxFillCostPct}% fill allows only $${perFillCap.toFixed(0)}, below the $${policy.minFillUsd} floor`)
   }
   if (positionCap < policy.minFillUsd) {
-    return empty(`a ${policy.maxExitCostPct}% exit allows a position of only $${positionCap.toFixed(0)}`)
+    const bound = positionCap === availableCapitalUsd ? 'capital' : `a ${policy.maxExitCostPct}% exit`
+    return empty(`${bound} allows a position of only $${positionCap.toFixed(0)}, below the $${policy.minFillUsd} floor`)
   }
 
   const levels: LevelSizing[] = []
@@ -139,9 +151,12 @@ export function sizeLadder(
     const nominalUsd = usdForLevel(params, level)
     const roomInPosition = positionCap - deployed
 
-    let sizedUsd = Math.min(nominalUsd, perFillCap, roomInPosition)
+    const sizedUsd = Math.min(nominalUsd, perFillCap, roomInPosition)
     let limitedBy: SizingLimit = 'none'
-    if (sizedUsd < nominalUsd) limitedBy = roomInPosition < perFillCap ? 'exitCost' : 'fillCost'
+    if (sizedUsd < nominalUsd) {
+      if (roomInPosition >= perFillCap) limitedBy = 'fillCost'
+      else limitedBy = positionCap === availableCapitalUsd ? 'capital' : 'exitCost'
+    }
 
     // A level that cannot be funded above the gas floor is not placed, and
     // neither is anything after it — the ladder is exhausted.

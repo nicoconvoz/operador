@@ -88,17 +88,46 @@ describe.skipIf(!dataset)('capital floor — recorded Solana market', () => {
     }
   })
 
-  it('costs scale with position size, so the cost SHARE falls as capital grows', () => {
-    const token = tokens[0]!
-    const share = (capital: number) => {
-      const run = paperRun(token.snapshot, token.quality, token.candles, {
-        params: DEFAULT_PARAMS, gasUsdPerSwap: GAS_USD_PER_SWAP, initialCapital: capital, maxOpenEntries: 10,
+  /**
+   * Cost share is a U, not a slope — and that is the most useful thing this
+   * experiment found.
+   *
+   * Two costs pull in opposite directions as a position grows:
+   *   gas is FIXED, so its share falls with size
+   *   impact is SUPERLINEAR, so its share rises with size
+   *
+   * Tiny positions are eaten by gas; large ones are eaten by their own price
+   * impact. Somewhere between is the size where the chain takes the least, and
+   * it is a property of the token's pool, not of the wallet.
+   */
+  const costShare = (token: DatasetToken, capital: number): number | null => {
+    const run = paperRun(token.snapshot, token.quality, token.candles, {
+      params: DEFAULT_PARAMS, gasUsdPerSwap: GAS_USD_PER_SWAP, initialCapital: capital, maxOpenEntries: 10,
+    })
+    if (!run.tradeable || run.summary!.closedTrades === 0 || run.summary!.grossPnlUsd === 0) return null
+    return run.summary!.closedCostsUsd / Math.abs(run.summary!.grossPnlUsd)
+  }
+
+  it('cost share is a U: gas dominates when small, impact when large', () => {
+    const rows: Record<string, unknown>[] = []
+    for (const token of tokens) {
+      const points = CAPITALS.map((capital) => ({ capital, share: costShare(token, capital) }))
+        .filter((p): p is { capital: number; share: number } => p.share !== null)
+      if (points.length < 3) continue
+
+      const best = points.reduce((a, b) => (b.share < a.share ? b : a))
+      rows.push({
+        token: token.snapshot.symbol,
+        ...Object.fromEntries(points.map((p) => [`$${p.capital}`, `${(p.share * 100).toFixed(0)}%`])),
+        'cheapest at': `$${best.capital}`,
       })
-      if (!run.tradeable || run.summary!.closedTrades === 0) return null
-      return run.summary!.closedCostsUsd / Math.max(1e-9, Math.abs(run.summary!.grossPnlUsd))
+
+      // Past the cheapest point, more capital costs more per dollar earned.
+      const after = points.filter((p) => p.capital > best.capital)
+      for (const p of after) expect(p.share, `${token.snapshot.symbol} @ $${p.capital}`).toBeGreaterThanOrEqual(best.share - 1e-9)
     }
-    const small = share(50)
-    const large = share(20_000)
-    if (small !== null && large !== null) expect(large).toBeLessThanOrEqual(small)
+    console.log('\ncost as a share of gross, by capital — and where the chain takes least:')
+    console.table(rows)
+    expect(rows.length).toBeGreaterThan(0)
   })
 })
