@@ -27,6 +27,16 @@ export interface GatePolicy {
   readonly denylist: readonly string[]
   /** Symbol → the only mint allowed to carry it. Anything else is an impostor. */
   readonly canonicalSymbols: Readonly<Record<string, string>>
+  /**
+   * Closed 1H candles the strategy needs before it can say anything.
+   *
+   * EMA-200 seeds at bar 199 and takes hundreds more to converge; the
+   * Bollinger basis needs 50. Below this the indicators are not wrong, they
+   * are ABSENT — and a strategy with absent indicators does not trade, it
+   * guesses. Unknown history is tolerated: the gate only fires on a count
+   * that was actually measured and came up short.
+   */
+  readonly minHistoryBars: number
 }
 
 /** Solana mints the scanner must never propose — they are money, not trades. */
@@ -70,6 +80,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   maxFdvUsd: 50_000_000,
   denylist: SOLANA_DENYLIST,
   canonicalSymbols: SOLANA_CANONICAL_SYMBOLS,
+  minHistoryBars: 250,
 }
 
 export type GateName =
@@ -88,6 +99,7 @@ export type GateName =
   | 'denylist'
   | 'marketCap'
   | 'impersonation'
+  | 'history'
 
 export interface GateFailure {
   readonly gate: GateName
@@ -173,6 +185,12 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   const age = hoursOld(snapshot)
   if (age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
   else if (age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+
+  // Only fires on a measured count: a scanner pass that has not fetched
+  // candles yet says nothing, and the executor checks again before trading.
+  if (snapshot.historyBars !== null && snapshot.historyBars !== undefined && snapshot.historyBars < policy.minHistoryBars) {
+    failures.push(fail('history', 'failed', `${snapshot.historyBars} bars of 1H history < ${policy.minHistoryBars} — EMA-200 cannot exist`))
+  }
 
   if (snapshot.volumeUsd.h24 < policy.minVolume24hUsd) {
     failures.push(fail('volume', 'failed', `24h volume $${snapshot.volumeUsd.h24.toFixed(0)} < $${policy.minVolume24hUsd}`))

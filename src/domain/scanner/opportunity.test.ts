@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_OPPORTUNITY_POLICY as P, scoreOpportunity } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
+import { type MarketQuality } from '../market/market-quality.js'
+
+const cheap: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
+const dear: MarketQuality = { ...cheap, spreadPct: 1.0, slippagePct: 2.0 }
 
 const base = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   chain: 'solana',
@@ -30,8 +34,9 @@ describe('opportunity — components are explainable and bounded', () => {
     expect(components.buyPressure).toBe(0)
     expect(components.liquidityGrowth).toBeCloseTo(0.5, 9) // no previous → ratio 1
     expect(components.volatility).toBe(0)
+    expect(components.costEfficiency).toBe(0.5) // unmeasured → neutral, never generous
     expect(score).toBeGreaterThan(0)
-    expect(score).toBeLessThan(40)
+    expect(score).toBeLessThan(50)
   })
 
   it('every component and the score stay within bounds under extreme inputs', () => {
@@ -41,13 +46,12 @@ describe('opportunity — components are explainable and bounded', () => {
       txns: { h1: { buys: 5000, sells: 0 }, h24: { buys: 9000, sells: 100 } },
       liquidityUsd: 10_000_000,
     })
-    const { score, components } = scoreOpportunity(wild, P, base({ liquidityUsd: 1 }))
+    const { score, components } = scoreOpportunity(wild, P, base({ liquidityUsd: 1 }), cheap)
     for (const value of Object.values(components)) {
       expect(value).toBeGreaterThanOrEqual(0)
       expect(value).toBeLessThanOrEqual(1)
     }
     expect(score).toBeLessThanOrEqual(100)
-    expect(score).toBeCloseTo(100, 9)
   })
 })
 
@@ -88,8 +92,21 @@ describe('opportunity — the signal moves the right way', () => {
     expect(Number.isFinite(dead.score)).toBe(true)
   })
 
+  it('a cheap token outscores an expensive one, all else equal', () => {
+    // 10% vs 72% of gross taken by the chain was a real measurement, not a hypothetical.
+    const cheapScore = scoreOpportunity(base(), P, null, cheap)
+    const dearScore = scoreOpportunity(base(), P, null, dear)
+    expect(cheapScore.components.costEfficiency).toBeGreaterThan(dearScore.components.costEfficiency)
+    expect(cheapScore.score).toBeGreaterThan(dearScore.score)
+  })
+
+  it('a toll past the worst round trip scores zero, not negative', () => {
+    const brutal = { ...dear, spreadPct: 5, slippagePct: 10 }
+    expect(scoreOpportunity(base(), P, null, brutal).components.costEfficiency).toBe(0)
+  })
+
   it('weights are honoured: a policy that only values volume ignores everything else', () => {
-    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0 } }
+    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, costEfficiency: 0 } }
     const burst = base({ volumeUsd: { h1: 3_000, h6: 8_000, h24: 24_000 }, priceChangePct: { h1: 50, h6: 50, h24: 50 } })
     expect(scoreOpportunity(burst, volumeOnly).score).toBeCloseTo(100, 9)
   })

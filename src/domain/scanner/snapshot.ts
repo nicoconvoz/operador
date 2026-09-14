@@ -64,6 +64,14 @@ export interface TokenSnapshot {
   readonly txns: { readonly h1: TxnCounts; readonly h24: TxnCounts }
   /** When the pair was created, or null when the source does not know. */
   readonly pairCreatedAt: number | null
+  /**
+   * Closed 1H candles available for this pool, or null when not checked.
+   *
+   * The strategy needs EMA-200 and a 50-bar Bollinger basis; a pool with 38
+   * bars of history cannot produce either. The first capital-floor run found
+   * two of five candidates in exactly that state.
+   */
+  readonly historyBars?: number | null
 
   readonly security: SecurityReport
 }

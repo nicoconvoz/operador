@@ -59,9 +59,12 @@ export function rankUniverse(
       rejected.push({ snapshot, gates })
       continue
     }
-    const opportunity = scoreOpportunity(snapshot, policy.opportunity, previous.get(tokenKey(snapshot)) ?? null)
+    // Quality is measured before scoring, because what the chain will take is
+    // part of how good the opportunity is — not a detail settled afterwards.
+    const marketQuality = quality(snapshot)
+    const opportunity = scoreOpportunity(snapshot, policy.opportunity, previous.get(tokenKey(snapshot)) ?? null, marketQuality)
     if (opportunity.score < policy.minScore) continue
-    candidates.push({ snapshot, opportunity, marketQuality: quality(snapshot) })
+    candidates.push({ snapshot, opportunity, marketQuality })
   }
 
   candidates.sort((a, b) => b.opportunity.score - a.opportunity.score || a.snapshot.address.localeCompare(b.snapshot.address))

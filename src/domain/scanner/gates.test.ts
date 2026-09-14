@@ -125,6 +125,19 @@ describe('gates — market thresholds', () => {
     expect(failedGates(clean({ pairCreatedAt: NOW - 3 * HOUR }))).toEqual(['age:failed'])
   })
 
+  it('too little history for the indicators to exist', () => {
+    // The first capital-floor run found candidates with 38 and 105 bars.
+    expect(failedGates(clean({ historyBars: 38 }))).toEqual(['history:failed'])
+    expect(failedGates(clean({ historyBars: 105 }))).toEqual(['history:failed'])
+    expect(failedGates(clean({ historyBars: 250 }))).toEqual([])
+    expect(failedGates(clean({ historyBars: 1000 }))).toEqual([])
+  })
+
+  it('unmeasured history is not a failure — the scanner may not have fetched candles yet', () => {
+    expect(failedGates(clean({ historyBars: null }))).toEqual([])
+    expect(failedGates(clean())).toEqual([])
+  })
+
   it('dead volume', () => {
     expect(failedGates(clean({ volumeUsd: { h1: 0, h6: 100, h24: 500 } }))).toEqual(['volume:failed'])
   })

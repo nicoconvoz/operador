@@ -1,3 +1,4 @@
+import { type MarketQuality } from '../market/market-quality.js'
 import { type TokenSnapshot } from './snapshot.js'
 
 /**
@@ -19,6 +20,13 @@ export interface OpportunityWeights {
   readonly liquidityGrowth: number
   readonly activity: number
   readonly volatility: number
+  /**
+   * How little of the move the chain will take. The first capital-floor run
+   * measured 10% of gross on one token and 72% on another, same strategy and
+   * same budget — so the venue's toll is a property OF THE TOKEN, and a
+   * ranking that ignores it ranks a trap alongside a bargain.
+   */
+  readonly costEfficiency: number
 }
 
 export interface OpportunityPolicy {
@@ -29,13 +37,20 @@ export interface OpportunityPolicy {
   readonly fullActivityTxnsPerHour: number
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
+  /**
+   * Round-trip cost, in percent, at which cost efficiency scores zero. A full
+   * cycle pays the fill cost on the way in and the exit cost on the way out;
+   * past this the toll plausibly exceeds what a DCA cycle can produce.
+   */
+  readonly worstRoundTripPct: number
 }
 
 export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
-  weights: { volumeExpansion: 0.35, buyPressure: 0.2, liquidityGrowth: 0.15, activity: 0.15, volatility: 0.15 },
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.15, costEfficiency: 0.2 },
   fullExpansionRatio: 3,
   fullActivityTxnsPerHour: 60,
   fullVolatilityPct: 20,
+  worstRoundTripPct: 6,
 }
 
 export interface OpportunityComponents {
@@ -44,6 +59,7 @@ export interface OpportunityComponents {
   readonly liquidityGrowth: number
   readonly activity: number
   readonly volatility: number
+  readonly costEfficiency: number
 }
 
 export interface Opportunity {
@@ -57,11 +73,14 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
 /**
  * @param previous the last snapshot of the same token, for liquidity growth;
  *        with none, growth is neutral.
+ * @param quality the token's measured spread and impact; without it, cost
+ *        efficiency is neutral rather than assumed good.
  */
 export function scoreOpportunity(
   snapshot: TokenSnapshot,
   policy: OpportunityPolicy,
   previous: TokenSnapshot | null = null,
+  quality: MarketQuality | null = null,
 ): Opportunity {
   const { volumeUsd, txns, priceChangePct } = snapshot
 
@@ -84,15 +103,20 @@ export function scoreOpportunity(
   const move = Math.abs(priceChangePct.h1 ?? 0) + Math.abs(priceChangePct.h6 ?? 0) / 2
   const volatility = clamp01(move / policy.fullVolatilityPct)
 
-  const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility }
+  // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
+  // so a token is never rewarded for a toll nobody checked.
+  const costEfficiency = quality === null ? 0.5 : clamp01(1 - (2 * (quality.spreadPct + quality.slippagePct)) / policy.worstRoundTripPct)
+
+  const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility, costEfficiency }
   const w = policy.weights
-  const weightSum = w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.activity + w.volatility
+  const weightSum = w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.activity + w.volatility + w.costEfficiency
   const weighted =
     w.volumeExpansion * volumeExpansion +
     w.buyPressure * buyPressure +
     w.liquidityGrowth * liquidityGrowth +
     w.activity * activity +
-    w.volatility * volatility
+    w.volatility * volatility +
+    w.costEfficiency * costEfficiency
 
   return { score: (100 * weighted) / weightSum, components }
 }

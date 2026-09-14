@@ -16,11 +16,21 @@ export interface DecimalsPort {
   discover?(): Promise<string[]>
 }
 
+/**
+ * How much 1H history a pool has. Optional: without it the history gate stays
+ * silent and the executor checks again before it trades. Supplying it here
+ * just means a token with no indicators never reaches the shortlist.
+ */
+export interface HistoryPort {
+  historyBars(chain: Chain, poolAddress: string): Promise<number | null>
+}
+
 export interface ScanDeps {
   readonly dex: DexScreener
   readonly goplus: GoPlus
   readonly jupiter: Jupiter
   readonly decimals: DecimalsPort
+  readonly history?: HistoryPort
   readonly now?: () => number
 }
 
@@ -37,7 +47,7 @@ export interface ScanConfig {
 
 export interface ScanError {
   readonly address: string
-  readonly stage: 'market' | 'security' | 'quote'
+  readonly stage: 'market' | 'security' | 'quote' | 'history'
   readonly error: string
 }
 
@@ -135,7 +145,16 @@ export async function scanOnce(
       }
     }
 
-    const snapshot: TokenSnapshot = { ...market, security }
+    let historyBars: number | null = null
+    if (deps.history) {
+      try {
+        historyBars = await deps.history.historyBars(config.chain, market.pairAddress)
+      } catch (error) {
+        errors.push({ address: market.address, stage: 'history', error: String(error) })
+      }
+    }
+
+    const snapshot: TokenSnapshot = { ...market, security, historyBars }
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,

@@ -90,6 +90,21 @@ export class GeckoTerminal {
     return { time, open, high, low, close, volume }
   }
 
+  /**
+   * How many 1H candles this pool has, capped at one page (1000).
+   *
+   * The scanner only needs to know whether there is ENOUGH — a few hundred
+   * bars — not the exact depth of history, so one request answers it and the
+   * result doubles as the candles the executor will run on.
+   */
+  async historyBars(chain: Chain, poolAddress: string): Promise<number | null> {
+    try {
+      return (await this.candles(chain, poolAddress, 'hour', 1000)).time.length
+    } catch {
+      return null
+    }
+  }
+
   /** GET with a doubling backoff on 429 — the free tier limits around 30/min. */
   private async getWithBackoff(url: string): Promise<unknown> {
     for (let attempt = 0; ; attempt++) {

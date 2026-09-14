@@ -230,7 +230,8 @@ First run of `capital-floor.test.ts` over a recorded Solana market
 | TROLL | — | — | +$53 | +$34 | +$34 | +$34 |
 | Leafy | — | — | +$159 | +$159 | +$159 | +$159 |
 
-Four findings, in order of how much they change the plan:
+Four findings, in order of how much they change the plan (1 and 3 and 4 are
+**done**; 2 drives the multi-token engine):
 
 1. **Below ~$200 the system does not trade at all.** Not "loses money" —
    places zero orders. The pool-sized ladder has its own minimum, and under it
@@ -242,10 +243,29 @@ Four findings, in order of how much they change the plan:
    80% at $200, 0.8% at $20,000. **Scale comes from more tokens, not more size
    per token.** This is the scanner's real justification.
 3. **The chain's cut varies enormously**: 10% of gross on DREGG, 72% on TROLL.
-   Cost share is a per-token property, and it belongs in the ranking.
+   Cost share is a per-token property. **Fixed**: `costEfficiency` is now a
+   weighted component of the opportunity score (weight 0.2), scoring zero at a
+   6% round trip. Quality is measured BEFORE scoring, because what the chain
+   will take is part of how good the opportunity is.
 4. **Most small caps lack the history the strategy needs.** Two of five
-   candidates had 38 and 105 bars; EMA-200 cannot exist there. A minimum-history
-   gate belongs in the scanner.
+   candidates had 38 and 105 bars; EMA-200 cannot exist there. **Fixed**: a
+   `history` gate rejects under 250 1H bars, fed by the candle adapter. An
+   unmeasured count stays silent — the gate fires on evidence, not on absence.
+
+### What the fixes changed, on the same recorded market
+
+| Token | bars | round trip | cost eff. | score before | after | verdict |
+|---|---|---|---|---|---|---|
+| DREGG | 1000 | 0.95% | 0.84 | 61.9 | **68.7** | PASS |
+| TROLL | 1000 | 1.59% | 0.73 | 43.2 | **47.9** | PASS |
+| HEV | 38 | **11.62%** | 0.00 | 54.0 | 44.0 | **history** |
+| EMBER | 105 | 1.59% | 0.73 | 34.2 | 38.8 | **history** |
+| Leafy | 370 | 3.18% | 0.47 | 34.1 | 33.5 | PASS |
+
+HEV ranked third before and is now both penalised (a 11.6% round trip scores
+zero on cost) and rejected outright. DREGG, the cheapest token and the one the
+paper run actually made money on, rose to the top. The ranking now prefers what
+the measurements say it should.
 
 **These numbers are not a forecast.** The tokens are today's trending list, over
 a window in which they trended — survivorship pointing the same way as the
