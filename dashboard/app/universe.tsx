@@ -34,6 +34,8 @@ const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string;
   held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', ring: 0.2 },
   prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', ring: 0.42 },
   eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', ring: 0.62 },
+  // Violet, between eligible and filtered: it is queued, not judged.
+  pending: { core: '#9d7cd8', halo: '157,124,216', label: 'SIN REVISAR', ring: 0.71 },
   filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', ring: 0.8 },
   unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'INSEGURA', ring: 0.93 },
   dead: { core: '#3a2030', halo: '90,40,60', label: 'MUERTA', ring: 1.02 },
@@ -59,7 +61,7 @@ const COMPONENT_LABEL: Record<string, string> = {
 const BODY_CAP = 400
 const BODY_CAP_COMPACT = 120
 
-const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'filtered', 'unsafe', 'dead']
+const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 'unsafe', 'dead']
 
 interface Body {
   readonly token: UniverseToken

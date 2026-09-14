@@ -1,6 +1,7 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
 import { evaluateMarketGates } from '../domain/scanner/gates.js'
+import { scoreOpportunity } from '../domain/scanner/opportunity.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { mergeSecurity } from '../domain/scanner/security-merge.js'
 import { lpLockFromVenue } from '../infrastructure/adapters/solana/lp-heuristics.js'
@@ -49,6 +50,8 @@ export interface ScanDeps {
   readonly decimals: DecimalsPort
   readonly history?: HistoryPort
   readonly now?: () => number
+  /** Optional. Injected rather than imported, so the domain never learns what a console is. */
+  readonly onProgress?: (progress: ScanProgress) => void
 }
 
 export interface ScanConfig {
@@ -68,6 +71,21 @@ export interface ScanConfig {
   readonly maxSecurityChecks?: number
 }
 
+/**
+ * Progress, for a caller that has to watch this from outside.
+ *
+ * A scan can spend ten minutes inside throttled network calls. Without this it
+ * spends them in silence, and a silent process that gets killed by a timeout
+ * tells you nothing about WHERE it was — which is the difference between
+ * fixing the cause and guessing at it.
+ */
+export type ScanProgress =
+  | { readonly stage: 'universe'; readonly chain: Chain; readonly discovered: number }
+  | { readonly stage: 'market'; readonly chain: Chain; readonly priced: number }
+  | { readonly stage: 'budget'; readonly chain: Chain; readonly affordable: number; readonly checking: number }
+  | { readonly stage: 'checked'; readonly chain: Chain; readonly done: number; readonly of: number }
+  | { readonly stage: 'done'; readonly chain: Chain; readonly candidates: number; readonly elapsedMs: number }
+
 export interface ScanError {
   readonly address: string
   readonly stage: 'market' | 'security' | 'quote' | 'history'
@@ -79,6 +97,22 @@ export interface ScanOutcome extends ScanResult {
   readonly errors: readonly ScanError[]
   readonly scannedAt: number
 }
+
+/**
+ * The opportunity score from market data alone — no security, no quote.
+ *
+ * Only used to decide who gets the expensive checks. The real score is
+ * computed after them, with measured quality; this one exists because ranking
+ * with free information beats ranking by arrival order.
+ */
+const provisionalScore = (market: Omit<TokenSnapshot, 'security' | 'historyBars'>, config: ScanConfig): number =>
+  scoreOpportunity({ ...market, security: UNKNOWN_SECURITY, historyBars: null }, config.ranking.opportunity, null, {
+    liquidityUsd: market.liquidityUsd,
+    spreadPct: config.spreadPct,
+    slippagePct: market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100,
+    referenceUsd: config.referenceUsd,
+    observedAt: market.observedAt,
+  }).score
 
 const UNKNOWN_SECURITY: SecurityReport = {
   honeypot: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null,
@@ -119,6 +153,7 @@ export async function scanOnce(
   }
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
   const addresses = [...universe].slice(0, config.maxTokens)
+  deps.onProgress?.({ stage: 'universe', chain: config.chain, discovered: addresses.length })
 
   // ── 2. Market, in batches of 30 ────────────────────────────────────────────
   const markets = []
@@ -132,6 +167,8 @@ export async function scanOnce(
     }
   }
 
+  deps.onProgress?.({ stage: 'market', chain: config.chain, priced: markets.length })
+
   // ── 3. Free gates before paid ones ─────────────────────────────────────────
   // Security costs one throttled request per token and the universe is larger
   // than that budget, so what can be decided from the market snapshot alone is
@@ -142,13 +179,45 @@ export async function scanOnce(
   const affordable: typeof markets = []
 
   for (const market of markets) {
-    const provisional: TokenSnapshot = { ...market, security: UNKNOWN_SECURITY, historyBars: null }
+    const provisional: TokenSnapshot = { ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: true }
     const cheap = evaluateMarketGates(provisional, config.ranking.gates)
     if (cheap.passed) affordable.push(market)
     else snapshots.push(provisional)
   }
 
-  for (const market of affordable.slice(0, config.maxSecurityChecks ?? affordable.length)) {
+  // ── 4. Rank BEFORE spending, when the budget cannot cover everyone ─────────
+  // Ordered by the opportunity score computed from market data alone, which
+  // costs nothing. Taking the first N in discovery order would spend a
+  // throttled security call and a sell quote on whichever token a provider
+  // happened to list first — and on a bounded budget, the order IS the choice.
+  const budget = config.maxSecurityChecks ?? affordable.length
+  const ordered =
+    budget >= affordable.length
+      ? affordable
+      : [...affordable].sort((a, b) => provisionalScore(b, config) - provisionalScore(a, config))
+
+  // What the budget could not reach still goes on the screen, marked unchecked.
+  // The gates fail closed, so an unexamined token is never a candidate — but
+  // "nobody has looked at this yet" and "we looked and it is dangerous" are
+  // different claims and must not render the same.
+  for (const market of ordered.slice(budget)) {
+    snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
+  }
+
+  deps.onProgress?.({
+    stage: 'budget',
+    chain: config.chain,
+    affordable: affordable.length,
+    checking: Math.min(budget, affordable.length),
+  })
+
+  let done = 0
+  for (const market of ordered.slice(0, budget)) {
+    done += 1
+    // Every tenth, not every one: a log that scrolls is a log nobody reads.
+    if (done % 10 === 0) {
+      deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: Math.min(budget, affordable.length) })
+    }
     // Sources in trust order: GoPlus, then the metadata provider's audit,
     // then venue heuristics. Danger from any source wins; unknowns fill in.
     const opinions: Partial<SecurityReport>[] = []
@@ -213,5 +282,11 @@ export async function scanOnce(
   // ── 4. Gates → score → rank ────────────────────────────────────────────────
   const ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
 
+  deps.onProgress?.({
+    stage: 'done',
+    chain: config.chain,
+    candidates: ranked.candidates.length,
+    elapsedMs: now() - scannedAt,
+  })
   return { ...ranked, snapshots, errors, scannedAt }
 }

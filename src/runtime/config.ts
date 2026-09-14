@@ -39,6 +39,14 @@ export interface RuntimeConfig {
    * nothing for a long-lived process to hold.
    */
   readonly maxCycles: number
+  /**
+   * Tokens per chain given the expensive treatment each cycle.
+   *
+   * Each one costs about nine throttled seconds on Solana and six on BSC, and
+   * a cycle has to finish well inside one 15-minute bar. 20 keeps two chains
+   * around five minutes. The rest are reported as unchecked, not dropped.
+   */
+  readonly maxSecurityChecks: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -109,6 +117,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
+    maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

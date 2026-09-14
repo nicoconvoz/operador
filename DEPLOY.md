@@ -103,6 +103,7 @@ En la pestaña **Variables** (al lado de Secrets), opcionales:
 | `OPERADOR_CAPITAL_USD` | capital total del experimento | `1000` |
 | `OPERADOR_MAX_POSITIONS` | cuántas posiciones a la vez | `5` |
 | `OPERADOR_GAS_USD` | gas por swap, define el piso mínimo | `0.05` |
+| `OPERADOR_MAX_SECURITY_CHECKS` | tokens por cadena con revisión completa por ciclo | `20` |
 
 ## Paso 5 — Primera corrida, a mano
 
@@ -188,6 +189,27 @@ una cotización de venta.
 **Todos los tokens escaneados aparecen en el panel**, aprobados y rechazados —
 un rechazo por seguridad es una bala esquivada y merece verse. El lienzo dibuja
 hasta 400 cuerpos (120 en celular) y si hay más lo dice: `+N sin dibujar`.
+
+### El presupuesto de revisiones
+
+Cada token que pasa los filtros gratuitos cuesta **cinco llamadas de red en
+serie**, limitadas por tasa: unos 9 segundos en Solana y 6 en BSC. Revisar
+todos los sobrevivientes no entra en una barra de 15 minutos.
+
+Por eso `OPERADOR_MAX_SECURITY_CHECKS` (20 por cadena) acota el gasto. Dos
+cosas lo hacen honesto:
+
+- **Se gasta en los mejores.** Antes de recortar, los candidatos se ordenan por
+  el puntaje de oportunidad calculado con datos de mercado, que no cuesta nada.
+  Tomar los primeros que llegaron sería gastar la revisión cara en el token que
+  un proveedor puso primero en su lista.
+- **Los que no entran se muestran igual**, en el tier **SIN REVISAR** (violeta).
+  No como inseguros: los filtros fallan cerrados, así que un token sin examinar
+  nunca se opera — pero "todavía nadie lo miró" y "lo miramos y es peligroso"
+  son afirmaciones distintas, y pintarlas iguales convierte una cola de espera
+  en una acusación.
+
+El ciclo siguiente llega en quince minutos.
 
 Si ves poquitos:
 

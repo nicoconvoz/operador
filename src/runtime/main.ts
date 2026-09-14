@@ -156,7 +156,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       for (const chain of config.chains) {
         try {
           const result = await scanOnce(
-            { dex, goplus, sellProbe: sellProbeFor(chain), decimals: jupiterTokens, history: gecko },
+            {
+              dex,
+              goplus,
+              sellProbe: sellProbeFor(chain),
+              decimals: jupiterTokens,
+              history: gecko,
+              // A scan spends minutes inside throttled calls. Saying where it
+              // is turns a timeout from a mystery into a measurement.
+              onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),
+            },
             {
               chain,
               ranking: {
@@ -171,6 +180,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // Solana tokens and GeckoTerminal adds BSC's pools; the free
               // gates cut that to what is worth paying for.
               maxTokens: 300,
+              // A bounded budget per chain, because each surviving token costs
+              // about nine throttled seconds and a cycle has to finish inside
+              // one bar. What it cannot reach is reported as unchecked rather
+              // than dropped, and the next cycle is fifteen minutes away.
+              maxSecurityChecks: config.maxSecurityChecks,
             },
           )
           await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: result.snapshots })

@@ -64,6 +64,7 @@ const view: UniverseView = {
     held: tokens.filter((t) => t.tier === 'held').length,
     prime: tokens.filter((t) => t.tier === 'prime').length,
     eligible: tokens.filter((t) => t.tier === 'eligible').length,
+    pending: tokens.filter((t) => t.tier === 'pending').length,
     filtered: tokens.filter((t) => t.tier === 'filtered').length,
     unsafe: tokens.filter((t) => t.tier === 'unsafe').length,
     dead: tokens.filter((t) => t.tier === 'dead').length,

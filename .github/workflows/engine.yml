@@ -33,8 +33,9 @@ concurrency:
 jobs:
   cycle:
     runs-on: ubuntu-latest
-    # A hung provider must not burn the whole allowance on one run.
-    timeout-minutes: 12
+    # Headroom, not a target. The budget below is what keeps a cycle short;
+    # this only stops a hung provider burning the whole allowance.
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -58,6 +59,11 @@ jobs:
           OPERADOR_CAPITAL_USD: ${{ vars.OPERADOR_CAPITAL_USD || '1000' }}
           OPERADOR_MAX_POSITIONS: ${{ vars.OPERADOR_MAX_POSITIONS || '5' }}
           OPERADOR_GAS_USD: ${{ vars.OPERADOR_GAS_USD || '0.05' }}
+          # Tokens per chain given the expensive checks. Each costs ~9
+          # throttled seconds on Solana and ~6 on BSC, so 20 keeps a two-chain
+          # cycle near five minutes. The rest are shown as unchecked, and the
+          # next cycle is fifteen minutes away.
+          OPERADOR_MAX_SECURITY_CHECKS: ${{ vars.OPERADOR_MAX_SECURITY_CHECKS || '20' }}
           # One cycle, then exit. This is the whole trick.
           OPERADOR_MAX_CYCLES: '1'
         run: npm run cycle

@@ -31,6 +31,15 @@ export type TokenTier =
   | 'filtered'
   /** Failed a SAFETY gate. Not a missed chance — a bullet dodged. */
   | 'unsafe'
+  /**
+   * Cleared the free gates but the cycle's security budget did not reach it.
+   *
+   * Deliberately NOT 'unsafe'. The gates fail closed, so an unexamined token
+   * is rejected either way — but "nobody has looked at this yet" and "we
+   * looked and it is dangerous" are different claims, and showing them the
+   * same way would quietly turn a queue into an accusation.
+   */
+  | 'pending'
   /** The death exit condemned it. Never again. */
   | 'dead'
 
@@ -78,7 +87,7 @@ export interface UniverseOptions {
   readonly spreadPct?: number
 }
 
-const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'filtered', 'unsafe', 'dead']
+const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 'unsafe', 'dead']
 
 /** Gates that mean "this could hurt you", as opposed to "not interesting". */
 const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation'])
@@ -127,13 +136,15 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
       ? 'dead'
       : held
         ? 'held'
-        : unsafe
-          ? 'unsafe'
-          : !gateResult.passed
-            ? 'filtered'
-            : opportunity.score >= PRIME_SCORE
-              ? 'prime'
-              : 'eligible'
+        : snapshot.securityChecked === false
+          ? 'pending'
+          : unsafe
+            ? 'unsafe'
+            : !gateResult.passed
+              ? 'filtered'
+              : opportunity.score >= PRIME_SCORE
+                ? 'prime'
+                : 'eligible'
 
     return {
       id: key,

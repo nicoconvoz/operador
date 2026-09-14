@@ -141,3 +141,65 @@ describe('scanOnce — discover → market → security → probe → rank', () 
     expect(http.calls.some((u) => u.includes('t2'))).toBe(false)
   })
 })
+
+
+describe('scanOnce — a bounded budget for the expensive checks', () => {
+  // Three tokens that all clear the free gates, in an order that would punish
+  // taking the first N: the liveliest is in the middle.
+  const budgetRig = () =>
+    build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: {
+        body: [
+          { chainId: 'solana', tokenAddress: 'dull' },
+          { chainId: 'solana', tokenAddress: 'lively' },
+          { chainId: 'solana', tokenAddress: 'quiet' },
+        ],
+      },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/dull,lively,quiet`]: {
+        body: [
+          pair('dull', { volume: { h1: 500, h6: 3_000, h24: 20_000 }, priceChange: { h1: 0, h6: 0, h24: 0 } }),
+          pair('lively', {
+            volume: { h1: 40_000, h6: 90_000, h24: 200_000 },
+            priceChange: { h1: 9, h6: 4, h24: 22 },
+            txns: { h1: { buys: 180, sells: 40 }, h24: { buys: 2_000, sells: 900 } },
+          }),
+          pair('quiet', { volume: { h1: 900, h6: 4_000, h24: 30_000 }, priceChange: { h1: 0, h6: 0, h24: 1 } }),
+        ],
+      },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=dull`]: { body: { code: 1, message: 'ok', result: { dull: safe } } },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=lively`]: { body: { code: 1, message: 'ok', result: { lively: safe } } },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=quiet`]: { body: { code: 1, message: 'ok', result: { quiet: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=`]: { body: goodQuote },
+    })
+
+  const securityCalls = (http: { calls: string[] }) =>
+    http.calls.filter((url) => url.includes('token_security')).map((url) => url.split('contract_addresses=')[1]!)
+
+  it('spends the budget on the most promising token, not on the first one it met', async () => {
+    const { deps, http } = budgetRig()
+    await scanOnce(deps, { ...config, maxSecurityChecks: 1 })
+
+    // Discovery order is dull, lively, quiet. Taking the first would spend the
+    // whole budget on the dullest token on the list.
+    expect(securityCalls(http)).toEqual(['lively'])
+  })
+
+  it('still reports the tokens it could not afford to check, marked as unchecked', async () => {
+    const { deps } = budgetRig()
+    const out = await scanOnce(deps, { ...config, maxSecurityChecks: 1 })
+
+    expect(out.snapshots).toHaveLength(3)
+    const unchecked = out.snapshots.filter((s) => s.securityChecked === false).map((s) => s.address).sort()
+    expect(unchecked).toEqual(['dull', 'quiet'])
+    // Present on the screen, never tradeable: nothing unexamined is a candidate.
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['lively'])
+  })
+
+  it('checks everything when no budget is given', async () => {
+    const { deps, http } = budgetRig()
+    await scanOnce(deps, config)
+    expect(securityCalls(http).sort()).toEqual(['dull', 'lively', 'quiet'])
+  })
+})

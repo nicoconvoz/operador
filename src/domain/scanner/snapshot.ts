@@ -65,6 +65,19 @@ export interface TokenSnapshot {
   /** When the pair was created, or null when the source does not know. */
   readonly pairCreatedAt: number | null
   /**
+   * Whether the expensive security pass actually ran on this token.
+   *
+   * The gates fail closed, so an unknown honeypot result is a REJECTION — and
+   * without this flag a token nobody has looked at yet is indistinguishable
+   * from one that was examined and found dangerous. Those are not the same
+   * claim, and a screen that shows them identically is lying about which
+   * bullets it dodged.
+   *
+   * Absent means the scan did not say; treat it as checked, since every
+   * snapshot written before this existed had been.
+   */
+  readonly securityChecked?: boolean
+  /**
    * Closed 1H candles available for this pool, or null when not checked.
    *
    * The strategy needs EMA-200 and a 50-bar Bollinger basis; a pool with 38
