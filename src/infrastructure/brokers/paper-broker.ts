@@ -36,6 +36,17 @@ export interface PaperBrokerConfig {
   readonly quality: () => MarketQuality
 }
 
+/** A recorded fill, as the store keeps it. Structural, so the broker stays free of the persistence types. */
+export interface SeedFill {
+  readonly orderId: string
+  readonly side: 'buy' | 'sell'
+  readonly time: number
+  readonly price: number
+  readonly qty: number
+  readonly costUsd: number
+  readonly comment: string
+}
+
 export interface PaperCosts {
   readonly spreadUsd: number
   readonly impactUsd: number
@@ -64,6 +75,53 @@ export class PaperBroker implements BrokerPort {
 
   constructor(private readonly config: PaperBrokerConfig) {
     this.cash = config.initialCapital
+  }
+
+  /**
+   * Rebuilds the position from the fills that were recorded.
+   *
+   * The engine runs as a one-shot process — wake, advance one bar, write
+   * everything down, exit — so a broker that keeps its position in memory is
+   * FLAT on every wake-up and the strategy never sees what it opened fifteen
+   * minutes ago. The fills are the facts; this reads them back.
+   *
+   * What it reconstructs exactly: open trades, cash, and therefore the
+   * snapshot the strategy reads and the pyramiding count a restart must
+   * respect. What it cannot: `realisedGrossUsd`, which needs the untouched mid
+   * of each entry and that is not in a fill. Seeded trades report their entry
+   * price as their mid, so gross reads as net for them — stated here rather
+   * than silently wrong, and the number is a report, not a decision.
+   */
+  seed(fills: readonly SeedFill[]): void {
+    // Sorted, because a store returns rows and rows are not a queue.
+    const ordered = [...fills].sort((a, b) => a.time - b.time)
+    let lastSellTime: number | null = null
+
+    for (const fill of ordered) {
+      if (fill.side === 'buy') {
+        this.cash -= fill.price * fill.qty + this.config.gasUsdPerSwap
+        this.open.push({
+          id: fill.orderId,
+          entryTime: fill.time,
+          entryPrice: fill.price,
+          entryMid: fill.price,
+          qty: fill.qty,
+          entryCommission: fill.costUsd,
+          comment: fill.comment,
+        })
+        continue
+      }
+
+      // A close sells EVERYTHING in one swap, so its fills share a timestamp
+      // and one gas charge between them.
+      this.cash += fill.price * fill.qty
+      if (lastSellTime !== fill.time) {
+        this.cash -= this.config.gasUsdPerSwap
+        lastSellTime = fill.time
+      }
+      const index = this.open.findIndex((trade) => trade.id === fill.orderId)
+      if (index >= 0) this.open.splice(index, 1)
+    }
   }
 
   get openTrades(): readonly OpenTrade[] {

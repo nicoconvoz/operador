@@ -34,7 +34,13 @@ export interface CycleDeps {
   /** Latest health observation, or null when no monitor ran. */
   readonly healthFor: (position: PersistedPosition) => Promise<AssetHealthObservation | null>
   /** The broker for a position — paper or live. */
-  readonly brokerFor: (position: PersistedPosition) => BrokerPort
+  /**
+   * Async, because a broker has to be rebuilt from the position's recorded
+   * fills. The engine wakes as a fresh process every cycle; a broker that
+   * remembered only what happened in THIS process would report every position
+   * as flat and the strategy would keep re-opening what it already holds.
+   */
+  readonly brokerFor: (position: PersistedPosition) => Promise<BrokerPort>
   /** Fresh scanner output. Empty is a valid answer and is alerted on. */
   readonly scan: () => Promise<readonly Candidate[]>
   readonly now: () => number
@@ -97,7 +103,7 @@ export async function runCycle(
     if (!candles) continue
 
     const result = await tickPosition(
-      { position: recovered.position, candles, health: await deps.healthFor(recovered.position), broker: deps.brokerFor(recovered.position) },
+      { position: recovered.position, candles, health: await deps.healthFor(recovered.position), broker: await deps.brokerFor(recovered.position) },
       { params: config.params, ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}) },
       deps.store,
       deps.alerts,

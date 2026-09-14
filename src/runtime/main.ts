@@ -97,7 +97,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // can never be spent by another — the same isolation the live wallets will
   // need to enforce for real.
   const brokers = new Map<string, PaperBroker>()
-  const brokerFor = (position: PersistedPosition) => {
+  const brokerFor = async (position: PersistedPosition) => {
     let broker = brokers.get(position.id)
     if (!broker) {
       broker = new PaperBroker({
@@ -106,6 +106,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         maxOpenEntries: 10,
         quality: () => position.quality,
       })
+      // Seeded from the fills, which are the only record that survives a
+      // process. Without this every cycle would start flat and the ladder
+      // would be rebuilt from level zero, forever.
+      broker.seed(await store.fillsFor(position.id))
       brokers.set(position.id, broker)
     }
     return broker

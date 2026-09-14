@@ -7,7 +7,8 @@ import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch, type AssetHealthObservation, type DeathWatchState } from '../domain/risk/death-exit.js'
-import { type PersistedPosition } from '../domain/persistence/store.js'
+import { idempotencyKeyFor, type PersistedPosition } from '../domain/persistence/store.js'
+import { orderKeyPart } from './recovery.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
 import { type Candles } from './replay.js'
 
@@ -173,5 +174,73 @@ describe('tickPosition — what it tells the human', () => {
       pos = out.position
     }
     expect(r.alerts.sent.filter((a) => a.kind === 'ladder-frozen')).toHaveLength(1)
+  })
+})
+
+
+describe('tickPosition — the orders actually execute', () => {
+  const armed = (bars: Candles) => ({
+    ...position(),
+    pendingOrders: [{ kind: 'entry' as const, id: 'Entry', level: 0, usd: 100, qty: 100, comment: 'Entry' }],
+    lastBarTime: bars.time[bars.time.length - 2]!,
+  })
+
+  it(`fills what the PREVIOUS bar decided, at this bar's open`, async () => {
+    const candles = decline(300)
+    const r = rig()
+    const { result } = await tick({ candles, position: armed(candles) }, r)
+
+    const fills = await r.store.fillsFor('pos-1')
+    expect(fills).toHaveLength(1)
+    expect(fills[0]).toMatchObject({ orderId: 'Entry', side: 'buy', qty: 100 })
+    // Parity semantics, the ones the TradingView harness pinned: an order
+    // decided at a close fills at the NEXT bar's open, never at the close that
+    // decided it.
+    expect(fills[0]!.price).toBeGreaterThanOrEqual(candles.open[candles.open.length - 1]!)
+    // What stays pending is exactly what THIS bar decided — nothing is carried
+    // over. Asserting the id is absent would be wrong: the strategy may well
+    // decide the same order again, and that is a new intention, not a stale one.
+    expect(result.position.pendingOrders).toEqual(result.orders)
+    expect(r.broker.openTrades).toHaveLength(1)
+  })
+
+  it('records a fill once, however many times the bar is replayed', async () => {
+    const candles = decline(300)
+    const store = new MemoryStore()
+    const held = armed(candles)
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const r = { ...rig(), store }
+      r.broker.seed(await store.fillsFor('pos-1'))
+      await tick({ candles, position: held }, r)
+    }
+
+    // A retried cycle must not buy twice. The key is deterministic for exactly
+    // this reason, and the store enforces it.
+    expect(await store.fillsFor('pos-1')).toHaveLength(1)
+  })
+
+  it('leaves the books untouched when there was nothing to fill', async () => {
+    const candles = decline(300)
+    const r = rig()
+    await tick({ candles, position: { ...position(), lastBarTime: candles.time[candles.time.length - 2]! } }, r)
+    expect(await r.store.fillsFor('pos-1')).toEqual([])
+  })
+})
+
+describe('tickPosition — the fill recovery will look for', () => {
+  it('keys a fill so recovery recognises it, instead of halting a position it just traded', async () => {
+    const candles = decline(300)
+    const decidedAt = candles.time[candles.time.length - 2]!
+    const order = { kind: 'entry' as const, id: 'Entry', level: 0, usd: 100, qty: 100, comment: 'Entry' }
+    const r = rig()
+
+    await tick({ candles, position: { ...position(), pendingOrders: [order], lastBarTime: decidedAt } }, r)
+
+    // Recovery asks by the bar the order was DECIDED on, not the one it filled
+    // at. These two used to disagree, which would have halted every position
+    // the engine had just traded — the exact opposite of what recovery is for.
+    const key = idempotencyKeyFor('pos-1', decidedAt, orderKeyPart(order))
+    expect(await r.store.hasFill(key)).toBe(true)
   })
 })

@@ -53,7 +53,7 @@ const rig = (over: Partial<CycleDeps> = {}) => {
     probe: async () => 'not-filled',
     candlesFor: async () => flat(),
     healthFor: async () => null,
-    brokerFor: () => new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality }),
+    brokerFor: async () => new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality }),
     scan: async () => [candidate('a', 90), candidate('b', 80)],
     now: () => NOW,
     ...over,

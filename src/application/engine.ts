@@ -71,6 +71,46 @@ export async function tickPosition(
     return { position, orders: [], vetoed: [], skipped: 'already-processed' }
   }
 
+  // ── 0. Execute what the PREVIOUS bar decided, at THIS bar's open ──────────
+  //
+  // This is the execution model the parity harness pinned: an order decided at
+  // a close fills at the NEXT bar's open, never at the close that decided it.
+  // The engine writes its intentions down and the following tick carries them
+  // out, which is also what makes a crash between the two survivable.
+  //
+  // Before anything else runs, because every number the strategy is about to
+  // read — size, average cost, open profit — comes from the broker, and the
+  // broker is rebuilt from these fills on the next wake-up.
+  // Executed ORDER BY ORDER, not all at once, so each fill can be keyed to the
+  // order that caused it — and keyed the way RECOVERY looks it up: by the bar
+  // the order was DECIDED on, which is the position's last bar, not the one it
+  // fills at. Writing the filling bar instead would leave recovery unable to
+  // find its own fills and it would halt every position it had just traded.
+  for (const order of position.pendingOrders) {
+    const key = idempotencyKeyFor(position.id, position.lastBarTime, orderKeyPart(order))
+    // Guarded here as well as in SQL: the store would reject the duplicate
+    // anyway, but a second execute() would also move the broker's cash.
+    if (await store.hasFill(key)) continue
+
+    const fills = broker.execute([order], candles.open[barIndex]!, barTime)
+    for (const [index, fill] of fills.entries()) {
+      await store.recordFill({
+        positionId: position.id,
+        orderId: fill.id,
+        side: fill.side,
+        time: fill.time,
+        price: fill.price,
+        qty: fill.qty,
+        costUsd: fill.commission,
+        comment: fill.comment,
+        // One close sells every open entry, so it produces several fills for a
+        // single order. The FIRST carries the order's canonical key, which is
+        // the one recovery asks about; the rest are suffixed.
+        idempotencyKey: index === 0 ? key : `${key}#${index}`,
+      })
+    }
+  }
+
   // ── 1. The death watch speaks first ────────────────────────────────────────
   let deathWatch = position.deathWatch
   if (input.health) {

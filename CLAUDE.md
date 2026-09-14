@@ -713,7 +713,28 @@ identifiers, comments and documentation stay English.
 ## The engine tick
 
 `application/engine.ts` advances ONE position by ONE closed bar. The order of
-its four steps is the design:
+its steps is the design:
+
+0. **Execute what the PREVIOUS bar decided, at THIS bar's open.** An order
+   decided at a close fills at the NEXT bar's open — the execution model the
+   parity harness pinned. The engine writes its intentions down and the
+   following tick carries them out, which is also what makes a crash between
+   the two survivable. Each fill is keyed the way RECOVERY looks it up: by the
+   bar the order was DECIDED on, not the one it filled at.
+
+   **This step did not exist until the system was live.** The engine decided
+   orders, wrote them as `pendingOrders`, alerted — and never sent them
+   anywhere. `recordFill` had no caller outside the stores that implement it,
+   and `broker.execute` was reached only from `replay.ts`. Five positions ran
+   in production showing `0 compra / 0 venta`, which is what a decision engine
+   with no execution looks like from outside: busy and completely still.
+
+   The second half of the same gap: `PaperBroker` kept its position in memory,
+   and the engine now wakes as a one-shot process. Every cycle started flat, so
+   even with execution the strategy would never have seen what it opened
+   fifteen minutes earlier. `PaperBroker.seed` rebuilds it from the recorded
+   fills — the same principle the operations view already ran on: **the fills
+   are the facts.**
 
 1. **The death watch speaks first.** Health is assessed before the strategy
    runs, so a freeze or a death is already in force when orders are decided.
