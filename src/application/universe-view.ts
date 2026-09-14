@@ -132,12 +132,24 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     const blockers = gateResult.failures.map((f) => f.detail)
     const unsafe = gateResult.failures.some((f) => SAFETY_GATES.has(f.gate))
 
+    // A token nobody examined has an all-null security report, and the gates
+    // fail closed — so a naive reading calls it dangerous. It is not: it is
+    // unexamined. And if it was rejected on MARKET grounds it never will be
+    // examined, which makes it uninteresting rather than queued.
+    //
+    // This mattered in production: the screen read "insegura 219, filtrada 6"
+    // when almost all 219 were simply too thin to bother with. Calling a thin
+    // pool a bullet dodged devalues the label for the tokens that earned it.
+    const marketFailure = gateResult.failures.some((f) => !SAFETY_GATES.has(f.gate))
+
     const tier: TokenTier = blacklisted.has(key)
       ? 'dead'
       : held
         ? 'held'
         : snapshot.securityChecked === false
-          ? 'pending'
+          ? marketFailure
+            ? 'filtered'
+            : 'pending'
           : unsafe
             ? 'unsafe'
             : !gateResult.passed

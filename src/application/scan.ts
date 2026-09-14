@@ -211,7 +211,11 @@ export async function scanOnce(
   const affordable: typeof markets = []
 
   for (const market of markets) {
-    const provisional: TokenSnapshot = { ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: true }
+    // securityChecked: FALSE, and true for neither of them yet. A token
+    // rejected here was never examined — saying otherwise made every thin pool
+    // read as a safety failure downstream, because an all-null report fails
+    // closed and nothing recorded that nobody had looked.
+    const provisional: TokenSnapshot = { ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false }
     const cheap = evaluateMarketGates(provisional, config.ranking.gates)
     if (cheap.passed) affordable.push(market)
     else snapshots.push(provisional)

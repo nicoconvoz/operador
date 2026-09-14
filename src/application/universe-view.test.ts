@@ -9,6 +9,11 @@ import { type SecurityReport, type TokenSnapshot } from '../domain/scanner/snaps
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
 
+const UNKNOWN: SecurityReport = {
+  honeypot: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null,
+  hasBlacklist: null, lpLockedPct: null, topHoldersPct: null, creatorPct: null, verifiedSource: null, isProxy: null,
+}
+
 const safe: SecurityReport = {
   honeypot: false, mintAuthorityActive: false, freezeAuthorityActive: false, transferTaxPct: 0,
   hasBlacklist: false, lpLockedPct: 100, topHoldersPct: 20, creatorPct: 1, verifiedSource: null, isProxy: null,
@@ -172,5 +177,30 @@ describe('buildUniverse — every chain at once', () => {
     await store.saveScan({ scannedAt: NOW - HOUR, chain: 'bsc', snapshots: [token('BSC1', { chain: 'bsc', address: 'BSC1' })] })
 
     expect((await buildUniverse(store, options)).scannedAt).toBe(NOW - 3 * HOUR_MS)
+  })
+})
+
+describe('buildUniverse — rejected for being thin is not the same as dangerous', () => {
+  it('a token rejected on MARKET grounds is filtered, not unsafe', async () => {
+    // The scanner never examines these: they fail the free gates first, so
+    // their security report is all-null. The gates fail closed, so a naive
+    // reading calls them a safety failure — and the screen said "insegura 219,
+    // filtrada 6" when almost every one of those was simply too thin.
+    const thin = token('THIN', { liquidityUsd: 500 })
+    const store = await seed([{ ...thin, security: UNKNOWN, securityChecked: false }])
+
+    const [t] = (await buildUniverse(store, options)).tokens
+    expect(t!.tier).toBe('filtered')
+    expect(t!.blockers.some((b) => b.includes('liquidity'))).toBe(true)
+  })
+
+  it('a token that passed the market gates but was never examined is pending', async () => {
+    const store = await seed([{ ...token('WAIT'), security: UNKNOWN, securityChecked: false }])
+    expect((await buildUniverse(store, options)).tokens[0]!.tier).toBe('pending')
+  })
+
+  it('a token that WAS examined and failed a safety gate is still unsafe', async () => {
+    const store = await seed([token('RUG', {}, { honeypot: true })])
+    expect((await buildUniverse(store, options)).tokens[0]!.tier).toBe('unsafe')
   })
 })
