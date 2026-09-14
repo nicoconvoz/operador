@@ -465,8 +465,24 @@ Build what can be verified. Then build what must be discovered.
    compared once converged; a wrong recursion cannot converge onto the right one.
 
 2. **State machine** — `level` transitions, both entry gates, the DCA ladder,
-   all five rebound locks, one-fill-per-bar.
-3. **Exits** — normal (VWM / Supertrend) and rescue breakeven.
+   all five rebound locks, one-fill-per-bar. **✅ COMPLETE** — `stepCascade`
+   in `src/domain/strategy/cascade.ts`, a transcription of DCA.pine's per-bar
+   logic in its exact evaluation order, 39 scenario tests.
+3. **Exits** — normal (VWM / Supertrend) and rescue breakeven. **✅ COMPLETE**
+   (part of the same step function, as in the reference).
+
+   **Architecture of the step function** — it takes two inputs that the
+   reference conflates:
+   - `BarContext`: indicator-derived facts (`isLateral`, `trendBullish`,
+     `stBearFlip`, VWM lags, swing high), computed by the indicator layer.
+   - `PositionSnapshot`: what the **broker** reports — size, average fill
+     price, open P&L (`strategy.position_size` etc.). These come from FILLS.
+
+   The distinction matters for parity: DCA.pine has no
+   `process_orders_on_close`, so every order fills at the **next bar's open**
+   (1 tick slippage, 0.1% commission), while the state machine sets
+   `ep1 := close` on the signal bar. Exit and rescue logic read the broker's
+   numbers, not the machine's — exactly as the reference does.
 4. **Death exit** — two-stage, with the price-is-never-a-death-signal guardrail.
 5. **Economics** — gas, swap fee, depth-based slippage models.
 6. **Parity harness** — full replay vs the TradingView trade list.
