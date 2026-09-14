@@ -1,5 +1,12 @@
-import { Universe } from '../universe.js'
+import { Console } from '../console.js'
 import type { UniverseToken, UniverseView, TokenTier } from '../../../src/application/universe-view.js'
+import { buildOperations } from '../../../src/application/operations-view.js'
+import { MemoryStore } from '../../../src/infrastructure/persistence/memory-store.js'
+import { initialState } from '../../../src/domain/strategy/state.js'
+import { startDeathWatch } from '../../../src/domain/risk/death-exit.js'
+import { DEFAULT_PARAMS } from '../../../src/domain/strategy/params.js'
+import { triggerPrice, usdForLevel } from '../../../src/domain/strategy/ladder.js'
+import type { PersistedFill, PersistedPosition } from '../../../src/domain/persistence/store.js'
 
 /**
  * A universe with no database behind it, so the view can be seen and judged
@@ -63,14 +70,78 @@ const view: UniverseView = {
   chains: ['bsc', 'solana'],
 }
 
-export default function Demo() {
+/**
+ * Synthetic BOOKS, not synthetic numbers.
+ *
+ * Rather than hand-writing a P&L that looks plausible, this seeds fake fills
+ * into a real store and runs the real read model over them. If the maths on
+ * this page is wrong, the maths in production is wrong too — which is the only
+ * kind of demo worth looking at.
+ */
+const NOW = Date.now()
+const MIN = 60_000
+
+async function demoOperations() {
+  const store = new MemoryStore()
+  const held = tokens.filter((t) => t.tier === 'held')
+
+  for (const [index, token] of held.entries()) {
+    const filled = Math.max(1, token.position!.filledDcas)
+    // One winner, one grinder, one underwater — a demo where every position
+    // shows the same P&L teaches nothing about reading the screen.
+    const entry = token.priceUsd * [0.82, 1.03, 1.19][index % 3]!
+    const openedAt = NOW - (90 + index * 40) * MIN
+
+    const position: PersistedPosition = {
+      id: `pos-${token.address}`,
+      chain: token.chain,
+      tokenAddress: token.address,
+      pairAddress: token.pairAddress,
+      symbol: token.symbol,
+      cascade: { ...initialState(), level: filled + 1, ep1: entry, wasInTrade: true },
+      deathWatch: { ...startDeathWatch(token.liquidityUsd, openedAt), stage: token.position!.deathStage },
+      quality: { liquidityUsd: token.liquidityUsd, spreadPct: 0.3, slippagePct: 0.4, referenceUsd: 100, observedAt: NOW },
+      capitalUsd: token.position!.capitalUsd,
+      lastBarTime: NOW,
+      lastPriceUsd: token.priceUsd,
+      pendingOrders: index === 0 ? [{ kind: 'entry', id: `DCA-${filled + 1}`, level: filled + 1, usd: 30, qty: 1, comment: 'pending' }] : [],
+      openedAt,
+      updatedAt: NOW,
+    }
+    await store.savePosition(position)
+
+    for (let level = 0; level <= filled; level += 1) {
+      const price = level === 0 ? entry : triggerPrice(DEFAULT_PARAMS, entry, level)
+      const usd = Math.min(usdForLevel(DEFAULT_PARAMS, level), 18)
+      const orderId = level === 0 ? 'Entry' : `DCA-${level}`
+      const fill: PersistedFill = {
+        positionId: position.id,
+        orderId,
+        side: 'buy',
+        time: openedAt + level * 17 * MIN,
+        price,
+        qty: usd / price,
+        costUsd: usd * 0.009 + 0.05, // spread and impact, plus the chain's cut
+        comment: orderId,
+        idempotencyKey: `${position.id}:${orderId}`,
+      }
+      await store.recordFill(fill)
+    }
+  }
+
+  return buildOperations(store, { now: () => NOW, params: DEFAULT_PARAMS })
+}
+
+export default async function Demo() {
+  const operations = await demoOperations()
+
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 14 }}>
         <h1 style={{ fontSize: 17, margin: 0 }}>Operador by Open Doors</h1>
         <span style={{ color: '#ffb454' }}>DEMO — synthetic data</span>
       </header>
-      <Universe view={view} />
+      <Console universe={view} operations={operations} />
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
         size = liquidity · rings = opportunity · glow = in position · ◆ bsc ● solana
       </footer>

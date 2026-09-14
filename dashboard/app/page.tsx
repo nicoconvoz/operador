@@ -1,7 +1,8 @@
 import { buildDashboard, type DashboardView } from '../../src/application/dashboard.js'
 import { buildUniverse, type UniverseView } from '../../src/application/universe-view.js'
+import { buildOperations, type OperationsView } from '../../src/application/operations-view.js'
 import { PostgresStore } from '../../src/infrastructure/persistence/postgres-store.js'
-import { Universe } from './universe.js'
+import { Console } from './console.js'
 import { Pool } from 'pg'
 
 // A cached view of a trading system is worse than no view: a stale "all
@@ -11,7 +12,13 @@ export const revalidate = 0
 
 let pool: Pool | null = null
 
-async function load(): Promise<{ dashboard: DashboardView; universe: UniverseView } | { error: string }> {
+interface Loaded {
+  dashboard: DashboardView
+  universe: UniverseView
+  operations: OperationsView
+}
+
+async function load(): Promise<Loaded | { error: string }> {
   if (!process.env.DATABASE_URL) return { error: 'DATABASE_URL is not set' }
   try {
     pool ??= new Pool({ connectionString: process.env.DATABASE_URL, max: 2 })
@@ -23,8 +30,12 @@ async function load(): Promise<{ dashboard: DashboardView; universe: UniverseVie
     }
     const store = new PostgresStore(sql)
     const now = () => Date.now()
-    const [dashboard, universe] = await Promise.all([buildDashboard(store, { now }), buildUniverse(store, { now })])
-    return { dashboard, universe }
+    const [dashboard, universe, operations] = await Promise.all([
+      buildDashboard(store, { now }),
+      buildUniverse(store, { now }),
+      buildOperations(store, { now }),
+    ])
+    return { dashboard, universe, operations }
   } catch (error) {
     return { error: String(error).slice(0, 200) }
   }
@@ -50,7 +61,7 @@ export default async function Page() {
     )
   }
 
-  const { dashboard, universe } = data
+  const { dashboard, universe, operations } = data
 
   return (
     <>
@@ -83,12 +94,17 @@ export default async function Page() {
       <section style={{ display: 'flex', gap: 22, marginBottom: 14, flexWrap: 'wrap' }}>
         <Stat label="Positions" value={String(dashboard.totals.positions)} />
         <Stat label="Committed" value={money(dashboard.totals.committedUsd)} />
+        <Stat
+          label="Unrealised"
+          value={`${operations.totals.unrealisedUsd >= 0 ? '+' : ''}${money(operations.totals.unrealisedUsd)}`}
+          color={operations.totals.unrealisedUsd >= 0 ? '#63e6a5' : '#ff6b6b'}
+        />
         <Stat label="Universe" value={String(universe.tokens.length)} />
         <Stat label="Frozen" value={String(dashboard.totals.frozen)} />
         <Stat label="Blacklisted" value={String(dashboard.blacklistedCount)} />
       </section>
 
-      <Universe view={universe} />
+      <Console universe={universe} operations={operations} />
 
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
         {universe.scannedAt ? `Scanned ${ago(universe.scannedAt)}` : 'No scan recorded yet'}
@@ -98,11 +114,11 @@ export default async function Page() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div>
       <div style={{ color: '#8b949e', fontSize: 11 }}>{label}</div>
-      <div style={{ fontSize: 19 }}>{value}</div>
+      <div style={{ fontSize: 19, color }}>{value}</div>
     </div>
   )
 }
