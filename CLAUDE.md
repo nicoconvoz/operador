@@ -859,6 +859,50 @@ strategy, so the fix can later be evaluated as an explicit A/B with retuned
 (Jupiter, viem/ethers, RPC clients), and the type system can enforce the
 death-exit guardrail structurally.
 
+### What a cycle actually costs — measured, twice, after guessing wrong twice
+
+The first cloud cycle was killed by its own timeout, and the numbers only made
+sense after instrumenting. Worth keeping, because both of my estimates were
+wrong in a way reasoning alone could not have caught.
+
+| | |
+|---|---|
+| Estimated per token | 9s |
+| First measurement | **16.8s** |
+| After parallelising the three providers | 4.5s locally, still ~15s in CI |
+| The actual cause | GeckoTerminal, 45 rate-limit rejections, 276s of backoff — **80% of the cycle** |
+| Every other provider | GoPlus: zero hits, zero waiting |
+
+**GeckoTerminal limits by IP, and a CI runner shares its address with thousands
+of unrelated jobs.** The quota is not ours to budget. Tuning a throttle against
+a quota you cannot observe is guesswork; the only winning move is to ask less.
+
+The heaviest call was `historyBars` — a full thousand-row candle download,
+made to learn one integer, once per checked token. `CachedHistory` keeps that
+integer in `pool_history`, and what makes that CORRECT rather than merely
+convenient is that **a pool cannot lose candles**: once it has enough history
+for the strategy it has enough forever. Only a SHORT count expires, after six
+hours, because a young pool grows. A failed call is never cached — writing null
+would turn one rate-limited request into a permanent "this pool has no
+history", and the gate would reject a good token forever on a network blip.
+
+Measured, cold cycle against warm cycle, same chain, same 20 tokens:
+
+| | Cold | Warm |
+|---|---|---|
+| GeckoTerminal rejections | 50 | **21** |
+| Time backing off | 304s | **116s** |
+| Scan | 384s | **177s** |
+
+Two lessons, both paid for: **instrument before optimising** — the bottleneck
+was in neither of my hypotheses — and **a diagnostic that misleads is worse
+than none**, which the first version of these counters proved by reporting a
+cumulative total as a per-chain one and printing 556 seconds of waiting inside
+a 356-second scan.
+
+What remains: discovery is still ten GeckoTerminal calls per chain, and most
+of the 116s. The universe does not change minute to minute, so it caches too.
+
 ### The engine does not need a server — CORRECTED
 
 This section used to say the opposite, citing "live WebSocket subscriptions to
