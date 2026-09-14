@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { dropPct, triggerPrice, usdForLevel, ladderCapital } from './ladder.js'
-import { DEFAULT_PARAMS, assertParams, ParamsError, type CascadeParams } from './params.js'
+import { DEFAULT_PARAMS, PYRAMIDING, assertParams, ParamsError, type CascadeParams } from './params.js'
 
 const linear = DEFAULT_PARAMS
 const geometric: CascadeParams = { ...DEFAULT_PARAMS, progression: 'geometric' }
@@ -27,9 +27,12 @@ describe('ladder — DCA.pine drop progression', () => {
     expect(triggerPrice(linear, 0.01, 10)).toBeCloseTo(0.0072, 12)
   })
 
-  it('with the default 10 levels every trigger is a positive price', () => {
-    // The 50-level reference goes negative at n=34. Ten levels never do.
-    for (let n = 1; n <= 10; n++) expect(triggerPrice(linear, 1, n)).toBeGreaterThan(0)
+  it('linear triggers go to zero at n=34 and negative beyond — unreachable levels', () => {
+    // drop(34) = 1 + 33*3 = 100. Signalled by the machine, never fillable.
+    // Irrelevant in practice: the broker rejects everything past the 10th entry.
+    for (let n = 1; n <= 33; n++) expect(triggerPrice(linear, 1, n)).toBeGreaterThan(0)
+    expect(triggerPrice(linear, 1, 34)).toBeCloseTo(0, 12)
+    expect(triggerPrice(linear, 1, 35)).toBeLessThan(0)
   })
 })
 
@@ -49,9 +52,11 @@ describe('ladder — DCA.pine amount progression', () => {
     expect(usdForLevel(wild, 1)).toBe(linear.maxUsdPerLevel)
   })
 
-  it('full-ladder capital with defaults is $46,200 — not the $10k initial_capital', () => {
-    // 1000 + 2200 + 3400 + 4600 + 5000 * 7
-    expect(ladderCapital(linear)).toBe(46_200)
+  it('capital the broker can actually deploy: 10 entries = $41,200, not the $10k initial_capital', () => {
+    // Entry + DCA-1..DCA-9: 1000 + 2200 + 3400 + 4600 + 5000 * 6
+    expect(ladderCapital({ ...linear, maxLevels: PYRAMIDING - 1 })).toBe(41_200)
+    // What the machine would signal with maxLevels = 50, if nothing rejected it.
+    expect(ladderCapital(linear)).toBe(1000 + 2200 + 3400 + 4600 + 5000 * 47)
   })
 })
 
@@ -60,10 +65,15 @@ describe('params — guard rails', () => {
     expect(() => assertParams(DEFAULT_PARAMS)).not.toThrow()
   })
 
-  it('refuses more than 10 levels: pyramiding = 10 is the real ceiling', () => {
-    expect(() => assertParams({ ...DEFAULT_PARAMS, maxLevels: 11 })).toThrow(ParamsError)
-    expect(() => assertParams({ ...DEFAULT_PARAMS, maxLevels: 50 })).toThrow(ParamsError)
+  it('mirrors the reference input range 1..50', () => {
+    expect(() => assertParams({ ...DEFAULT_PARAMS, maxLevels: 50 })).not.toThrow()
+    expect(() => assertParams({ ...DEFAULT_PARAMS, maxLevels: 51 })).toThrow(ParamsError)
     expect(() => assertParams({ ...DEFAULT_PARAMS, maxLevels: 0 })).toThrow(ParamsError)
+  })
+
+  it('the broker, not the strategy, caps fills at pyramiding = 10', () => {
+    expect(PYRAMIDING).toBe(10)
+    expect(DEFAULT_PARAMS.maxLevels).toBe(50)
   })
 
   it('refuses a geometric multiplier that does not grow', () => {

@@ -67,11 +67,21 @@ Persistent state to reproduce exactly: `level`, `ep1` (anchor entry price),
 
 `is_lateral` = `BBW < bbw_max` OR `ADX < adx_max` (AND if `require_both`).
 
-### DCA ladder — 10 levels
+### DCA ladder — 50 signalled levels, 10 fillable
 
-**10 levels is intentional and validated.** `pyramiding = 10` in the Pine source
-is the real ceiling, not a bug. The 11..50 blocks are dead code in the reference
-and must not be ported.
+**The Pine defaults ARE the production configuration** (confirmed by the
+user): `max_levels = 50` in the inputs and `pyramiding = 10` in the
+`strategy()` header, both intentional. They interact:
+
+- The state machine signals DCA levels all the way to 50 — advancing `level`,
+  resetting the cycle, summing nominal `total_inv` — exactly as the script does.
+- TradingView's broker rejects every entry after the **tenth open one**
+  (Entry + DCA-1..DCA-9). DCA-10 onward are signalled, never filled.
+
+So the port keeps the machine faithful (`maxLevels` up to 50) and enforces
+`PYRAMIDING = 10` in the **broker simulator and the live risk layer** — the
+strategy signals, the venue caps. This is also why `rescue_mode` can engage:
+`filled_dcas = level - 1` counts signalled levels, not fills.
 
 - Trigger for level `n`: `ep1 * (1 - drop(n)/100)`
   - Linear: `drop(n) = dca_base_pct + (n-1) * lin_inc`
@@ -279,7 +289,7 @@ Decided, not accidental:
 
 | # | Item | Decision |
 |---|---|---|
-| 1 | `pyramiding = 10` vs 50 DCA blocks | **Intentional.** 10 levels is the validated config. Levels 11–50 are dead code; do not port. |
+| 1 | `pyramiding = 10` vs 50 DCA blocks | **Intentional, both.** Machine signals to 50; broker fills 10. Ported as `maxLevels = 50` + `PYRAMIDING = 10` in execution. |
 | 2 | Magic number `0.3` in `impulse_dead` | Port as a named configurable constant. |
 | 3 | `min_gap_pct` dominating early DCA drops | Confirm against the tuned 10-level parameter set. |
 | 4 | `confirm_bars` default vs tooltip | Confirm which value is the tested one. |
@@ -322,7 +332,7 @@ This is the hard evidence for the permissiveness flagged earlier.
 stretch — the 4001-bar figures above supersede it.)
 
 **Decision: port the behaviour exactly as written.** The strategy's parameters
-were tuned against this behaviour, and parity with the validated backtest is
+(the Pine defaults, which are the production configuration) were tuned against this behaviour, and parity with the validated backtest is
 the acceptance test. Silently "fixing" it changes `is_lateral` on 4.45% of
 bars against a baseline that was never tested.
 

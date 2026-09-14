@@ -3,10 +3,18 @@
  * DCA.pine. Names are the Pine identifiers in camelCase so a diff against the
  * reference stays mechanical. Defaults are the Pine defaults.
  *
- * `maxLevels` is capped at 10: `pyramiding = 10` in the reference is the real
- * ceiling and the validated configuration. Levels 11–50 are dead code there
- * and are not ported.
+ * The user's production configuration IS these defaults — including
+ * `maxLevels = 50` alongside `pyramiding = 10` in the `strategy()` header.
+ * The two interact: the state machine keeps SIGNALLING DCA levels past the
+ * tenth (advancing `level`, resetting the cycle, summing `totalInvested`),
+ * while TradingView's broker REJECTS every entry after the tenth open one
+ * (Entry + DCA-1..DCA-9). That rejection is an execution constraint, so it
+ * lives in the broker simulator and the live risk layer as `PYRAMIDING`,
+ * not here. The machine mirrors the script; the broker mirrors the venue.
  */
+
+/** `pyramiding = 10` from the strategy() header — max open entries per position. */
+export const PYRAMIDING = 10
 
 export type Progression = 'linear' | 'geometric'
 
@@ -68,7 +76,8 @@ export interface CascadeParams {
   readonly impulseThreshold: number
 }
 
-export const MAX_SUPPORTED_LEVELS = 10
+/** The reference input allows 1..50. */
+export const MAX_SUPPORTED_LEVELS = 50
 
 export const DEFAULT_PARAMS: CascadeParams = {
   baseUsd: 1000,
