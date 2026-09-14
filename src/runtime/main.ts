@@ -189,6 +189,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           )
           await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: result.snapshots })
           candidates.push(...result.candidates)
+          // A scan three times slower in CI than on a laptop is either a rate
+          // limit or a mystery. This is how it stops being a mystery.
+          console.log(
+            `[scan:limits] ${chain} goplus=${JSON.stringify(goplus.rateLimit)} gecko=${JSON.stringify(gecko.rateLimit)}`,
+          )
         } catch (error) {
           console.error(`[scan:${chain}]`, error)
         }

@@ -94,6 +94,15 @@ export class GoPlus {
     this.now = options.now ?? Date.now
   }
 
+  /**
+   * Time spent waiting because the provider said "slow down", and how often.
+   *
+   * Reported rather than hidden, because a scan three times slower in CI than
+   * on a laptop is either a rate limit or a mystery, and a mystery cannot be
+   * fixed. Back-off that nobody can see looks exactly like code being slow.
+   */
+  readonly rateLimit = { hits: 0, waitedMs: 0 }
+
   /** Security report for one token. Returns null when GoPlus has never seen it. */
   async securityReport(chain: Chain, address: string): Promise<SecurityReport | null> {
     if (chain === 'solana') {
@@ -192,7 +201,10 @@ export class GoPlus {
       const limited = response.status === 429 || body?.code === RATE_LIMITED
 
       if (limited && attempt < this.maxRetries) {
-        await this.sleep(this.backoffMs * 2 ** attempt)
+        const wait = this.backoffMs * 2 ** attempt
+        this.rateLimit.hits += 1
+        this.rateLimit.waitedMs += wait
+        await this.sleep(wait)
         continue
       }
       if (response.status !== 200) throw new HttpError(url, response.status)

@@ -77,6 +77,9 @@ export class GeckoTerminal {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   }
 
+  /** Time lost to 429s, and how many. See the note on GoPlus.rateLimit. */
+  readonly rateLimit = { hits: 0, waitedMs: 0 }
+
   /**
    * Candles for a pool, OLDEST FIRST, timestamps in milliseconds.
    *
@@ -179,7 +182,10 @@ export class GeckoTerminal {
       const response = await this.http(url)
       if (response.status === 200) return response.json()
       if (response.status === 429 && attempt < this.maxRetries) {
-        await this.sleep(this.backoffMs * 2 ** attempt)
+        const wait = this.backoffMs * 2 ** attempt
+        this.rateLimit.hits += 1
+        this.rateLimit.waitedMs += wait
+        await this.sleep(wait)
         continue
       }
       throw new HttpError(url, response.status)
