@@ -12,6 +12,8 @@ export interface DecimalsPort {
   decimals(chain: Chain, address: string): Promise<number | null>
   /** Optional second opinion on security facts (e.g. Jupiter's audit block). */
   security?(chain: Chain, address: string): Promise<Partial<SecurityReport> | null>
+  /** Optional extra universe (e.g. Jupiter's trending / traded / organic lists). */
+  discover?(): Promise<string[]>
 }
 
 export interface ScanDeps {
@@ -66,8 +68,17 @@ export async function scanOnce(
   const scannedAt = now()
   const errors: ScanError[] = []
 
-  // ── 1. Universe ────────────────────────────────────────────────────────────
-  const addresses = (await deps.dex.discoverTokens(config.chain)).slice(0, config.maxTokens)
+  // ── 1. Universe: every source we have, deduplicated, capped ────────────────
+  const universe = new Set<string>()
+  if (deps.decimals.discover) {
+    try {
+      for (const address of await deps.decimals.discover()) universe.add(address)
+    } catch (error) {
+      errors.push({ address: '*', stage: 'market', error: `universe: ${String(error)}` })
+    }
+  }
+  for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
+  const addresses = [...universe].slice(0, config.maxTokens)
 
   // ── 2. Market, in batches of 30 ────────────────────────────────────────────
   const markets = []

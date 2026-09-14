@@ -52,6 +52,8 @@ export interface TokenSnapshot {
   readonly pairAddress: string
   /** Venue of the deepest pool, e.g. 'raydium', 'pumpswap', 'orca'. */
   readonly dexId?: string
+  /** Venue labels from the source, e.g. ['CLMM'] or ['DLMM']. */
+  readonly dexLabels?: readonly string[]
   readonly observedAt: number
 
   readonly priceUsd: number

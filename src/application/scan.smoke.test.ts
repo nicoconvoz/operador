@@ -28,7 +28,7 @@ describe.skipIf(!SMOKE)('scan — live smoke on Solana', () => {
         ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 10, minScore: 0 },
         referenceUsd: 100,
         spreadPct: 0.5,
-        maxTokens: 25,
+        maxTokens: 60,
       },
     )
 
@@ -38,7 +38,7 @@ describe.skipIf(!SMOKE)('scan — live smoke on Solana', () => {
     console.log(JSON.stringify({
       scanned: out.snapshots.length,
       candidates: out.candidates.map((c) => ({
-        symbol: c.snapshot.symbol, score: +c.opportunity.score.toFixed(1),
+        symbol: c.snapshot.symbol, dex: c.snapshot.dexId, score: +c.opportunity.score.toFixed(1),
         liq: Math.round(c.snapshot.liquidityUsd), slip: +c.marketQuality.slippagePct.toFixed(3),
         honeypot: c.snapshot.security.honeypot, lpLocked: c.snapshot.security.lpLockedPct, top10: c.snapshot.security.topHoldersPct,
       })),
@@ -48,5 +48,5 @@ describe.skipIf(!SMOKE)('scan — live smoke on Solana', () => {
     }, null, 1))
 
     expect(out.snapshots.length).toBeGreaterThan(0)
-  }, 120_000)
+  }, 300_000)
 })

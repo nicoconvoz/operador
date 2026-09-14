@@ -1,3 +1,4 @@
+import { lpModelOf } from './lp-model.js'
 import { hoursOld, type TokenSnapshot } from './snapshot.js'
 
 /**
@@ -79,9 +80,14 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
     failures.push(fail('transferTax', 'failed', `transfer tax ${s.transferTaxPct}% > ${policy.maxTransferTaxPct}%`))
   }
 
-  if (s.lpLockedPct === null) failures.push(fail('lpLocked', 'unknown', 'LP lock status unknown'))
-  else if (s.lpLockedPct < policy.minLpLockedPct) {
-    failures.push(fail('lpLocked', 'failed', `LP locked ${s.lpLockedPct}% < ${policy.minLpLockedPct}%`))
+  // An LP lock can only exist where LP tokens exist. On concentrated venues
+  // the gate is skipped — not passed — and the liquidity gate plus the death
+  // exit's monitoring carry the defense. See lp-model.ts.
+  if (lpModelOf(snapshot.dexId, snapshot.dexLabels) === 'lp-token') {
+    if (s.lpLockedPct === null) failures.push(fail('lpLocked', 'unknown', 'LP lock status unknown'))
+    else if (s.lpLockedPct < policy.minLpLockedPct) {
+      failures.push(fail('lpLocked', 'failed', `LP locked ${s.lpLockedPct}% < ${policy.minLpLockedPct}%`))
+    }
   }
 
   if (s.topHoldersPct === null) failures.push(fail('topHolders', 'unknown', 'holder concentration unknown'))

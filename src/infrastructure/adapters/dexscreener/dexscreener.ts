@@ -19,6 +19,7 @@ export interface DexPair {
   readonly chainId: string
   readonly dexId: string
   readonly pairAddress: string
+  readonly labels?: readonly string[] | null
   readonly baseToken: { readonly address: string; readonly name: string; readonly symbol: string }
   readonly quoteToken: { readonly address: string | null; readonly symbol: string | null }
   readonly priceUsd: string | null
@@ -104,6 +105,7 @@ export class DexScreener {
       symbol: pair.baseToken.symbol,
       pairAddress: pair.pairAddress,
       dexId: pair.dexId,
+      dexLabels: pair.labels ?? [],
       observedAt: this.now(),
       priceUsd: Number(pair.priceUsd),
       liquidityUsd: pair.liquidity?.usd ?? 0,

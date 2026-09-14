@@ -126,6 +126,14 @@ describe('gates — fail closed on unknown critical facts', () => {
     ])
   })
 
+  it('the LP lock gate is skipped, not passed, on concentrated venues', () => {
+    // No LP token exists on Orca / CLMM / DLMM, so "unknown lock" is not a failure there…
+    expect(failedGates(clean({ dexId: 'orca' }, { lpLockedPct: null }))).toEqual([])
+    expect(failedGates(clean({ dexId: 'raydium', dexLabels: ['CLMM'] }, { lpLockedPct: null }))).toEqual([])
+    // …while on a classic pool it still fails closed.
+    expect(failedGates(clean({ dexId: 'raydium' }, { lpLockedPct: null }))).toEqual(['lpLocked:unknown'])
+  })
+
   it('unknown pair age fails closed', () => {
     expect(failedGates(clean({ pairCreatedAt: null }))).toEqual(['age:unknown'])
   })

@@ -34,6 +34,7 @@ describe('DexScreener adapter — mapping', () => {
       symbol: 'Bonk',
       pairAddress: '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9',
       dexId: 'orca',
+      dexLabels: [],
       observedAt: NOW,
       priceUsd: 0.000002723,
       liquidityUsd: 273239.21,

@@ -56,6 +56,30 @@ export class JupiterTokens implements DecimalsPort {
     return match
   }
 
+  /**
+   * A Solana universe: the tokens Jupiter ranks as trending, most traded and
+   * most organically active over 24h. Confirmed live (Sept 2026): each list
+   * returns up to `limit` tokens with liquidity, holders, stats and audit —
+   * and unlike DexScreener's boosts, most of them have real liquidity.
+   */
+  async discover(limit = 50): Promise<string[]> {
+    const lists = ['toptrending/24h', 'toptraded/24h', 'toporganicscore/24h']
+    const seen = new Set<string>()
+    for (const list of lists) {
+      const response = await this.http(`${this.base}/tokens/v2/${list}?limit=${limit}`)
+      if (response.status !== 200) continue
+      const body = (await response.json()) as unknown
+      if (!Array.isArray(body)) continue
+      for (const token of body as JupiterTokenInfo[]) {
+        if (typeof token.id === 'string') {
+          seen.add(token.id)
+          this.cache.set(token.id, token) // free metadata for the security pass
+        }
+      }
+    }
+    return [...seen]
+  }
+
   async decimals(chain: Chain, address: string): Promise<number | null> {
     if (chain !== 'solana') return null
     const info = await this.info(address)
