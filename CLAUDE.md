@@ -219,6 +219,38 @@ Evaluated continuously for every open position, independent of price.
 5. **Every death exit is logged with its full evidence chain** — which signal,
    which source, which observations. These become test fixtures.
 
+## The capital floor — measured, not guessed
+
+First run of `capital-floor.test.ts` over a recorded Solana market
+(3 tokens with enough 1H history, ~41 days, gas $0.05/swap, 1% fill budget):
+
+| Token | $1 | $50 | $200 | $1,000 | $5,000 | $20,000 |
+|---|---|---|---|---|---|---|
+| DREGG | — | — | — | +$1,044 | +$5,534 | +$5,534 |
+| TROLL | — | — | +$53 | +$34 | +$34 | +$34 |
+| Leafy | — | — | +$159 | +$159 | +$159 | +$159 |
+
+Four findings, in order of how much they change the plan:
+
+1. **Below ~$200 the system does not trade at all.** Not "loses money" —
+   places zero orders. The pool-sized ladder has its own minimum, and under it
+   the broker rejects every entry for want of funds. The $1 experiment is not
+   unprofitable; it is mechanically impossible.
+2. **Above the pool's capacity, more capital does nothing.** Leafy returns the
+   same $159 at $200 and at $20,000, because the ladder is capped by depth, not
+   by the wallet. Return per dollar therefore FALLS as capital grows —
+   80% at $200, 0.8% at $20,000. **Scale comes from more tokens, not more size
+   per token.** This is the scanner's real justification.
+3. **The chain's cut varies enormously**: 10% of gross on DREGG, 72% on TROLL.
+   Cost share is a per-token property, and it belongs in the ranking.
+4. **Most small caps lack the history the strategy needs.** Two of five
+   candidates had 38 and 105 bars; EMA-200 cannot exist there. A minimum-history
+   gate belongs in the scanner.
+
+**These numbers are not a forecast.** The tokens are today's trending list, over
+a window in which they trended — survivorship pointing the same way as the
+result. The floor and the scaling shape are the findings; the returns are not.
+
 ## Economics — the hard floor
 
 Every on-chain order pays: **gas + DEX swap fee + slippage**. On small caps the
