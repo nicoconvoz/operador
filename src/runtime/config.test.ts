@@ -61,3 +61,18 @@ describe('describeConfig — safe to log', () => {
     expect(JSON.stringify(described)).not.toContain('supersecret')
   })
 })
+
+describe('loadConfig — bar size', () => {
+  it('defaults to 1H, the only size validated against the backtest', () => {
+    expect(loadConfig(valid).barSize).toEqual({ timeframe: 'hour' })
+  })
+
+  it('accepts 15m as minute bars aggregated by 15', () => {
+    expect(loadConfig({ ...valid, OPERADOR_TIMEFRAME: '15m' }).barSize).toEqual({ timeframe: 'minute', aggregate: 15 })
+  })
+
+  it('rejects a timeframe nobody has measured', () => {
+    expect(() => loadConfig({ ...valid, OPERADOR_TIMEFRAME: '5m' })).toThrow(/1h/)
+    expect(() => loadConfig({ ...valid, OPERADOR_TIMEFRAME: '4h' })).toThrow(ConfigError)
+  })
+})

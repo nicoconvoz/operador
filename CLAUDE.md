@@ -423,6 +423,46 @@ Deriving that floor from the simulator is an explicit project deliverable.
 7. **Bar-close semantics are sacred.** Signals evaluate on **closed** bars only.
 8. **Position isolation.** One token dying must not affect any other position.
 
+## Bar size, and what changes with it
+
+`OPERADOR_TIMEFRAME=1h|15m`. **Only 1H is validated against the TradingView
+backtest.** 15m is a new configuration, and three things move with it:
+
+- **Every indicator length means something different.** EMA-200 is 200 hours at
+  1H and 50 hours at 15m. `confirm_bars = 20` is 20 hours, then 5. The numbers
+  in `DCA.pine` were tuned on 1H; at 15m they are the same numbers measuring a
+  different market.
+- **History gets shorter.** One page is 1000 bars: ~41 days at 1H, ~10.4 at
+  15m. The 250-bar gate is 10 days of history at 1H and 2.6 at 15m, so it
+  admits much younger pools.
+- **Gas multiplies.** Four times the bars is roughly four times the cycles, and
+  gas is charged per swap regardless of size.
+
+None of that makes 15m wrong. It makes it **unmeasured**, and the way to
+measure it is a paper run, not an opinion.
+
+## The gas floor is derived, not guessed
+
+`gasFloorUsd(gasUsdPerSwap, maxGasSharePct)` replaces a hardcoded $20. A fixed
+floor is a guess that stops being true the moment gas moves: $20 is generous on
+Solana at $0.01 a swap and reckless on a congested chain at $0.20.
+
+| Gas per swap | Floor at 1% tolerance |
+|---|---|
+| $0.01 | $1 |
+| $0.05 | **$5** (the default) |
+| $0.20 | $20 |
+
+This is what makes a **$15 ladder** viable: `max_usd_cap = 15` produces a FLAT
+ladder — `min(1000 × (1 + 1.2n), 15)` is $15 at every level — totalling $150
+over ten fills, where gas is 0.33% of each. The old $20 floor refused it
+outright; the derived floor accepts it on Solana and still refuses it if gas
+climbs to $0.20, which is the right answer in both cases.
+
+A consequence worth stating: a thin pool is no longer REFUSED, it is SHRUNK.
+The budgets, not the floor, are what bound the risk — a $14 fill on a $3.8k
+pool costs the same 1% as a $750 fill on a deep one.
+
 ## Paper mode is the whole system, minus the spending
 
 Everything that DECIDES is real: discovery, gates, the honeypot sell quote,

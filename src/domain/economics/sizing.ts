@@ -35,10 +35,26 @@ export interface SizingPolicy {
   readonly minFillUsd: number
 }
 
+/**
+ * The smallest fill worth placing, DERIVED from what gas costs rather than
+ * picked by feel.
+ *
+ * A fixed floor is a guess that stops being true the moment gas moves: $20 is
+ * generous on Solana at $0.01 a swap and reckless on a congested chain at
+ * $0.20. The honest floor is whatever size keeps gas under the share of it you
+ * are willing to lose.
+ *
+ * @param maxGasSharePct how much of a fill gas may eat, in percent.
+ */
+export const gasFloorUsd = (gasUsdPerSwap: number, maxGasSharePct = 1): number =>
+  maxGasSharePct > 0 ? (gasUsdPerSwap * 100) / maxGasSharePct : Infinity
+
 export const DEFAULT_SIZING_POLICY: SizingPolicy = {
   maxFillCostPct: 1.0,
   maxExitCostPct: 3.0,
-  minFillUsd: 20,
+  // Solana priority fees sit near $0.05, and a fill where gas is 1% is the
+  // smallest one worth making. Recompute this whenever gas changes.
+  minFillUsd: gasFloorUsd(0.05, 1),
 }
 
 export type SizingLimit = 'none' | 'fillCost' | 'exitCost' | 'capital'

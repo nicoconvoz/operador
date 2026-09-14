@@ -5,7 +5,7 @@ import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
-import { GeckoTerminal } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { GeckoTerminal, ONE_HOUR } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
@@ -52,7 +52,7 @@ describe.skipIf(!SMOKE)('collect — live Solana dataset', () => {
     for (const candidate of scan.candidates) {
       try {
         // One page is 1000 bars (~41 days of 1H) — enough, and one request.
-        const candles = await gecko.candles('solana', candidate.snapshot.pairAddress, 'hour', 1000)
+        const candles = await gecko.candles('solana', candidate.snapshot.pairAddress, ONE_HOUR, 1000)
         console.log(`  ${candidate.snapshot.symbol}: ${candles.time.length} bars`)
         tokens.push({ snapshot: candidate.snapshot, quality: candidate.marketQuality, opportunity: candidate.opportunity, candles })
       } catch (error) {

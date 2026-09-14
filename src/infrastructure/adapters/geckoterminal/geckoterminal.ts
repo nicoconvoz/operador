@@ -24,6 +24,25 @@ const NETWORK: Record<Chain, string> = { solana: 'solana', bsc: 'bsc' }
 
 export type Timeframe = 'minute' | 'hour' | 'day'
 
+/**
+ * A bar size, as GeckoTerminal expresses it: a base timeframe plus how many of
+ * them to aggregate. 15-minute bars are `minute` aggregated by 15.
+ *
+ * Confirmed live: one page of 1000 bars reaches ~10.4 days at 15m, against ~41
+ * days at 1H. Shorter bars buy resolution and spend history, and the strategy
+ * needs 250 bars before its indicators exist at all.
+ */
+export interface BarSize {
+  readonly timeframe: Timeframe
+  readonly aggregate?: number
+}
+
+export const ONE_HOUR: BarSize = { timeframe: 'hour' }
+export const FIFTEEN_MINUTES: BarSize = { timeframe: 'minute', aggregate: 15 }
+
+export const barSizeMs = (size: BarSize): number =>
+  ({ minute: 60_000, hour: 3_600_000, day: 86_400_000 })[size.timeframe] * (size.aggregate ?? 1)
+
 interface OhlcvResponse {
   readonly data?: { readonly attributes?: { readonly ohlcv_list?: readonly (readonly number[])[] } }
 }
@@ -63,10 +82,11 @@ export class GeckoTerminal {
    *
    * @param beforeSeconds page further back: returns candles before this time.
    */
-  async candles(chain: Chain, poolAddress: string, timeframe: Timeframe = 'hour', limit = 1000, beforeSeconds?: number): Promise<Candles> {
+  async candles(chain: Chain, poolAddress: string, size: BarSize = ONE_HOUR, limit = 1000, beforeSeconds?: number): Promise<Candles> {
     const query = new URLSearchParams({ limit: String(limit) })
+    if (size.aggregate !== undefined) query.set('aggregate', String(size.aggregate))
     if (beforeSeconds !== undefined) query.set('before_timestamp', String(beforeSeconds))
-    const url = `${this.base}/networks/${NETWORK[chain]}/pools/${poolAddress}/ohlcv/${timeframe}?${query}`
+    const url = `${this.base}/networks/${NETWORK[chain]}/pools/${poolAddress}/ohlcv/${size.timeframe}?${query}`
 
     const body = (await this.getWithBackoff(url)) as OhlcvResponse
     const rows = body.data?.attributes?.ohlcv_list ?? []
@@ -144,9 +164,9 @@ export class GeckoTerminal {
    * bars — not the exact depth of history, so one request answers it and the
    * result doubles as the candles the executor will run on.
    */
-  async historyBars(chain: Chain, poolAddress: string): Promise<number | null> {
+  async historyBars(chain: Chain, poolAddress: string, size: BarSize = ONE_HOUR): Promise<number | null> {
     try {
-      return (await this.candles(chain, poolAddress, 'hour', 1000)).time.length
+      return (await this.candles(chain, poolAddress, size, 1000)).time.length
     } catch {
       return null
     }
@@ -170,11 +190,11 @@ export class GeckoTerminal {
    * Candles going back at least `wanted` bars, paging as needed.
    * The strategy's EMA-200 needs history; one page is often not enough.
    */
-  async history(chain: Chain, poolAddress: string, wanted: number, timeframe: Timeframe = 'hour'): Promise<Candles> {
-    let all = await this.candles(chain, poolAddress, timeframe, 1000)
+  async history(chain: Chain, poolAddress: string, wanted: number, size: BarSize = ONE_HOUR): Promise<Candles> {
+    let all = await this.candles(chain, poolAddress, size, 1000)
     while (all.time.length < wanted && all.time.length > 0) {
       const oldestSeconds = Math.floor(all.time[0]! / 1000)
-      const older = await this.candles(chain, poolAddress, timeframe, 1000, oldestSeconds)
+      const older = await this.candles(chain, poolAddress, size, 1000, oldestSeconds)
       if (older.time.length === 0) break
       all = {
         time: [...older.time, ...all.time],

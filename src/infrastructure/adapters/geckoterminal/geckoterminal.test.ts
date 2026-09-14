@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GeckoTerminal, GECKOTERMINAL_BASE } from './geckoterminal.js'
+import { GeckoTerminal, GECKOTERMINAL_BASE, FIFTEEN_MINUTES, ONE_HOUR, barSizeMs } from './geckoterminal.js'
 import { stubHttp } from '../../http.js'
 
 const POOL = '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9'
@@ -34,7 +34,7 @@ describe('GeckoTerminal — candles', () => {
     const http = stubHttp({ [url]: { body: live } })
     let waits = 0
     const gt = new GeckoTerminal(http, { wait: async () => { waits++ } })
-    await gt.candles('solana', POOL, 'hour', 500, 1789340400)
+    await gt.candles('solana', POOL, ONE_HOUR, 500, 1789340400)
     expect(http.calls[0]).toContain('limit=500')
     expect(http.calls[0]).toContain('before_timestamp=1789340400')
     expect(waits).toBe(1)
@@ -141,5 +141,30 @@ describe('GeckoTerminal — a universe that works on any chain', () => {
     const solUrl = `${GECKOTERMINAL_BASE}/networks/solana`
     const gt = new GeckoTerminal(stubHttp({ [solUrl]: { body: pools([['Mint1', 'PoolX']]) } }))
     expect(await gt.discoverPools('solana', 1)).toEqual([{ tokenAddress: 'Mint1', poolAddress: 'PoolX' }])
+  })
+})
+
+describe('GeckoTerminal — bar sizes', () => {
+  const url15 = `${GECKOTERMINAL_BASE}/networks/solana/pools/${POOL}/ohlcv/minute`
+
+  it('sends the aggregate for 15-minute bars', async () => {
+    const http = stubHttp({ [url15]: { body: live } })
+    await new GeckoTerminal(http).candles('solana', POOL, FIFTEEN_MINUTES)
+    expect(http.calls[0]).toContain('/ohlcv/minute?')
+    expect(http.calls[0]).toContain('aggregate=15')
+  })
+
+  it('sends no aggregate for hourly bars', async () => {
+    const http = stubHttp({ [url]: { body: live } })
+    await new GeckoTerminal(http).candles('solana', POOL, ONE_HOUR)
+    expect(http.calls[0]).toContain('/ohlcv/hour?')
+    expect(http.calls[0]).not.toContain('aggregate')
+  })
+
+  it('knows how long a bar is — 250 bars is 10 days at 1H and 2.6 at 15m', () => {
+    expect(barSizeMs(ONE_HOUR)).toBe(3_600_000)
+    expect(barSizeMs(FIFTEEN_MINUTES)).toBe(900_000)
+    expect((250 * barSizeMs(ONE_HOUR)) / 86_400_000).toBeCloseTo(10.4, 1)
+    expect((250 * barSizeMs(FIFTEEN_MINUTES)) / 86_400_000).toBeCloseTo(2.6, 1)
   })
 })

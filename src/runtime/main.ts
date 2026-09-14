@@ -106,7 +106,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     probe: async () => 'unknown',
     candlesFor: async (position) => {
       try {
-        return await gecko.candles(config.chain, position.pairAddress, 'hour', 1000)
+        return await gecko.candles(config.chain, position.pairAddress, config.barSize, 1000)
       } catch {
         return null
       }

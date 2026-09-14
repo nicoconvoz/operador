@@ -67,8 +67,8 @@ describe('scaledParams — the ladder keeps its shape, loses its scale', () => {
 
 describe('paperRun — a token the pool cannot carry', () => {
   it('refuses before placing a single order, with the reason', () => {
-    // 8% impact on $100 → $2.5k of depth.
-    const run = paperRun(snapshot, quality({ slippagePct: 8 }), sawtooth(400), config)
+    // 50% impact on $100 → $400 of depth: a 1% fill is worth less than gas.
+    const run = paperRun(snapshot, quality({ slippagePct: 50 }), sawtooth(400), config)
     expect(run.tradeable).toBe(false)
     expect(run.reason).toMatch(/floor/)
     expect(run.broker).toBeNull()

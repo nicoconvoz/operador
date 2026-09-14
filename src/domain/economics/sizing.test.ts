@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SIZING_POLICY as P, effectiveDepth, sizeLadder } from './sizing.js'
+import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder } from './sizing.js'
 import { DEFAULT_PARAMS } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -78,23 +78,67 @@ describe('sizeLadder — tokens the executor refuses', () => {
     expect(sized.reason).toMatch(/spread/)
   })
 
-  it('refuses a pool too thin to take even one minimum fill', () => {
-    // 5.2% on $100 → $3,846 of depth → 0.75% budget allows $14, under the floor.
+  it('a thin pool is not refused — it is shrunk to what it can carry', () => {
+    // HEV: 5.2% on $100 → $3,846 of real depth. The budgets, not the floor,
+    // are what protect the position: a $14 fill on this pool costs the same
+    // 1% as a $750 fill on a deep one. Refusing would be a different rule
+    // from the one the budgets already enforce.
     const sized = sizeLadder(DEFAULT_PARAMS, quality({ liquidityUsd: 186_000, slippagePct: 5.2 }))
-    expect(sized.tradeable).toBe(false)
-    expect(sized.reason).toMatch(/floor/)
-    expect(sized.levels).toEqual([])
+    expect(sized.tradeable).toBe(true)
+    expect(sized.totalUsd).toBeLessThan(100) // against a $41,200 nominal ladder
+    for (const level of sized.levels) expect(level.fillCostPct).toBeLessThanOrEqual(P.maxFillCostPct + 1e-9)
+    expect(sized.exitCostPct).toBeLessThanOrEqual(P.maxExitCostPct + 1e-9)
   })
 
-  it('refuses regardless of how good the reported liquidity looks', () => {
-    // The scanner would call this a $5M pool. The quote says otherwise.
+  it('reported liquidity never rescues a pool the quote says is thin', () => {
+    // The scanner would call this a $5M pool. The quote says $2,500.
     const sized = sizeLadder(DEFAULT_PARAMS, quality({ liquidityUsd: 5_000_000, slippagePct: 8 }))
+    expect(sized.effectiveDepthUsd).toBeLessThan(3_000)
+    expect(sized.totalUsd).toBeLessThan(50)
+  })
+
+  it('and IS refused once the budget cannot even clear the gas floor', () => {
+    // 50% impact on $100 → $400 of depth → a 0.75% fill is $1.50.
+    const sized = sizeLadder(DEFAULT_PARAMS, quality({ slippagePct: 50 }))
     expect(sized.tradeable).toBe(false)
+    expect(sized.reason).toMatch(/floor/)
   })
 
   it('still reports the nominal ladder when refusing, for the audit log', () => {
     const sized = sizeLadder(DEFAULT_PARAMS, quality({ spreadPct: 2 }))
     expect(sized.nominalTotalUsd).toBe(41_200)
     expect(sized.depthSource).toBe('measured')
+  })
+})
+
+describe('gasFloorUsd — the floor is derived, not guessed', () => {
+  it('is the size at which gas costs exactly the share you will tolerate', () => {
+    expect(gasFloorUsd(0.05, 1)).toBeCloseTo(5, 9)     // $0.05 is 1% of $5
+    expect(gasFloorUsd(0.05, 0.5)).toBeCloseTo(10, 9)
+    expect(gasFloorUsd(0.20, 1)).toBeCloseTo(20, 9)    // congested chain, higher floor
+    expect(gasFloorUsd(0.01, 1)).toBeCloseTo(1, 9)     // cheap chain, lower floor
+  })
+
+  it('moves with gas, which a fixed number cannot', () => {
+    // The same tolerance on a chain 20x more expensive demands 20x the size.
+    expect(gasFloorUsd(0.20, 1) / gasFloorUsd(0.01, 1)).toBeCloseTo(20, 9)
+  })
+
+  it('a zero tolerance admits no fill at all', () => {
+    expect(gasFloorUsd(0.05, 0)).toBe(Infinity)
+  })
+
+  it('a $15 ladder clears the derived floor at Solana gas', () => {
+    const capped = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+    const policy = { ...P, minFillUsd: gasFloorUsd(0.05, 1) }
+    const sized = sizeLadder(capped, quality(), policy, 200)
+    expect(sized.tradeable).toBe(true)
+    expect(sized.levels.every((l) => l.sizedUsd === 15)).toBe(true)
+  })
+
+  it('…and is refused at congested gas, which is the right answer', () => {
+    const capped = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+    const policy = { ...P, minFillUsd: gasFloorUsd(0.20, 1) }
+    expect(sizeLadder(capped, quality(), policy, 200).tradeable).toBe(false)
   })
 })

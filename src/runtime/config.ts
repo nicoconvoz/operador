@@ -1,3 +1,5 @@
+import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+
 /**
  * Runtime configuration, read from the environment.
  *
@@ -25,6 +27,13 @@ export interface RuntimeConfig {
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
+
+  /**
+   * Bar size the strategy runs on. 1H is the ONLY size validated against the
+   * TradingView backtest; anything else is a new configuration whose numbers
+   * nobody has checked.
+   */
+  readonly barSize: BarSize
 }
 
 export class ConfigError extends Error {
@@ -57,6 +66,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
   const chain = env.OPERADOR_CHAIN?.trim() ?? 'solana'
   if (chain !== 'solana' && chain !== 'bsc') throw new ConfigError(`OPERADOR_CHAIN must be "solana" or "bsc", got "${chain}"`)
 
+  const timeframe = env.OPERADOR_TIMEFRAME?.trim() ?? '1h'
+  if (timeframe !== '1h' && timeframe !== '15m') throw new ConfigError(`OPERADOR_TIMEFRAME must be "1h" or "15m", got "${timeframe}"`)
+
   const config: RuntimeConfig = {
     mode,
     chain,
@@ -71,6 +83,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',
+    barSize: timeframe === '15m' ? FIFTEEN_MINUTES : ONE_HOUR,
   }
 
   // Live mode is not a flag you drift into. Nothing in this repo can place a

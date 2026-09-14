@@ -99,15 +99,15 @@ describe('planPortfolio — capital below the floor', () => {
 
 describe('planPortfolio — the executor still validates', () => {
   it('refuses a top-ranked token whose pool cannot carry a ladder', () => {
-    // HEV in the live scan: 5.2% impact on $100 → $3.8k of real depth.
-    const thin = candidate('hev', 99, quality({ liquidityUsd: 186_000, slippagePct: 5.2 }))
+    // A pool so thin that a 1% fill is worth less than its own gas.
+    const thin = candidate('hev', 99, quality({ liquidityUsd: 186_000, slippagePct: 50 }))
     const plan = planPortfolio([thin, ...five], DEFAULT_PARAMS, P)
     expect(plan.allocations.map((a) => a.snapshot.address)).not.toContain('hev')
     expect(plan.skipped.find((s) => s.snapshot.address === 'hev')?.reason).toBe('pool-refused')
   })
 
   it('a refused token frees its slot for the next candidate', () => {
-    const thin = candidate('hev', 99, quality({ liquidityUsd: 186_000, slippagePct: 5.2 }))
+    const thin = candidate('hev', 99, quality({ liquidityUsd: 186_000, slippagePct: 50 }))
     const plan = planPortfolio([thin, ...five], DEFAULT_PARAMS, P)
     expect(plan.allocations).toHaveLength(4)
     expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['a', 'b', 'c', 'd'])

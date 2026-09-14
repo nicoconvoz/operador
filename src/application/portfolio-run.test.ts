@@ -96,7 +96,7 @@ describe('portfolioRun — isolation', () => {
   })
 
   it('a pool-refused token costs its slot, not the portfolio', () => {
-    const thin = candidate('hev', 99, quality({ liquidityUsd: 186_000, slippagePct: 5.2 }))
+    const thin = candidate('hev', 99, quality({ liquidityUsd: 186_000, slippagePct: 50 }))
     const run = portfolioRun([thin, ...four], candlesFor, config)
     expect(run.plan.skipped.find((s) => s.snapshot.address === 'hev')?.reason).toBe('pool-refused')
     expect(run.summary.positions).toBeGreaterThan(0)
