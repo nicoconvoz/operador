@@ -41,7 +41,7 @@ describe.skipIf(!SMOKE)('collect — live Solana dataset', () => {
         ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 6, minScore: 0 },
         referenceUsd: 100,
         spreadPct: 0.3,
-        maxTokens: 60,
+        maxTokens: 300,
       },
     )
     console.log(`scanned ${scan.snapshots.length}, candidates: ${scan.candidates.map((c) => c.snapshot.symbol).join(', ')}`)

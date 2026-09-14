@@ -118,6 +118,45 @@ const fail = (gate: GateName, reason: GateFailure['reason'], detail: string): Ga
 /** "usdc", " USDC ", "$USDC" and "USDC." all mean USDC to a victim. */
 const normaliseSymbol = (symbol: string): string => symbol.toUpperCase().replace(/[^A-Z0-9]/g, '')
 
+/**
+ * The gates that need NO extra network call — everything decidable from the
+ * market snapshot alone.
+ *
+ * Separated because the security gates cost one throttled request per token,
+ * and the universe is larger than that budget. Deciding what is free before
+ * paying for what is not lets the scanner cover every token it can see
+ * instead of the first N it happens to reach.
+ *
+ * This is an optimisation of ORDER, not of strictness: a token that passes
+ * here still faces the full gate set, security included.
+ */
+export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
+  const failures: GateFailure[] = []
+
+  if (policy.denylist.includes(snapshot.address)) {
+    failures.push(fail('denylist', 'failed', `${snapshot.symbol} is money, not a trade`))
+  }
+  const canonical = policy.canonicalSymbols[normaliseSymbol(snapshot.symbol)]
+  if (canonical !== undefined && canonical !== snapshot.address) {
+    failures.push(fail('impersonation', 'failed', `"${snapshot.symbol}" at ${snapshot.address} is not the canonical mint`))
+  }
+  if (policy.maxFdvUsd !== null && snapshot.fdvUsd !== null && snapshot.fdvUsd > policy.maxFdvUsd) {
+    failures.push(fail('marketCap', 'failed', `FDV $${Math.round(snapshot.fdvUsd).toLocaleString()} > $${policy.maxFdvUsd.toLocaleString()} — not a small cap`))
+  }
+  if (snapshot.liquidityUsd < policy.minLiquidityUsd) {
+    failures.push(fail('liquidity', 'failed', `liquidity $${snapshot.liquidityUsd.toFixed(0)} < $${policy.minLiquidityUsd}`))
+  }
+  const age = hoursOld(snapshot)
+  if (age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
+  else if (age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+
+  if (snapshot.volumeUsd.h24 < policy.minVolume24hUsd) {
+    failures.push(fail('volume', 'failed', `24h volume $${snapshot.volumeUsd.h24.toFixed(0)} < $${policy.minVolume24hUsd}`))
+  }
+
+  return { passed: failures.length === 0, failures }
+}
+
 export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
   const s = snapshot.security
   const failures: GateFailure[] = []

@@ -1,5 +1,6 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
+import { evaluateMarketGates } from '../domain/scanner/gates.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { mergeSecurity } from '../domain/scanner/security-merge.js'
 import { lpLockFromVenue } from '../infrastructure/adapters/solana/lp-heuristics.js'
@@ -41,8 +42,14 @@ export interface ScanConfig {
   readonly referenceUsd: number
   /** Venue round-trip cost at negligible size — AMM fee, in percent. */
   readonly spreadPct: number
-  /** Cap on tokens examined per scan, to respect rate limits. */
+  /** Cap on tokens whose MARKET data is fetched. Cheap: 30 per request. */
   readonly maxTokens: number
+  /**
+   * Cap on tokens given the expensive treatment — one throttled security call
+   * and one sell quote each. Omitted means every token that cleared the free
+   * gates, which is the honest default now that those gates run first.
+   */
+  readonly maxSecurityChecks?: number
 }
 
 export interface ScanError {
@@ -102,11 +109,23 @@ export async function scanOnce(
     }
   }
 
-  // ── 3. Security + sell probe, one token at a time (rate limits) ────────────
+  // ── 3. Free gates before paid ones ─────────────────────────────────────────
+  // Security costs one throttled request per token and the universe is larger
+  // than that budget, so what can be decided from the market snapshot alone is
+  // decided first. A token rejected here was rejected on the same rules it
+  // would have faced anyway — this reorders the work, it does not soften it.
   const snapshots: TokenSnapshot[] = []
   const quality = new Map<string, MarketQuality>()
+  const affordable: typeof markets = []
 
   for (const market of markets) {
+    const provisional: TokenSnapshot = { ...market, security: UNKNOWN_SECURITY, historyBars: null }
+    const cheap = evaluateMarketGates(provisional, config.ranking.gates)
+    if (cheap.passed) affordable.push(market)
+    else snapshots.push(provisional)
+  }
+
+  for (const market of affordable.slice(0, config.maxSecurityChecks ?? affordable.length)) {
     // Sources in trust order: GoPlus, then the metadata provider's audit,
     // then venue heuristics. Danger from any source wins; unknowns fill in.
     const opinions: Partial<SecurityReport>[] = []

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_GATE_POLICY as P, evaluateGates } from './gates.js'
+import { DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
 const HOUR = 3_600_000
@@ -182,5 +182,37 @@ describe('gates — fail closed on unknown critical facts', () => {
 
   it('unknown verified-source and proxy are tolerated on Solana, where they do not apply', () => {
     expect(evaluateGates(clean({}, { verifiedSource: null, isProxy: null }), P).passed).toBe(true)
+  })
+})
+
+describe('evaluateMarketGates — free gates, run before the paid ones', () => {
+  it('decides everything it can without a security report', () => {
+    const noSecurity = clean({}, {
+      honeypot: null, mintAuthorityActive: null, freezeAuthorityActive: null,
+      hasBlacklist: null, transferTaxPct: null, lpLockedPct: null, topHoldersPct: null,
+    })
+    // The full gate set rejects this for unknown security…
+    expect(evaluateGates(noSecurity, P).passed).toBe(false)
+    // …while the free gates pass it through to be paid for.
+    expect(evaluateMarketGates(noSecurity, P).passed).toBe(true)
+  })
+
+  it('still rejects on liquidity, age, volume, FDV, denylist and impersonation', () => {
+    const failed = (s: TokenSnapshot) => evaluateMarketGates(s, P).failures.map((f) => f.gate)
+    expect(failed(clean({ liquidityUsd: 100 }))).toEqual(['liquidity'])
+    expect(failed(clean({ pairCreatedAt: NOW - HOUR }))).toEqual(['age'])
+    expect(failed(clean({ volumeUsd: { h1: 0, h6: 0, h24: 10 } }))).toEqual(['volume'])
+    expect(failed(clean({ fdvUsd: 900_000_000 }))).toEqual(['marketCap'])
+    expect(failed(clean({ address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC' }))).toEqual(['denylist'])
+    expect(failed(clean({ address: 'Fake', symbol: 'BONK' }))).toEqual(['impersonation'])
+  })
+
+  it('never passes something the full gates would reject on market grounds', () => {
+    // The reorder must not soften anything: any market failure appears in both.
+    for (const s of [clean({ liquidityUsd: 1 }), clean({ fdvUsd: 1e9 }), clean({ pairCreatedAt: NOW })]) {
+      const cheap = evaluateMarketGates(s, P).failures.map((f) => f.gate)
+      const full = evaluateGates(s, P).failures.map((f) => f.gate)
+      for (const gate of cheap) expect(full).toContain(gate)
+    }
   })
 })

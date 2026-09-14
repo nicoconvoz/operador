@@ -138,7 +138,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: config.maxPositions, minScore: 0 },
           referenceUsd: 100,
           spreadPct: 0.3,
-          maxTokens: 60,
+          // The whole visible universe: Jupiter's lists return ~220 unique
+          // tokens and the free gates cut that to what is worth paying for.
+          maxTokens: 300,
         },
       )
       await store.saveScan({ scannedAt: result.scannedAt, chain: config.chain, snapshots: result.snapshots })

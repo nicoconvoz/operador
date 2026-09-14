@@ -53,6 +53,24 @@ price signal looks.
 - `ranking.ts` — gates → score → sort → cut to watch slots; every candidate
   carries the `MarketQuality` the executor re-validates.
 
+### Universe coverage
+
+Jupiter's three lists return **~220 unique Solana tokens**, and they are not
+biased to the newest: measured live, **101 are older than 30 days and 78 older
+than 180**. The bias the scanner used to have was mine — a `maxTokens: 60` cap
+put there to respect GoPlus rate limits, which truncated the universe long
+before any gate had an opinion.
+
+Fixed by running **the free gates before the paid ones**
+(`evaluateMarketGates`): liquidity, age, volume, FDV, denylist and
+impersonation need no network call, so they decide first and only the
+survivors cost a throttled security request and a sell quote. The cap is now
+300, which is the whole visible universe.
+
+This reorders the work; it does not soften it. A token that clears the free
+gates still faces the full set, security included — and a test pins that any
+market failure appears in both.
+
 **The scanner produces a WATCHLIST, not entry signals.** It decides which
 tokens are worth running the strategy on; CASCADE DCA's own gates (drop
 from swing high, lateral zone) decide *when* to enter. One executor state
