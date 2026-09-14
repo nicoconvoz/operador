@@ -167,6 +167,15 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     scan: async () => {
       const candidates: Candidate[] = []
       for (const chain of config.chains) {
+        // The counters live on adapters SHARED by every chain, so they are
+        // cumulative. Reporting them raw labelled the second chain with the
+        // first one's total — a diagnostic that misleads is worse than none.
+        const before = { goplus: { ...goplus.rateLimit }, gecko: { ...gecko.rateLimit } }
+        const spentSince = () => {
+          const delta = (now: { hits: number; waitedMs: number }, then: { hits: number; waitedMs: number }) =>
+            JSON.stringify({ hits: now.hits - then.hits, waitedMs: now.waitedMs - then.waitedMs })
+          return `goplus=${delta(goplus.rateLimit, before.goplus)} gecko=${delta(gecko.rateLimit, before.gecko)}`
+        }
         try {
           const result = await scanOnce(
             {
@@ -204,9 +213,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           candidates.push(...result.candidates)
           // A scan three times slower in CI than on a laptop is either a rate
           // limit or a mystery. This is how it stops being a mystery.
-          console.log(
-            `[scan:limits] ${chain} goplus=${JSON.stringify(goplus.rateLimit)} gecko=${JSON.stringify(gecko.rateLimit)}`,
-          )
+          console.log(`[scan:limits] ${chain} ${spentSince()}`)
         } catch (error) {
           console.error(`[scan:${chain}]`, error)
         }
