@@ -30,15 +30,22 @@ import type { UniverseToken, UniverseView, TokenTier } from '../../src/applicati
  *    but not at the cost of somebody's vestibular system.
  */
 
-const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string; ring: number }> = {
-  held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', ring: 0.2 },
-  prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', ring: 0.42 },
-  eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', ring: 0.62 },
+/**
+ * `short` is a separate field, not the first word of `label`.
+ *
+ * Truncating at the space turned "SIN REVISAR" into "sin" and "EN POSICIÓN"
+ * into "en" — chips that read as nothing at all. A shorter name is a different
+ * name, not a prefix of the longer one.
+ */
+const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string; short: string; ring: number }> = {
+  held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', short: 'operando', ring: 0.2 },
+  prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', short: 'óptima', ring: 0.42 },
+  eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', short: 'elegible', ring: 0.62 },
   // Violet, between eligible and filtered: it is queued, not judged.
-  pending: { core: '#9d7cd8', halo: '157,124,216', label: 'SIN REVISAR', ring: 0.71 },
-  filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', ring: 0.8 },
-  unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'INSEGURA', ring: 0.93 },
-  dead: { core: '#3a2030', halo: '90,40,60', label: 'MUERTA', ring: 1.02 },
+  pending: { core: '#9d7cd8', halo: '157,124,216', label: 'SIN REVISAR', short: 'pendiente', ring: 0.71 },
+  filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', short: 'filtrada', ring: 0.8 },
+  unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'INSEGURA', short: 'insegura', ring: 0.93 },
+  dead: { core: '#3a2030', halo: '90,40,60', label: 'MUERTA', short: 'muerta', ring: 1.02 },
 }
 
 /** The score's own vocabulary, in the language the reader speaks. */
@@ -63,8 +70,31 @@ const BODY_CAP_COMPACT = 120
 
 const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 'unsafe', 'dead']
 
+/**
+ * Tiers drawn as ONE body per chain instead of one per token.
+ *
+ * A cycle turns up a hundred tokens nobody has examined and a few dozen that
+ * failed a safety gate. Drawing each of them spends the canvas — and a
+ * fingertip's worth of screen — on the two groups you will never act on, while
+ * the handful that matter get the same dot each.
+ *
+ * Collapsed, not hidden: the cluster carries its count, and tapping it filters
+ * to exactly those tokens so they expand again. Nothing becomes unreachable.
+ */
+const COLLAPSED_TIERS: readonly TokenTier[] = ['pending', 'unsafe']
+
+interface Cluster {
+  readonly tier: TokenTier
+  readonly chain: string
+  readonly count: number
+}
+
 interface Body {
-  readonly token: UniverseToken
+  /** null for a cluster — the count stands in for the tokens. */
+  readonly token: UniverseToken | null
+  readonly cluster: Cluster | null
+  /** Stable across refreshes, so the orbit is remembered. */
+  readonly key: string
   readonly orbit: number
   angle: number
   readonly speed: number
@@ -133,9 +163,14 @@ export function Universe({ view }: { view: UniverseView }) {
     return () => window.removeEventListener('resize', check)
   }, [])
 
+  const matches = (t: UniverseToken) =>
+    (chainFilter === 'all' || t.chain === chainFilter) && (tierFilter === 'all' || t.tier === tierFilter)
+
   const visible = useMemo(() => {
     const filtered = view.tokens.filter(
-      (t) => (chainFilter === 'all' || t.chain === chainFilter) && (tierFilter === 'all' || t.tier === tierFilter),
+      // Filtering TO a collapsed tier expands it: that is the whole point of
+      // the cluster being tappable.
+      (t) => matches(t) && !(COLLAPSED_TIERS.includes(t.tier) && tierFilter !== t.tier),
     )
     // Tokens arrive brightest-first, so a cap keeps what matters and drops the
     // noise a small screen could not render legibly anyway. The count of what
@@ -144,20 +179,33 @@ export function Universe({ view }: { view: UniverseView }) {
     return filtered.slice(0, compact ? BODY_CAP_COMPACT : BODY_CAP)
   }, [view.tokens, chainFilter, tierFilter, compact])
 
-  const matching = useMemo(
-    () =>
-      view.tokens.filter(
-        (t) => (chainFilter === 'all' || t.chain === chainFilter) && (tierFilter === 'all' || t.tier === tierFilter),
-      ).length,
-    [view.tokens, chainFilter, tierFilter],
-  )
-  const hidden = matching - visible.length
+  const clusters = useMemo<Cluster[]>(() => {
+    const counted = new Map<string, Cluster>()
+    for (const token of view.tokens) {
+      if (!COLLAPSED_TIERS.includes(token.tier) || tierFilter === token.tier) continue
+      if (!matches(token)) continue
+      const key = `${token.tier}:${token.chain}`
+      const held = counted.get(key)
+      counted.set(key, { tier: token.tier, chain: token.chain, count: (held?.count ?? 0) + 1 })
+    }
+    // Biggest first, so the ring reads left to right by weight.
+    return [...counted.values()].sort((a, b) => b.count - a.count)
+  }, [view.tokens, chainFilter, tierFilter])
+
+  const matching = useMemo(() => view.tokens.filter(matches).length, [view.tokens, chainFilter, tierFilter])
+  // What the CAP dropped. Clustered tokens are represented, not hidden.
+  const clustered = clusters.reduce((sum, c) => sum + c.count, 0)
+  const hidden = matching - visible.length - clustered
 
   // Resolved against the current view, so an open detail panel shows the
   // latest numbers rather than the ones that were on screen when it opened —
   // and closes by itself if the token leaves the universe.
   const selected = useMemo(() => view.tokens.find((t) => t.id === selectedId) ?? null, [view.tokens, selectedId])
   const hovered = useMemo(() => view.tokens.find((t) => t.id === hoveredId) ?? null, [view.tokens, hoveredId])
+  const hoveredCluster = useMemo(
+    () => (hoveredId?.startsWith('cluster:') ? clusters.find((c) => `cluster:${c.tier}:${c.chain}` === hoveredId) ?? null : null),
+    [clusters, hoveredId],
+  )
 
   const bodies = useMemo<Body[]>(() => {
     // Random angles clump: three tokens landing within a few degrees become
@@ -168,7 +216,7 @@ export function Universe({ view }: { view: UniverseView }) {
     for (const token of visible) perTier.set(token.tier, (perTier.get(token.tier) ?? 0) + 1)
     const seen = new Map<TokenTier, number>()
 
-    return visible.map((token) => {
+    const tokenBodies: Body[] = visible.map((token) => {
         const seed = hash(token.id)
         const style = TIER_STYLE[token.tier]
         const index = seen.get(token.tier) ?? 0
@@ -182,6 +230,8 @@ export function Universe({ view }: { view: UniverseView }) {
         const strength = token.tier === 'held' ? 1 : token.score / 100
         return {
           token,
+          cluster: null,
+          key: token.id,
           orbit: style.ring + (seed - 0.5) * 0.07,
           angle: anglesRef.current.get(token.id) ?? spread,
           // Lively tokens orbit faster; held ones barely drift, so they anchor.
@@ -194,7 +244,31 @@ export function Universe({ view }: { view: UniverseView }) {
           y: 0,
         }
     })
-  }, [visible, compact])
+
+    // One body per cluster, on its tier's ring, spaced apart. Sized by count
+    // on a log scale so "3 unsafe" and "300" are visibly different without the
+    // large one swallowing the screen.
+    const clusterBodies: Body[] = clusters.map((cluster, index) => {
+      const style = TIER_STYLE[cluster.tier]
+      const key = `cluster:${cluster.tier}:${cluster.chain}`
+      return {
+        token: null,
+        cluster,
+        key,
+        orbit: style.ring,
+        angle: anglesRef.current.get(key) ?? (index / Math.max(clusters.length, 1)) * Math.PI * 2 + 0.6,
+        speed: 0.03,
+        radius: (compact ? 9 : 12) + Math.log10(Math.max(cluster.count, 1)) * (compact ? 4 : 6),
+        phase: index,
+        ripples: 0,
+        strength: 0.3,
+        x: 0,
+        y: 0,
+      }
+    })
+
+    return [...tokenBodies, ...clusterBodies]
+  }, [visible, clusters, compact])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -259,16 +333,18 @@ export function Universe({ view }: { view: UniverseView }) {
           body.angle += body.speed * 0.004
           // Remembered so the next batch of data resumes the orbit instead of
           // restarting it.
-          angles.set(body.token.id, body.angle)
+          angles.set(body.key, body.angle)
         }
         const r = body.orbit * unit
         body.x = cx + Math.cos(body.angle) * r
         body.y = cy + Math.sin(body.angle) * r * 0.82 // slight tilt, so it reads as a disc
 
-        const { token } = body
-        const style = TIER_STYLE[token.tier]
-        const isSelected = selectedId === token.id
-        const isHovered = hoveredId === token.id
+        const { token, cluster } = body
+        const tier = token?.tier ?? cluster!.tier
+        const chain = token?.chain ?? cluster!.chain
+        const style = TIER_STYLE[tier]
+        const isSelected = selectedId === body.key
+        const isHovered = hoveredId === body.key
 
         // ── Ripples: how good the opportunity is, made visible ──────────────
         for (let i = 0; i < body.ripples; i++) {
@@ -281,10 +357,10 @@ export function Universe({ view }: { view: UniverseView }) {
         }
 
         // ── Glow: money is in it. One blit, no gradient. ────────────────────
-        if (token.tier === 'held') {
+        if (tier === 'held') {
           const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * 0.05 + body.phase)
           const reach = body.radius * (5 + pulse * 2.5)
-          const sprite = token.position?.deathStage === 'frozen' ? frozenGlow : glows.get('held')!
+          const sprite = token?.position?.deathStage === 'frozen' ? frozenGlow : glows.get('held')!
           ctx!.drawImage(sprite, body.x - reach, body.y - reach, reach * 2, reach * 2)
         }
 
@@ -297,10 +373,10 @@ export function Universe({ view }: { view: UniverseView }) {
         }
 
         // ── The body: round for Solana, diamond for BSC ─────────────────────
-        ctx!.globalAlpha = token.tier === 'dead' ? 0.5 : token.tier === 'filtered' ? 0.65 : 1
+        ctx!.globalAlpha = tier === 'dead' ? 0.5 : tier === 'filtered' ? 0.65 : 1
         ctx!.fillStyle = style.core
         ctx!.beginPath()
-        if (token.chain === 'bsc') {
+        if (chain === 'bsc') {
           const s = body.radius
           ctx!.moveTo(body.x, body.y - s)
           ctx!.lineTo(body.x + s, body.y)
@@ -313,13 +389,30 @@ export function Universe({ view }: { view: UniverseView }) {
         ctx!.fill()
         ctx!.globalAlpha = 1
 
+        // A cluster is ONLY useful with its number. A shape that stands for
+        // ninety tokens and says nothing is just a bigger dot.
+        if (cluster) {
+          ctx!.textAlign = 'center'
+          ctx!.fillStyle = style.core
+          ctx!.font = `${compact ? 13 : 15}px ui-monospace, monospace`
+          ctx!.fillText(String(cluster.count), body.x, body.y + body.radius + 16)
+          ctx!.fillStyle = 'rgba(200,200,210,0.7)'
+          ctx!.font = `${compact ? 9 : 10}px ui-monospace, monospace`
+          ctx!.fillText(
+            `${chain === 'bsc' ? 'BSC' : 'SOL'} ${style.short}`,
+            body.x,
+            body.y + body.radius + (compact ? 28 : 31),
+          )
+          continue
+        }
+
         // Labels only where they can be read. On a phone, only what is touched.
-        const labelled = isHovered || isSelected || token.tier === 'held' || (!compact && token.tier === 'prime')
+        const labelled = isHovered || isSelected || tier === 'held' || (!compact && tier === 'prime')
         if (labelled) {
           ctx!.fillStyle = 'rgba(230,230,230,0.85)'
           ctx!.font = `${compact ? 10 : 11}px ui-monospace, monospace`
           ctx!.textAlign = 'center'
-          ctx!.fillText(token.symbol.slice(0, 12), body.x, body.y + body.radius + 14)
+          ctx!.fillText(token!.symbol.slice(0, 12), body.x, body.y + body.radius + 14)
         }
       }
 
@@ -338,7 +431,7 @@ export function Universe({ view }: { view: UniverseView }) {
     }
   }, [bodies, selectedId, hoveredId, paused, compact])
 
-  const pickAt = (clientX: number, clientY: number, rect: DOMRect): UniverseToken | null => {
+  const pickAt = (clientX: number, clientY: number, rect: DOMRect): Body | null => {
     const x = clientX - rect.left
     const y = clientY - rect.top
     let best: { body: Body; distance: number } | null = null
@@ -348,7 +441,22 @@ export function Universe({ view }: { view: UniverseView }) {
       const reach = body.radius + (compact ? 22 : 10)
       if (distance < reach && (!best || distance < best.distance)) best = { body, distance }
     }
-    return best?.body.token ?? null
+    return best?.body ?? null
+  }
+
+  /**
+   * A tap on a cluster EXPANDS it — filters to exactly those tokens, which
+   * makes the collapse a summary rather than a wall. A tap on a token selects
+   * it as before.
+   */
+  const tap = (body: Body | null) => {
+    if (body?.cluster) {
+      setChainFilter(body.cluster.chain)
+      setTierFilter(body.cluster.tier)
+      setSelectedId(null)
+      return
+    }
+    setSelectedId(body?.token?.id ?? null)
   }
 
   return (
@@ -370,7 +478,7 @@ export function Universe({ view }: { view: UniverseView }) {
             onClick={() => setTierFilter(tierFilter === tier ? 'all' : tier)}
             color={TIER_STYLE[tier].core}
           >
-            {compact ? TIER_STYLE[tier].label.split(' ')[0]!.toLowerCase() : TIER_STYLE[tier].label.toLowerCase()} {view.counts[tier]}
+            {TIER_STYLE[tier].short} {view.counts[tier]}
           </Chip>
         ))}
         <span style={{ flex: 1 }} />
@@ -386,12 +494,12 @@ export function Universe({ view }: { view: UniverseView }) {
 
       <canvas
         ref={canvasRef}
-        onMouseMove={(e) => !compact && setHoveredId(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect())?.id ?? null)}
+        onMouseMove={(e) => !compact && setHoveredId(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect())?.key ?? null)}
         onMouseLeave={() => setHoveredId(null)}
-        onClick={(e) => setSelectedId(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect())?.id ?? null)}
+        onClick={(e) => tap(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect()))}
         onTouchStart={(e) => {
           const touch = e.touches[0]
-          if (touch) setSelectedId(pickAt(touch.clientX, touch.clientY, e.currentTarget.getBoundingClientRect())?.id ?? null)
+          if (touch) tap(pickAt(touch.clientX, touch.clientY, e.currentTarget.getBoundingClientRect()))
         }}
         style={{
           width: '100%',
@@ -409,6 +517,14 @@ export function Universe({ view }: { view: UniverseView }) {
 
       {selected && <Detail token={selected} compact={compact} onClose={() => setSelectedId(null)} />}
       {!selected && hovered && <Hint token={hovered} />}
+      {!selected && hoveredCluster && (
+        <div style={{ ...panel(10, compact), fontSize: 12 }}>
+          <b style={{ color: TIER_STYLE[hoveredCluster.tier].core }}>
+            {hoveredCluster.count} {TIER_STYLE[hoveredCluster.tier].short}
+          </b>{' '}
+          en {hoveredCluster.chain === 'bsc' ? 'BSC' : 'Solana'} · tocá para verlas
+        </div>
+      )}
     </div>
   )
 }

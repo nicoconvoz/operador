@@ -20,7 +20,8 @@ const SYMBOLS = ['DREGG', 'TROLL', 'LEAFY', 'SQUIRE', 'EMBER', 'HEV', 'CATE', 'S
 
 const make = (i: number): UniverseToken => {
   const r = (n: number) => ((Math.sin(i * 12.9898 + n * 78.233) * 43758.5453) % 1 + 1) % 1
-  const tier: TokenTier = i < 3 ? 'held' : i < 9 ? 'prime' : i < 17 ? 'eligible' : i < 24 ? 'filtered' : i < 28 ? 'unsafe' : 'dead'
+  const tier: TokenTier =
+    i < 3 ? 'held' : i < 9 ? 'prime' : i < 17 ? 'eligible' : i < 24 ? 'filtered' : i < 60 ? 'pending' : i < 76 ? 'unsafe' : 'dead'
   const chain = r(1) > 0.6 ? 'bsc' : 'solana'
   const liquidityUsd = 20_000 + r(2) ** 3 * 4_000_000
   return {
@@ -54,7 +55,7 @@ const make = (i: number): UniverseToken => {
   }
 }
 
-const tokens = Array.from({ length: 30 }, (_, i) => make(i))
+const tokens = Array.from({ length: 80 }, (_, i) => make(i))
 
 const view: UniverseView = {
   generatedAt: Date.now(),
