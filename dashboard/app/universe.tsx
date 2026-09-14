@@ -96,8 +96,19 @@ function makeGlowSprite(rgb: string, size: number): HTMLCanvasElement {
 
 export function Universe({ view }: { view: UniverseView }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [selected, setSelected] = useState<UniverseToken | null>(null)
-  const [hovered, setHovered] = useState<UniverseToken | null>(null)
+  // Selection is an ID, not the token object. The view is replaced wholesale
+  // every time fresh data arrives, and a selection holding the OLD object
+  // would either vanish or quietly keep showing stale numbers.
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  /**
+   * Where each body is on its orbit, kept across data refreshes.
+   *
+   * Without this every poll snaps the whole sky back to its starting angles —
+   * which reads as the screen flinching once a minute for no reason a viewer
+   * can connect to anything.
+   */
+  const anglesRef = useRef<Map<string, number>>(new Map())
   const [chainFilter, setChainFilter] = useState<string | 'all'>('all')
   const [tierFilter, setTierFilter] = useState<TokenTier | 'all'>('all')
   const [paused, setPaused] = useState(false)
@@ -118,6 +129,12 @@ export function Universe({ view }: { view: UniverseView }) {
     // noise a small screen could not render legibly anyway.
     return filtered.slice(0, compact ? 60 : 200)
   }, [view.tokens, chainFilter, tierFilter, compact])
+
+  // Resolved against the current view, so an open detail panel shows the
+  // latest numbers rather than the ones that were on screen when it opened —
+  // and closes by itself if the token leaves the universe.
+  const selected = useMemo(() => view.tokens.find((t) => t.id === selectedId) ?? null, [view.tokens, selectedId])
+  const hovered = useMemo(() => view.tokens.find((t) => t.id === hoveredId) ?? null, [view.tokens, hoveredId])
 
   const bodies = useMemo<Body[]>(() => {
     // Random angles clump: three tokens landing within a few degrees become
@@ -143,7 +160,7 @@ export function Universe({ view }: { view: UniverseView }) {
         return {
           token,
           orbit: style.ring + (seed - 0.5) * 0.07,
-          angle: spread,
+          angle: anglesRef.current.get(token.id) ?? spread,
           // Lively tokens orbit faster; held ones barely drift, so they anchor.
           speed: (token.tier === 'held' ? 0.04 : 0.11) * (0.35 + Math.min(volatility, 40) / 40) * (seed > 0.5 ? 1 : -1),
           radius: (compact ? 3 : 4) + size * (compact ? 2.4 : 3.4),
@@ -167,6 +184,7 @@ export function Universe({ view }: { view: UniverseView }) {
     const glows = new Map(TIER_ORDER.map((tier) => [tier, makeGlowSprite(TIER_STYLE[tier].halo, 80)]))
     const frozenGlow = makeGlowSprite('120,200,255', 80)
 
+    const angles = anglesRef.current
     let raf = 0
     let t = 0
     let running = true
@@ -214,15 +232,20 @@ export function Universe({ view }: { view: UniverseView }) {
       }
 
       for (const body of bodies) {
-        if (!paused && !still) body.angle += body.speed * 0.004
+        if (!paused && !still) {
+          body.angle += body.speed * 0.004
+          // Remembered so the next batch of data resumes the orbit instead of
+          // restarting it.
+          angles.set(body.token.id, body.angle)
+        }
         const r = body.orbit * unit
         body.x = cx + Math.cos(body.angle) * r
         body.y = cy + Math.sin(body.angle) * r * 0.82 // slight tilt, so it reads as a disc
 
         const { token } = body
         const style = TIER_STYLE[token.tier]
-        const isSelected = selected?.id === token.id
-        const isHovered = hovered?.id === token.id
+        const isSelected = selectedId === token.id
+        const isHovered = hoveredId === token.id
 
         // ── Ripples: how good the opportunity is, made visible ──────────────
         for (let i = 0; i < body.ripples; i++) {
@@ -290,7 +313,7 @@ export function Universe({ view }: { view: UniverseView }) {
       window.removeEventListener('resize', resize)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [bodies, selected, hovered, paused, compact])
+  }, [bodies, selectedId, hoveredId, paused, compact])
 
   const pickAt = (clientX: number, clientY: number, rect: DOMRect): UniverseToken | null => {
     const x = clientX - rect.left
@@ -335,12 +358,12 @@ export function Universe({ view }: { view: UniverseView }) {
 
       <canvas
         ref={canvasRef}
-        onMouseMove={(e) => !compact && setHovered(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect()))}
-        onMouseLeave={() => setHovered(null)}
-        onClick={(e) => setSelected(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect()))}
+        onMouseMove={(e) => !compact && setHoveredId(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect())?.id ?? null)}
+        onMouseLeave={() => setHoveredId(null)}
+        onClick={(e) => setSelectedId(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect())?.id ?? null)}
         onTouchStart={(e) => {
           const touch = e.touches[0]
-          if (touch) setSelected(pickAt(touch.clientX, touch.clientY, e.currentTarget.getBoundingClientRect()))
+          if (touch) setSelectedId(pickAt(touch.clientX, touch.clientY, e.currentTarget.getBoundingClientRect())?.id ?? null)
         }}
         style={{
           width: '100%',
@@ -356,7 +379,7 @@ export function Universe({ view }: { view: UniverseView }) {
         }}
       />
 
-      {selected && <Detail token={selected} compact={compact} onClose={() => setSelected(null)} />}
+      {selected && <Detail token={selected} compact={compact} onClose={() => setSelectedId(null)} />}
       {!selected && hovered && <Hint token={hovered} />}
     </div>
   )

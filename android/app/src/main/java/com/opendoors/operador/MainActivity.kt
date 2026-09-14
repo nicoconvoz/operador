@@ -50,7 +50,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: Prefs
     private var webView: WebView? = null
     private var statusLabel: TextView? = null
-    private var lastLoadedAt = 0L
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -62,14 +61,11 @@ class MainActivity : AppCompatActivity() {
         render()
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Opening the app should show the present, not whatever was on screen
-        // when you last closed it. A stale "all healthy" reads exactly like a
-        // live one, which is the whole reason the web page is force-dynamic.
-        val view = webView
-        if (view != null && System.currentTimeMillis() - lastLoadedAt > STALE_VIEW_MS) reload()
-    }
+    // No reload on resume. The page refreshes itself by fetching, and it does
+    // so when it becomes visible — reloading on top of that threw away the
+    // canvas, snapped every orbit back to its starting angle and dropped the
+    // viewer's selection, which reads as the screen flinching for no reason.
+    // The ⟳ button stays, for when someone wants the whole page rebuilt.
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
@@ -218,10 +214,6 @@ class MainActivity : AppCompatActivity() {
             cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         }
         view.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, url: String?) {
-                lastLoadedAt = System.currentTimeMillis()
-            }
-
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 // Only the main document: a failed favicon must not paint an
                 // error over a page that loaded fine.
@@ -236,7 +228,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun reload() {
         webView?.loadUrl(prefs.serverUrl)
-        lastLoadedAt = System.currentTimeMillis()
     }
 
     private fun showLoadFailure() {
@@ -299,7 +290,8 @@ class MainActivity : AppCompatActivity() {
                     is Api.Result.Unreachable ->
                         toast("No se pudo contactar al motor: queda como estaba")
                 }
-                reload()
+                // The page picks the new state up on its next poll; forcing a
+                // reload here would undo exactly the flicker this removed.
             }
         }.start()
     }
@@ -431,7 +423,5 @@ class MainActivity : AppCompatActivity() {
         val BACKGROUND: Int = Color.parseColor("#0d1117")
         val DIM: Int = Color.parseColor("#8b949e")
 
-        /** Reopening after this long refetches rather than showing history. */
-        const val STALE_VIEW_MS = 60_000L
     }
 }

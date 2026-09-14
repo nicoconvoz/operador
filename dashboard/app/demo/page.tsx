@@ -1,4 +1,5 @@
 import { Console } from '../console.js'
+import type { DashboardView } from '../../../src/application/dashboard.js'
 import type { UniverseToken, UniverseView, TokenTier } from '../../../src/application/universe-view.js'
 import { buildOperations } from '../../../src/application/operations-view.js'
 import { MemoryStore } from '../../../src/infrastructure/persistence/memory-store.js'
@@ -135,16 +136,23 @@ async function demoOperations() {
 export default async function Demo() {
   const operations = await demoOperations()
 
+  const dashboard: DashboardView = {
+    generatedAt: NOW,
+    killSwitchEngaged: false,
+    lastCompletedBar: NOW,
+    positions: [],
+    totals: { positions: operations.positions.length, committedUsd: 600, frozen: 1, pending: 1 },
+    blacklistedCount: 2,
+    lastScan: { at: NOW - 4 * MIN, tokensSeen: tokens.length },
+    warnings: [],
+  }
+
   return (
     <>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 14 }}>
-        <h1 style={{ fontSize: 17, margin: 0 }}>Operador by Open Doors</h1>
-        <span style={{ color: '#ffb454' }}>DEMO — datos sintéticos</span>
-      </header>
-      <Console universe={view} operations={operations} />
-      <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
-        tamaño = liquidez · anillos = oportunidad · brillo = en posición · ◆ bsc ● solana
-      </footer>
+      <div style={{ color: '#ffb454', fontSize: 12, marginBottom: 8 }}>DEMO — datos sintéticos</div>
+      {/* live={false}: there is no database behind this page, so polling it
+          would only produce an error banner over data that is fine. */}
+      <Console initial={{ dashboard, universe: view, operations }} live={false} />
     </>
   )
 }
