@@ -1,0 +1,18 @@
+# Local run. On the VPS the database is Supabase or Neon, so only the engine
+# service is used there.
+services:
+  engine:
+    build: .
+    restart: unless-stopped
+    environment:
+      OPERADOR_MODE: paper
+      OPERADOR_CHAIN: solana
+      DATABASE_URL: ${DATABASE_URL}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      OPERADOR_CAPITAL_USD: ${OPERADOR_CAPITAL_USD:-1000}
+      OPERADOR_MAX_POSITIONS: ${OPERADOR_MAX_POSITIONS:-5}
+      OPERADOR_CYCLE_MS: ${OPERADOR_CYCLE_MS:-300000}
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

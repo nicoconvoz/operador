@@ -356,6 +356,30 @@ Deriving that floor from the simulator is an explicit project deliverable.
 7. **Bar-close semantics are sacred.** Signals evaluate on **closed** bars only.
 8. **Position isolation.** One token dying must not affect any other position.
 
+## Running it
+
+```bash
+cp .env.example .env      # fill in DATABASE_URL and the Telegram pair
+docker compose up -d --build
+```
+
+The image targets **linux/arm64** (Oracle's Always Free tier is Ampere), and
+the build runs `tsc --noEmit` and the full suite before it produces anything —
+a native module without an ARM build fails at build time rather than at 3am on
+the VPS. TypeScript is compiled to plain JS for production: shipping `tsx`
+would make the runtime depend on a transpiler staying healthy.
+
+**Live mode refuses to start.** `loadConfig` throws on `OPERADOR_MODE=live`
+because no wallet adapter has been built or audited, and live trading is not a
+flag anyone should be able to drift into. Paper is the only accepted value
+today.
+
+Smoke tests hit real APIs and are skipped unless asked for:
+
+```bash
+OPERADOR_SMOKE=1 npx vitest run src/application/collect-dataset.smoke.test.ts
+```
+
 ## The cycle
 
 `application/orchestrator.ts` runs one cycle of the whole system, and the

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS positions (
   quality        JSONB       NOT NULL,
   capital_usd    NUMERIC     NOT NULL,
   last_bar_time  BIGINT      NOT NULL,
+  last_price_usd NUMERIC,
   -- Orders decided but not yet confirmed. The field recovery depends on.
   pending_orders JSONB       NOT NULL DEFAULT '[]'::jsonb,
   opened_at      BIGINT      NOT NULL,

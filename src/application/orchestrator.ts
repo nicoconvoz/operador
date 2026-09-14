@@ -151,7 +151,7 @@ export async function runCycle(
           deathWatch: startDeathWatch(allocation.quality.liquidityUsd, at),
           quality: allocation.quality,
           capitalUsd: allocation.capitalUsd,
-          lastBarTime: -1,
+          lastBarTime: -1, lastPriceUsd: 1,
           pendingOrders: [],
           openedAt: at,
           updatedAt: at,

@@ -36,6 +36,12 @@ export interface PersistedPosition {
   /** Close time of the last bar this position has already evaluated. */
   readonly lastBarTime: number
   /**
+   * Close of that bar. The death watch needs it to size a sell probe of the
+   * right magnitude — quoting $100 of a token tells you nothing about whether
+   * a $5,000 position can leave.
+   */
+  readonly lastPriceUsd: number | null
+  /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *
    * This is the field that makes recovery safe. A process that dies between

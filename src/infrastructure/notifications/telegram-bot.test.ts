@@ -15,7 +15,7 @@ const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => (
   cascade: { ...initialState(), level: 3 },
   deathWatch: startDeathWatch(100_000, NOW),
   quality: { liquidityUsd: 100_000, spreadPct: 0.3, slippagePct: 0.2, referenceUsd: 100, observedAt: NOW },
-  capitalUsd: 475, lastBarTime: NOW, pendingOrders: [], openedAt: NOW, updatedAt: NOW, ...over,
+  capitalUsd: 475, lastBarTime: NOW, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW, ...over,
 })
 
 const rig = (equityUsd = 1_100) => {

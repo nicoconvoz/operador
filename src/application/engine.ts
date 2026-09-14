@@ -112,6 +112,7 @@ export async function tickPosition(
     cascade: stepped.state,
     deathWatch,
     lastBarTime: barTime,
+    lastPriceUsd: candles.close[barIndex]!,
     pendingOrders: orders,
     updatedAt: barTime,
   }

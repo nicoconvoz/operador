@@ -35,7 +35,7 @@ const candidate = (address: string, score: number): Candidate => ({
 const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => ({
   id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
   cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 300,
-  lastBarTime: -1, pendingOrders: [], openedAt: NOW, updatedAt: NOW, ...over,
+  lastBarTime: -1, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW, ...over,
 })
 
 const config: CycleConfig = {

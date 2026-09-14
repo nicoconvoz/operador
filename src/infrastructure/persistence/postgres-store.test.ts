@@ -24,7 +24,7 @@ const position: PersistedPosition = {
   cascade: { ...initialState(), level: 3 },
   deathWatch: startDeathWatch(100_000, NOW),
   quality: { liquidityUsd: 100_000, spreadPct: 0.3, slippagePct: 0.2, referenceUsd: 100, observedAt: NOW },
-  capitalUsd: 500, lastBarTime: NOW, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+  capitalUsd: 500, lastBarTime: NOW, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
 }
 
 describe('PostgresStore — idempotency lives in SQL, not in TypeScript', () => {
@@ -65,12 +65,13 @@ describe('PostgresStore — reading back what Postgres actually returns', () => 
     const { client } = fakeSql([[{
       id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
       cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
-      capital_usd: '500.00', last_bar_time: '1800000000000', pending_orders: [],
+      capital_usd: '500.00', last_bar_time: '1800000000000', last_price_usd: '0.0123', pending_orders: [],
       opened_at: '1800000000000', updated_at: '1800000000000',
     }]])
     const [loaded] = await new PostgresStore(client).loadPositions()
     expect(loaded!.capitalUsd).toBe(500)
     expect(loaded!.lastBarTime).toBe(NOW)
+    expect(loaded!.lastPriceUsd).toBe(0.0123)
     expect(loaded!.cascade.level).toBe(3)
     expect(typeof loaded!.openedAt).toBe('number')
   })

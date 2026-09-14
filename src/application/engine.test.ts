@@ -35,7 +35,7 @@ const healthy = (over: Partial<AssetHealthObservation> = {}): AssetHealthObserva
 const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => ({
   id: 'pos-1', chain: 'solana', tokenAddress: 'Mint1', pairAddress: 'Pair1', symbol: 'TEST',
   cascade: initialState(), deathWatch: startDeathWatch(1_000_000, 0), quality, capitalUsd: 1_000,
-  lastBarTime: -1, pendingOrders: [], openedAt: 0, updatedAt: 0, ...over,
+  lastBarTime: -1, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0, ...over,
 })
 
 const config: EngineConfig = { params: DEFAULT_PARAMS }

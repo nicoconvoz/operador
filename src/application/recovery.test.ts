@@ -20,7 +20,7 @@ const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => (
   deathWatch: startDeathWatch(100_000, BAR),
   quality: { liquidityUsd: 100_000, spreadPct: 0.3, slippagePct: 0.2, referenceUsd: 100, observedAt: BAR },
   capitalUsd: 500,
-  lastBarTime: BAR,
+  lastBarTime: BAR, lastPriceUsd: 1,
   pendingOrders: [],
   openedAt: BAR - 86_400_000,
   updatedAt: BAR,

@@ -38,6 +38,7 @@ interface PositionRow {
   quality: MarketQuality
   capital_usd: string | number
   last_bar_time: string | number
+  last_price_usd: string | number | null
   pending_orders: PersistedPosition['pendingOrders']
   opened_at: string | number
   updated_at: string | number
@@ -71,6 +72,7 @@ export class PostgresStore implements StatePort {
       quality: row.quality,
       capitalUsd: num(row.capital_usd),
       lastBarTime: num(row.last_bar_time),
+      lastPriceUsd: row.last_price_usd === null ? null : num(row.last_price_usd),
       pendingOrders: row.pending_orders,
       openedAt: num(row.opened_at),
       updatedAt: num(row.updated_at),
@@ -80,18 +82,19 @@ export class PostgresStore implements StatePort {
   async savePosition(p: PersistedPosition): Promise<void> {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
-                              capital_usd, last_bar_time, pending_orders, opened_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                              capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
          quality = EXCLUDED.quality,
          capital_usd = EXCLUDED.capital_usd,
          last_bar_time = EXCLUDED.last_bar_time,
+         last_price_usd = EXCLUDED.last_price_usd,
          pending_orders = EXCLUDED.pending_orders,
          updated_at = EXCLUDED.updated_at`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
-       JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt],
+       JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt],
     )
   }
 
