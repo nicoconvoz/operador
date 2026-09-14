@@ -42,8 +42,18 @@ const fetchJson = async (url: string): Promise<unknown> => {
   return response.json()
 }
 
+// JSON-RPC needs the parsed body, not just the status.
+const postJson = async (url: string, body: unknown) => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: response.status, json: () => response.json() as Promise<unknown> }
+}
+
 try {
-  await main({ sql, post, fetchJson })
+  await main({ sql, post, fetchJson, postJson })
 } catch (error) {
   console.error('[fatal]', error)
   process.exitCode = 1

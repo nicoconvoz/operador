@@ -24,6 +24,7 @@ export interface RuntimeConfig {
   readonly healthIntervalMs: number
 
   readonly solanaRpcUrl: string
+  readonly bscRpcUrl: string
 }
 
 export class ConfigError extends Error {
@@ -68,6 +69,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
+    // Confirmed reachable without a key; Ankr's public endpoint now requires one.
+    bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',
   }
 
   // Live mode is not a flag you drift into. Nothing in this repo can place a

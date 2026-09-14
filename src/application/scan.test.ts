@@ -49,7 +49,7 @@ const build = (table: Parameters<typeof stubHttp>[0], decimals: Record<string, n
   const deps: ScanDeps = {
     dex: new DexScreener(http, () => NOW),
     goplus: new GoPlus(http, { minIntervalMs: 0, maxRetries: 0 }),
-    jupiter: new Jupiter(http),
+    sellProbe: new Jupiter(http),
     decimals: { decimals: async (_c, a) => (a in decimals ? decimals[a]! : 6) },
     now: () => NOW,
   }

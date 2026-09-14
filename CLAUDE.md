@@ -53,6 +53,36 @@ price signal looks.
 - `ranking.ts` — gates → score → sort → cut to watch slots; every candidate
   carries the `MarketQuality` the executor re-validates.
 
+### The sell probe — one port, two chains
+
+"Can this position actually be sold?" is the question the whole death exit
+rests on, and there are two ways to answer it:
+
+- **Quote a real sell.** A fact.
+- **Read a vendor's `is_honeypot` flag.** A third party's opinion.
+
+Solana got the fact from the start. BSC got the opinion — until
+`PancakeSwap.assessSell` closed the gap by calling the V2 router's
+`getAmountsOut` through `eth_call`. Both implement the same `SellProbePort`,
+so the domain never learns which chain it is on.
+
+No SDK and no key: the ABI encoding for that one function is forty lines of
+hex. Pulling in ethers to encode a single call would be a dependency, a bundle
+and a supply chain for something shorter than its own import statement.
+
+It tries the direct pair, then routes through WBNB, and **an RPC failure is
+never read as "no route"** — one is inconclusive, the other is a death signal,
+and confusing them would either liquidate a healthy position or hold a dead one.
+
+Impact is **measured, not modelled**: quote a thousandth of the order to learn
+the undisturbed price, quote the real order, take the difference. That is what
+impact *is*.
+
+Verified live against `bsc-dataseed.binance.org`: CAKE $2.3550 (1 hop), BUSD
+$0.9997 — a stablecoin pricing at a dollar is a good sign the decoder is
+right — and a dead address returning **no route at all**, which is exactly the
+shape of a honeypot.
+
 ### Universe coverage per chain
 
 Measured live, not assumed:

@@ -33,7 +33,7 @@ describe.skipIf(!SMOKE)('collect — live Solana dataset', () => {
       {
         dex: new DexScreener(http),
         goplus: new GoPlus(http),
-        jupiter: new Jupiter(http, jupiterThrottle),
+        sellProbe: new Jupiter(http, jupiterThrottle),
         decimals: new JupiterTokens(http, jupiterThrottle),
       },
       {

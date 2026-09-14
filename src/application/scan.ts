@@ -6,7 +6,16 @@ import { mergeSecurity } from '../domain/scanner/security-merge.js'
 import { lpLockFromVenue } from '../infrastructure/adapters/solana/lp-heuristics.js'
 import { type DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { type GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
-import { type Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
+import { type SellAssessment } from '../infrastructure/adapters/jupiter/jupiter.js'
+
+/**
+ * Quoting a real sell — the honeypot test, and the only honest source of price
+ * impact. One port, one implementation per chain: Jupiter on Solana,
+ * PancakeSwap's router on BSC. The domain never learns which.
+ */
+export interface SellProbePort {
+  assessSell(token: string, amountRaw: bigint, decimals: number, expectedUsd: number): Promise<SellAssessment>
+}
 
 /** Token decimals — needed to size a reference sell in base units. */
 export interface DecimalsPort {
@@ -35,7 +44,8 @@ export interface HistoryPort {
 export interface ScanDeps {
   readonly dex: DexScreener
   readonly goplus: GoPlus
-  readonly jupiter: Jupiter
+  /** Chain-appropriate sell probe. Without one, honeypot stays unknown and the gates fail closed. */
+  readonly sellProbe?: SellProbePort
   readonly decimals: DecimalsPort
   readonly history?: HistoryPort
   readonly now?: () => number
@@ -160,16 +170,18 @@ export async function scanOnce(
     let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
 
     let slippagePct: number | null = null
-    if (config.chain === 'solana') {
+    if (deps.sellProbe) {
       try {
-        const decimals = await deps.decimals.decimals('solana', market.address)
+        const decimals = await deps.decimals.decimals(config.chain, market.address)
         if (decimals !== null && market.priceUsd > 0) {
           const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
-          // One quote answers both: GoPlus has no honeypot flag on Solana, so
-          // the sell probe IS the honeypot test — and the same quote carries
-          // the measured price impact for MarketQuality.
-          const sell = await deps.jupiter.assessSell(market.address, amountRaw, config.referenceUsd)
-          security = { ...security, honeypot: sell.sellQuote === 'ok' ? false : sell.sellQuote === 'unknown' ? null : true }
+          // One quote answers both questions: whether the token can be SOLD at
+          // all — the honeypot test, and the only one worth trusting because it
+          // is a fact rather than a third party's flag — and what the impact of
+          // a real order actually is.
+          const sell = await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd)
+          // A probe result beats any reported flag, in both directions.
+          security = { ...security, honeypot: sell.sellQuote === 'ok' ? false : sell.sellQuote === 'unknown' ? security.honeypot : true }
           slippagePct = sell.priceImpactPct
         }
       } catch (error) {

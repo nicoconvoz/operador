@@ -24,7 +24,7 @@ describe.skipIf(!SMOKE)('scan — live smoke on Solana', () => {
     // One throttle for everything that talks to Jupiter's lite tier.
     const jupiterThrottle = makeThrottle(1_100)
     const out = await scanOnce(
-      { dex: new DexScreener(http), goplus: new GoPlus(http), jupiter: new Jupiter(http, jupiterThrottle), decimals: new JupiterTokens(http, jupiterThrottle) },
+      { dex: new DexScreener(http), goplus: new GoPlus(http), sellProbe: new Jupiter(http, jupiterThrottle), decimals: new JupiterTokens(http, jupiterThrottle) },
       {
         chain: 'solana',
         ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 10, minScore: 0 },

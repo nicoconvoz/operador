@@ -85,14 +85,14 @@ describe('Jupiter adapter — one quote, two answers', () => {
   it('assessSell returns the verdict and the measured impact from a single call', async () => {
     const http = stubHttp({ [quoteUrl]: { body: { ...liveQuote, priceImpactPct: '0.0025' } } })
     const jup = new Jupiter(http)
-    expect(await jup.assessSell(BONK, 1_000_000_000_000n, 27.5)).toEqual({ sellQuote: 'ok', priceImpactPct: 0.25 })
+    expect(await jup.assessSell(BONK, 1_000_000_000_000n, 5, 27.5)).toEqual({ sellQuote: 'ok', priceImpactPct: 0.25 })
     expect(http.calls).toHaveLength(1)
   })
 
   it('a plain-text rate-limit body is unknown, not a crash', async () => {
     // makeHttpGet turns non-JSON bodies into { error: text }; the adapter must cope.
     const jup = new Jupiter(stubHttp({ [quoteUrl]: { status: 429, body: { error: 'Rate limit exceeded' } } }))
-    expect(await jup.assessSell(BONK, 1n, 10)).toEqual({ sellQuote: 'unknown', priceImpactPct: null })
+    expect(await jup.assessSell(BONK, 1n, 5, 10)).toEqual({ sellQuote: 'unknown', priceImpactPct: null })
   })
 
   it('waits on the shared throttle before every quote', async () => {

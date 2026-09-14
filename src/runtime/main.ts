@@ -16,6 +16,7 @@ import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.
 import { GeckoTerminal } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
+import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
@@ -47,6 +48,8 @@ export interface RuntimePorts {
   readonly post: (url: string, body: unknown) => Promise<{ status: number }>
   /** GET returning JSON, for Telegram long-polling. */
   readonly fetchJson: (url: string) => Promise<unknown>
+  /** POST returning a parsed body, for JSON-RPC. */
+  readonly postJson: (url: string, body: unknown) => Promise<{ status: number; json: () => Promise<unknown> }>
 }
 
 export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtime {
@@ -67,6 +70,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const jupiter = new Jupiter(http, jupiterThrottle)
   const jupiterTokens = new JupiterTokens(http, jupiterThrottle)
   const gecko = new GeckoTerminal(http, geckoThrottle)
+
+  // One port, the right implementation for the chain. BSC quotes PancakeSwap's
+  // router directly; without this its honeypot answer would be a third party's
+  // flag rather than a fact.
+  const sellProbe =
+    config.chain === 'solana'
+      ? jupiter
+      : new PancakeSwap(jsonRpcEthCall(config.bscRpcUrl, ports.postJson), makeThrottle(250))
 
   // In paper mode every position keeps its own broker, so one position's cash
   // can never be spent by another — the same isolation the live wallets will
@@ -112,7 +123,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // sold says nothing about whether the position can leave.
         const referenceUsd = Math.max(position.capitalUsd, 50)
         const amountRaw = BigInt(Math.floor((referenceUsd / position.lastPriceUsd) * 10 ** decimals))
-        const assessment = await jupiter.assessSell(position.tokenAddress, amountRaw, referenceUsd)
+        const assessment = await sellProbe.assessSell(position.tokenAddress, amountRaw, decimals, referenceUsd)
         return {
           observedAt: Date.now(),
           source: 'jupiter',
@@ -132,7 +143,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     brokerFor,
     scan: async () => {
       const result = await scanOnce(
-        { dex, goplus, jupiter, decimals: jupiterTokens, history: gecko },
+        { dex, goplus, sellProbe, decimals: jupiterTokens, history: gecko },
         {
           chain: config.chain,
           ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: config.maxPositions, minScore: 0 },

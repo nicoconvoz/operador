@@ -91,7 +91,7 @@ export class Jupiter {
    * route exists but the market will not honour the price. The same quote
    * yields the measured price impact, so one call answers both questions.
    */
-  async assessSell(mint: string, amountRaw: bigint, expectedUsd: number, maxShortfallPct = 50): Promise<SellAssessment> {
+  async assessSell(mint: string, amountRaw: bigint, _decimals: number, expectedUsd: number, maxShortfallPct = 50): Promise<SellAssessment> {
     const result = await this.quoteSell(mint, amountRaw)
     if (!result.ok) return { sellQuote: result.reason === 'no-route' ? 'failed' : 'unknown', priceImpactPct: null }
     if (result.outUsd <= 0) return { sellQuote: 'failed', priceImpactPct: result.priceImpactPct }
@@ -101,9 +101,15 @@ export class Jupiter {
     return { sellQuote: 'ok', priceImpactPct: result.priceImpactPct }
   }
 
-  /** The death-exit sell probe for a full position. */
+  /**
+   * The death-exit sell probe for a full position.
+   *
+   * `decimals` is unused here — Jupiter takes raw amounts — but it is part of
+   * the shared SellProbePort because PancakeSwap needs it, and a port shaped
+   * around one implementation is not a port.
+   */
   async probeSellPath(mint: string, amountRaw: bigint, expectedUsd: number, maxShortfallPct = 50): Promise<SellQuoteResult> {
-    return (await this.assessSell(mint, amountRaw, expectedUsd, maxShortfallPct)).sellQuote
+    return (await this.assessSell(mint, amountRaw, 0, expectedUsd, maxShortfallPct)).sellQuote
   }
 
   /** Price impact, in percent, of selling `referenceUsd` worth of the token. */
