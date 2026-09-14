@@ -1,4 +1,8 @@
-# Operador
+# Operador by Open Doors
+
+The system's name. "Operador" is the repo, the package and the engine;
+"Open Doors" is the brand it ships under. Use the full name in user-facing
+surfaces (dashboard title, alerts, docs); the short name in code.
 
 ## Mission
 

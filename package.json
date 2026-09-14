@@ -1,9 +1,12 @@
 {
   "name": "operador",
+  "description": "Operador by Open Doors — CASCADE DCA executor and small-cap scanner for on-chain spot markets",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
