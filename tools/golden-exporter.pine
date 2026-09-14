@@ -86,7 +86,7 @@ ema3  = ta.ema(close, 3)
 sma3  = ta.sma(close, 3)
 
 // ── Formatting: fixed high precision, "na" preserved as itself ───────────────
-f(float x) => na(x) ? "na" : str.tostring(x, "#.##########")
+f(float x) => na(x) ? "na" : str.tostring(x, "#.###############")  // 15dp: prices near 0.008 keep ~13 significant digits
 
 // ── SEED PROBE — the first bars of available history ─────────────────────────
 // Decisive: if ema5 is na until bar 4 and then equals sma5, the port's

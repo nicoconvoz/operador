@@ -305,20 +305,25 @@ Proven against TradingView's own exported values (`sma.golden.test.ts`):
 So all three names are shifted, and the BBW line actually computes
 `(basis - lower) / upper * 100` instead of `(upper - lower) / basis * 100`.
 
-**Measured impact** over 301 bars of BLESS 1H:
+**Measured impact** over 4001 bars of BLESS 1H, with Pine itself computing
+both formulas side by side:
 
 | | As written | Textbook |
 |---|---|---|
-| Mean BBW | 4.004 | 8.494 (**2.12×**) |
-| `bbw < bbw_max(14)` | **100.0% of bars** | 88.0% |
+| Mean BBW | 5.821 | 13.165 (**2.26×**) |
+| `bbw < bbw_max(14)` | 92.5% of bars | 74.3% |
+| `is_lateral` differs | — | on 4.45% of bars |
 
-The BBW half of `is_lateral` **never blocks anything** — it is true on every
-single bar. OR'd with `ADX < 40`, the lateral filter is effectively a constant
-`true`. This is the hard evidence for the permissiveness flagged earlier.
+The BBW half of `is_lateral` passes on 92.5% of bars, so it filters almost
+nothing; OR'd with `ADX < 40` the lateral gate is close to a constant `true`.
+This is the hard evidence for the permissiveness flagged earlier.
+
+(An earlier 301-bar sample read 100%/88%. That window was an unusually quiet
+stretch — the 4001-bar figures above supersede it.)
 
 **Decision: port the behaviour exactly as written.** The strategy's parameters
 were tuned against this behaviour, and parity with the validated backtest is
-the acceptance test. Silently "fixing" it changes entry timing on ~10.6% of
+the acceptance test. Silently "fixing" it changes `is_lateral` on 4.45% of
 bars against a baseline that was never tested.
 
 The corrected formula ships alongside it as `bbwTextbook`, unused by the
@@ -437,6 +442,21 @@ Build what can be verified. Then build what must be discovered.
 1. **Indicators** — SMA, EMA, stdev/Bollinger, ROC, ATR, Supertrend, DMI/ADX, VWM.
    Pure functions, golden-file tested against TradingView exports. Parity breaks
    here first, so nothing proceeds until these match.
+
+   **Proven so far** (golden source: BLESS 1H, 4001 bars + 12 seed bars):
+   - `ta.sma` — exact, on both price and volume scales
+   - `ta.ema` — seeding SETTLED (na until the window fills, then seeded with
+     the SMA of that window) and the recursion verified at length 200 over
+     4001 bars
+   - `ta.bb` tuple order — `[basis, upper, lower]`, proven three ways
+
+   Parity is asserted against the **export grid** (10 decimal places), not a
+   fuzzy percentage. A correct implementation lands on the same grid point; a
+   wrong one misses by orders of magnitude.
+
+   **Still unverified** — these carry recursive state and need their own
+   golden columns: `ta.atr`/RMA, `ta.supertrend`, `ta.dmi`/ADX, `ta.roc`,
+   `ta.stdev`, and the composed VWM.
 2. **State machine** — `level` transitions, both entry gates, the DCA ladder,
    all five rebound locks, one-fill-per-bar.
 3. **Exits** — normal (VWM / Supertrend) and rescue breakeven.
