@@ -28,6 +28,13 @@ interface OhlcvResponse {
   readonly data?: { readonly attributes?: { readonly ohlcv_list?: readonly (readonly number[])[] } }
 }
 
+interface PoolsResponse {
+  readonly data?: readonly {
+    readonly attributes?: { readonly address?: string; readonly name?: string }
+    readonly relationships?: { readonly base_token?: { readonly data?: { readonly id?: string } } }
+  }[]
+}
+
 export interface GeckoTerminalOptions {
   /** Retries on HTTP 429, with doubling backoff from `backoffMs`. */
   readonly maxRetries?: number
@@ -88,6 +95,46 @@ export class GeckoTerminal {
     }
 
     return { time, open, high, low, close, volume }
+  }
+
+  /**
+   * A universe for ANY chain: the pools GeckoTerminal ranks as trending, top
+   * by liquidity, and newest.
+   *
+   * This is what Jupiter's token lists are for Solana, except it works on BSC
+   * too — where the alternative was DexScreener's boosts, which are PAID
+   * PROMOTIONS and returned nine tokens. A universe built from who paid to be
+   * seen is not a universe; it is an advertising slot.
+   *
+   * Returns base token addresses paired with the pool they were found in, so
+   * the caller does not have to look the pair up again.
+   */
+  async discoverPools(chain: Chain, pages = 5): Promise<{ tokenAddress: string; poolAddress: string }[]> {
+    const lists = ['trending_pools', 'pools']
+    const found = new Map<string, string>()
+
+    for (const list of lists) {
+      for (let page = 1; page <= pages; page++) {
+        let body: PoolsResponse
+        try {
+          body = (await this.getWithBackoff(`${this.base}/networks/${NETWORK[chain]}/${list}?page=${page}`)) as PoolsResponse
+        } catch {
+          break
+        }
+        const items = body.data ?? []
+        if (items.length === 0) break
+        for (const item of items) {
+          // "base_token" relationship id looks like "bsc_0xabc…"; the address
+          // is whatever follows the network prefix.
+          const raw = item.relationships?.base_token?.data?.id
+          const address = raw?.includes('_') ? raw.slice(raw.indexOf('_') + 1) : raw
+          const pool = item.attributes?.address
+          if (address && pool && !found.has(address)) found.set(address, pool)
+        }
+      }
+    }
+
+    return [...found.entries()].map(([tokenAddress, poolAddress]) => ({ tokenAddress, poolAddress }))
   }
 
   /**

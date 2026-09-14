@@ -93,3 +93,53 @@ describe('GeckoTerminal — history paging', () => {
     expect(candles.time.length).toBeGreaterThan(0)
   })
 })
+
+describe('GeckoTerminal — a universe that works on any chain', () => {
+  const poolsUrl = `${GECKOTERMINAL_BASE}/networks/bsc`
+  const pools = (entries: [string, string][]) => ({
+    data: entries.map(([token, pool]) => ({
+      attributes: { address: pool, name: `${token} / USDT` },
+      relationships: { base_token: { data: { id: `bsc_${token}` } } },
+    })),
+  })
+
+  it('strips the network prefix from the base token id', async () => {
+    const gt = new GeckoTerminal(stubHttp({ [poolsUrl]: { body: pools([['0xabc', 'poolA']]) } }))
+    expect(await gt.discoverPools('bsc', 1)).toEqual([{ tokenAddress: '0xabc', poolAddress: 'poolA' }])
+  })
+
+  it('deduplicates a token that appears in several lists, keeping the first pool', async () => {
+    const gt = new GeckoTerminal(stubHttp({ [poolsUrl]: { body: pools([['0xabc', 'poolA'], ['0xabc', 'poolB'], ['0xdef', 'poolC']]) } }))
+    const found = await gt.discoverPools('bsc', 1)
+    expect(found).toHaveLength(2)
+    expect(found[0]).toEqual({ tokenAddress: '0xabc', poolAddress: 'poolA' })
+  })
+
+  it('stops paging on an empty page instead of asking forever', async () => {
+    let calls = 0
+    const http = async () => {
+      calls++
+      return { status: 200, json: async () => (calls === 1 ? pools([['0xabc', 'poolA']]) : { data: [] }) }
+    }
+    const gt = new GeckoTerminal(http)
+    await gt.discoverPools('bsc', 5)
+    // page 1 has data, page 2 is empty and breaks — then the second list does the same.
+    expect(calls).toBeLessThanOrEqual(4)
+  })
+
+  it('a failing list does not lose what the others found', async () => {
+    let calls = 0
+    const http = async () => {
+      calls++
+      return calls === 1 ? { status: 500, json: async () => ({}) } : { status: 200, json: async () => pools([['0xdef', 'poolC']]) }
+    }
+    const gt = new GeckoTerminal(http, undefined, undefined, { maxRetries: 0 })
+    expect(await gt.discoverPools('bsc', 1)).toEqual([{ tokenAddress: '0xdef', poolAddress: 'poolC' }])
+  })
+
+  it('works the same on solana', async () => {
+    const solUrl = `${GECKOTERMINAL_BASE}/networks/solana`
+    const gt = new GeckoTerminal(stubHttp({ [solUrl]: { body: pools([['Mint1', 'PoolX']]) } }))
+    expect(await gt.discoverPools('solana', 1)).toEqual([{ tokenAddress: 'Mint1', poolAddress: 'PoolX' }])
+  })
+})

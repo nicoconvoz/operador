@@ -24,6 +24,12 @@ export interface DecimalsPort {
  */
 export interface HistoryPort {
   historyBars(chain: Chain, poolAddress: string): Promise<number | null>
+  /**
+   * Optional chain-agnostic universe. Matters most on chains with no native
+   * token list: BSC's only other source is DexScreener's boosts, which are
+   * paid promotions and returned NINE tokens when measured.
+   */
+  discoverPools?(chain: Chain, pages?: number): Promise<{ tokenAddress: string; poolAddress: string }[]>
 }
 
 export interface ScanDeps {
@@ -92,6 +98,13 @@ export async function scanOnce(
       for (const address of await deps.decimals.discover()) universe.add(address)
     } catch (error) {
       errors.push({ address: '*', stage: 'market', error: `universe: ${String(error)}` })
+    }
+  }
+  if (deps.history?.discoverPools) {
+    try {
+      for (const { tokenAddress } of await deps.history.discoverPools(config.chain)) universe.add(tokenAddress)
+    } catch (error) {
+      errors.push({ address: '*', stage: 'market', error: `pool universe: ${String(error)}` })
     }
   }
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)

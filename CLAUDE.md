@@ -53,6 +53,25 @@ price signal looks.
 - `ranking.ts` — gates → score → sort → cut to watch slots; every candidate
   carries the `MarketQuality` the executor re-validates.
 
+### Universe coverage per chain
+
+Measured live, not assumed:
+
+| Source | Solana | BSC |
+|---|---|---|
+| Jupiter token lists | **220** | — (Solana only) |
+| DexScreener boosts | 30 | **9** |
+| GeckoTerminal pools | 20 | **48** |
+
+BSC was effectively blind. Its only source was DexScreener's boosts — which
+are **paid promotions**. A universe built from who paid to be seen is not a
+universe, it is an advertising slot, and nine tokens is not a market.
+
+`GeckoTerminal.discoverPools(chain)` fixes it: trending and top pools, paged,
+**working identically on both chains**. It is what Jupiter's lists are for
+Solana, except chain-agnostic — which also means adding a third chain later
+costs nothing on the universe side.
+
 ### Universe coverage
 
 Jupiter's three lists return **~220 unique Solana tokens**, and they are not
