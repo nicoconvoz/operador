@@ -356,6 +356,47 @@ Deriving that floor from the simulator is an explicit project deliverable.
 7. **Bar-close semantics are sacred.** Signals evaluate on **closed** bars only.
 8. **Position isolation.** One token dying must not affect any other position.
 
+## The cycle
+
+`application/orchestrator.ts` runs one cycle of the whole system, and the
+ORDER of its steps is the safety property:
+
+```
+recover → halt what cannot be trusted → tick what can →
+open new positions with what is left → checkpoint → heartbeat
+```
+
+- **Recovery runs first.** An engine that scans and allocates before
+  reconciling its own past is building on state it has not verified.
+- **New positions come last**, because capital that might belong to an
+  unresolved position is not capital to spend. A halted position keeps BOTH
+  its capital and its slot — treating either as free is how an engine quietly
+  doubles its own exposure after a bad restart.
+- **A token already held or already blacklisted is never reopened**, however
+  highly the scanner ranks it.
+
+## The kill switch
+
+It lives in the **store**, not in the process. A switch held in memory can only
+be thrown by a healthy engine — and a healthy engine is exactly the case where
+you least need one. In durable state, a phone can stop a machine it cannot
+reach, and a crash-looping process comes back already stopped.
+
+| | |
+|---|---|
+| **Stops** | opening any new position |
+| **Keeps** | the death watch running on everything already open |
+
+That asymmetry is deliberate: if the switch froze the death watch too, "stop
+the engine" would also mean "stop protecting the money" — and the moment you
+most want to stop taking new risk is often the moment an open position most
+needs watching. Releasing it is a separate, explicit act.
+
+Automatic limits (`shouldEngage`, pure so the rule is testable without a
+store): drawdown past 35%, or **3 death exits in 24 hours** — several tokens
+dying at once is rarely a coincidence. It is either a bad market or a bad
+scanner, and neither is a reason to keep buying.
+
 ## The engine tick
 
 `application/engine.ts` advances ONE position by ONE closed bar. The order of
