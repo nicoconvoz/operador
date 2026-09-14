@@ -462,7 +462,21 @@ export function Universe({ view }: { view: UniverseView }) {
   return (
     <div style={{ position: 'relative' }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
-        <Chip active={chainFilter === 'all'} onClick={() => setChainFilter('all')}>
+        {/*
+          A full reset, not just the chain.
+
+          Tapping a cluster sets BOTH filters, so a "todas" that cleared only
+          one left the view filtered while claiming to show everything — and
+          the word, unqualified, promises everything. The escape hatch has to
+          mean what it says or people stop trusting the other controls too.
+        */}
+        <Chip
+          active={chainFilter === 'all' && tierFilter === 'all'}
+          onClick={() => {
+            setChainFilter('all')
+            setTierFilter('all')
+          }}
+        >
           todas
         </Chip>
         {view.chains.map((chain) => (
