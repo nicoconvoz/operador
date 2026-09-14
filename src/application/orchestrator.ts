@@ -182,7 +182,14 @@ export async function runCycle(
           deathWatch: startDeathWatch(allocation.quality.liquidityUsd, at),
           quality: allocation.quality,
           capitalUsd: allocation.capitalUsd,
-          lastBarTime: -1, lastPriceUsd: 1,
+          lastBarTime: -1,
+          // The price the scanner just measured, never a placeholder. The
+          // death watch sizes its sell probe from this, so a stand-in value
+          // makes the very first observation ask an absurd question and
+          // freezes the position before it has done anything.
+          // null, not a stand-in, when the scanner has no price: the death
+          // watch skips an observation it cannot size, and skipping is honest.
+          lastPriceUsd: allocation.snapshot.priceUsd > 0 ? allocation.snapshot.priceUsd : null,
           pendingOrders: [],
           openedAt: at,
           updatedAt: at,

@@ -8,6 +8,7 @@ import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
+import { type Chain } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
 import { scanOnce } from '../application/scan.js'
@@ -19,6 +20,7 @@ import { CachedHistory } from '../infrastructure/adapters/geckoterminal/cached-h
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
+import { Erc20Decimals } from '../infrastructure/adapters/pancakeswap/erc20-decimals.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
@@ -90,8 +92,25 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // both chains scanned, a BSC position asked through Jupiter would get a
   // "cannot sell" that means nothing more than "wrong venue" — and the death
   // watch would read it as a rug.
-  const pancake = new PancakeSwap(jsonRpcEthCall(config.bscRpcUrl, ports.postJson), makeThrottle(250))
+  const bscRpc = jsonRpcEthCall(config.bscRpcUrl, ports.postJson)
+  const pancake = new PancakeSwap(bscRpc, makeThrottle(250))
   const sellProbeFor = (chain: string) => (chain === 'bsc' ? pancake : jupiter)
+
+  /**
+   * Decimals, from a source that knows the chain.
+   *
+   * This used to be Jupiter's token list for BOTH chains, and Jupiter is
+   * Solana only — so it answered null for every BSC address. Since the
+   * decimals lookup stands in FRONT of every sell probe, that one null meant
+   * BSC tokens were never honeypot-tested and BSC positions ran with no death
+   * watch at all. The PancakeSwap probe was written, wired, and unreachable.
+   */
+  const erc20 = new Erc20Decimals(bscRpc)
+  const decimalsFor = {
+    decimals: (chain: Chain, address: string) =>
+      chain === 'bsc' ? erc20.decimals(chain, address) : jupiterTokens.decimals(chain, address),
+    security: (chain: Chain, address: string) => jupiterTokens.security(chain, address),
+  }
 
   // In paper mode every position keeps its own broker, so one position's cash
   // can never be spent by another — the same isolation the live wallets will
@@ -131,7 +150,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     },
     healthFor: async (position) => {
       try {
-        const decimals = await jupiterTokens.decimals(position.chain, position.tokenAddress)
+        const decimals = await decimalsFor.decimals(position.chain, position.tokenAddress)
         // Without decimals or a price there is no way to size a meaningful
         // probe, and a probe of the wrong size answers the wrong question.
         // Reporting nothing is honest; reporting an unfounded 'ok' is not.
@@ -169,7 +188,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // asked again — for the handful about to be opened, which costs seconds.
     confirmSellable: async (snapshot) => {
       try {
-        const decimals = await jupiterTokens.decimals(snapshot.chain, snapshot.address)
+        const decimals = await decimalsFor.decimals(snapshot.chain, snapshot.address)
         if (decimals === null || snapshot.priceUsd <= 0) return false
         const amountRaw = BigInt(Math.floor((100 / snapshot.priceUsd) * 10 ** decimals))
         const assessment = await sellProbeFor(snapshot.chain).assessSell(snapshot.address, amountRaw, decimals, 100)
@@ -202,7 +221,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               dex,
               goplus,
               sellProbe: sellProbeFor(chain),
-              decimals: jupiterTokens,
+              decimals: decimalsFor,
               history,
               // Remembers what has been examined, so the budget reaches the
               // whole list over a few cycles instead of re-checking the same

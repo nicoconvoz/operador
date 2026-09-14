@@ -27,7 +27,10 @@ const flat = (bars = 300): Candles => {
 }
 
 const candidate = (address: string, score: number): Candidate => ({
-  snapshot: { chain: 'solana', address, symbol: address, pairAddress: `pair-${address}` } as TokenSnapshot,
+  // priceUsd is not decoration: the death watch sizes its sell probe from it.
+  // This fixture omitted it behind a cast, which is how a position shipped
+  // with a placeholder price and froze itself on its first observation.
+  snapshot: { chain: 'solana', address, symbol: address, pairAddress: `pair-${address}`, priceUsd: 0.01 } as TokenSnapshot,
   opportunity: { score, components: {} as never },
   marketQuality: quality,
 })
@@ -226,5 +229,20 @@ describe('runCycle — the sell path is confirmed before money moves', () => {
     const { deps, throttle } = rig()
     await runCycle(deps, config, throttle)
     expect((await deps.store.loadPositions()).length).toBeGreaterThan(0)
+  })
+})
+
+describe('runCycle — a new position is born knowing its price', () => {
+  it('records the price the scanner measured, not a placeholder', async () => {
+    const { deps, throttle } = rig()
+    await runCycle(deps, config, throttle)
+    const [opened] = await deps.store.loadPositions()
+
+    // It used to be 1. The death watch sizes its sell probe from this number,
+    // so a placeholder asked "if I sell 285 units do I get $285 back?" of a
+    // token trading at less than a cent — got a fraction of that, called it
+    // implausible, and froze every new position on its first observation.
+    expect(opened!.lastPriceUsd).not.toBe(1)
+    expect(opened!.lastPriceUsd).toBeGreaterThan(0)
   })
 })
