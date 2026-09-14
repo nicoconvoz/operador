@@ -26,3 +26,24 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vitest run
+
+  # The dashboard, built the way Vercel builds it.
+  #
+  # A local `next build` resolves modules through the REPOSITORY's node_modules,
+  # so a file under src/ importing a dev-only package (vitest, say) compiles
+  # happily here and fails on Vercel, which installs only dashboard's own
+  # dependencies. That exact mistake shipped a broken deploy once. This job
+  # installs nothing but dashboard/package.json, so the two agree or this fails.
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run build
