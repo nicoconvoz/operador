@@ -56,6 +56,16 @@ export function expectGolden(
 export const column = (rows: GoldenBar[], key: string): (number | null)[] =>
   rows.map((row) => row[key] ?? null)
 
+/**
+ * OHLCV columns must have no gaps — a hole there is a broken pipeline, not a
+ * legitimate `na`. Fail at fixture load rather than deep inside an indicator.
+ */
+export const dense = (series: readonly (number | null)[]): number[] =>
+  series.map((value, i) => {
+    if (value === null) throw new Error(`golden fixture has a gap at bar ${i}`)
+    return value
+  })
+
 /** Single cell, normalised to `na`. */
 export const cell = (rows: GoldenBar[], i: number, key: string): number | null =>
   rows[i]?.[key] ?? null
