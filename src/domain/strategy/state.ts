@@ -113,7 +113,8 @@ export type EntryOrder = {
 
 export type CloseAllOrder = {
   readonly kind: 'closeAll'
-  readonly comment: '🏁 Exit' | '⚖️ BE Exit'
+  /** The two strategy exits, plus the risk layer's death exit (see domain/risk). */
+  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit'
 }
 
 export type Order = EntryOrder | CloseAllOrder

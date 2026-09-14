@@ -521,6 +521,14 @@ Build what can be verified. Then build what must be discovered.
    `ep1 := close` on the signal bar. Exit and rescue logic read the broker's
    numbers, not the machine's — exactly as the reference does.
 4. **Death exit** — two-stage, with the price-is-never-a-death-signal guardrail.
+   **✅ COMPLETE** — `src/domain/risk/death-exit.ts`. `AssetHealthObservation`
+   is typed so no price-shaped field can exist on it (`price?: never` and
+   friends — a leak fails `tsc`). `assessAssetHealth` folds observations into
+   a serialisable `DeathWatchState`; `applyDeathVerdict` filters the strategy's
+   orders: frozen drops entries, dead replaces everything with `☠️ Death Exit`
+   while in position and blocks entries forever. 22 scenario tests, including
+   "stage-1 evidence never accumulates into an exit" and "unknown readings
+   neither confirm nor clear".
 5. **Economics** — gas, swap fee, depth-based slippage models, driven by the
    scanner's `MarketQuality` (contract defined; sizing and paper fills next).
 6. **Parity harness** — full replay vs the TradingView trade list. **✅ GREEN.**
