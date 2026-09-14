@@ -551,8 +551,36 @@ Build what can be verified. Then build what must be discovered.
    while in position and blocks entries forever. 22 scenario tests, including
    "stage-1 evidence never accumulates into an exit" and "unknown readings
    neither confirm nor clear".
-5. **Economics** — gas, swap fee, depth-based slippage models, driven by the
-   scanner's `MarketQuality` (contract defined; sizing and paper fills next).
+5. **Economics** — sizing **✅ COMPLETE** (`src/domain/economics/sizing.ts`);
+   paper fills next.
+
+   **Budget: 1% total cost per fill** (user's decision), 3% for the single
+   exit, $20 gas floor. Three bounds, and the second is the one people forget:
+
+   - **Per fill**: spread + impact ≤ 1%. The venue fee comes out first, so a
+     0.25% pool leaves 0.75% for impact.
+   - **Per position**: `close_all` sells EVERYTHING in one order, so the total
+     — not each level — sets what leaving costs. On a thin pool this binds
+     long before the fill budget does.
+   - **Floor**: a fill under $20 is not worth its gas; the ladder stops there.
+
+   **Effective depth comes from a measured quote, never reported TVL.**
+   Inverting the impact model (`depth = 200 × usd / impact%`) exposes
+   concentrated pools: HEV reported $186k of liquidity and moved 5.2% on a
+   $100 order — $3.8k of real depth. The executor refuses it.
+
+   Measured against the live Solana candidates:
+
+   | Token | Reported | Real depth | Ladder |
+   |---|---|---|---|
+   | EMBER | $517k | $1.0M | $13,750 over 5 levels |
+   | DREGG | $171k | $67k | $909 over 4 levels |
+   | SQUIRE | $125k | $14k | $183 over 4 levels |
+   | HEV | $186k | **$3.8k** | **refused** |
+
+   Against a nominal ladder of $41,200. **On real small caps the pool sets the
+   position size, not the capital** — and the honest simulator is what makes
+   that visible before any money moves.
 6. **Parity harness** — full replay vs the TradingView trade list. **✅ GREEN.**
    `src/application/parity.test.ts` reproduces TradingView's Strategy Tester
    trade for trade from the resync point to the end of history: entry bar,
