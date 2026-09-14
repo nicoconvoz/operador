@@ -218,53 +218,81 @@ export async function scanOnce(
     if (done % 10 === 0) {
       deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: Math.min(budget, affordable.length) })
     }
-    // Sources in trust order: GoPlus, then the metadata provider's audit,
-    // then venue heuristics. Danger from any source wins; unknowns fill in.
-    const opinions: Partial<SecurityReport>[] = []
-    try {
-      const primary = await deps.goplus.securityReport(config.chain, market.address)
-      if (primary) opinions.push(primary)
-    } catch (error) {
-      errors.push({ address: market.address, stage: 'security', error: String(error) })
-    }
-    if (deps.decimals.security) {
+    // Three providers, three independent rate limiters — and until the first
+    // real cycle measured it, three queues waited on each other for nothing.
+    // 16.8 seconds per token against a 15-minute bar, because the sum of three
+    // unrelated waits is not a cost anyone chose. A token now costs the
+    // LONGEST branch rather than their total.
+    //
+    // The sell quote is the one real dependency: it needs the decimals to size
+    // a $100 order, so it stays behind them, inside its own branch.
+    const record = (stage: ScanError['stage'], error: unknown) =>
+      errors.push({ address: market.address, stage, error: String(error) })
+
+    const askGoPlus = async (): Promise<Partial<SecurityReport> | null> => {
       try {
-        const second = await deps.decimals.security(config.chain, market.address)
-        if (second) opinions.push(second)
+        return await deps.goplus.securityReport(config.chain, market.address)
       } catch (error) {
-        errors.push({ address: market.address, stage: 'security', error: String(error) })
+        record('security', error)
+        return null
       }
     }
-    if (config.chain === 'solana') opinions.push(lpLockFromVenue(market.dexId))
-    let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
 
-    let slippagePct: number | null = null
-    if (deps.sellProbe) {
+    const askMetadataProvider = async (): Promise<{
+      audit: Partial<SecurityReport> | null
+      sell: SellAssessment | null
+    }> => {
+      let audit: Partial<SecurityReport> | null = null
+      if (deps.decimals.security) {
+        try {
+          audit = await deps.decimals.security(config.chain, market.address)
+        } catch (error) {
+          record('security', error)
+        }
+      }
+      if (!deps.sellProbe) return { audit, sell: null }
       try {
         const decimals = await deps.decimals.decimals(config.chain, market.address)
-        if (decimals !== null && market.priceUsd > 0) {
-          const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
-          // One quote answers both questions: whether the token can be SOLD at
-          // all — the honeypot test, and the only one worth trusting because it
-          // is a fact rather than a third party's flag — and what the impact of
-          // a real order actually is.
-          const sell = await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd)
-          // A probe result beats any reported flag, in both directions.
-          security = { ...security, honeypot: sell.sellQuote === 'ok' ? false : sell.sellQuote === 'unknown' ? security.honeypot : true }
-          slippagePct = sell.priceImpactPct
-        }
+        if (decimals === null || market.priceUsd <= 0) return { audit, sell: null }
+        const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
+        // One quote answers both questions: whether the token can be SOLD at
+        // all — the honeypot test, and the only one worth trusting because it
+        // is a fact rather than a third party's flag — and what the impact of
+        // a real order actually is.
+        return { audit, sell: await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd) }
       } catch (error) {
-        errors.push({ address: market.address, stage: 'quote', error: String(error) })
+        record('quote', error)
+        return { audit, sell: null }
       }
     }
 
-    let historyBars: number | null = null
-    if (deps.history) {
+    const askHistory = async (): Promise<number | null> => {
+      if (!deps.history) return null
       try {
-        historyBars = await deps.history.historyBars(config.chain, market.pairAddress)
+        return await deps.history.historyBars(config.chain, market.pairAddress)
       } catch (error) {
-        errors.push({ address: market.address, stage: 'history', error: String(error) })
+        record('history', error)
+        return null
       }
+    }
+
+    const [primary, metadata, historyBars] = await Promise.all([askGoPlus(), askMetadataProvider(), askHistory()])
+
+    // Merged in TRUST order, which the concurrency must not disturb: GoPlus
+    // first, then the metadata provider's audit, then venue heuristics.
+    // Danger from any source wins; unknowns fill in from the next.
+    const opinions: Partial<SecurityReport>[] = []
+    if (primary) opinions.push(primary)
+    if (metadata.audit) opinions.push(metadata.audit)
+    if (config.chain === 'solana') opinions.push(lpLockFromVenue(market.dexId))
+
+    let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
+    let slippagePct: number | null = null
+    if (metadata.sell) {
+      // A probe result beats any reported flag, in both directions.
+      const { sellQuote } = metadata.sell
+      security = { ...security, honeypot: sellQuote === 'ok' ? false : sellQuote === 'unknown' ? security.honeypot : true }
+      slippagePct = metadata.sell.priceImpactPct
     }
 
     const snapshot: TokenSnapshot = { ...market, security, historyBars }
