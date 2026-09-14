@@ -1,0 +1,23 @@
+{
+  "name": "operador-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Operador by Open Doors — read-only dashboard",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.2",
+    "typescript": "^5.7.2"
+  }
+}
