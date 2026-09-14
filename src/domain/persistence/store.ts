@@ -1,5 +1,11 @@
 import { type Alert } from '../notifications/alerts.js'
-import { type Chain } from '../scanner/snapshot.js'
+import { type Chain, type SecurityReport } from '../scanner/snapshot.js'
+
+export interface CachedSecurity {
+  readonly security: SecurityReport
+  readonly slippagePct: number | null
+  readonly measuredAt: number
+}
 import { type DeathWatchState } from '../risk/death-exit.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
@@ -157,6 +163,10 @@ export interface StatePort {
   /** How many bars a pool had when last measured, or null if never. */
   historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null>
   recordHistoryBars(chain: Chain, poolAddress: string, bars: number, measuredAt: number): Promise<void>
+
+  /** The last security examination of a token, or null if never examined. */
+  cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null>
+  recordSecurity(chain: Chain, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void>
 
   /** Tokens the death exit has condemned. Never traded again. */
   blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void>

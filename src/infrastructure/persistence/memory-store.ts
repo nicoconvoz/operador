@@ -7,7 +7,8 @@ import {
   type StoredAlert,
 } from '../../domain/persistence/store.js'
 import { type Alert } from '../../domain/notifications/alerts.js'
-import { type Chain } from '../../domain/scanner/snapshot.js'
+import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.js'
+import { type CachedSecurity } from '../../domain/persistence/store.js'
 
 /**
  * In-memory StatePort — for tests, paper runs, and as the reference that
@@ -63,6 +64,16 @@ export class MemoryStore implements StatePort {
 
   async recordHistoryBars(chain: Chain, poolAddress: string, bars: number, measuredAt: number): Promise<void> {
     this.poolHistory.set(`${chain}:${poolAddress}`, { bars, measuredAt })
+  }
+
+  private readonly security = new Map<string, CachedSecurity>()
+
+  async cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null> {
+    return this.security.get(`${chain}:${address}`) ?? null
+  }
+
+  async recordSecurity(chain: Chain, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void> {
+    this.security.set(`${chain}:${address}`, { security: structuredClone(security), slippagePct, measuredAt })
   }
 
   async latestAlertSeq(): Promise<number> {

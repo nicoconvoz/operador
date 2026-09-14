@@ -195,3 +195,36 @@ describe('runCycle — liveness', () => {
     expect((await store.loadCheckpoint())?.lastCompletedBar).toBe(flat().time.at(-1))
   })
 })
+
+describe('runCycle — the sell path is confirmed before money moves', () => {
+  it('refuses to open a token whose sell path cannot be confirmed NOW', async () => {
+    const { deps, alerts, throttle } = rig()
+    const asked: string[] = []
+
+    await runCycle(
+      { ...deps, confirmSellable: async (snapshot) => { asked.push(snapshot.address); return false } },
+      config,
+      throttle,
+    )
+
+    // The scanner's verdict can be up to two hours old, because its security
+    // reports are cached so the budget can reach every token. A cached
+    // honeypot flag is exactly the one that must not be trusted at the moment
+    // capital is committed.
+    expect(asked.length).toBeGreaterThan(0)
+    expect(await deps.store.loadPositions()).toEqual([])
+    expect(alerts.sent.some((a) => a.kind === 'provider-degraded')).toBe(true)
+  })
+
+  it('opens normally when the sell path still answers', async () => {
+    const { deps, throttle } = rig()
+    await runCycle({ ...deps, confirmSellable: async () => true }, config, throttle)
+    expect((await deps.store.loadPositions()).length).toBeGreaterThan(0)
+  })
+
+  it('opens when no confirmation port is wired — the check is an addition, not a gate that fails closed on absence', async () => {
+    const { deps, throttle } = rig()
+    await runCycle(deps, config, throttle)
+    expect((await deps.store.loadPositions()).length).toBeGreaterThan(0)
+  })
+})

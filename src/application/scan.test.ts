@@ -6,6 +6,7 @@ import { Jupiter, JUPITER_LITE_BASE } from '../infrastructure/adapters/jupiter/j
 import { stubHttp } from '../infrastructure/http.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
+import { type SecurityReport } from '../domain/scanner/snapshot.js'
 
 const NOW = 1_800_000_000_000
 const DAY = 86_400_000
@@ -201,5 +202,75 @@ describe('scanOnce — a bounded budget for the expensive checks', () => {
     const { deps, http } = budgetRig()
     await scanOnce(deps, config)
     expect(securityCalls(http).sort()).toEqual(['dull', 'lively', 'quiet'])
+  })
+})
+
+describe('scanOnce — the budget rotates, so nothing waits forever', () => {
+  const NOW_MS = NOW
+
+  class Cache {
+    readonly rows = new Map<string, { security: SecurityReport; slippagePct: number | null; measuredAt: number }>()
+    async cachedSecurity(chain: string, address: string) {
+      return this.rows.get(`${chain}:${address}`) ?? null
+    }
+    async recordSecurity(chain: string, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number) {
+      this.rows.set(`${chain}:${address}`, { security, slippagePct, measuredAt })
+    }
+  }
+
+  const threeTokens = (cache: Cache, now = NOW_MS) => {
+    const { deps, http } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: {
+        body: ['a', 'b', 'c'].map((t) => ({ chainId: 'solana', tokenAddress: t })),
+      },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/a,b,c`]: { body: [pair('a'), pair('b'), pair('c')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=a`]: { body: { code: 1, message: 'ok', result: { a: safe } } },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=b`]: { body: { code: 1, message: 'ok', result: { b: safe } } },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=c`]: { body: { code: 1, message: 'ok', result: { c: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=`]: { body: goodQuote },
+    })
+    return { deps: { ...deps, securityCache: cache, now: () => now }, http }
+  }
+
+  const checked = (http: { calls: string[] }) =>
+    http.calls.filter((u) => u.includes('token_security')).map((u) => u.split('contract_addresses=')[1]!).sort()
+
+  it(`spends the next cycle's budget on tokens nobody has looked at yet`, async () => {
+    const cache = new Cache()
+    const first = threeTokens(cache)
+    await scanOnce(first.deps, { ...config, maxSecurityChecks: 1 })
+    const firstChecked = checked(first.http)
+    expect(firstChecked).toHaveLength(1)
+
+    // THE BUG THIS PINS: with a deterministic score order and no memory, every
+    // cycle checked the same token and the rest stayed "sin revisar" forever.
+    const second = threeTokens(cache)
+    await scanOnce(second.deps, { ...config, maxSecurityChecks: 1 })
+    expect(checked(second.http)).not.toEqual(firstChecked)
+  })
+
+  it('a token with a fresh report stays fully evaluated, at no network cost', async () => {
+    const cache = new Cache()
+    const first = threeTokens(cache)
+    await scanOnce(first.deps, { ...config, maxSecurityChecks: 3 })
+    expect(checked(first.http)).toEqual(['a', 'b', 'c'])
+
+    const second = threeTokens(cache)
+    const out = await scanOnce(second.deps, { ...config, maxSecurityChecks: 3 })
+    expect(checked(second.http)).toEqual([])
+    // Cached is EVALUATED, not pending: a report that still holds is an answer.
+    expect(out.snapshots.filter((s) => s.securityChecked === false)).toHaveLength(0)
+    expect(out.candidates.map((c) => c.snapshot.address).sort()).toEqual(['a', 'b', 'c'])
+  })
+
+  it('re-checks a report that has gone stale', async () => {
+    const cache = new Cache()
+    await scanOnce(threeTokens(cache).deps, { ...config, maxSecurityChecks: 3 })
+
+    const later = threeTokens(cache, NOW_MS + 5 * 60 * 60 * 1000)
+    await scanOnce(later.deps, { ...config, maxSecurityChecks: 3, securityTtlMs: 60 * 60 * 1000 })
+    expect(checked(later.http)).toEqual(['a', 'b', 'c'])
   })
 })

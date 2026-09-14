@@ -5,12 +5,13 @@ import {
   type PersistedScan,
   type StatePort,
   type StoredAlert,
+  type CachedSecurity,
 } from '../../domain/persistence/store.js'
 import { type Alert, type AlertKind, type AlertLevel } from '../../domain/notifications/alerts.js'
 import { type CascadeState } from '../../domain/strategy/state.js'
 import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
-import { type Chain, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
+import { type Chain, type SecurityReport, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 
 /**
  * Postgres StatePort.
@@ -242,6 +243,29 @@ export class PostgresStore implements StatePort {
       `INSERT INTO pool_history (chain, pool_address, bars, measured_at) VALUES ($1,$2,$3,$4)
        ON CONFLICT (chain, pool_address) DO UPDATE SET bars = EXCLUDED.bars, measured_at = EXCLUDED.measured_at`,
       [chain, poolAddress, bars, measuredAt],
+    )
+  }
+
+  async cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null> {
+    const { rows } = await this.sql.query<{ security: SecurityReport; slippage_pct: string | number | null; measured_at: string | number }>(
+      'SELECT security, slippage_pct, measured_at FROM token_security WHERE chain = $1 AND address = $2',
+      [chain, address],
+    )
+    const row = rows[0]
+    if (!row) return null
+    return {
+      security: row.security,
+      slippagePct: row.slippage_pct === null ? null : num(row.slippage_pct),
+      measuredAt: num(row.measured_at),
+    }
+  }
+
+  async recordSecurity(chain: string, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void> {
+    await this.sql.query(
+      `INSERT INTO token_security (chain, address, security, slippage_pct, measured_at) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (chain, address) DO UPDATE
+         SET security = EXCLUDED.security, slippage_pct = EXCLUDED.slippage_pct, measured_at = EXCLUDED.measured_at`,
+      [chain, address, JSON.stringify(security), slippagePct, measuredAt],
     )
   }
 

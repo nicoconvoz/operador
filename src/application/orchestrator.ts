@@ -41,6 +41,20 @@ export interface CycleDeps {
    * as flat and the strategy would keep re-opening what it already holds.
    */
   readonly brokerFor: (position: PersistedPosition) => Promise<BrokerPort>
+  /**
+   * Re-confirms, right now, that this token can still be sold.
+   *
+   * The scanner's security verdict can be up to a couple of hours old: its
+   * reports are cached so the examination budget can rotate and reach every
+   * token instead of re-checking the same twenty forever. That trade is fine
+   * for ranking and wrong at the moment capital is committed, because the
+   * honeypot answer is the one that ages worst and the one everything rests
+   * on. So it is asked again here, for the handful about to be opened.
+   *
+   * Optional: absent, positions open on the scanner's verdict as before. It is
+   * a second look, not a gate that should fail closed on its own absence.
+   */
+  readonly confirmSellable?: (snapshot: Candidate['snapshot']) => Promise<boolean>
   /** Fresh scanner output. Empty is a valid answer and is alerted on. */
   readonly scan: () => Promise<readonly Candidate[]>
   readonly now: () => number
@@ -144,6 +158,18 @@ export async function runCycle(
       }
 
       for (const allocation of plan.allocations) {
+        if (deps.confirmSellable && !(await deps.confirmSellable(allocation.snapshot))) {
+          const refused = alert(
+            'provider-degraded',
+            `⚠️ ${allocation.snapshot.symbol} no se pudo confirmar`,
+            'La ruta de venta no respondió al re-confirmarla. No se abre la posición.',
+            at,
+            { token: allocation.snapshot.address },
+          )
+          if (throttle.shouldSend(refused, `unsellable:${allocation.snapshot.address}`)) await deps.alerts.send(refused)
+          continue
+        }
+
         const position: PersistedPosition = {
           id: `${allocation.snapshot.chain}:${allocation.snapshot.address}:${at}`,
           chain: allocation.snapshot.chain,

@@ -107,3 +107,22 @@ CREATE TABLE IF NOT EXISTS pool_history (
   measured_at  BIGINT NOT NULL,
   PRIMARY KEY (chain, pool_address)
 );
+
+-- What the expensive security pass found, so the budget can rotate.
+--
+-- Each examined token costs five throttled network calls, so a cycle can only
+-- afford a couple of dozen. Without a memory the same highest-scoring tokens
+-- were re-examined every fifteen minutes and everything below the cut waited
+-- forever: 106 tokens sat permanently "sin revisar" in production.
+--
+-- Short-lived on purpose. The honeypot answer inside a report is the one that
+-- ages worst, which is why a cached report keeps a token ELIGIBLE but never
+-- gets it traded: the sell path is re-confirmed before a position opens.
+CREATE TABLE IF NOT EXISTS token_security (
+  chain        TEXT   NOT NULL,
+  address      TEXT   NOT NULL,
+  security     JSONB  NOT NULL,
+  slippage_pct NUMERIC,
+  measured_at  BIGINT NOT NULL,
+  PRIMARY KEY (chain, address)
+);

@@ -164,6 +164,22 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       }
     },
     brokerFor,
+    // The scanner's verdict can be hours old by design. The sell path is the
+    // one answer that must be current at the moment capital moves, so it is
+    // asked again — for the handful about to be opened, which costs seconds.
+    confirmSellable: async (snapshot) => {
+      try {
+        const decimals = await jupiterTokens.decimals(snapshot.chain, snapshot.address)
+        if (decimals === null || snapshot.priceUsd <= 0) return false
+        const amountRaw = BigInt(Math.floor((100 / snapshot.priceUsd) * 10 ** decimals))
+        const assessment = await sellProbeFor(snapshot.chain).assessSell(snapshot.address, amountRaw, decimals, 100)
+        // 'unknown' is not a yes. An unanswered sell path at the moment of
+        // entry is exactly the shape of the thing this prevents.
+        return assessment.sellQuote === 'ok'
+      } catch {
+        return false
+      }
+    },
     // Every configured chain, each scan stored under its own chain so the
     // universe can show them together. One chain failing must not cost the
     // others their turn: a rate limit on Solana is not a reason to stop
@@ -188,6 +204,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               sellProbe: sellProbeFor(chain),
               decimals: jupiterTokens,
               history,
+              // Remembers what has been examined, so the budget reaches the
+              // whole list over a few cycles instead of re-checking the same
+              // twenty forever.
+              securityCache: store,
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

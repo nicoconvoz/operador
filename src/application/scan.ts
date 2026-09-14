@@ -52,6 +52,26 @@ export interface ScanDeps {
   readonly now?: () => number
   /** Optional. Injected rather than imported, so the domain never learns what a console is. */
   readonly onProgress?: (progress: ScanProgress) => void
+  /**
+   * Remembers which tokens have already been examined, and when.
+   *
+   * Without it the budget is spent on the same highest-scoring tokens every
+   * cycle — the order is deterministic — so everything below the cut waits
+   * forever. Measured in production: 106 tokens permanently "sin revisar"
+   * while the same twenty were re-checked every fifteen minutes.
+   */
+  readonly securityCache?: SecurityCachePort
+}
+
+export interface CachedSecurity {
+  readonly security: SecurityReport
+  readonly slippagePct: number | null
+  readonly measuredAt: number
+}
+
+export interface SecurityCachePort {
+  cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null>
+  recordSecurity(chain: Chain, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void>
 }
 
 export interface ScanConfig {
@@ -69,6 +89,15 @@ export interface ScanConfig {
    * gates, which is the honest default now that those gates run first.
    */
   readonly maxSecurityChecks?: number
+  /**
+   * How long an examination stands before it is worth repeating.
+   *
+   * Two hours, not a day: the honeypot answer inside a report is the one that
+   * ages worst, and it is the one the whole thing rests on. A cached report is
+   * why a token stays eligible between checks; it is NOT why it gets traded —
+   * the sell path is re-confirmed before a position is opened.
+   */
+  readonly securityTtlMs?: number
 }
 
 /**
@@ -113,6 +142,9 @@ const provisionalScore = (market: Omit<TokenSnapshot, 'security' | 'historyBars'
     referenceUsd: config.referenceUsd,
     observedAt: market.observedAt,
   }).score
+
+/** Two hours. See the note on `securityTtlMs`. */
+const DEFAULT_SECURITY_TTL_MS = 2 * 60 * 60 * 1000
 
 const UNKNOWN_SECURITY: SecurityReport = {
   honeypot: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null,
@@ -185,16 +217,46 @@ export async function scanOnce(
     else snapshots.push(provisional)
   }
 
+  // ── 3b. What is already known does not need paying for again ──────────────
+  // A cached report keeps the token fully evaluated at no network cost, which
+  // is what frees the budget to reach the ones nobody has looked at yet.
+  const ttl = config.securityTtlMs ?? DEFAULT_SECURITY_TTL_MS
+  const remembered = new Map<string, CachedSecurity>()
+  if (deps.securityCache) {
+    for (const market of affordable) {
+      const known = await deps.securityCache.cachedSecurity(config.chain, market.address)
+      if (known && scannedAt - known.measuredAt < ttl) remembered.set(market.address, known)
+    }
+  }
+
+  for (const market of affordable) {
+    const known = remembered.get(market.address)
+    if (!known) continue
+    const snapshot: TokenSnapshot = { ...market, security: known.security, historyBars: null, securityChecked: true }
+    snapshots.push(snapshot)
+    quality.set(tokenKey(snapshot), {
+      liquidityUsd: market.liquidityUsd,
+      spreadPct: config.spreadPct,
+      slippagePct: known.slippagePct ?? (market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100),
+      referenceUsd: config.referenceUsd,
+      observedAt: scannedAt,
+    })
+  }
+
   // ── 4. Rank BEFORE spending, when the budget cannot cover everyone ─────────
   // Ordered by the opportunity score computed from market data alone, which
   // costs nothing. Taking the first N in discovery order would spend a
   // throttled security call and a sell quote on whichever token a provider
   // happened to list first — and on a bounded budget, the order IS the choice.
-  const budget = config.maxSecurityChecks ?? affordable.length
+  // Only what is NOT already known competes for the budget. That single line
+  // is what makes the budget rotate: a token examined this cycle is cached
+  // next cycle, so the next cycle's budget reaches further down the list.
+  const unexamined = affordable.filter((market) => !remembered.has(market.address))
+  const budget = config.maxSecurityChecks ?? unexamined.length
   const ordered =
-    budget >= affordable.length
-      ? affordable
-      : [...affordable].sort((a, b) => provisionalScore(b, config) - provisionalScore(a, config))
+    budget >= unexamined.length
+      ? unexamined
+      : [...unexamined].sort((a, b) => provisionalScore(b, config) - provisionalScore(a, config))
 
   // What the budget could not reach still goes on the screen, marked unchecked.
   // The gates fail closed, so an unexamined token is never a candidate — but
@@ -208,7 +270,7 @@ export async function scanOnce(
     stage: 'budget',
     chain: config.chain,
     affordable: affordable.length,
-    checking: Math.min(budget, affordable.length),
+    checking: Math.min(budget, unexamined.length),
   })
 
   let done = 0
@@ -216,7 +278,7 @@ export async function scanOnce(
     done += 1
     // Every tenth, not every one: a log that scrolls is a log nobody reads.
     if (done % 10 === 0) {
-      deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: Math.min(budget, affordable.length) })
+      deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: Math.min(budget, unexamined.length) })
     }
     // Three providers, three independent rate limiters — and until the first
     // real cycle measured it, three queues waited on each other for nothing.
@@ -294,6 +356,8 @@ export async function scanOnce(
       security = { ...security, honeypot: sellQuote === 'ok' ? false : sellQuote === 'unknown' ? security.honeypot : true }
       slippagePct = metadata.sell.priceImpactPct
     }
+
+    await deps.securityCache?.recordSecurity(config.chain, market.address, security, slippagePct, scannedAt)
 
     const snapshot: TokenSnapshot = { ...market, security, historyBars }
     snapshots.push(snapshot)
