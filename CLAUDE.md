@@ -423,23 +423,32 @@ Deriving that floor from the simulator is an explicit project deliverable.
 7. **Bar-close semantics are sacred.** Signals evaluate on **closed** bars only.
 8. **Position isolation.** One token dying must not affect any other position.
 
-## Bar size, and what changes with it
+## Bar size — 15m in production
 
-`OPERADOR_TIMEFRAME=1h|15m`. **Only 1H is validated against the TradingView
-backtest.** 15m is a new configuration, and three things move with it:
+`OPERADOR_TIMEFRAME=15m` (default). The user's decision, from trading these
+tokens: on young crypto an hour is long enough for the move to be over before
+the strategy has an opinion.
 
-- **Every indicator length means something different.** EMA-200 is 200 hours at
-  1H and 50 hours at 15m. `confirm_bars = 20` is 20 hours, then 5. The numbers
-  in `DCA.pine` were tuned on 1H; at 15m they are the same numbers measuring a
-  different market.
-- **History gets shorter.** One page is 1000 bars: ~41 days at 1H, ~10.4 at
-  15m. The 250-bar gate is 10 days of history at 1H and 2.6 at 15m, so it
-  admits much younger pools.
-- **Gas multiplies.** Four times the bars is roughly four times the cycles, and
-  gas is charged per swap regardless of size.
+The 1H parity harness stays green and stays meaningful — it proves the PORT is
+faithful to `DCA.pine`. Bar size is a separate choice, and reproducing the
+backtest is not an argument for trading the bar the backtest used.
 
-None of that makes 15m wrong. It makes it **unmeasured**, and the way to
-measure it is a paper run, not an opinion.
+What 15m means concretely, since every parameter is counted in BARS:
+
+| Parameter | Bars | At 15m | Was at 1H |
+|---|---|---|---|
+| EMA-200 (trend gate) | 200 | 50h | 200h |
+| Bollinger basis | 50 | 12.5h | 50h |
+| Swing high lookback | 20 | 5h | 20h |
+| `confirm_bars` | 20 | 5h | 20h |
+| History gate | 250 | 2.6 days | 10.4 days |
+
+Two consequences to watch in the paper run:
+
+- **Younger pools qualify.** 250 bars is 2.6 days of pool age instead of 10.
+  The safety gates are unchanged, but the age one is now doing less work.
+- **Gas per unit of time roughly quadruples.** Four times the bars is four
+  times the cycles, and gas is per swap regardless of size.
 
 ## The gas floor is derived, not guessed
 

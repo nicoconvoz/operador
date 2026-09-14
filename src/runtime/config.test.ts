@@ -63,12 +63,12 @@ describe('describeConfig — safe to log', () => {
 })
 
 describe('loadConfig — bar size', () => {
-  it('defaults to 1H, the only size validated against the backtest', () => {
-    expect(loadConfig(valid).barSize).toEqual({ timeframe: 'hour' })
+  it('defaults to 15m — the user trades these tokens on that bar', () => {
+    expect(loadConfig(valid).barSize).toEqual({ timeframe: 'minute', aggregate: 15 })
   })
 
-  it('accepts 15m as minute bars aggregated by 15', () => {
-    expect(loadConfig({ ...valid, OPERADOR_TIMEFRAME: '15m' }).barSize).toEqual({ timeframe: 'minute', aggregate: 15 })
+  it('still accepts 1h, which is what the parity harness proved', () => {
+    expect(loadConfig({ ...valid, OPERADOR_TIMEFRAME: '1h' }).barSize).toEqual({ timeframe: 'hour' })
   })
 
   it('rejects a timeframe nobody has measured', () => {

@@ -29,9 +29,10 @@ export interface RuntimeConfig {
   readonly bscRpcUrl: string
 
   /**
-   * Bar size the strategy runs on. 1H is the ONLY size validated against the
-   * TradingView backtest; anything else is a new configuration whose numbers
-   * nobody has checked.
+   * Bar size the strategy runs on. 15m in production.
+   *
+   * 1H is what the parity harness proved against TradingView — that test shows
+   * the PORT is faithful, and it stays green whatever bar size runs live.
    */
   readonly barSize: BarSize
 }
@@ -66,7 +67,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
   const chain = env.OPERADOR_CHAIN?.trim() ?? 'solana'
   if (chain !== 'solana' && chain !== 'bsc') throw new ConfigError(`OPERADOR_CHAIN must be "solana" or "bsc", got "${chain}"`)
 
-  const timeframe = env.OPERADOR_TIMEFRAME?.trim() ?? '1h'
+  // 15m by default, chosen from live trading rather than from the backtest:
+  // on young tokens an hour is long enough for the move to be over before the
+  // strategy has an opinion. The 1H parity run remains the proof that the PORT
+  // is faithful; the bar size is a separate decision, and this one is the
+  // user's, made with money on a real chart.
+  const timeframe = env.OPERADOR_TIMEFRAME?.trim() ?? '15m'
   if (timeframe !== '1h' && timeframe !== '15m') throw new ConfigError(`OPERADOR_TIMEFRAME must be "1h" or "15m", got "${timeframe}"`)
 
   const config: RuntimeConfig = {
