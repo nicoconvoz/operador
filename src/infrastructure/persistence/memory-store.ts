@@ -1,0 +1,85 @@
+import {
+  type EngineCheckpoint,
+  type PersistedFill,
+  type PersistedPosition,
+  type PersistedScan,
+  type StatePort,
+} from '../../domain/persistence/store.js'
+
+/**
+ * In-memory StatePort — for tests, paper runs, and as the reference that
+ * defines what "correct" means for the Postgres implementation.
+ *
+ * It is deliberately strict about the things that matter: writes are
+ * idempotent by key, and reads return copies so a caller mutating what it got
+ * back cannot corrupt the store. A store that is loose in memory hides the
+ * bugs the real one will have.
+ */
+export class MemoryStore implements StatePort {
+  private readonly positions = new Map<string, PersistedPosition>()
+  private readonly fills = new Map<string, PersistedFill>()
+  private readonly blacklistEntries = new Map<string, { reason: string; at: number }>()
+  private scan: PersistedScan | null = null
+  private checkpoint: EngineCheckpoint | null = null
+
+  async loadPositions(): Promise<readonly PersistedPosition[]> {
+    return [...this.positions.values()].map((p) => structuredClone(p))
+  }
+
+  async savePosition(position: PersistedPosition): Promise<void> {
+    this.positions.set(position.id, structuredClone(position))
+  }
+
+  async closePosition(positionId: string): Promise<void> {
+    this.positions.delete(positionId)
+  }
+
+  async recordFill(fill: PersistedFill): Promise<void> {
+    // First write wins: a retry after an ambiguous failure must not append a
+    // second fill for the same intended order.
+    if (this.fills.has(fill.idempotencyKey)) return
+    this.fills.set(fill.idempotencyKey, structuredClone(fill))
+  }
+
+  async fillsFor(positionId: string): Promise<readonly PersistedFill[]> {
+    return [...this.fills.values()]
+      .filter((f) => f.positionId === positionId)
+      .sort((a, b) => a.time - b.time)
+      .map((f) => structuredClone(f))
+  }
+
+  async hasFill(idempotencyKey: string): Promise<boolean> {
+    return this.fills.has(idempotencyKey)
+  }
+
+  async saveScan(scan: PersistedScan): Promise<void> {
+    this.scan = structuredClone(scan)
+  }
+
+  async latestScan(): Promise<PersistedScan | null> {
+    return this.scan ? structuredClone(this.scan) : null
+  }
+
+  async saveCheckpoint(checkpoint: EngineCheckpoint): Promise<void> {
+    this.checkpoint = { ...checkpoint }
+  }
+
+  async loadCheckpoint(): Promise<EngineCheckpoint | null> {
+    return this.checkpoint ? { ...this.checkpoint } : null
+  }
+
+  async blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void> {
+    // A death exit is terminal, so the FIRST verdict is the one kept.
+    const key = `${chain}:${tokenAddress}`
+    if (!this.blacklistEntries.has(key)) this.blacklistEntries.set(key, { reason, at })
+  }
+
+  async blacklisted(): Promise<ReadonlySet<string>> {
+    return new Set(this.blacklistEntries.keys())
+  }
+
+  /** Test helper: why a token was condemned. */
+  blacklistReason(chain: string, tokenAddress: string): string | null {
+    return this.blacklistEntries.get(`${chain}:${tokenAddress}`)?.reason ?? null
+  }
+}

@@ -682,6 +682,29 @@ Build what can be verified. Then build what must be discovered.
      trade since the chart began, so the replay seeds TradingView's cash at
      the resync bar (both sides flat) before walking in lockstep.
 7. **Persistence + crash recovery** — resume mid-position, idempotent orders.
+   **✅ COMPLETE.** `domain/persistence/store.ts` defines the durable contract
+   (positions with their cascade state, death watch and pending orders; fills
+   keyed for idempotency; scans; checkpoints; the death-exit blacklist), with
+   `MemoryStore` as the reference implementation and Postgres to follow.
+
+   `application/recovery.ts` is the path that decides whether a restart costs
+   money. For every order that was in flight when the process died it answers
+   one question — *did this actually happen?* — and there are three answers,
+   not two:
+
+   | Verdict | Action | Why |
+   |---|---|---|
+   | a fill is already recorded | continue | the store is the truth; the venue is not even asked |
+   | the venue confirms it never arrived | resubmit | retrying is safe |
+   | **unknown** | **halt the position** | both guesses are wrong half the time |
+
+   That third row is the whole design. "Assume filled" loses a position;
+   "assume not filled" buys twice; and a silent divergence between what the
+   engine believes and what the wallet holds is worse than either, because it
+   keeps trading on a lie. A halted position keeps its state, stops, and asks
+   for a human — **an unattended system is allowed to stop; it is not allowed
+   to guess.** One halted position never stops the others, and a blacklisted
+   token never resumes at all.
 
 Scanner work starts only once the parity harness is green.
 
