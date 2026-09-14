@@ -91,6 +91,31 @@ describe('gates — the shapes of real rugs', () => {
   })
 })
 
+describe('gates — not a trade at all', () => {
+  it('stablecoins and wrapped natives are denied by mint', () => {
+    expect(failedGates(clean({ address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC' }))).toEqual(['denylist:failed'])
+    expect(failedGates(clean({ address: 'So11111111111111111111111111111111111111112', symbol: 'SOL' }))).toEqual(['denylist:failed'])
+  })
+
+  it('a token wearing a canonical symbol at another address is an impostor', () => {
+    // The first live scan proposed a "USDC" on Raydium with a $96k pool.
+    expect(failedGates(clean({ address: 'NotTheRealUSDC111', symbol: 'USDC' }))).toEqual(['impersonation:failed'])
+    expect(failedGates(clean({ address: 'NotTheRealUSDC111', symbol: '$usdc' }))).toEqual(['impersonation:failed'])
+    expect(failedGates(clean({ address: 'Fake', symbol: 'BONK' }))).toEqual(['impersonation:failed'])
+    // A symbol nobody owns is fine.
+    expect(failedGates(clean({ address: 'Fresh', symbol: 'GOOD' }))).toEqual([])
+  })
+
+  it('a large cap is not what the strategy was tuned for', () => {
+    expect(failedGates(clean({ fdvUsd: 240_000_000 }))).toEqual(['marketCap:failed'])
+    expect(failedGates(clean({ fdvUsd: 49_000_000 }))).toEqual([])
+    // Unknown FDV is tolerated: liquidity and volume gates still apply.
+    expect(failedGates(clean({ fdvUsd: null }))).toEqual([])
+    // And the cap can be switched off.
+    expect(evaluateGates(clean({ fdvUsd: 240_000_000 }), { ...P, maxFdvUsd: null }).passed).toBe(true)
+  })
+})
+
 describe('gates — market thresholds', () => {
   it('thin liquidity', () => {
     expect(failedGates(clean({ liquidityUsd: P.minLiquidityUsd - 1 }))).toEqual(['liquidity:failed'])

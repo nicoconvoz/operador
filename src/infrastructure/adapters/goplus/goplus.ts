@@ -65,8 +65,34 @@ interface Envelope<T> {
   readonly result?: Record<string, T>
 }
 
+export interface GoPlusOptions {
+  /** Minimum spacing between calls. GoPlus returned code 4029 after ~50 back-to-back calls. */
+  readonly minIntervalMs?: number
+  /** Retries on 4029 / HTTP 429, with doubling backoff starting at `backoffMs`. */
+  readonly maxRetries?: number
+  readonly backoffMs?: number
+  readonly sleep?: (ms: number) => Promise<void>
+  readonly now?: () => number
+}
+
+const RATE_LIMITED = 4029
+
 export class GoPlus {
-  constructor(private readonly http: HttpGet) {}
+  private readonly minIntervalMs: number
+  private readonly maxRetries: number
+  private readonly backoffMs: number
+  private readonly sleep: (ms: number) => Promise<void>
+  private readonly now: () => number
+  private lastCallAt = -Infinity
+
+  constructor(private readonly http: HttpGet, options: GoPlusOptions = {}) {
+    // 1.3s spacing still drew 4029s on a 55-token pass; 2s with a 5s backoff holds.
+    this.minIntervalMs = options.minIntervalMs ?? 2_000
+    this.maxRetries = options.maxRetries ?? 2
+    this.backoffMs = options.backoffMs ?? 5_000
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.now = options.now ?? Date.now
+  }
 
   /** Security report for one token. Returns null when GoPlus has never seen it. */
   async securityReport(chain: Chain, address: string): Promise<SecurityReport | null> {
@@ -159,12 +185,27 @@ export class GoPlus {
   }
 
   private async fetchOne<T>(url: string, address: string): Promise<T | null> {
-    const response = await this.http(url)
-    if (response.status !== 200) throw new HttpError(url, response.status)
-    const body = (await response.json()) as Envelope<T>
-    if (body.code !== 1) throw new HttpError(url, response.status, `GoPlus code ${body.code}: ${body.message}`)
-    const result = body.result ?? {}
-    // EVM results are keyed by lowercase address.
-    return result[address] ?? result[address.toLowerCase()] ?? null
+    for (let attempt = 0; ; attempt++) {
+      await this.throttle()
+      const response = await this.http(url)
+      const body = response.status === 200 ? ((await response.json()) as Envelope<T>) : null
+      const limited = response.status === 429 || body?.code === RATE_LIMITED
+
+      if (limited && attempt < this.maxRetries) {
+        await this.sleep(this.backoffMs * 2 ** attempt)
+        continue
+      }
+      if (response.status !== 200) throw new HttpError(url, response.status)
+      if (body!.code !== 1) throw new HttpError(url, response.status, `GoPlus code ${body!.code}: ${body!.message}`)
+      const result = body!.result ?? {}
+      // EVM results are keyed by lowercase address.
+      return result[address] ?? result[address.toLowerCase()] ?? null
+    }
+  }
+
+  private async throttle(): Promise<void> {
+    const wait = this.lastCallAt + this.minIntervalMs - this.now()
+    if (wait > 0) await this.sleep(wait)
+    this.lastCallAt = this.now()
   }
 }

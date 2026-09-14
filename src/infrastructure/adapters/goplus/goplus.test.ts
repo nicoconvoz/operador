@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { GoPlus, GOPLUS_BASE, type GoPlusEvmToken, type GoPlusSolanaToken } from './goplus.js'
-import { stubHttp } from '../../http.js'
+import { stubHttp, type HttpGet } from '../../http.js'
 
 /** Trimmed from the live BONK response (Sept 2026). */
 const bonk: GoPlusSolanaToken = {
@@ -122,26 +122,68 @@ describe('GoPlus adapter — EVM mapping', () => {
   })
 })
 
+/** No waiting in tests: instant sleep, a clock that jumps on each sleep. */
+const fakeClock = () => {
+  let t = 0
+  const sleeps: number[] = []
+  return {
+    sleeps,
+    options: { sleep: async (ms: number) => { sleeps.push(ms); t += ms }, now: () => t },
+  }
+}
+
 describe('GoPlus adapter — endpoints', () => {
   it('calls the Solana and BSC endpoints and unwraps the envelope', async () => {
     const http = stubHttp({
       [`${GOPLUS_BASE}/solana/token_security?contract_addresses=Mint1`]: { body: { code: 1, message: 'ok', result: { Mint1: bonk } } },
       [`${GOPLUS_BASE}/token_security/56?contract_addresses=0xABC`]: { body: { code: 1, message: 'ok', result: { '0xabc': cake } } },
     })
-    const gp = new GoPlus(http)
+    const gp = new GoPlus(http, fakeClock().options)
     expect((await gp.securityReport('solana', 'Mint1'))?.mintAuthorityActive).toBe(false)
     expect((await gp.securityReport('bsc', '0xABC'))?.honeypot).toBe(false)
   })
 
   it('returns null for a token GoPlus has never seen', async () => {
-    const gp = new GoPlus(stubHttp({ [GOPLUS_BASE]: { body: { code: 1, message: 'ok', result: {} } } }))
+    const gp = new GoPlus(stubHttp({ [GOPLUS_BASE]: { body: { code: 1, message: 'ok', result: {} } } }), fakeClock().options)
     expect(await gp.securityReport('solana', 'Unknown')).toBeNull()
   })
 
   it('surfaces a non-1 code and non-200 status as HttpError', async () => {
-    const bad = new GoPlus(stubHttp({ [GOPLUS_BASE]: { body: { code: 4010, message: 'rate limited' } } }))
+    const bad = new GoPlus(stubHttp({ [GOPLUS_BASE]: { body: { code: 4010, message: 'bad key' } } }), fakeClock().options)
     await expect(bad.securityReport('solana', 'x')).rejects.toMatchObject({ name: 'HttpError' })
-    const down = new GoPlus(stubHttp({ [GOPLUS_BASE]: { status: 503, body: {} } }))
+    const down = new GoPlus(stubHttp({ [GOPLUS_BASE]: { status: 503, body: {} } }), fakeClock().options)
     await expect(down.securityReport('bsc', 'x')).rejects.toMatchObject({ name: 'HttpError', status: 503 })
+  })
+
+  it('spaces calls by the minimum interval — GoPlus limited us after ~50 back-to-back calls', async () => {
+    const clock = fakeClock()
+    const gp = new GoPlus(stubHttp({ [GOPLUS_BASE]: { body: { code: 1, message: 'ok', result: {} } } }), { ...clock.options, minIntervalMs: 1_300 })
+    await gp.securityReport('solana', 'a')
+    await gp.securityReport('solana', 'b')
+    await gp.securityReport('solana', 'c')
+    expect(clock.sleeps).toEqual([1_300, 1_300])
+  })
+
+  it('retries a 4029 with doubling backoff, then succeeds', async () => {
+    let calls = 0
+    const http: HttpGet = Object.assign(
+      async () => {
+        calls++
+        return calls < 3
+          ? { status: 200, json: async () => ({ code: 4029, message: 'too many requests' }) }
+          : { status: 200, json: async () => ({ code: 1, message: 'ok', result: { m: bonk } }) }
+      },
+      { calls: [] as string[] },
+    )
+    const clock = fakeClock()
+    const gp = new GoPlus(http, { ...clock.options, minIntervalMs: 0, backoffMs: 2_000, maxRetries: 2 })
+    expect((await gp.securityReport('solana', 'm'))?.mintAuthorityActive).toBe(false)
+    expect(calls).toBe(3)
+    expect(clock.sleeps).toEqual([2_000, 4_000])
+  })
+
+  it('gives up after maxRetries and lets the scan fail closed', async () => {
+    const gp = new GoPlus(stubHttp({ [GOPLUS_BASE]: { status: 429, body: {} } }), { ...fakeClock().options, minIntervalMs: 0, maxRetries: 1 })
+    await expect(gp.securityReport('solana', 'x')).rejects.toMatchObject({ name: 'HttpError', status: 429 })
   })
 })

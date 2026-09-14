@@ -1,4 +1,4 @@
-import { type HttpGet } from '../../http.js'
+import { NO_THROTTLE, type HttpGet, type Throttle } from '../../http.js'
 import { type SellQuoteResult } from '../../../domain/risk/death-exit.js'
 
 /**
@@ -43,9 +43,16 @@ export interface QuoteFailure {
   readonly detail: string
 }
 
+/** One quote, two answers: the honeypot verdict and the measured impact. */
+export interface SellAssessment {
+  readonly sellQuote: SellQuoteResult
+  readonly priceImpactPct: number | null
+}
+
 export class Jupiter {
   constructor(
     private readonly http: HttpGet,
+    private readonly throttle: Throttle = NO_THROTTLE,
     private readonly base: string = JUPITER_LITE_BASE,
   ) {}
 
@@ -56,6 +63,7 @@ export class Jupiter {
       `&amount=${amountRaw.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`
     let response
     try {
+      await this.throttle.wait()
       response = await this.http(url)
     } catch (error) {
       return { ok: false, reason: 'http', detail: String(error) }
@@ -78,16 +86,24 @@ export class Jupiter {
   }
 
   /**
-   * The death-exit sell probe. `expectedUsd` is what the position is worth at
-   * the last known price; a quote paying far less than that is 'implausible'
-   * — the route exists but the market will not honour the price.
+   * The sell probe. `expectedUsd` is what the amount is worth at the last
+   * known price; a quote paying far less than that is 'implausible' — the
+   * route exists but the market will not honour the price. The same quote
+   * yields the measured price impact, so one call answers both questions.
    */
-  async probeSellPath(mint: string, amountRaw: bigint, expectedUsd: number, maxShortfallPct = 50): Promise<SellQuoteResult> {
+  async assessSell(mint: string, amountRaw: bigint, expectedUsd: number, maxShortfallPct = 50): Promise<SellAssessment> {
     const result = await this.quoteSell(mint, amountRaw)
-    if (!result.ok) return result.reason === 'no-route' ? 'failed' : 'unknown'
-    if (result.outUsd <= 0) return 'failed'
-    if (expectedUsd > 0 && result.outUsd < expectedUsd * (1 - maxShortfallPct / 100)) return 'implausible'
-    return 'ok'
+    if (!result.ok) return { sellQuote: result.reason === 'no-route' ? 'failed' : 'unknown', priceImpactPct: null }
+    if (result.outUsd <= 0) return { sellQuote: 'failed', priceImpactPct: result.priceImpactPct }
+    if (expectedUsd > 0 && result.outUsd < expectedUsd * (1 - maxShortfallPct / 100)) {
+      return { sellQuote: 'implausible', priceImpactPct: result.priceImpactPct }
+    }
+    return { sellQuote: 'ok', priceImpactPct: result.priceImpactPct }
+  }
+
+  /** The death-exit sell probe for a full position. */
+  async probeSellPath(mint: string, amountRaw: bigint, expectedUsd: number, maxShortfallPct = 50): Promise<SellQuoteResult> {
+    return (await this.assessSell(mint, amountRaw, expectedUsd, maxShortfallPct)).sellQuote
   }
 
   /** Price impact, in percent, of selling `referenceUsd` worth of the token. */

@@ -37,12 +37,46 @@ export const makeHttpGet = (options: HttpOptions = {}): HttpGet => {
         signal: controller.signal,
         headers: { accept: 'application/json', 'user-agent': userAgent, ...init?.headers },
       })
-      return { status: response.status, json: () => response.json() as Promise<unknown> }
+      // APIs under rate limit answer with plain text ("Rate limit"). Never let
+      // that become a SyntaxError deep inside an adapter: surface it as a body.
+      const text = await response.text()
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        parsed = { error: text.slice(0, 200) }
+      }
+      return { status: response.status, json: async () => parsed }
     } finally {
       clearTimeout(timer)
     }
   }
 }
+
+/**
+ * A minimum spacing between calls, shared by every adapter that talks to the
+ * same provider. `wait()` resolves when the next call may go out.
+ */
+export interface Throttle {
+  wait(): Promise<void>
+}
+
+export const makeThrottle = (
+  minIntervalMs: number,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: () => number = Date.now,
+): Throttle => {
+  let lastAt = -Infinity
+  return {
+    async wait() {
+      const pause = lastAt + minIntervalMs - now()
+      if (pause > 0) await sleep(pause)
+      lastAt = now()
+    },
+  }
+}
+
+export const NO_THROTTLE: Throttle = { wait: async () => {} }
 
 /** Test helper: an HttpGet that answers from a URL → payload table. */
 export const stubHttp = (table: Record<string, { status?: number; body: unknown }>): HttpGet & { readonly calls: string[] } => {

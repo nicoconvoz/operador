@@ -1,4 +1,4 @@
-import { type HttpGet } from '../../http.js'
+import { NO_THROTTLE, type HttpGet, type Throttle } from '../../http.js'
 import { type Chain, type SecurityReport } from '../../../domain/scanner/snapshot.js'
 import { type DecimalsPort } from '../../../application/scan.js'
 import { JUPITER_LITE_BASE } from './jupiter.js'
@@ -39,6 +39,7 @@ export class JupiterTokens implements DecimalsPort {
 
   constructor(
     private readonly http: HttpGet,
+    private readonly throttle: Throttle = NO_THROTTLE,
     private readonly base: string = JUPITER_LITE_BASE,
   ) {}
 
@@ -46,6 +47,7 @@ export class JupiterTokens implements DecimalsPort {
     const cached = this.cache.get(mint)
     if (cached !== undefined) return cached
 
+    await this.throttle.wait()
     const response = await this.http(`${this.base}/tokens/v2/search?query=${encodeURIComponent(mint)}`)
     if (response.status !== 200) return null
     const body = (await response.json()) as unknown
@@ -66,6 +68,7 @@ export class JupiterTokens implements DecimalsPort {
     const lists = ['toptrending/24h', 'toptraded/24h', 'toporganicscore/24h']
     const seen = new Set<string>()
     for (const list of lists) {
+      await this.throttle.wait()
       const response = await this.http(`${this.base}/tokens/v2/${list}?limit=${limit}`)
       if (response.status !== 200) continue
       const body = (await response.json()) as unknown

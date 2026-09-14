@@ -4,7 +4,7 @@ import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
-import { makeHttpGet } from '../infrastructure/http.js'
+import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 
@@ -21,8 +21,10 @@ const SMOKE = process.env.OPERADOR_SMOKE === '1'
 describe.skipIf(!SMOKE)('scan — live smoke on Solana', () => {
   it('runs one real scan and reports what it found', async () => {
     const http = makeHttpGet({ timeoutMs: 15_000 })
+    // One throttle for everything that talks to Jupiter's lite tier.
+    const jupiterThrottle = makeThrottle(1_100)
     const out = await scanOnce(
-      { dex: new DexScreener(http), goplus: new GoPlus(http), jupiter: new Jupiter(http), decimals: new JupiterTokens(http) },
+      { dex: new DexScreener(http), goplus: new GoPlus(http), jupiter: new Jupiter(http, jupiterThrottle), decimals: new JupiterTokens(http, jupiterThrottle) },
       {
         chain: 'solana',
         ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 10, minScore: 0 },

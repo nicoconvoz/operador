@@ -123,10 +123,12 @@ export async function scanOnce(
         const decimals = await deps.decimals.decimals('solana', market.address)
         if (decimals !== null && market.priceUsd > 0) {
           const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
-          const probe = await deps.jupiter.probeSellPath(market.address, amountRaw, config.referenceUsd)
-          // GoPlus has no honeypot flag on Solana: the sell probe IS the honeypot test.
-          security = { ...security, honeypot: probe === 'ok' ? false : probe === 'unknown' ? null : true }
-          slippagePct = await deps.jupiter.measureSlippagePct(market.address, decimals, market.priceUsd, config.referenceUsd)
+          // One quote answers both: GoPlus has no honeypot flag on Solana, so
+          // the sell probe IS the honeypot test — and the same quote carries
+          // the measured price impact for MarketQuality.
+          const sell = await deps.jupiter.assessSell(market.address, amountRaw, config.referenceUsd)
+          security = { ...security, honeypot: sell.sellQuote === 'ok' ? false : sell.sellQuote === 'unknown' ? null : true }
+          slippagePct = sell.priceImpactPct
         }
       } catch (error) {
         errors.push({ address: market.address, stage: 'quote', error: String(error) })
