@@ -8,6 +8,7 @@ import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
+import { type Candidate } from '../domain/scanner/ranking.js'
 
 import { scanOnce } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
@@ -68,13 +69,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const jupiterTokens = new JupiterTokens(http, jupiterThrottle)
   const gecko = new GeckoTerminal(http, geckoThrottle)
 
-  // One port, the right implementation for the chain. BSC quotes PancakeSwap's
+  // One port, the right implementation PER CHAIN. BSC quotes PancakeSwap's
   // router directly; without this its honeypot answer would be a third party's
   // flag rather than a fact.
-  const sellProbe =
-    config.chain === 'solana'
-      ? jupiter
-      : new PancakeSwap(jsonRpcEthCall(config.bscRpcUrl, ports.postJson), makeThrottle(250))
+  //
+  // Chosen by the chain in hand rather than by a single configured one: with
+  // both chains scanned, a BSC position asked through Jupiter would get a
+  // "cannot sell" that means nothing more than "wrong venue" — and the death
+  // watch would read it as a rug.
+  const pancake = new PancakeSwap(jsonRpcEthCall(config.bscRpcUrl, ports.postJson), makeThrottle(250))
+  const sellProbeFor = (chain: string) => (chain === 'bsc' ? pancake : jupiter)
 
   // In paper mode every position keeps its own broker, so one position's cash
   // can never be spent by another — the same isolation the live wallets will
@@ -103,14 +107,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     probe: async () => 'unknown',
     candlesFor: async (position) => {
       try {
-        return await gecko.candles(config.chain, position.pairAddress, config.barSize, 1000)
+        return await gecko.candles(position.chain, position.pairAddress, config.barSize, 1000)
       } catch {
         return null
       }
     },
     healthFor: async (position) => {
       try {
-        const decimals = await jupiterTokens.decimals(config.chain, position.tokenAddress)
+        const decimals = await jupiterTokens.decimals(position.chain, position.tokenAddress)
         // Without decimals or a price there is no way to size a meaningful
         // probe, and a probe of the wrong size answers the wrong question.
         // Reporting nothing is honest; reporting an unfounded 'ok' is not.
@@ -120,7 +124,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // sold says nothing about whether the position can leave.
         const referenceUsd = Math.max(position.capitalUsd, 50)
         const amountRaw = BigInt(Math.floor((referenceUsd / position.lastPriceUsd) * 10 ** decimals))
-        const assessment = await sellProbe.assessSell(position.tokenAddress, amountRaw, decimals, referenceUsd)
+        const assessment = await sellProbeFor(position.chain).assessSell(
+          position.tokenAddress,
+          amountRaw,
+          decimals,
+          referenceUsd,
+        )
         return {
           observedAt: Date.now(),
           source: 'jupiter',
@@ -138,21 +147,41 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       }
     },
     brokerFor,
+    // Every configured chain, each scan stored under its own chain so the
+    // universe can show them together. One chain failing must not cost the
+    // others their turn: a rate limit on Solana is not a reason to stop
+    // looking at BSC.
     scan: async () => {
-      const result = await scanOnce(
-        { dex, goplus, sellProbe, decimals: jupiterTokens, history: gecko },
-        {
-          chain: config.chain,
-          ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: config.maxPositions, minScore: 0 },
-          referenceUsd: 100,
-          spreadPct: 0.3,
-          // The whole visible universe: Jupiter's lists return ~220 unique
-          // tokens and the free gates cut that to what is worth paying for.
-          maxTokens: 300,
-        },
-      )
-      await store.saveScan({ scannedAt: result.scannedAt, chain: config.chain, snapshots: result.snapshots })
-      return result.candidates
+      const candidates: Candidate[] = []
+      for (const chain of config.chains) {
+        try {
+          const result = await scanOnce(
+            { dex, goplus, sellProbe: sellProbeFor(chain), decimals: jupiterTokens, history: gecko },
+            {
+              chain,
+              ranking: {
+                gates: DEFAULT_GATE_POLICY,
+                opportunity: DEFAULT_OPPORTUNITY_POLICY,
+                watchSlots: config.maxPositions,
+                minScore: 0,
+              },
+              referenceUsd: 100,
+              spreadPct: 0.3,
+              // The whole visible universe: Jupiter's lists return ~220 unique
+              // Solana tokens and GeckoTerminal adds BSC's pools; the free
+              // gates cut that to what is worth paying for.
+              maxTokens: 300,
+            },
+          )
+          await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: result.snapshots })
+          candidates.push(...result.candidates)
+        } catch (error) {
+          console.error(`[scan:${chain}]`, error)
+        }
+      }
+      // Ranked across chains: slots are scarce and the best opportunity should
+      // win wherever it lives.
+      return candidates.sort((a, b) => b.opportunity.score - a.opportunity.score)
     },
     now: () => Date.now(),
   }
@@ -162,7 +191,6 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     cycleConfig: {
       params: DEFAULT_PARAMS,
       portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: config.totalCapitalUsd, maxPositions: config.maxPositions },
-      chain: config.chain,
       heartbeatMs: 60 * 60 * 1000,
     },
     throttle: new AlertThrottle(30 * 60 * 1000),
@@ -187,6 +215,8 @@ export async function main(ports: RuntimePorts): Promise<void> {
   const report = await runLoop(deps, cycleConfig, throttle, {
     intervalMs: config.cycleIntervalMs,
     stopSignal,
+    // 0 means run forever. A scheduler sets 1 and gets a single cycle.
+    ...(config.maxCycles > 0 ? { maxCycles: config.maxCycles } : {}),
   })
 
   console.log('[exit]', JSON.stringify(report.stoppedBy), report.cycles, 'cycles')

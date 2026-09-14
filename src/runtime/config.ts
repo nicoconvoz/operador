@@ -1,3 +1,4 @@
+import { type Chain } from '../domain/scanner/snapshot.js'
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -10,7 +11,13 @@ import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapt
 
 export interface RuntimeConfig {
   readonly mode: 'paper' | 'live'
-  readonly chain: 'solana' | 'bsc'
+  /**
+   * Every chain the scanner covers, in order. A LIST and not one value,
+   * because the universe spans chains: running one at a time meant the screen
+   * showed whichever scanned last and the other looked like it had stopped
+   * existing.
+   */
+  readonly chains: readonly Chain[]
 
   readonly databaseUrl: string
 
@@ -22,6 +29,16 @@ export interface RuntimeConfig {
   readonly cycleIntervalMs: number
   /** How often the death watch re-probes the sell path of open positions. */
   readonly healthIntervalMs: number
+  /**
+   * Stop after this many cycles. 0 means never — the daemon.
+   *
+   * 1 turns the engine into a ONE-SHOT: do a cycle, write everything down,
+   * exit. That is what lets a scheduler run it instead of a server, and it is
+   * only honest because every adapter is HTTP polling and every piece of state
+   * is in Postgres. Nothing is held in memory between cycles, so there is
+   * nothing for a long-lived process to hold.
+   */
+  readonly maxCycles: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -62,8 +79,17 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
   const mode = env.OPERADOR_MODE?.trim() ?? 'paper'
   if (mode !== 'paper' && mode !== 'live') throw new ConfigError(`OPERADOR_MODE must be "paper" or "live", got "${mode}"`)
 
-  const chain = env.OPERADOR_CHAIN?.trim() ?? 'solana'
-  if (chain !== 'solana' && chain !== 'bsc') throw new ConfigError(`OPERADOR_CHAIN must be "solana" or "bsc", got "${chain}"`)
+  // "solana", "bsc", or "solana,bsc".
+  const chains = (env.OPERADOR_CHAIN?.trim() || 'solana')
+    .split(',')
+    .map((name) => name.trim().toLowerCase())
+    .filter((name) => name.length > 0)
+  for (const name of chains) {
+    if (name !== 'solana' && name !== 'bsc') {
+      throw new ConfigError(`OPERADOR_CHAIN accepts "solana", "bsc" or "solana,bsc"; got "${name}"`)
+    }
+  }
+  if (chains.length === 0) throw new ConfigError('OPERADOR_CHAIN must name at least one chain')
 
   // 15m by default, chosen from live trading rather than from the backtest:
   // on young tokens an hour is long enough for the move to be over before the
@@ -75,13 +101,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
 
   const config: RuntimeConfig = {
     mode,
-    chain,
+    chains: chains as readonly Chain[],
     databaseUrl: required(env, 'DATABASE_URL'),
     totalCapitalUsd: number(env, 'OPERADOR_CAPITAL_USD', 1_000),
     maxPositions: number(env, 'OPERADOR_MAX_POSITIONS', 5),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
+    maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',
@@ -103,7 +130,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
 /** Redacted for logs. Secrets never reach stdout, not even once at boot. */
 export const describeConfig = (config: RuntimeConfig): Record<string, unknown> => ({
   mode: config.mode,
-  chain: config.chain,
+  chains: config.chains.join(','),
   database: config.databaseUrl.replace(/:\/\/[^@]*@/, '://***@'),
   capitalUsd: config.totalCapitalUsd,
   maxPositions: config.maxPositions,

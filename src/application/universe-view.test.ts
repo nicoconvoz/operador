@@ -137,3 +137,40 @@ describe('buildUniverse — what a picture needs', () => {
     expect(view.tokens[0]!.symbol).toBe('GOOD')
   })
 })
+
+describe('buildUniverse — every chain at once', () => {
+  const HOUR_MS = 3_600_000
+
+  it('shows Solana AND BSC together, not whichever scanned last', async () => {
+    const store = new MemoryStore()
+    await store.saveScan({ scannedAt: NOW - 2 * HOUR_MS, chain: 'solana', snapshots: [token('SOL1'), token('SOL2')] })
+    await store.saveScan({
+      scannedAt: NOW - HOUR,
+      chain: 'bsc',
+      snapshots: [token('BSC1', { chain: 'bsc', address: 'BSC1' })],
+    })
+
+    const view = await buildUniverse(store, options)
+    // The old read took the newest row and nothing else, so scanning BSC made
+    // every Solana token disappear from the screen.
+    expect(view.tokens.map((t) => t.symbol).sort()).toEqual(['BSC1', 'SOL1', 'SOL2'])
+    expect(view.chains).toEqual(['bsc', 'solana'])
+  })
+
+  it('keeps only the LATEST scan of each chain', async () => {
+    const store = new MemoryStore()
+    await store.saveScan({ scannedAt: NOW - 2 * HOUR_MS, chain: 'solana', snapshots: [token('OLD')] })
+    await store.saveScan({ scannedAt: NOW - HOUR, chain: 'solana', snapshots: [token('FRESH')] })
+
+    const view = await buildUniverse(store, options)
+    expect(view.tokens.map((t) => t.symbol)).toEqual(['FRESH'])
+  })
+
+  it('reports the OLDEST chain as the scan time — a universe is only as fresh as its stalest half', async () => {
+    const store = new MemoryStore()
+    await store.saveScan({ scannedAt: NOW - 3 * HOUR_MS, chain: 'solana', snapshots: [token('SOL1')] })
+    await store.saveScan({ scannedAt: NOW - HOUR, chain: 'bsc', snapshots: [token('BSC1', { chain: 'bsc', address: 'BSC1' })] })
+
+    expect((await buildUniverse(store, options)).scannedAt).toBe(NOW - 3 * HOUR_MS)
+  })
+})

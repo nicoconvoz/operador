@@ -9,7 +9,7 @@ describe('loadConfig — fails at boot, never mid-ladder', () => {
   it('accepts a minimal valid environment with sane defaults', () => {
     const config = loadConfig(valid)
     expect(config.mode).toBe('paper')
-    expect(config.chain).toBe('solana')
+    expect(config.chains).toEqual(['solana'])
     expect(config.totalCapitalUsd).toBe(1_000)
     expect(config.cycleIntervalMs).toBe(300_000)
   })
@@ -60,7 +60,7 @@ describe('describeConfig — safe to log', () => {
     // not named is simply never printed.
     const described = describeConfig(loadConfig(valid))
     expect(Object.keys(described).sort()).toEqual(
-      ['capitalUsd', 'chain', 'cycleMinutes', 'database', 'gasUsdPerSwap', 'maxPositions', 'mode'],
+      ['capitalUsd', 'chains', 'cycleMinutes', 'database', 'gasUsdPerSwap', 'maxPositions', 'mode'],
     )
   })
 })

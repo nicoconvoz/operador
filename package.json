@@ -1,6 +1,6 @@
 {
   "name": "operador",
-  "description": "Operador by Open Doors — CASCADE DCA executor and small-cap scanner for on-chain spot markets",
+  "description": "Operador by Open Doors \u2014 CASCADE DCA executor and small-cap scanner for on-chain spot markets",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,13 +12,16 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit false --outDir dist --module nodenext --moduleResolution nodenext",
-    "start": "node dist/runtime/index.js"
+    "start": "node dist/runtime/index.js",
+    "cycle": "tsx src/runtime/index.ts",
+    "dev:phone-api": "tsx src/runtime/demo-server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/pg": "^8.23.1",
     "typescript": "^5.7.2",
-    "vitest": "^3.0.5"
+    "vitest": "^3.0.5",
+    "tsx": "^4.19.2"
   },
   "dependencies": {
     "pg": "^8.23.0"

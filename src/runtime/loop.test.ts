@@ -22,7 +22,6 @@ const flat = (bars = 260): Candles => ({
 const config: CycleConfig = {
   params: DEFAULT_PARAMS,
   portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: 2_000 },
-  chain: 'solana',
   heartbeatMs: 60 * 60 * 1000,
 }
 

@@ -1,0 +1,63 @@
+# The engine, on a schedule instead of a server.
+#
+# This is possible — and honest — only because of two properties the system
+# already has: every adapter is HTTP polling (there is not a single WebSocket
+# in the codebase) and every piece of state lives in Postgres. Nothing is held
+# in memory between cycles, so there is nothing for a long-lived process to
+# hold. A cycle run here is the same cycle a daemon would run.
+#
+# Two limits worth knowing before trusting it:
+#
+#   - GitHub's cron is BEST EFFORT. Under load a run can start ten minutes
+#     late. On 15-minute bars that is tolerable; it would not be on 1-minute
+#     ones.
+#   - A scheduled workflow is DISABLED after 60 days with no commits to the
+#     repository. Push something, or turn it back on.
+
+name: engine
+
+on:
+  schedule:
+    # Every 15 minutes — one bar. On a PRIVATE repo this costs about 2,900
+    # minutes a month against a 2,000-minute free allowance; make the repo
+    # public (unlimited minutes) or raise this to */30.
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # so you can run one by hand and watch the log
+
+# A cycle writes to the database. Two at once would both try to open positions
+# against the same capital, so a late run waits rather than overlapping.
+concurrency:
+  group: engine
+  cancel-in-progress: false
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    # A hung provider must not burn the whole allowance on one run.
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # The engine refuses to start on a bad configuration, so a broken secret
+      # fails here rather than halfway through a ladder.
+      - name: Run one cycle
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPERADOR_CONTROL_TOKEN: ${{ secrets.OPERADOR_CONTROL_TOKEN }}
+          OPERADOR_MODE: paper
+          OPERADOR_CHAIN: solana,bsc
+          OPERADOR_TIMEFRAME: 15m
+          OPERADOR_CAPITAL_USD: ${{ vars.OPERADOR_CAPITAL_USD || '1000' }}
+          OPERADOR_MAX_POSITIONS: ${{ vars.OPERADOR_MAX_POSITIONS || '5' }}
+          OPERADOR_GAS_USD: ${{ vars.OPERADOR_GAS_USD || '0.05' }}
+          # One cycle, then exit. This is the whole trick.
+          OPERADOR_MAX_CYCLES: '1'
+        run: npm run cycle

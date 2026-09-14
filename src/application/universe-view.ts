@@ -91,14 +91,17 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
   const opportunityPolicy = options.opportunity ?? DEFAULT_OPPORTUNITY_POLICY
   const spreadPct = options.spreadPct ?? 0.3
 
-  const [scan, positions, blacklisted] = await Promise.all([
-    store.latestScan(),
+  const [scans, positions, blacklisted] = await Promise.all([
+    store.latestScansByChain(),
     store.loadPositions(),
     store.blacklisted(),
   ])
 
   const heldBy = new Map(positions.map((p) => [`${p.chain}:${p.tokenAddress}`, p]))
-  const snapshots: readonly TokenSnapshot[] = scan?.snapshots ?? []
+  // Every chain's newest scan, together. The universe is not one chain, and a
+  // screen that shows whichever ran last makes the other one look like it
+  // stopped existing.
+  const snapshots: readonly TokenSnapshot[] = scans.flatMap((scan) => scan.snapshots)
 
   const tokens: UniverseToken[] = snapshots.map((snapshot) => {
     const key = `${snapshot.chain}:${snapshot.address}`
@@ -162,7 +165,10 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
 
   return {
     generatedAt,
-    scannedAt: scan?.scannedAt ?? null,
+    // The OLDEST chain, not the newest. A universe is only as fresh as its
+    // stalest half, and reporting the newest would let a healthy Solana scan
+    // hide a BSC scanner that died three hours ago.
+    scannedAt: scans.length === 0 ? null : Math.min(...scans.map((s) => s.scannedAt)),
     // Brightest first, so a truncated render keeps the interesting ones.
     tokens: [...tokens].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || b.score - a.score),
     counts,

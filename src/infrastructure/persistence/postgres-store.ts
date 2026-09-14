@@ -10,7 +10,7 @@ import { type Alert, type AlertKind, type AlertLevel } from '../../domain/notifi
 import { type CascadeState } from '../../domain/strategy/state.js'
 import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
-import { type TokenSnapshot } from '../../domain/scanner/snapshot.js'
+import { type Chain, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 
 /**
  * Postgres StatePort.
@@ -27,6 +27,12 @@ import { type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 
 export interface SqlClient {
   query<T = Record<string, unknown>>(sql: string, params?: readonly unknown[]): Promise<{ rows: T[] }>
+}
+
+interface ScanRow {
+  scanned_at: string | number
+  chain: string
+  snapshots: TokenSnapshot[]
 }
 
 interface AlertRow {
@@ -75,7 +81,7 @@ export class PostgresStore implements StatePort {
     const { rows } = await this.sql.query<PositionRow>('SELECT * FROM positions ORDER BY opened_at')
     return rows.map((row) => ({
       id: row.id,
-      chain: row.chain,
+      chain: row.chain as Chain,
       tokenAddress: row.token_address,
       pairAddress: row.pair_address,
       symbol: row.symbol,
@@ -152,6 +158,16 @@ export class PostgresStore implements StatePort {
        ON CONFLICT (scanned_at) DO NOTHING`,
       [scan.scannedAt, scan.chain, JSON.stringify(scan.snapshots)],
     )
+  }
+
+  async latestScansByChain(): Promise<readonly PersistedScan[]> {
+    // DISTINCT ON is Postgres' way of saying "the newest row per chain" in one
+    // pass. A single ORDER BY ... LIMIT 1 answers a different question, and
+    // answering it here made the whole universe collapse to one chain.
+    const { rows } = await this.sql.query<ScanRow>(
+      'SELECT DISTINCT ON (chain) scanned_at, chain, snapshots FROM scans ORDER BY chain, scanned_at DESC',
+    )
+    return rows.map((row) => ({ scannedAt: num(row.scanned_at), chain: row.chain, snapshots: row.snapshots }))
   }
 
   async latestScan(): Promise<PersistedScan | null> {

@@ -1,4 +1,5 @@
 import { type Alert } from '../notifications/alerts.js'
+import { type Chain } from '../scanner/snapshot.js'
 import { type DeathWatchState } from '../risk/death-exit.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
@@ -20,7 +21,8 @@ import { type TokenSnapshot } from '../scanner/snapshot.js'
 /** A position the engine is running, as it must survive a restart. */
 export interface PersistedPosition {
   readonly id: string
-  readonly chain: string
+  /** Typed, not a free string: the sell probe and the candle source are both chosen by it. */
+  readonly chain: Chain
   readonly tokenAddress: string
   readonly pairAddress: string
   readonly symbol: string
@@ -120,6 +122,15 @@ export interface StatePort {
 
   saveScan(scan: PersistedScan): Promise<void>
   latestScan(): Promise<PersistedScan | null>
+  /**
+   * The newest scan of EACH chain.
+   *
+   * Separate from `latestScan` because the universe spans chains and a single
+   * newest row cannot represent it: scanning BSC would make every Solana token
+   * vanish from the screen, which looks exactly like the scanner having
+   * stopped finding them.
+   */
+  latestScansByChain(): Promise<readonly PersistedScan[]>
 
   saveCheckpoint(checkpoint: EngineCheckpoint): Promise<void>
   loadCheckpoint(): Promise<EngineCheckpoint | null>

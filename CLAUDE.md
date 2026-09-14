@@ -89,9 +89,18 @@ Measured live, not assumed:
 
 | Source | Solana | BSC |
 |---|---|---|
-| Jupiter token lists | **220** | — (Solana only) |
-| DexScreener boosts | 30 | **9** |
-| GeckoTerminal pools | 20 | **48** |
+| Jupiter token lists | **99** | — (Solana only) |
+| GeckoTerminal pools | **171** | **119** |
+| DexScreener boosts | 36 | 4 |
+| **Unique, deduplicated** | **261** | **123** |
+
+Measured again on 2026-09-14, and the shape has MOVED since the first run:
+Jupiter's lists fell from ~220 to 99 while GeckoTerminal's pools rose from 20
+to 171. Neither number is a constant, which is the argument for having three
+sources rather than a favourite — a universe built on one provider's list is a
+universe that halves the day that provider changes its mind.
+
+Both chains together: **384 tokens per cycle.**
 
 BSC was effectively blind. Its only source was DexScreener's boosts — which
 are **paid promotions**. A universe built from who paid to be seen is not a
@@ -125,7 +134,16 @@ tokens are worth running the strategy on; CASCADE DCA's own gates (drop
 from swing high, lateral zone) decide *when* to enter. One executor state
 machine per watched token.
 
-**Chain order: Solana first, then BSC** as a second adapter of the same port.
+**Both chains, every cycle.** The scan loops `OPERADOR_CHAIN` (default
+`solana,bsc`) and stores each result under its own chain, because
+`latestScan()` returning a single newest row meant scanning BSC made every
+Solana token vanish from the screen — which looks exactly like the scanner
+having stopped finding them. `latestScansByChain()` returns the newest scan per
+chain and the universe merges them; the reported scan time is the OLDEST of
+them, since a universe is only as fresh as its stalest half.
+
+One chain failing does not cost the others their turn: a rate limit on Solana
+is not a reason to stop looking at BSC.
 Sources (verified free, Sept 2026): DexScreener public API for the universe
 and market numbers, GoPlus for security, Jupiter lite-api for sell quotes.
 
@@ -841,16 +859,32 @@ strategy, so the fix can later be evaluated as an explicit A/B with retuned
 (Jupiter, viem/ethers, RPC clients), and the type system can enforce the
 death-exit guardrail structurally.
 
-### The engine is a long-running process — not serverless
+### The engine does not need a server — CORRECTED
 
-This is a hard constraint, not a preference. The engine must hold:
+This section used to say the opposite, citing "live WebSocket subscriptions to
+price and liquidity feeds". **There is not a single WebSocket in the
+codebase.** Every adapter — DexScreener, GoPlus, Jupiter, GeckoTerminal,
+PancakeSwap — is HTTP polling, and every piece of state (positions, ladder,
+death watch, in-flight orders, the alert log) is in Postgres.
 
-- Live WebSocket subscriptions to price and liquidity feeds
-- One in-flight state machine per open position
-- Continuous death-exit monitoring, independent of the 1H bar cycle
+So a cycle reads the database, decides, writes, and exits. There is nothing
+for a long-lived process to hold between cycles because there is nothing in
+memory, which is what makes `OPERADOR_MAX_CYCLES=1` honest rather than a
+shortcut: it does exactly what the daemon does, once.
 
-Serverless functions terminate, cannot hold sockets, and have no continuity
-between invocations. **Vercel cannot host the engine.**
+The engine therefore runs on **GitHub Actions on a schedule** (see `DEPLOY.md`),
+with two limits worth knowing:
+
+- GitHub's cron is best effort; a run can start ten minutes late under load.
+  Tolerable on 15-minute bars, not on 1-minute ones.
+- A scheduled workflow is disabled after 60 days without a commit.
+
+Vercel still cannot host it, and the reason is unchanged: a serverless function
+has no continuity. A scheduler is not a serverless runtime — it starts a whole
+process, which is all a cycle ever needed.
+
+The Docker image remains the migration path to a real daemon (Oracle Always
+Free ARM) the day a WebSocket feed or a sub-minute bar makes one necessary.
 
 ### Topology — $0/month stack
 
@@ -858,7 +892,7 @@ The whole system runs on free tiers. Verified September 2026.
 
 | Component | Runs on | Cost | Notes |
 |---|---|---|---|
-| **Engine** — scanner, executors, death-exit monitor | Oracle Cloud **Always Free** ARM (Ampere A1) | $0 | 2 OCPU / 12 GB RAM / 200 GB. See gotchas below. |
+| **Engine** — scanner, executors, death-exit monitor | **GitHub Actions**, one cycle every 15 minutes | $0 | Unlimited minutes on a public repo. Oracle Always Free ARM remains the upgrade path. |
 | **State & event log** | Postgres — Supabase or Neon free tier | $0 | Durable truth. Engine memory is a cache, never the source. |
 | **Dashboard** — positions, death watch, warnings | **Vercel** Hobby (Next.js, read-only) | $0 | This is where Vercel belongs. **✅ built** |
 | **Alerts + kill switch** — on the phone | Android app (`android/`), reading the alert log | $0 | Unattended ≠ unobservable. **✅ built** |

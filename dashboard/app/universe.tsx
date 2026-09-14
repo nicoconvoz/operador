@@ -49,6 +49,16 @@ const COMPONENT_LABEL: Record<string, string> = {
   costEfficiency: 'eficiencia de costo',
 }
 
+/**
+ * How many bodies the canvas will draw.
+ *
+ * Every body costs a glow blit and a ripple arc per frame, so this is a
+ * rendering budget and not an opinion about how many tokens matter. Anything
+ * past it is counted and reported rather than quietly discarded.
+ */
+const BODY_CAP = 400
+const BODY_CAP_COMPACT = 120
+
 const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'filtered', 'unsafe', 'dead']
 
 interface Body {
@@ -126,9 +136,20 @@ export function Universe({ view }: { view: UniverseView }) {
       (t) => (chainFilter === 'all' || t.chain === chainFilter) && (tierFilter === 'all' || t.tier === tierFilter),
     )
     // Tokens arrive brightest-first, so a cap keeps what matters and drops the
-    // noise a small screen could not render legibly anyway.
-    return filtered.slice(0, compact ? 60 : 200)
+    // noise a small screen could not render legibly anyway. The count of what
+    // it dropped is shown, because a screen that silently renders a third of
+    // the universe is telling you the scanner found a third of the universe.
+    return filtered.slice(0, compact ? BODY_CAP_COMPACT : BODY_CAP)
   }, [view.tokens, chainFilter, tierFilter, compact])
+
+  const matching = useMemo(
+    () =>
+      view.tokens.filter(
+        (t) => (chainFilter === 'all' || t.chain === chainFilter) && (tierFilter === 'all' || t.tier === tierFilter),
+      ).length,
+    [view.tokens, chainFilter, tierFilter],
+  )
+  const hidden = matching - visible.length
 
   // Resolved against the current view, so an open detail panel shows the
   // latest numbers rather than the ones that were on screen when it opened —
@@ -351,6 +372,11 @@ export function Universe({ view }: { view: UniverseView }) {
           </Chip>
         ))}
         <span style={{ flex: 1 }} />
+        {hidden > 0 && (
+          <span style={{ color: '#8b949e', fontSize: 11 }} title="Superan lo que el lienzo dibuja; siguen escaneados y operables.">
+            +{hidden} sin dibujar
+          </span>
+        )}
         <Chip active={paused} onClick={() => setPaused((p) => !p)}>
           {paused ? '▶' : '❚❚'}
         </Chip>

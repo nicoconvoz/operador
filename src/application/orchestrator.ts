@@ -44,7 +44,6 @@ export interface CycleConfig {
   readonly params: CascadeParams
   readonly portfolio: PortfolioPolicy
   readonly deathPolicy?: DeathExitPolicy
-  readonly chain: string
   /** Emit a heartbeat when this long has passed since the last one. */
   readonly heartbeatMs: number
 }

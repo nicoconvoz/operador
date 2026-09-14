@@ -22,7 +22,12 @@ export class MemoryStore implements StatePort {
   private readonly fills = new Map<string, PersistedFill>()
   private readonly blacklistEntries = new Map<string, { reason: string; at: number }>()
   private readonly alerts: StoredAlert[] = []
-  private scan: PersistedScan | null = null
+  /**
+   * One scan per chain, not one scan. Keeping a single row meant scanning BSC
+   * erased the Solana universe — the reference implementation was reproducing
+   * the very bug the Postgres one had.
+   */
+  private readonly scans = new Map<string, PersistedScan>()
   private checkpoint: EngineCheckpoint | null = null
 
   async loadPositions(): Promise<readonly PersistedPosition[]> {
@@ -72,11 +77,20 @@ export class MemoryStore implements StatePort {
   }
 
   async saveScan(scan: PersistedScan): Promise<void> {
-    this.scan = structuredClone(scan)
+    const held = this.scans.get(scan.chain)
+    if (held && held.scannedAt > scan.scannedAt) return // Never go backwards.
+    this.scans.set(scan.chain, structuredClone(scan))
+  }
+
+  async latestScansByChain(): Promise<readonly PersistedScan[]> {
+    const newest = new Map<string, PersistedScan>()
+    for (const scan of this.scans.values()) newest.set(scan.chain, scan)
+    return [...newest.values()].map((scan) => structuredClone(scan))
   }
 
   async latestScan(): Promise<PersistedScan | null> {
-    return this.scan ? structuredClone(this.scan) : null
+    const newest = [...this.scans.values()].sort((a, b) => b.scannedAt - a.scannedAt)[0]
+    return newest ? structuredClone(newest) : null
   }
 
   async saveCheckpoint(checkpoint: EngineCheckpoint): Promise<void> {

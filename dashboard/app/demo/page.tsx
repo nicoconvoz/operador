@@ -95,7 +95,7 @@ async function demoOperations() {
 
     const position: PersistedPosition = {
       id: `pos-${token.address}`,
-      chain: token.chain,
+      chain: token.chain === 'bsc' ? 'bsc' : 'solana',
       tokenAddress: token.address,
       pairAddress: token.pairAddress,
       symbol: token.symbol,

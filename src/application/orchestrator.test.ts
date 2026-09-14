@@ -41,7 +41,6 @@ const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => (
 const config: CycleConfig = {
   params: DEFAULT_PARAMS,
   portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: 2_000, maxPositions: 4 },
-  chain: 'solana',
   heartbeatMs: 60 * 60 * 1000,
 }
 

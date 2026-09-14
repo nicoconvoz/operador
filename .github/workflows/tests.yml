@@ -1,0 +1,28 @@
+# Parity and safety, on every push.
+#
+# The suite is the reason any of this can be trusted: indicator parity against
+# TradingView's own exported values, the gates that refuse a rug, and the
+# recovery path that halts rather than guessing. It runs before anything gets
+# deployed anywhere.
+
+name: tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx vitest run
