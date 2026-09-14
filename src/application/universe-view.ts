@@ -1,0 +1,171 @@
+import { evaluateGates, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { scoreOpportunity, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
+import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
+import { type StatePort } from '../domain/persistence/store.js'
+import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
+
+/**
+ * The universe, as something you can look at.
+ *
+ * The scanner already decides everything this needs; storing a second,
+ * prettier version of those decisions would be a second place for them to be
+ * wrong. So this recomputes from the stored snapshots using the SAME gate and
+ * score functions the engine runs, and adds only what a picture needs:
+ * a tier, a magnitude, and a reason.
+ */
+
+/**
+ * What a token IS right now, in the order that matters visually.
+ *
+ * The order is the story: dead things are darkest, held things brightest,
+ * and everything between is a degree of interest.
+ */
+export type TokenTier =
+  /** Money is in it. */
+  | 'held'
+  /** Passed every gate and scored well — the ones worth watching. */
+  | 'prime'
+  /** Passed every gate, quieter score. */
+  | 'eligible'
+  /** Failed a market gate: too thin, too young, too quiet, too big. */
+  | 'filtered'
+  /** Failed a SAFETY gate. Not a missed chance — a bullet dodged. */
+  | 'unsafe'
+  /** The death exit condemned it. Never again. */
+  | 'dead'
+
+export interface UniverseToken {
+  readonly id: string
+  readonly symbol: string
+  readonly chain: string
+  readonly address: string
+  readonly pairAddress: string
+  readonly tier: TokenTier
+  /** 0..100 from the scanner's own score. */
+  readonly score: number
+  /** The five components, so the picture can show WHY. */
+  readonly components: Readonly<Record<string, number>>
+  readonly liquidityUsd: number
+  readonly volume24hUsd: number
+  readonly priceUsd: number
+  readonly change24hPct: number | null
+  readonly ageHours: number | null
+  /** Round-trip cost estimate, in percent — what the chain takes. */
+  readonly frictionPct: number
+  /** Gate failures, plainest first. Empty when it passed. */
+  readonly blockers: readonly string[]
+  /** Present only for held tokens. */
+  readonly position: {
+    readonly capitalUsd: number
+    readonly filledDcas: number
+    readonly deathStage: 'healthy' | 'frozen' | 'dead'
+  } | null
+}
+
+export interface UniverseView {
+  readonly generatedAt: number
+  readonly scannedAt: number | null
+  readonly tokens: readonly UniverseToken[]
+  readonly counts: Readonly<Record<TokenTier, number>>
+  readonly chains: readonly string[]
+}
+
+export interface UniverseOptions {
+  readonly now: () => number
+  readonly gates?: GatePolicy
+  readonly opportunity?: OpportunityPolicy
+  /** Assumed venue fee when nothing was measured, in percent. */
+  readonly spreadPct?: number
+}
+
+const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'filtered', 'unsafe', 'dead']
+
+/** Gates that mean "this could hurt you", as opposed to "not interesting". */
+const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation'])
+
+const PRIME_SCORE = 45
+
+export async function buildUniverse(store: StatePort, options: UniverseOptions): Promise<UniverseView> {
+  const generatedAt = options.now()
+  const gates = options.gates ?? DEFAULT_GATE_POLICY
+  const opportunityPolicy = options.opportunity ?? DEFAULT_OPPORTUNITY_POLICY
+  const spreadPct = options.spreadPct ?? 0.3
+
+  const [scan, positions, blacklisted] = await Promise.all([
+    store.latestScan(),
+    store.loadPositions(),
+    store.blacklisted(),
+  ])
+
+  const heldBy = new Map(positions.map((p) => [`${p.chain}:${p.tokenAddress}`, p]))
+  const snapshots: readonly TokenSnapshot[] = scan?.snapshots ?? []
+
+  const tokens: UniverseToken[] = snapshots.map((snapshot) => {
+    const key = `${snapshot.chain}:${snapshot.address}`
+    const held = heldBy.get(key)
+    const gateResult = evaluateGates(snapshot, gates)
+
+    // Quality was measured during the scan but is not stored per token, so the
+    // picture falls back to the model. Stated rather than hidden: this is a
+    // display estimate, and the executor still measures before it trades.
+    const quality = {
+      liquidityUsd: snapshot.liquidityUsd,
+      spreadPct,
+      slippagePct: snapshot.liquidityUsd > 0 ? estimatePriceImpactPct(100, snapshot.liquidityUsd) : 100,
+      referenceUsd: 100,
+      observedAt: snapshot.observedAt,
+    }
+    const opportunity = scoreOpportunity(snapshot, opportunityPolicy, null, quality)
+
+    const blockers = gateResult.failures.map((f) => f.detail)
+    const unsafe = gateResult.failures.some((f) => SAFETY_GATES.has(f.gate))
+
+    const tier: TokenTier = blacklisted.has(key)
+      ? 'dead'
+      : held
+        ? 'held'
+        : unsafe
+          ? 'unsafe'
+          : !gateResult.passed
+            ? 'filtered'
+            : opportunity.score >= PRIME_SCORE
+              ? 'prime'
+              : 'eligible'
+
+    return {
+      id: key,
+      symbol: snapshot.symbol,
+      chain: snapshot.chain,
+      address: snapshot.address,
+      pairAddress: snapshot.pairAddress,
+      tier,
+      score: opportunity.score,
+      components: opportunity.components as unknown as Record<string, number>,
+      liquidityUsd: snapshot.liquidityUsd,
+      volume24hUsd: snapshot.volumeUsd.h24,
+      priceUsd: snapshot.priceUsd,
+      change24hPct: snapshot.priceChangePct.h24,
+      ageHours: snapshot.pairCreatedAt === null ? null : (snapshot.observedAt - snapshot.pairCreatedAt) / 3_600_000,
+      frictionPct: 2 * (quality.spreadPct + quality.slippagePct),
+      blockers,
+      position: held
+        ? {
+            capitalUsd: held.capitalUsd,
+            filledDcas: held.cascade.level > 0 ? held.cascade.level - 1 : 0,
+            deathStage: held.deathWatch.stage,
+          }
+        : null,
+    }
+  })
+
+  const counts = Object.fromEntries(TIERS.map((tier) => [tier, tokens.filter((t) => t.tier === tier).length])) as Record<TokenTier, number>
+
+  return {
+    generatedAt,
+    scannedAt: scan?.scannedAt ?? null,
+    // Brightest first, so a truncated render keeps the interesting ones.
+    tokens: [...tokens].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || b.score - a.score),
+    counts,
+    chains: [...new Set(tokens.map((t) => t.chain))].sort(),
+  }
+}

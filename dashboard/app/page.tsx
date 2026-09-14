@@ -1,5 +1,7 @@
 import { buildDashboard, type DashboardView } from '../../src/application/dashboard.js'
+import { buildUniverse, type UniverseView } from '../../src/application/universe-view.js'
 import { PostgresStore } from '../../src/infrastructure/persistence/postgres-store.js'
+import { Universe } from './universe.js'
 import { Pool } from 'pg'
 
 // A cached view of a trading system is worse than no view: a stale "all
@@ -9,7 +11,7 @@ export const revalidate = 0
 
 let pool: Pool | null = null
 
-async function load(): Promise<DashboardView | { error: string }> {
+async function load(): Promise<{ dashboard: DashboardView; universe: UniverseView } | { error: string }> {
   if (!process.env.DATABASE_URL) return { error: 'DATABASE_URL is not set' }
   try {
     pool ??= new Pool({ connectionString: process.env.DATABASE_URL, max: 2 })
@@ -19,13 +21,16 @@ async function load(): Promise<DashboardView | { error: string }> {
         return { rows: result.rows as T[] }
       },
     }
-    return await buildDashboard(new PostgresStore(sql), { now: () => Date.now() })
+    const store = new PostgresStore(sql)
+    const now = () => Date.now()
+    const [dashboard, universe] = await Promise.all([buildDashboard(store, { now }), buildUniverse(store, { now })])
+    return { dashboard, universe }
   } catch (error) {
     return { error: String(error).slice(0, 200) }
   }
 }
 
-const money = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const money = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 const ago = (ms: number) => {
   const minutes = Math.round((Date.now() - ms) / 60_000)
   if (minutes < 60) return `${minutes}m ago`
@@ -33,83 +38,61 @@ const ago = (ms: number) => {
   return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`
 }
 
-const STAGE = { healthy: '', frozen: ' ❄️', dead: ' ☠️' } as const
-
 export default async function Page() {
-  const view = await load()
+  const data = await load()
 
-  if ('error' in view) {
+  if ('error' in data) {
     return (
       <>
-        <h1 style={{ fontSize: 18 }}>Operador by Open Doors</h1>
-        <p style={{ color: '#ff6b6b' }}>Cannot read state: {view.error}</p>
+        <h1 style={{ fontSize: 17, margin: '0 0 8px' }}>Operador by Open Doors</h1>
+        <p style={{ color: '#ff6b6b' }}>Cannot read state: {data.error}</p>
       </>
     )
   }
 
+  const { dashboard, universe } = data
+
   return (
     <>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 18, margin: 0 }}>Operador by Open Doors</h1>
-        <span style={{ color: view.killSwitchEngaged ? '#ff6b6b' : '#63e6a5' }}>
-          {view.killSwitchEngaged ? '🛑 STOPPED' : '▶️ Running'}
+      <header
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: 14,
+        }}
+      >
+        <h1 style={{ fontSize: 17, margin: 0 }}>Operador by Open Doors</h1>
+        <span style={{ color: dashboard.killSwitchEngaged ? '#ff6b6b' : '#63e6a5' }}>
+          {dashboard.killSwitchEngaged ? '🛑 STOPPED' : '▶️ Running'}
         </span>
       </header>
 
-      {view.warnings.length > 0 && (
-        <section style={{ border: '1px solid #ffb454', borderRadius: 6, padding: '12px 16px', marginBottom: 24 }}>
-          {view.warnings.map((warning) => (
-            <div key={warning} style={{ color: '#ffb454' }}>⚠️ {warning}</div>
+      {dashboard.warnings.length > 0 && (
+        <section style={{ border: '1px solid #ffb454', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+          {dashboard.warnings.map((warning) => (
+            <div key={warning} style={{ color: '#ffb454', fontSize: 13 }}>
+              ⚠️ {warning}
+            </div>
           ))}
         </section>
       )}
 
-      <section style={{ display: 'flex', gap: 32, marginBottom: 24, flexWrap: 'wrap' }}>
-        <Stat label="Positions" value={String(view.totals.positions)} />
-        <Stat label="Committed" value={money(view.totals.committedUsd)} />
-        <Stat label="Frozen" value={String(view.totals.frozen)} />
-        <Stat label="Blacklisted" value={String(view.blacklistedCount)} />
+      <section style={{ display: 'flex', gap: 22, marginBottom: 14, flexWrap: 'wrap' }}>
+        <Stat label="Positions" value={String(dashboard.totals.positions)} />
+        <Stat label="Committed" value={money(dashboard.totals.committedUsd)} />
+        <Stat label="Universe" value={String(universe.tokens.length)} />
+        <Stat label="Frozen" value={String(dashboard.totals.frozen)} />
+        <Stat label="Blacklisted" value={String(dashboard.blacklistedCount)} />
       </section>
 
-      {view.positions.length === 0 ? (
-        <p style={{ color: '#8b949e' }}>No open positions.</p>
-      ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{ textAlign: 'left', color: '#8b949e', borderBottom: '1px solid #21262d' }}>
-              <th style={{ padding: '8px 0' }}>Token</th>
-              <th>Capital</th>
-              <th>DCA</th>
-              <th>Price</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {view.positions.map((position) => (
-              <tr key={position.id} style={{ borderBottom: '1px solid #161b22' }}>
-                <td style={{ padding: '8px 0' }}>
-                  {position.symbol}
-                  {STAGE[position.deathStage]}
-                  {position.hasPendingOrders ? ' ⏳' : ''}
-                  {position.deathSignals.length > 0 && (
-                    <div style={{ color: '#8b949e', fontSize: 12 }}>{position.deathSignals[0]}</div>
-                  )}
-                </td>
-                <td>{money(position.capitalUsd)}</td>
-                <td>{position.filledDcas}</td>
-                <td>{position.lastPriceUsd === null ? '—' : position.lastPriceUsd.toPrecision(6)}</td>
-                <td style={{ color: '#8b949e' }}>{ago(position.updatedAt)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      <Universe view={universe} />
 
-      <footer style={{ marginTop: 32, color: '#8b949e', fontSize: 12 }}>
-        {view.lastScan
-          ? `Last scan ${ago(view.lastScan.at)} · ${view.lastScan.tokensSeen} tokens seen`
-          : 'No scan recorded yet'}
-        {' · read-only'}
+      <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
+        {universe.scannedAt ? `Scanned ${ago(universe.scannedAt)}` : 'No scan recorded yet'}
+        {' · size = liquidity · rings = opportunity · glow = in position · read-only'}
       </footer>
     </>
   )
@@ -118,8 +101,8 @@ export default async function Page() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div style={{ color: '#8b949e', fontSize: 12 }}>{label}</div>
-      <div style={{ fontSize: 20 }}>{value}</div>
+      <div style={{ color: '#8b949e', fontSize: 11 }}>{label}</div>
+      <div style={{ fontSize: 19 }}>{value}</div>
     </div>
   )
 }

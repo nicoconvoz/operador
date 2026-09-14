@@ -581,6 +581,44 @@ second attack surface on the money, guarded by a URL people paste into chats —
 which is exactly why the kill switch lives in Telegram, authenticated to one
 chat id.
 
+### The universe view
+
+`dashboard/app/universe.tsx` draws every scanned token as a body in orbit.
+Every mark is a measurement, not decoration:
+
+| Mark | Means |
+|---|---|
+| Ring | tier — held nearest the sun, dead drifting at the edge |
+| Size | liquidity, on a log scale (a $40k pool and a $5M one must share a screen) |
+| Colour | tier |
+| Glow | money is in it; blue instead of green when the death watch froze it |
+| Ripples | opportunity score — more rings, expanding faster, for better scores |
+| Orbit speed | 24h volatility |
+| Shape | ● Solana, ◆ BSC |
+
+The tiers separate two things a single "rejected" list would conflate:
+**filtered** is uninteresting (thin, young, quiet, too big), **unsafe** failed a
+SAFETY gate. One is a missed chance; the other is a bullet dodged, and they
+should not look alike.
+
+Tapping a body opens what it knows — score, liquidity, age, round-trip cost,
+and **the five score components as bars**, so "why is this ranked here" is
+answerable without reading code.
+
+It runs on a phone, which forced four decisions:
+
+- **Glows are pre-rendered sprites**, drawn once. A radial gradient per body
+  per frame is the most expensive thing a canvas does, and it is pure waste
+  when the image never changes.
+- **The body count is capped by screen size** (60 on a phone, 200 otherwise).
+  Tokens arrive brightest-first, so the cap drops noise rather than signal.
+- **Rendering stops when the tab is hidden.** A background tab painting at
+  60fps is a battery leak nobody ever sees.
+- **`prefers-reduced-motion` renders one still frame.**
+
+`/demo` renders the same view from synthetic data, labelled as such — a demo
+that passes for live is how people end up trusting a screenshot.
+
 It renders **warnings, not a green badge**: kill switch engaged, orders in
 flight unconfirmed, frozen positions, and — the one that matters most — a
 position nobody has updated in hours. That last case is the shape of a silently
