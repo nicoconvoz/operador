@@ -40,6 +40,29 @@ price signal looks.
 
 Runs the reference strategy, one independent state machine per open position.
 
+### The contract between them: `MarketQuality`
+
+When the scanner selects a token it hands the executor **liquidity, spread and
+slippage** — and keeps refreshing them while the position is open
+(`src/domain/market/market-quality.ts`):
+
+| Field | Meaning | Used for |
+|---|---|---|
+| `liquidityUsd` | total pool depth, both sides | sizing each ladder level; the **entry baseline** the death-exit "liquidity collapse" signal compares against |
+| `spreadPct` | round-trip cost at negligible size (AMM fee + any gap) | paper fills; the floor every trade pays |
+| `slippagePct` @ `referenceUsd` | measured price impact for a reference quote | extrapolating impact to the actual level sizes |
+| `observedAt` | when it was measured | staleness — stale quality is no quality |
+
+Two rules follow:
+
+- **The executor validates, it does not trust.** A selected token whose ten
+  fillable levels would cost more than the configured impact ceiling is
+  refused or sized down, regardless of the scanner's verdict. Defense in depth.
+- **Nominal USD is not fill size.** `usd(n)` from the ladder is what the
+  strategy *wants*; the executor caps it so `spread + impact` stays bounded.
+  With defaults, level 4+ ($5,000) against a $100k pool costs ~10% per fill —
+  untradeable — while a $1M pool keeps every level under 1.5%.
+
 ## Reference Strategy — CASCADE DCA v1.5
 
 Spot **long only**, bar-close driven. No intrabar execution.
@@ -494,7 +517,8 @@ Build what can be verified. Then build what must be discovered.
    `ep1 := close` on the signal bar. Exit and rescue logic read the broker's
    numbers, not the machine's — exactly as the reference does.
 4. **Death exit** — two-stage, with the price-is-never-a-death-signal guardrail.
-5. **Economics** — gas, swap fee, depth-based slippage models.
+5. **Economics** — gas, swap fee, depth-based slippage models, driven by the
+   scanner's `MarketQuality` (contract defined; sizing and paper fills next).
 6. **Parity harness** — full replay vs the TradingView trade list.
 7. **Persistence + crash recovery** — resume mid-position, idempotent orders.
 
