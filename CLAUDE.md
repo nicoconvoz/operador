@@ -40,6 +40,28 @@ most of the risk lives, and most of the work.
 A token that fails any safety gate is never traded, regardless of how good the
 price signal looks.
 
+**Status — domain complete** (`src/domain/scanner/`, chain-agnostic, pure):
+- `snapshot.ts` — `TokenSnapshot` + `SecurityReport`, the only shape the
+  domain ever sees; adapters translate API responses into it.
+- `gates.ts` — the blockers. **Fail closed**: an unknown honeypot result,
+  authority, blacklist, tax, LP lock or holder concentration is a failure,
+  not a pass. Tested against the shapes of real rugs.
+- `opportunity.ts` — the "breathing" score, 0..100, five explainable
+  components (volume expansion, buy pressure, liquidity growth, activity,
+  volatility). A v1 heuristic with policy weights — to be tuned against
+  recorded outcomes, not a claim of alpha.
+- `ranking.ts` — gates → score → sort → cut to watch slots; every candidate
+  carries the `MarketQuality` the executor re-validates.
+
+**The scanner produces a WATCHLIST, not entry signals.** It decides which
+tokens are worth running the strategy on; CASCADE DCA's own gates (drop
+from swing high, lateral zone) decide *when* to enter. One executor state
+machine per watched token.
+
+**Chain order: Solana first, then BSC** as a second adapter of the same port.
+Sources (verified free, Sept 2026): DexScreener public API for the universe
+and market numbers, GoPlus for security, Jupiter lite-api for sell quotes.
+
 ### 2. Executor — CASCADE DCA on a chosen token
 
 Runs the reference strategy, one independent state machine per open position.
