@@ -21,6 +21,8 @@ import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { PostgresStore, type SqlClient } from '../infrastructure/persistence/postgres-store.js'
 import { TelegramAlerts } from '../infrastructure/notifications/telegram.js'
+import { botApiTransport, pollCommands } from '../infrastructure/notifications/telegram-poller.js'
+import { type BotContext } from '../infrastructure/notifications/telegram-bot.js'
 
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { runLoop, shutdownSignal } from './loop.js'
@@ -43,6 +45,8 @@ export interface RuntimePorts {
   readonly sql: SqlClient
   /** POST for Telegram. Injected so main() stays testable. */
   readonly post: (url: string, body: unknown) => Promise<{ status: number }>
+  /** GET returning JSON, for Telegram long-polling. */
+  readonly fetchJson: (url: string) => Promise<unknown>
 }
 
 export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtime {
@@ -167,9 +171,36 @@ export async function main(ports: RuntimePorts): Promise<void> {
   await store.migrate(schemaSql())
 
   const { deps, cycleConfig, throttle } = buildRuntime(config, ports)
-  const report = await runLoop(deps, cycleConfig, throttle, {
-    intervalMs: config.cycleIntervalMs,
-    stopSignal: shutdownSignal(),
-  })
+
+  // One signal, two consumers: the trading loop and the command poller stop
+  // together. A poller that outlived the engine would answer /status about a
+  // system that is no longer running.
+  const stopSignal = shutdownSignal()
+
+  const botContext: BotContext = {
+    store,
+    alerts: deps.alerts,
+    authorisedChatId: config.telegramChatId,
+    now: () => Date.now(),
+    equity: async () => {
+      // Cash held by each position's broker is not visible from the store, so
+      // equity is reported from committed capital until a live wallet can be
+      // queried. Stated plainly rather than guessed at.
+      const positions = await store.loadPositions()
+      return {
+        equityUsd: positions.reduce((sum, p) => sum + p.capitalUsd, 0),
+        startingCapitalUsd: config.totalCapitalUsd,
+      }
+    },
+  }
+
+  const transport = botApiTransport(config.telegramBotToken, ports.fetchJson, ports.post)
+
+  // Run both; whichever stops first, the other is already stopping.
+  const [report] = await Promise.all([
+    runLoop(deps, cycleConfig, throttle, { intervalMs: config.cycleIntervalMs, stopSignal }),
+    pollCommands(transport, botContext, { stopSignal, onError: (error) => console.error('[telegram]', error) }),
+  ])
+
   console.log('[exit]', JSON.stringify(report.stoppedBy), report.cycles, 'cycles')
 }

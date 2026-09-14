@@ -35,8 +35,15 @@ const sql = {
   },
 }
 
+const fetchJson = async (url: string): Promise<unknown> => {
+  // Long polling holds the connection open for the timeout; no AbortSignal
+  // here, or every poll would look like a failure.
+  const response = await fetch(url)
+  return response.json()
+}
+
 try {
-  await main({ sql, post })
+  await main({ sql, post, fetchJson })
 } catch (error) {
   console.error('[fatal]', error)
   process.exitCode = 1

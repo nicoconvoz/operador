@@ -439,12 +439,24 @@ scanner, and neither is a reason to keep buying.
 
 ## The phone
 
-`telegram-bot.ts` — `/status`, `/stop`, `/start`, `/positions`, `/help`.
+`telegram-bot.ts` — `/status`, `/stop`, `/start`, `/positions`, `/help` —
+wired to Telegram by `telegram-poller.ts` and run alongside the trading loop.
 
 Every command is authorised against a single chat id, and an unauthorised chat
 gets **nothing back at all** — not an error, not a hint. An error message would
 confirm the bot exists and does something worth doing, which is free
 reconnaissance for whoever found the token.
+
+Three properties of the poller:
+
+- **Long-polling, not webhooks.** A webhook needs a public URL and a TLS
+  certificate on a box whose whole appeal is being free and unexposed. Polling
+  costs one idle connection and opens no ports.
+- **The offset only advances past an update that was processed.** Telegram
+  replays anything unacknowledged, so a crash mid-command retries it rather
+  than losing it — which for `/stop` is exactly the behaviour you want.
+- **A failed poll never ends the loop.** The channel that can stop trading has
+  to outlive a bad network, or it is not a safety control.
 
 ## The engine tick
 
