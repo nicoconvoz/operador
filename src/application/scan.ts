@@ -236,7 +236,13 @@ export async function scanOnce(
   for (const market of affordable) {
     const known = remembered.get(market.address)
     if (!known) continue
-    const snapshot: TokenSnapshot = { ...market, security: known.security, historyBars: null, securityChecked: true }
+    const snapshot: TokenSnapshot = {
+      ...market,
+      security: known.security,
+      historyBars: null,
+      securityChecked: true,
+      measuredImpactPct: known.slippagePct,
+    }
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,
@@ -363,7 +369,10 @@ export async function scanOnce(
 
     await deps.securityCache?.recordSecurity(config.chain, market.address, security, slippagePct, scannedAt)
 
-    const snapshot: TokenSnapshot = { ...market, security, historyBars }
+    // What the venue said, recorded on the snapshot — so the gate can refuse
+    // an inescapable pool and the screen can show the real cost, instead of
+    // both inferring a friendly number from reported liquidity.
+    const snapshot: TokenSnapshot = { ...market, security, historyBars, measuredImpactPct: slippagePct }
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,

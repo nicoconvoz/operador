@@ -216,3 +216,27 @@ describe('evaluateMarketGates — free gates, run before the paid ones', () => {
     }
   })
 })
+
+describe('evaluateGates — what it costs to get out', () => {
+  it('refuses a pool whose measured impact makes the trade unwinnable', () => {
+    // CREPE, live: $718,000 of REPORTED liquidity, and a $285 sell moved the
+    // price 98%. It passed every other gate and became a position. Reported
+    // depth is a claim; a quote is a measurement.
+    const shallow = clean({ measuredImpactPct: 98 })
+    const result = evaluateGates(shallow, P)
+    expect(result.passed).toBe(false)
+    expect(result.failures.map((f) => f.gate)).toContain('impact')
+  })
+
+  it('allows a pool deep enough to leave', () => {
+    expect(evaluateGates(clean({ measuredImpactPct: 0.4 }), P).passed).toBe(true)
+  })
+
+  it('stays silent when nothing was measured — it fires on evidence, never on absence', () => {
+    // Unlike the safety gates, which fail closed: an unmeasured cost is not a
+    // danger signal, and rejecting on it would blind the scanner to every
+    // token the probe budget could not reach this cycle.
+    const result = evaluateGates(clean({ measuredImpactPct: null }), P)
+    expect(result.failures.map((f) => f.gate)).not.toContain('impact')
+  })
+})

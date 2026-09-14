@@ -78,6 +78,16 @@ export interface TokenSnapshot {
    */
   readonly securityChecked?: boolean
   /**
+   * Price impact of a real reference sell, MEASURED by quoting it. Null when
+   * no quote was taken.
+   *
+   * Not the same thing as `liquidityUsd`, and the gap between them is the
+   * point: CREPE reported $718,000 of liquidity and moved 98% on a $285 sell.
+   * Reported depth is a claim made by an aggregator; this is what the venue
+   * said when asked to buy.
+   */
+  readonly measuredImpactPct?: number | null
+  /**
    * Closed 1H candles available for this pool, or null when not checked.
    *
    * The strategy needs EMA-200 and a 50-bar Bollinger basis; a pool with 38

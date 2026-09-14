@@ -37,6 +37,20 @@ export interface GatePolicy {
    * that was actually measured and came up short.
    */
   readonly minHistoryBars: number
+  /**
+   * Price impact of a reference sell, above which the token is not a trade.
+   *
+   * The score already penalises cost — `costEfficiency` reaches zero at a 6%
+   * round trip — but a penalty only reorders a list. A pool where leaving
+   * costs more than this is not a worse opportunity, it is not an opportunity:
+   * no entry signal can pay for it and no sizing can shrink out of it, because
+   * the measurement was taken at the smallest size worth quoting.
+   *
+   * Fires only on a MEASURED value. An impact nobody quoted is unknown, and
+   * unknown cost is not evidence of a bad pool — unlike the safety gates,
+   * which fail closed because unknown danger IS evidence.
+   */
+  readonly maxReferenceImpactPct: number
 }
 
 /** Solana mints the scanner must never propose — they are money, not trades. */
@@ -81,10 +95,15 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   denylist: SOLANA_DENYLIST,
   canonicalSymbols: SOLANA_CANONICAL_SYMBOLS,
   minHistoryBars: 250,
+  // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
+  // Ten percent is already far beyond anything the 1%-per-fill and 3%-exit
+  // budgets could rescue; past it there is nothing to size down to.
+  maxReferenceImpactPct: 10,
 }
 
 export type GateName =
   | 'honeypot'
+  | 'impact'
   | 'mintAuthority'
   | 'freezeAuthority'
   | 'blacklist'
@@ -174,6 +193,11 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   }
 
   // ── Critical security facts: unknown is a failure ─────────────────────────
+  const impact = snapshot.measuredImpactPct
+  if (impact !== null && impact !== undefined && impact > policy.maxReferenceImpactPct) {
+    failures.push(fail('impact', 'failed', `a reference sell moves the price ${impact.toFixed(1)}% — there is no way out`))
+  }
+
   if (s.honeypot === null) failures.push(fail('honeypot', 'unknown', 'sell simulation unavailable'))
   else if (s.honeypot) failures.push(fail('honeypot', 'failed', 'sell simulation failed'))
 

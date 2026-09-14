@@ -123,7 +123,11 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     const quality = {
       liquidityUsd: snapshot.liquidityUsd,
       spreadPct,
-      slippagePct: snapshot.liquidityUsd > 0 ? estimatePriceImpactPct(100, snapshot.liquidityUsd) : 100,
+      // The measurement when there is one. The model is a fallback, and it is
+      // the optimistic half of the pair: it reads reported liquidity, which
+      // said $718,000 about a pool that moved 98% on a $285 sell.
+      slippagePct:
+        snapshot.measuredImpactPct ?? (snapshot.liquidityUsd > 0 ? estimatePriceImpactPct(100, snapshot.liquidityUsd) : 100),
       referenceUsd: 100,
       observedAt: snapshot.observedAt,
     }
