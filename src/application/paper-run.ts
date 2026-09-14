@@ -1,0 +1,127 @@
+import { sizeLadder, type SizingPolicy, DEFAULT_SIZING_POLICY, type LadderSizing } from '../domain/economics/sizing.js'
+import { type MarketQuality } from '../domain/market/market-quality.js'
+import { type Candles, replay, type ReplayResult } from './replay.js'
+import { type CascadeParams } from '../domain/strategy/params.js'
+import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
+import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
+import { usdForLevel } from '../domain/strategy/ladder.js'
+
+/**
+ * Paper-trades one token end to end: the executor's strategy over real
+ * candles, through the honest broker, with the ladder sized to the pool.
+ *
+ * This is where the project's open question gets answered. Not "is the
+ * strategy good" — parity already settled that it reproduces the backtest —
+ * but "does it survive spread, impact and gas at THIS size, on THIS pool".
+ */
+
+export interface PaperRunConfig {
+  readonly params: CascadeParams
+  readonly sizing?: SizingPolicy
+  readonly gasUsdPerSwap: number
+  readonly initialCapital: number
+  readonly maxOpenEntries: number
+}
+
+export interface PaperRunResult {
+  readonly token: string
+  readonly tradeable: boolean
+  readonly reason: string | null
+  readonly sizing: LadderSizing
+  readonly replay: ReplayResult | null
+  readonly broker: PaperBroker | null
+  readonly summary: PaperSummary | null
+}
+
+export interface PaperSummary {
+  readonly bars: number
+  readonly cycles: number
+  readonly closedTrades: number
+  readonly wins: number
+  readonly grossPnlUsd: number
+  /** Spread + impact + gas charged over the whole run, open position included. */
+  readonly costsUsd: number
+  /** The share of those costs that belongs to CLOSED trades: gross − this = net. */
+  readonly closedCostsUsd: number
+  readonly netPnlUsd: number
+  readonly endingCashUsd: number
+  readonly openPositionUsd: number
+  readonly equityUsd: number
+  readonly returnPct: number
+}
+
+/**
+ * Scales the strategy's nominal ladder down to what the pool can take.
+ *
+ * `usd(n)` is multiplied by the ratio the sizing allows for that level, so the
+ * SHAPE of the ladder is preserved — growing size as price falls — while its
+ * scale matches the venue. A level the pool cannot fund at all is clamped to
+ * the last fundable size rather than dropped, because dropping a level would
+ * change the state machine's own transitions and break parity with the
+ * validated behaviour.
+ */
+export function scaledParams(params: CascadeParams, sizing: LadderSizing): CascadeParams {
+  const first = sizing.levels[0]
+  if (!first || first.nominalUsd <= 0) return params
+  const scale = first.sizedUsd / first.nominalUsd
+  const cappedNominal = sizing.levels.reduce((max, level) => Math.max(max, level.sizedUsd), 0)
+  return {
+    ...params,
+    baseUsd: params.baseUsd * scale,
+    maxUsdPerLevel: Math.min(params.maxUsdPerLevel * scale, Math.max(cappedNominal, usdForLevel(params, 0) * scale)),
+  }
+}
+
+export function paperRun(
+  snapshot: TokenSnapshot,
+  quality: MarketQuality,
+  candles: Candles,
+  config: PaperRunConfig,
+): PaperRunResult {
+  const sizingPolicy = config.sizing ?? DEFAULT_SIZING_POLICY
+  const sizing = sizeLadder(config.params, quality, sizingPolicy)
+
+  if (!sizing.tradeable) {
+    return { token: snapshot.symbol, tradeable: false, reason: sizing.reason, sizing, replay: null, broker: null, summary: null }
+  }
+
+  const broker = new PaperBroker({
+    gasUsdPerSwap: config.gasUsdPerSwap,
+    initialCapital: config.initialCapital,
+    maxOpenEntries: config.maxOpenEntries,
+    quality: () => quality,
+  })
+
+  const result = replay(candles, scaledParams(config.params, sizing), broker)
+
+  const closed = broker.closedTrades
+  // Mid-to-mid: what the price move was worth before the chain took its cut.
+  const grossPnlUsd = broker.realisedGrossUsd
+  const costs = broker.totalCosts
+  const costsUsd = costs.spreadUsd + costs.impactUsd + costs.gasUsd
+  const lastClose = candles.close.at(-1) ?? 0
+  const openPositionUsd = broker.openTrades.reduce((sum, t) => sum + t.qty * lastClose, 0)
+  const equityUsd = broker.equityCash + openPositionUsd
+
+  // Costs on trades still open are real money already spent, but they have no
+  // realised P&L to net against — keeping the two apart is what makes the
+  // accounting identity below exact instead of approximately right.
+  const closedCostsUsd = closed.reduce((sum, t) => sum + t.entryCommission + t.exitCommission, 0)
+
+  const summary: PaperSummary = {
+    bars: candles.time.length,
+    cycles: result.orders.filter((os) => os.some((o) => o.kind === 'closeAll')).length,
+    closedTrades: closed.length,
+    wins: closed.filter((t) => t.profit > 0).length,
+    grossPnlUsd,
+    costsUsd,
+    closedCostsUsd,
+    netPnlUsd: closed.reduce((sum, t) => sum + t.profit, 0),
+    endingCashUsd: broker.equityCash,
+    openPositionUsd,
+    equityUsd,
+    returnPct: ((equityUsd - config.initialCapital) / config.initialCapital) * 100,
+  }
+
+  return { token: snapshot.symbol, tradeable: true, reason: null, sizing, replay: result, broker, summary }
+}

@@ -42,12 +42,25 @@ export interface PaperCosts {
   readonly gasUsd: number
 }
 
+/**
+ * An open trade plus the MID price it was filled against.
+ *
+ * Slippage is already inside `entryPrice`, so charging it again as a
+ * commission would count it twice. Keeping the mid lets the books state both
+ * truths at once: what the position cost against an untouched price (gross),
+ * and what actually left the wallet (net).
+ */
+interface PaperOpenTrade extends OpenTrade {
+  readonly entryMid: number
+}
+
 export class PaperBroker implements BrokerPort {
-  private readonly open: OpenTrade[] = []
+  private readonly open: PaperOpenTrade[] = []
   private readonly closed: ClosedTrade[] = []
   private readonly rejected: Rejection[] = []
   private cash: number
   private costs: PaperCosts = { spreadUsd: 0, impactUsd: 0, gasUsd: 0 }
+  private grossUsd = 0
 
   constructor(private readonly config: PaperBrokerConfig) {
     this.cash = config.initialCapital
@@ -55,6 +68,14 @@ export class PaperBroker implements BrokerPort {
 
   get openTrades(): readonly OpenTrade[] {
     return this.open
+  }
+
+  /**
+   * Realised P&L measured mid-to-mid: what the price move alone was worth,
+   * before the chain took its cut. `gross − every commission = net`, exactly.
+   */
+  get realisedGrossUsd(): number {
+    return this.grossUsd
   }
 
   get closedTrades(): readonly ClosedTrade[] {
@@ -111,7 +132,10 @@ export class PaperBroker implements BrokerPort {
           id: order.id,
           entryTime: time,
           entryPrice: price,
+          entryMid: open,
           qty: order.qty,
+          // Cost of this fill measured against the untouched price: the
+          // slippage baked into `price`, plus the gas that was not.
           entryCommission: spent - notional + gas,
           comment: order.comment,
         })
@@ -139,7 +163,12 @@ export class PaperBroker implements BrokerPort {
         // Gas is one swap for the whole exit; split it by share of the position.
         const share = trade.qty / totalQty
         const exitCommission = (notional - received) * share + gas * share
-        const profit = (price - trade.entryPrice) * trade.qty - trade.entryCommission - gas * share
+        // Cash truth: the two fill prices already carry their slippage, so only
+        // gas is subtracted on top. This equals mid-to-mid minus BOTH
+        // commissions — the identity the summary relies on.
+        const gasEntry = this.config.gasUsdPerSwap
+        const profit = (price - trade.entryPrice) * trade.qty - gasEntry - gas * share
+        this.grossUsd += (open - trade.entryMid) * trade.qty
         this.closed.push({ ...trade, exitTime: time, exitPrice: price, exitCommission, profit, exitComment: order.comment })
         fills.push({ time, id: trade.id, side: 'sell', price, qty: trade.qty, commission: exitCommission, comment: order.comment })
       }
