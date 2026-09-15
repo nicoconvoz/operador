@@ -222,6 +222,22 @@ export class PostgresStore implements StatePort {
     }))
   }
 
+  async discoveredPools(chain: Chain) {
+    const { rows } = await this.sql.query<{ pools: { tokenAddress: string; poolAddress: string }[]; discovered_at: string | number }>(
+      'SELECT pools, discovered_at FROM pool_discovery WHERE chain = $1', [chain],
+    )
+    const row = rows[0]
+    return row ? { pools: row.pools, discoveredAt: num(row.discovered_at) } : null
+  }
+
+  async recordDiscoveredPools(chain: Chain, pools: readonly { tokenAddress: string; poolAddress: string }[], at: number): Promise<void> {
+    await this.sql.query(
+      `INSERT INTO pool_discovery (chain, pools, discovered_at) VALUES ($1, $2, $3)
+       ON CONFLICT (chain) DO UPDATE SET pools = EXCLUDED.pools, discovered_at = EXCLUDED.discovered_at`,
+      [chain, JSON.stringify(pools), at],
+    )
+  }
+
   async historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null> {
     const { rows } = await this.sql.query<{ bars: string | number; measured_at: string | number }>(
       'SELECT bars, measured_at FROM pool_history WHERE chain = $1 AND pool_address = $2',

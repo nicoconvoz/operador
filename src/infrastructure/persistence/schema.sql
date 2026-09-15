@@ -100,6 +100,21 @@ CREATE INDEX IF NOT EXISTS alerts_level_idx ON alerts (level, seq);
 -- backoff. What makes caching it CORRECT rather than merely convenient is that
 -- a pool cannot lose candles: once it has enough for the strategy, it has
 -- enough forever. Only a short count can change, so only a short count expires.
+-- Which pools exist on a chain, so discovery stops running every hour.
+--
+-- Ten throttled GeckoTerminal calls per chain, and after the candle downloads
+-- were cached it became most of what a scan costs — about half an hour, during
+-- which the engine is not watching the positions that already hold money.
+--
+-- Unlike a candle count a discovery list genuinely changes, so it expires. The
+-- window is not a guess about how fast the market moves: a pool younger than it
+-- CANNOT clear the history gate anyway, which wants 250 bars — 2.6 days at 15m.
+CREATE TABLE IF NOT EXISTS pool_discovery (
+  chain         TEXT   PRIMARY KEY,
+  pools         JSONB  NOT NULL,
+  discovered_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pool_history (
   chain        TEXT   NOT NULL,
   pool_address TEXT   NOT NULL,

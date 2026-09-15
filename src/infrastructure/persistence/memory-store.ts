@@ -87,6 +87,17 @@ export class MemoryStore implements StatePort {
     this.fills.set(fill.idempotencyKey, structuredClone(fill))
   }
 
+  private readonly discovery = new Map<string, { pools: readonly { tokenAddress: string; poolAddress: string }[]; discoveredAt: number }>()
+
+  async discoveredPools(chain: Chain) {
+    const found = this.discovery.get(chain)
+    return found ? { pools: [...found.pools], discoveredAt: found.discoveredAt } : null
+  }
+
+  async recordDiscoveredPools(chain: Chain, pools: readonly { tokenAddress: string; poolAddress: string }[], at: number) {
+    this.discovery.set(chain, { pools: [...pools], discoveredAt: at })
+  }
+
   async allFills(): Promise<readonly PersistedFill[]> {
     return [...this.fills.values()]
       .sort((a, b) => a.time - b.time)

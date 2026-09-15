@@ -30,6 +30,7 @@ import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { recallCandidates } from '../application/recall.js'
+import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
 /**
@@ -81,9 +82,15 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     now: () => Date.now(),
     minBars: DEFAULT_GATE_POLICY.minHistoryBars,
   })
+  // And once the candle downloads were cached, DISCOVERY became most of what a
+  // scan costs: ten throttled calls per chain, about half an hour, during which
+  // the engine is not watching the positions that already hold money. It
+  // expires because new pools appear — but a pool younger than the window
+  // cannot clear the history gate anyway, which wants 250 bars: 2.6 days at 15m.
+  const cachedDiscovery = new CachedDiscovery(gecko, store, { now: () => Date.now() })
   const history = {
     historyBars: (chain: Parameters<typeof gecko.historyBars>[0], pool: string) => cachedHistory.historyBars(chain, pool),
-    discoverPools: (chain: Parameters<typeof gecko.discoverPools>[0]) => gecko.discoverPools(chain),
+    discoverPools: (chain: Parameters<typeof gecko.discoverPools>[0]) => cachedDiscovery.discoverPools(chain),
   }
 
   // One port, the right implementation PER CHAIN. BSC quotes PancakeSwap's

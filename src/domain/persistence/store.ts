@@ -170,6 +170,17 @@ export interface StatePort {
    */
   latestAlertSeq(): Promise<number>
 
+  /**
+   * The pools discovery last found on a chain, or null if it never ran.
+   *
+   * Discovery is ten throttled calls per chain and most of what a scan costs
+   * once the candle downloads are cached. It expires — new pools appear — but
+   * a pool younger than the window cannot clear the history gate anyway, which
+   * needs 250 bars: 2.6 days at 15m.
+   */
+  discoveredPools(chain: Chain): Promise<{ pools: readonly { tokenAddress: string; poolAddress: string }[]; discoveredAt: number } | null>
+  recordDiscoveredPools(chain: Chain, pools: readonly { tokenAddress: string; poolAddress: string }[], at: number): Promise<void>
+
   /** How many bars a pool had when last measured, or null if never. */
   historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null>
   recordHistoryBars(chain: Chain, poolAddress: string, bars: number, measuredAt: number): Promise<void>

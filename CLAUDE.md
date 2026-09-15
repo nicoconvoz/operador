@@ -1165,8 +1165,24 @@ than none**, which the first version of these counters proved by reporting a
 cumulative total as a per-chain one and printing 556 seconds of waiting inside
 a 356-second scan.
 
-What remains: discovery is still ten GeckoTerminal calls per chain, and most
-of the 116s. The universe does not change minute to minute, so it caches too.
+And then discovery was what remained — ten throttled calls per chain, most of
+the 116s, and about half an hour of a scan during which the engine is not
+watching the positions that already hold money. `CachedDiscovery` keeps the
+list in `pool_discovery`.
+
+Unlike a candle count, a discovery list genuinely CHANGES: new pools appear. So
+it expires, and the window is not a guess about how fast the market moves — it
+is an argument about what the gates would do with the answer:
+
+> **A pool younger than the window cannot clear the history gate anyway.** The
+> strategy wants 250 bars, which is 2.6 days at 15m, so a token that first
+> appeared six hours ago is rejected on arrival. Caching for six hours cannot
+> lose a single token the scanner would have accepted.
+
+Same two failure rules as the history cache, learned the same way: a failure is
+never cached, because an empty list would turn one rate limit into a chain that
+does not exist for six hours — and a failure falls back to the STALE list,
+because an old universe beats no universe.
 
 ### The engine does not need a server — CORRECTED
 
