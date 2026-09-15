@@ -91,9 +91,12 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
           <span style={{ color: realisedUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>{signed(realisedUsd)} cobrada</span>
           <span style={{ color: unrealisedUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>{signed(unrealisedUsd)} sin cobrar</span>
-          {/* Costs never get netted away in silence: on small caps the chain
-              taking more than the edge is the most common way to lose. */}
-          <span style={{ color: '#8b949e' }}>{exact(costsUsd)} a la cadena</span>
+          {/* The minus is not decoration. Without it this term sat in a row of
+              signed figures wearing no sign at all, so the row read as three
+              things being added and the total looked wrong by exactly the cost
+              — which is the one number a small-cap strategy dies of. A term
+              that gets subtracted has to LOOK subtracted. */}
+          <span style={{ color: '#8b949e' }}>−{exact(costsUsd)} a la cadena</span>
           <span style={{ color: '#8b949e' }}>
             {operations.totals.buys} compra / {operations.totals.sells} venta
           </span>
