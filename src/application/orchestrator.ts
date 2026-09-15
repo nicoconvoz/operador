@@ -64,6 +64,9 @@ export interface CycleConfig {
   readonly params: CascadeParams
   readonly portfolio: PortfolioPolicy
   readonly deathPolicy?: DeathExitPolicy
+  /** Passed to the tick, which sizes each position's ladder against them. */
+  readonly gasUsdPerSwap?: number
+  readonly maxOpenEntries?: number
   /** Emit a heartbeat when this long has passed since the last one. */
   readonly heartbeatMs: number
 }
@@ -118,7 +121,12 @@ export async function runCycle(
 
     const result = await tickPosition(
       { position: recovered.position, candles, health: await deps.healthFor(recovered.position), broker: await deps.brokerFor(recovered.position) },
-      { params: config.params, ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}) },
+      {
+        params: config.params,
+        ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
+        ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
+        ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
+      },
       deps.store,
       deps.alerts,
       throttle,

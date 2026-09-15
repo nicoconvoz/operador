@@ -285,6 +285,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     deps,
     cycleConfig: {
       params: DEFAULT_PARAMS,
+      // The same numbers the broker charges, so the ladder is sized against
+      // the costs it will actually pay rather than against a guess.
+      gasUsdPerSwap: config.gasUsdPerSwap,
+      maxOpenEntries: 10,
       portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: config.totalCapitalUsd, maxPositions: config.maxPositions },
       heartbeatMs: 60 * 60 * 1000,
     },

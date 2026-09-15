@@ -7,6 +7,9 @@ import { type CascadeParams } from '../domain/strategy/params.js'
 import { type Order, type PositionSnapshot } from '../domain/strategy/state.js'
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { orderKeyPart } from './recovery.js'
+import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/economics/sizing.js'
+import { deployableCapital, scaledParams } from './paper-run.js'
+import { PYRAMIDING } from '../domain/strategy/params.js'
 import { type Candles } from './replay.js'
 
 /**
@@ -36,6 +39,10 @@ export interface TickInput {
 export interface EngineConfig {
   readonly params: CascadeParams
   readonly deathPolicy?: DeathExitPolicy
+  readonly sizing?: SizingPolicy
+  /** Needed to reserve gas out of the position's capital before sizing. */
+  readonly gasUsdPerSwap?: number
+  readonly maxOpenEntries?: number
 }
 
 export interface TickResult {
@@ -126,12 +133,37 @@ export async function tickPosition(
     }
   }
 
+  // ── 1b. Size the ladder to THIS wallet and THIS pool ──────────────────────
+  //
+  // The strategy speaks in Pine's nominal sizes — level 0 is $1,000 — and a
+  // position holds whatever the portfolio allotted it. Unsized, a $285
+  // position emits a $1,000 entry, the broker refuses it for funds, and
+  // nothing is recorded anywhere: a silent rejection is indistinguishable
+  // from a strategy with no signals. It ran that way in production.
+  //
+  // `sizeLadder` and `scaledParams` already existed and were already tested;
+  // only the offline paper run ever called them. Scaling the PARAMS rather
+  // than the orders keeps the shape of the ladder — growing size as price
+  // falls — while matching its scale to the venue and the wallet.
+  const sizing = sizeLadder(
+    config.params,
+    position.quality,
+    config.sizing ?? DEFAULT_SIZING_POLICY,
+    deployableCapital({
+      initialCapital: position.capitalUsd,
+      gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
+      maxOpenEntries: config.maxOpenEntries ?? PYRAMIDING,
+      params: config.params,
+    }),
+  )
+  const params = sizing.tradeable ? scaledParams(config.params, sizing) : config.params
+
   // ── 2. The strategy evaluates the closed bar ───────────────────────────────
-  const signals = computeSignals(candles, config.params)
+  const signals = computeSignals(candles, params)
   const snapshot: PositionSnapshot = broker.snapshot(candles.close[barIndex]!)
   const stepped = stepCascade(
     position.cascade,
-    config.params,
+    params,
     { open: candles.open[barIndex]!, high: candles.high[barIndex]!, low: candles.low[barIndex]!, close: candles.close[barIndex]! },
     signals.contexts[barIndex]!,
     snapshot,
@@ -139,7 +171,10 @@ export async function tickPosition(
 
   // ── 3. The death watch gets the last word ──────────────────────────────────
   const inPosition = snapshot.size > 0
-  const orders = applyDeathVerdict(stepped.orders, deathWatch.stage, inPosition)
+  const afterDeath = applyDeathVerdict(stepped.orders, deathWatch.stage, inPosition)
+  // A pool too thin to size against must not trap the money already in it:
+  // entries stop, exits never do.
+  const orders = sizing.tradeable ? afterDeath : afterDeath.filter((o) => o.kind !== 'entry')
   const kept = new Set(orders)
   const vetoed = stepped.orders.filter((o) => !kept.has(o))
 

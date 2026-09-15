@@ -378,6 +378,13 @@ cheaper to run.**
   position was handed $1,000 levels, and the broker rejected each one for
   funds — which looks exactly like a strategy that produces no signals.
   `sizeLadder` now takes the available capital as a second ceiling.
+
+  **And then the live engine did not call it.** Fixed in `paper-run.ts`,
+  absent from `tickPosition` — so production ran a $285 position emitting
+  $1,000 entries, rejected in silence, for hours. The same shape as the
+  missing execution layer: a function written, tested, documented as the fix,
+  and reached only by the offline path. Anything the experiment does and the
+  engine does not is not a fix; it is a rehearsal of one.
 - **Orders were sized to the last cent.** The state machine sizes at the signal
   bar's CLOSE and fills at the next bar's OPEN: a half-percent gap up and the
   order is unaffordable. Sizing now reserves gas for every swap of a full cycle

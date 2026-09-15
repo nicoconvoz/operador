@@ -41,6 +41,16 @@ const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => (
 
 const config: EngineConfig = { params: DEFAULT_PARAMS }
 
+/** One more bar, so a decided order has a next open to fill at. */
+const extend = (c: Candles): Candles => ({
+  time: [...c.time, c.time.at(-1)! + HOUR],
+  open: [...c.open, c.open.at(-1)!],
+  high: [...c.high, c.high.at(-1)!],
+  low: [...c.low, c.low.at(-1)!],
+  close: [...c.close, c.close.at(-1)!],
+  volume: [...c.volume, c.volume.at(-1)!],
+})
+
 const rig = () => ({
   store: new MemoryStore(),
   alerts: new RecordingAlerts(),
@@ -242,5 +252,40 @@ describe('tickPosition — the fill recovery will look for', () => {
     // the engine had just traded — the exact opposite of what recovery is for.
     const key = idempotencyKeyFor('pos-1', decidedAt, orderKeyPart(order))
     expect(await r.store.hasFill(key)).toBe(true)
+  })
+})
+
+describe('tickPosition — the ladder is sized to the wallet, not to Pine', () => {
+  it('emits an entry the position can actually afford', async () => {
+    const candles = decline(300)
+    // Exactly production: $285 of capital against a strategy whose nominal
+    // level 0 is $1,000. Unsized, the broker refuses it for funds — and a
+    // silent rejection looks identical to a strategy with no signals.
+    const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 285, maxOpenEntries: 10, quality: () => quality })
+    const r = { ...rig(), broker }
+    const held = { ...position(), capitalUsd: 285, lastBarTime: candles.time[candles.time.length - 2]! }
+
+    // Bar one decides the entry; bar two fills it at the open.
+    const first = await tick({ candles, position: held }, r)
+    expect(first.result.orders.filter((o) => o.kind === 'entry')).toHaveLength(1)
+
+    const entry = first.result.orders.find((o) => o.kind === 'entry')!
+    expect(entry.usd).toBeLessThan(285)
+
+    await tick({ candles: extend(candles), position: first.result.position }, r)
+    expect(await r.store.fillsFor('pos-1')).toHaveLength(1)
+    expect(r.broker.rejections).toEqual([])
+  })
+
+  it('still lets a position LEAVE when the ladder cannot be sized at all', async () => {
+    const candles = decline(300)
+    // A pool too thin to size against must not trap the money already in it.
+    const thin = { liquidityUsd: 900, spreadPct: 0.3, slippagePct: 60, referenceUsd: 100, observedAt: 0 }
+    const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 285, maxOpenEntries: 10, quality: () => thin })
+    const r = { ...rig(), broker }
+    const held = { ...position(), capitalUsd: 285, quality: thin, lastBarTime: candles.time[candles.time.length - 2]! }
+
+    const { result } = await tick({ candles, position: held }, r)
+    expect(result.orders.filter((o) => o.kind === 'entry')).toEqual([])
   })
 })

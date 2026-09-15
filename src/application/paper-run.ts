@@ -67,7 +67,12 @@ const PRICE_HEADROOM_PCT = 5
  * every swap the full cycle will need, minus headroom for the gap between
  * signal and fill.
  */
-export function deployableCapital(config: PaperRunConfig): number {
+export function deployableCapital(config: {
+  readonly initialCapital: number
+  readonly gasUsdPerSwap: number
+  readonly maxOpenEntries: number
+  readonly params: { readonly maxLevels: number }
+}): number {
   const swaps = Math.min(config.params.maxLevels + 1, config.maxOpenEntries) + 1 // entries + one exit
   const gasReserve = config.gasUsdPerSwap * swaps
   return Math.max(0, (config.initialCapital - gasReserve) * (1 - PRICE_HEADROOM_PCT / 100))
