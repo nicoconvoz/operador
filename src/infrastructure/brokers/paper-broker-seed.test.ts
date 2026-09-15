@@ -104,3 +104,81 @@ describe('PaperBroker.seed — the fills are the facts', () => {
     expect(shuffled.snapshot(0.011)).toEqual(live.snapshot(0.011))
   })
 })
+
+// ── A deep ladder, rebuilt ──────────────────────────────────────────────────
+//
+// Every test above stops at two open entries, which is as far as production has
+// ever got: the deepest thing ever seen live is DCA-1. But in production every
+// cycle is a NEW PROCESS — decide, persist, die, rebuild from the fills, decide
+// again — so the rebuild is the load-bearing step, and a ladder six levels deep
+// exercises it in a way two entries do not.
+
+describe('PaperBroker.seed — a ladder six levels deep', () => {
+  /** Entry plus five DCAs, each 100 units, each a nickel lower. */
+  const ladder = (broker: PaperBroker) => {
+    const prices = [1, 0.95, 0.9, 0.85, 0.8, 0.75]
+    const recorded = []
+    for (const [level, price] of prices.entries()) {
+      const id = level === 0 ? 'Entry' : `DCA-${level}`
+      recorded.push(...persist(broker.execute([entry(id, 100 * price, price)], price, T + level * 900_000)))
+    }
+    return recorded
+  }
+
+  it('comes back with every rung, at the same average', () => {
+    const live = new PaperBroker({ ...config, initialCapital: 10_000 })
+    const recorded = ladder(live)
+
+    const rebuilt = new PaperBroker({ ...config, initialCapital: 10_000 })
+    rebuilt.seed(recorded)
+
+    expect(rebuilt.openTrades).toHaveLength(6)
+    expect(rebuilt.snapshot(0.9)).toEqual(live.snapshot(0.9))
+    expect(rebuilt.equityCash).toBeCloseTo(live.equityCash, 9)
+
+    // And the average is NOT the average of the trigger prices. The mid of
+    // 1, .95, .9, .85, .8, .75 is 0.875; the basis comes out at 0.8792,
+    // because every rung paid the venue on the way in and the ladder pays it
+    // six times. The exit compares against THIS number, so a +2% target on a
+    // six-deep ladder needs the price to travel nearly 2.5%.
+    const nominal = (1 + 0.95 + 0.9 + 0.85 + 0.8 + 0.75) / 6
+    expect(rebuilt.snapshot(0.9).avgPrice).toBeGreaterThan(nominal)
+    expect(rebuilt.snapshot(0.9).avgPrice! / nominal - 1).toBeCloseTo(0.0048, 3)
+  })
+
+  it('closes all six rungs in one order, and the cash matches the live broker', () => {
+    const live = new PaperBroker({ ...config, initialCapital: 10_000 })
+    const recorded = ladder(live)
+
+    const rebuilt = new PaperBroker({ ...config, initialCapital: 10_000 })
+    rebuilt.seed(recorded)
+
+    const liveFills = live.execute([{ kind: 'closeAll', comment: '🏁 Exit' }], 0.95, T + 10 * 900_000)
+    const rebuiltFills = rebuilt.execute([{ kind: 'closeAll', comment: '🏁 Exit' }], 0.95, T + 10 * 900_000)
+
+    // One fill per open entry, not one for the aggregate: the ledger has to
+    // record which rung left, and gas is charged once for the whole close.
+    expect(rebuiltFills).toHaveLength(6)
+    expect(rebuiltFills.length).toBe(liveFills.length)
+    expect(rebuilt.snapshot(0.95).size).toBe(0)
+    expect(rebuilt.equityCash).toBeCloseTo(live.equityCash, 9)
+  })
+
+  it('rebuilds a ladder that is already at the pyramiding ceiling', () => {
+    const live = new PaperBroker({ ...config, initialCapital: 10_000, maxOpenEntries: 10 })
+    const recorded = []
+    for (let level = 0; level < 10; level++) {
+      const price = 1 - level * 0.05
+      recorded.push(...persist(live.execute([entry(level === 0 ? 'Entry' : `DCA-${level}`, 100 * price, price)], price, T + level * 900_000)))
+    }
+
+    const rebuilt = new PaperBroker({ ...config, initialCapital: 10_000, maxOpenEntries: 10 })
+    rebuilt.seed(recorded)
+    rebuilt.execute([entry('DCA-10', 50, 0.5)], 0.5, T + 20 * 900_000)
+
+    // The machine signals to 50; the venue fills ten. A restart must not be a
+    // way to get an eleventh past the cap.
+    expect(rebuilt.openTrades).toHaveLength(10)
+    expect(rebuilt.rejections.map((r) => r.reason)).toEqual(['pyramiding'])
+  })
+})

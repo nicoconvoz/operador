@@ -553,3 +553,82 @@ describe('entryAlertLabel — the order is the fact, not the machine', () => {
       .toEqual({ opening: false, icon: '➕', name: 'DCA-3' })
   })
 })
+
+// ── The ladder at depth, through the path production uses ───────────────────
+//
+// The deepest thing production has ever reached is DCA-1, and the parity
+// harness proves the ladder to DCA-4 against TradingView's own trade list. What
+// neither covers is the LIVE loop: decide, persist, the process dies, rebuild
+// from fills, decide again — with six rungs open instead of two.
+//
+// The sharpest difference at depth is the cost basis. Six rungs down, the
+// average sits far below the FIRST entry, so a sale under the opening price can
+// be a healthy profit. A guard reading the wrong fill would behave backwards
+// exactly here, and never anywhere shallower.
+
+describe('tickPosition — a ladder six rungs deep', () => {
+  /** Entry plus five DCAs, a nickel apart. Seeded, so the basis is exactly 0.875. */
+  const deep = () => {
+    const { store, alerts, throttle } = rig()
+    const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 10_000, maxOpenEntries: 10, quality: () => quality })
+    broker.seed([1, 0.95, 0.9, 0.85, 0.8, 0.75].map((price, level) => ({
+      orderId: level === 0 ? 'Entry' : `DCA-${level}`,
+      side: 'buy' as const, time: level, price, qty: 100, costUsd: 0, comment: level === 0 ? '🟢 Entry' : `DCA-${level}`,
+    })))
+    return { store, alerts, throttle, broker }
+  }
+
+  const exiting = (lastBarTime: number) => position({
+    lastBarTime,
+    cascade: { ...initialState(), level: 6, ep1: 1, wasInTrade: true },
+    pendingOrders: [{ kind: 'closeAll' as const, comment: '🏁 Exit' as const }],
+  })
+
+  it('lets a deep ladder out at 0.92 — under the 1.00 entry, over the 0.875 average', async () => {
+    const { store, alerts, throttle, broker } = deep()
+    const candles = gapDown(300, 1, 0.92)
+
+    await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    // The whole point of averaging down: the position is green at a price the
+    // first rung is deeply red at.
+    const sells = (await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')
+    expect(sells).toHaveLength(6)
+  })
+
+  it('still refuses below the AVERAGE, not below the last rung', async () => {
+    const { store, alerts, throttle, broker } = deep()
+    // 0.80 is above the last rung at 0.75 and below the 0.875 basis. A guard
+    // comparing against the most recent fill would let this one through at a
+    // loss on the position as a whole.
+    const candles = gapDown(300, 1, 0.8)
+
+    await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect((await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')).toEqual([])
+  })
+
+  it('records one fill per rung, each keyed apart so none collides', async () => {
+    const { store, alerts, throttle, broker } = deep()
+    const candles = gapDown(300, 1, 0.95)
+
+    await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    const sells = (await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')
+    // Six rungs leave in one order, and the store rejects duplicate keys — so
+    // anything less than six here is a collision silently eating a fill.
+    expect(sells).toHaveLength(6)
+    expect(new Set(sells.map((f) => f.idempotencyKey)).size).toBe(6)
+  })
+
+  it('leaves the position flat and the machine reset once the ladder is out', async () => {
+    const { store, alerts, throttle, broker } = deep()
+    const candles = gapDown(300, 1, 0.95)
+
+    const result = await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(broker.snapshot(0.95).size).toBe(0)
+    expect(result.position.cascade.level).toBe(0)
+    expect(result.position.cascade.awaitReentry).toBe(true)
+  })
+})
