@@ -289,3 +289,47 @@ describe('tickPosition — the ladder is sized to the wallet, not to Pine', () =
     expect(result.orders.filter((o) => o.kind === 'entry')).toEqual([])
   })
 })
+
+describe('tickPosition — the broker is the truth about what is held', () => {
+  it('resyncs a machine that thinks it holds something the broker never bought', async () => {
+    const candles = decline(300)
+    const r = rig()
+    // Exactly what production did: an entry was signalled, the broker refused
+    // it for funds, and the state machine advanced anyway. It then waits for a
+    // DCA trigger on a position it does not hold, forever, holding capital
+    // hostage and showing a ladder that is pure fiction.
+    const desynced = {
+      ...position(),
+      cascade: { ...initialState(), level: 3, ep1: 1, wasInTrade: true },
+      pendingOrders: [],
+      lastBarTime: candles.time[candles.time.length - 2]!,
+    }
+
+    const { result } = await tick({ candles, position: desynced }, r)
+
+    // The fills are the facts, and the broker keeps them. A machine that
+    // disagrees with the broker is wrong by definition — so it restarts from
+    // flat, which means the next order it can emit is an ENTRY, not a DCA
+    // against a cost basis that never existed.
+    const entries = result.orders.filter((o) => o.kind === 'entry')
+    expect(entries.map((o) => o.id)).toEqual(['Entry'])
+    expect(r.alerts.sent.some((a) => a.title.includes('desincronizada'))).toBe(true)
+  })
+
+  it('does NOT resync while a decided order is still waiting to fill', async () => {
+    const candles = decline(300)
+    const r = rig()
+    // Decided at a close, fills at the next open: flat-with-pending is the
+    // normal state for exactly one bar and must not be mistaken for a
+    // desync.
+    const waiting = {
+      ...position(),
+      cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true },
+      pendingOrders: [{ kind: 'entry' as const, id: 'Entry', level: 0, usd: 100, qty: 100, comment: 'Entry' }],
+      lastBarTime: candles.time[candles.time.length - 2]!,
+    }
+
+    const { result } = await tick({ candles, position: waiting }, r)
+    expect(result.position.cascade.level).not.toBe(0)
+  })
+})

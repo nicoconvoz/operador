@@ -3,6 +3,7 @@ import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_
 import { idempotencyKeyFor, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { stepCascade } from '../domain/strategy/cascade.js'
 import { computeSignals } from '../domain/strategy/signals.js'
+import { initialState } from '../domain/strategy/state.js'
 import { type CascadeParams } from '../domain/strategy/params.js'
 import { type Order, type PositionSnapshot } from '../domain/strategy/state.js'
 import { type BrokerPort } from '../domain/execution/broker.js'
@@ -145,6 +146,32 @@ export async function tickPosition(
   // only the offline paper run ever called them. Scaling the PARAMS rather
   // than the orders keeps the shape of the ladder — growing size as price
   // falls — while matching its scale to the venue and the wallet.
+  // ── 1a. The broker is the truth about what is held ────────────────────────
+  //
+  // The state machine advances on the SIGNAL — that is Pine's semantics and
+  // the parity harness depends on it. But an order the broker refused leaves
+  // the machine believing it holds a position nobody bought, waiting for a DCA
+  // trigger on a cost basis that never existed. Production ran five positions
+  // that way: level 1, zero tokens, a ladder of pure fiction, capital held
+  // hostage by a trade that never happened.
+  //
+  // Flat AND nothing pending AND the machine says in-trade is the one
+  // combination that cannot be honest. Flat WITH something pending is normal
+  // for exactly one bar — decided at a close, filled at the next open — so the
+  // pending check is what keeps this from firing on healthy positions.
+  const beforeStrategy = broker.snapshot(candles.close[barIndex]!)
+  const desynced = beforeStrategy.size === 0 && position.pendingOrders.length === 0 && position.cascade.level > 0
+  const cascadeIn = desynced ? initialState() : position.cascade
+  if (desynced) {
+    await alerts.send(alert(
+      'position-halted',
+      `⚠️ ${position.symbol} desincronizada`,
+      'La máquina creía estar en posición y el bróker no tiene nada. Se reinicia al estado plano, que es el que los fills respaldan.',
+      barTime,
+      { position: position.id, level: position.cascade.level },
+    ))
+  }
+
   const sizing = sizeLadder(
     config.params,
     position.quality,
@@ -160,9 +187,9 @@ export async function tickPosition(
 
   // ── 2. The strategy evaluates the closed bar ───────────────────────────────
   const signals = computeSignals(candles, params)
-  const snapshot: PositionSnapshot = broker.snapshot(candles.close[barIndex]!)
+  const snapshot: PositionSnapshot = beforeStrategy
   const stepped = stepCascade(
-    position.cascade,
+    cascadeIn,
     params,
     { open: candles.open[barIndex]!, high: candles.high[barIndex]!, low: candles.low[barIndex]!, close: candles.close[barIndex]! },
     signals.contexts[barIndex]!,
