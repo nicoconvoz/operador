@@ -180,3 +180,91 @@ describe('buildOperations — the ladder points at what is actually waiting', ()
     expect(ladder[1]!.pending).toBe(true)
   })
 })
+
+// ── Realised profit ─────────────────────────────────────────────────────────
+//
+// The whole system exists to produce realised profit, and the screen did not
+// have it. A position that sold everything showed qty 0, unrealised null, and
+// its actual gain — the only money the system had genuinely made — appeared
+// nowhere at all.
+//
+// The same walk fixes a second, quieter error. deployedUsd summed EVERY buy
+// ever made, including ones already sold, so a position that had cycled once
+// reported twice the capital it holds — and avgCost was that blend divided by
+// every unit ever bought, which made the UNREALISED number wrong too.
+
+describe('buildOperations — the money actually made', () => {
+  it('reports the gain of a round trip that closed', async () => {
+    const store = await seed([
+      fill('Entry', 0.01, 1_000, NOW - 30 * MIN),
+      fill('Exit', 0.012, 1_000, NOW - 10 * MIN, 'sell'),
+    ], { cascade: initialState() })
+
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    expect(view!.realisedUsd).toBeCloseTo(2, 6) // 1000 × (0.012 − 0.01)
+    expect(view!.qty).toBe(0)
+  })
+
+  it('counts only what is still held as deployed, not everything ever bought', async () => {
+    const store = await seed([
+      fill('Entry', 0.01, 1_000, NOW - 40 * MIN),
+      fill('Exit', 0.012, 1_000, NOW - 30 * MIN, 'sell'),
+      fill('Entry', 0.011, 1_000, NOW - 20 * MIN),
+    ])
+
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    // $10 went in, came back out at $12, and $11 went in again. Eleven dollars
+    // are committed — not twenty-one.
+    expect(view!.deployedUsd).toBeCloseTo(11, 6)
+    expect(view!.avgCostUsd).toBeCloseTo(0.011, 6)
+  })
+
+  it('marks the open position against what it actually cost, not a blend with closed trades', async () => {
+    const store = await seed([
+      fill('Entry', 0.01, 1_000, NOW - 40 * MIN),
+      fill('Exit', 0.012, 1_000, NOW - 30 * MIN, 'sell'),
+      fill('Entry', 0.011, 1_000, NOW - 20 * MIN),
+    ], { lastPriceUsd: 0.012 })
+
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    // Against the real basis of 0.011 the open lot is up $1. Averaged with the
+    // closed trade the basis would read 0.0105 and the screen would claim $1.50
+    // on a position that never paid that price.
+    expect(view!.unrealisedUsd).toBeCloseTo(1, 6)
+    expect(view!.realisedUsd).toBeCloseTo(2, 6)
+  })
+
+  it('averages the cost of a ladder, and a partial sale realises against it', async () => {
+    const store = await seed([
+      fill('Entry', 0.01, 1_000, NOW - 40 * MIN),
+      fill('DCA-1', 0.008, 1_000, NOW - 30 * MIN),
+      fill('Exit', 0.012, 1_000, NOW - 10 * MIN, 'sell'),
+    ])
+
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    // Basis 0.009 across two rungs; selling half realises 1000 × 0.003.
+    expect(view!.avgCostUsd).toBeCloseTo(0.009, 6)
+    expect(view!.realisedUsd).toBeCloseTo(3, 6)
+    expect(view!.deployedUsd).toBeCloseTo(9, 6)
+  })
+
+  it('totals the profit, and states it net of what the chain took', async () => {
+    const store = await seed([
+      fill('Entry', 0.01, 1_000, NOW - 30 * MIN),
+      fill('Exit', 0.012, 1_000, NOW - 10 * MIN, 'sell'),
+    ], { cascade: initialState() })
+
+    const { totals } = await buildOperations(store, { now: () => NOW })
+
+    // Costs are never netted silently into the P&L — they sit beside it, so
+    // "we made two dollars" and "the chain took thirteen cents" stay two
+    // separate facts. netUsd is the one number that answers "are we ahead".
+    expect(totals.realisedUsd).toBeCloseTo(2, 6)
+    expect(totals.costsUsd).toBeGreaterThan(0)
+    expect(totals.netUsd).toBeCloseTo(2 + totals.unrealisedUsd - totals.costsUsd, 6)
+  })
+})

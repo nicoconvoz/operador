@@ -41,6 +41,8 @@ export interface PositionOperations {
   readonly deployedUsd: number
   readonly qty: number
   readonly avgCostUsd: number | null
+  /** Profit already banked by sales, at the cost basis those sales left behind. */
+  readonly realisedUsd: number
   readonly lastPriceUsd: number | null
   readonly marketValueUsd: number | null
   readonly unrealisedUsd: number | null
@@ -63,8 +65,11 @@ export interface OperationsView {
   readonly totals: {
     readonly deployedUsd: number
     readonly marketValueUsd: number
+    readonly realisedUsd: number
     readonly unrealisedUsd: number
     readonly costsUsd: number
+    /** realised + unrealised − costs. The answer to "are we ahead". */
+    readonly netUsd: number
     readonly buys: number
     readonly sells: number
   }
@@ -89,10 +94,8 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     for (const fill of fills) tape.push({ ...fill, symbol: position.symbol })
 
     const buys = fills.filter((f) => f.side === 'buy')
-    const qty = buys.reduce((sum, f) => sum + f.qty, 0) - fills.filter((f) => f.side === 'sell').reduce((s, f) => s + f.qty, 0)
-    const deployedUsd = buys.reduce((sum, f) => sum + f.price * f.qty, 0)
     const costsUsd = fills.reduce((sum, f) => sum + f.costUsd, 0)
-    const avgCostUsd = qty > 0 ? deployedUsd / buys.reduce((s, f) => s + f.qty, 0) : null
+    const { qty, deployedUsd, avgCostUsd, realisedUsd } = walkFills(fills)
 
     const price = position.lastPriceUsd
     const marketValueUsd = price !== null && qty > 0 ? qty * price : null
@@ -139,6 +142,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       deployedUsd,
       qty,
       avgCostUsd,
+      realisedUsd,
       lastPriceUsd: price,
       marketValueUsd,
       unrealisedUsd,
@@ -161,10 +165,70 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     totals: {
       deployedUsd: built.reduce((s, p) => s + p.deployedUsd, 0),
       marketValueUsd: built.reduce((s, p) => s + (p.marketValueUsd ?? 0), 0),
+      realisedUsd: built.reduce((s, p) => s + p.realisedUsd, 0),
       unrealisedUsd: built.reduce((s, p) => s + (p.unrealisedUsd ?? 0), 0),
       costsUsd: built.reduce((s, p) => s + p.costsUsd, 0),
+      // The one number that answers "are we ahead". Costs are subtracted here
+      // and ALSO reported on their own: netting them silently would hide the
+      // single largest reason a small-cap strategy fails, which is that the
+      // chain takes more than the edge.
+      netUsd:
+        built.reduce((s, p) => s + p.realisedUsd, 0) +
+        built.reduce((s, p) => s + (p.unrealisedUsd ?? 0), 0) -
+        built.reduce((s, p) => s + p.costsUsd, 0),
       buys: tape.filter((f) => f.side === 'buy').length,
       sells: tape.filter((f) => f.side === 'sell').length,
     },
   }
+}
+
+/**
+ * Position and profit, walked forward through the fills in time order.
+ *
+ * Average-cost accounting, which is what the broker itself reports, so the
+ * screen and the strategy never disagree about what a position cost.
+ *
+ * Doing it as a WALK rather than as sums is the whole point. The old code
+ * totalled every buy ever made, so a position that had closed once and
+ * re-entered reported both entries as deployed — twice the capital it held —
+ * and divided that blend by every unit ever bought to get a cost basis. That
+ * basis fed the unrealised number, so a position that had cycled was marked
+ * against a price it never paid.
+ *
+ * A sale realises against the basis at that moment and LEAVES the basis
+ * unchanged for what remains, which is exactly why the two numbers can be
+ * separated at all.
+ */
+function walkFills(fills: readonly PersistedFill[]): {
+  qty: number
+  deployedUsd: number
+  avgCostUsd: number | null
+  realisedUsd: number
+} {
+  let qty = 0
+  let basisUsd = 0
+  let realisedUsd = 0
+
+  for (const fill of [...fills].sort((a, b) => a.time - b.time)) {
+    if (fill.side === 'buy') {
+      qty += fill.qty
+      basisUsd += fill.price * fill.qty
+      continue
+    }
+
+    // Selling more than the record says is held cannot happen from our own
+    // orders, but a sale is the moment to be careful rather than clever: cap
+    // it, so a bad fill cannot invent profit out of a negative position.
+    const sold = Math.min(fill.qty, qty)
+    if (sold <= 0) continue
+    const avg = basisUsd / qty
+    realisedUsd += sold * (fill.price - avg)
+    basisUsd -= sold * avg
+    qty -= sold
+  }
+
+  // Floating point leaves crumbs after a full exit; a basis of 1e-17 on zero
+  // units is not a cost, it is noise.
+  if (qty <= 0) return { qty: 0, deployedUsd: 0, avgCostUsd: null, realisedUsd }
+  return { qty, deployedUsd: basisUsd, avgCostUsd: basisUsd / qty, realisedUsd }
 }

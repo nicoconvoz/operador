@@ -44,16 +44,28 @@ export function Operations({ view }: { view: OperationsView }) {
   }
 
   const { totals } = view
-  const net = totals.unrealisedUsd
 
   return (
     <>
+      {/* GANANCIA first, and on its own line, because it is the question the
+          whole system exists to answer. It was missing entirely: a position
+          that sold everything showed nothing at all, so the only money the
+          system had genuinely made appeared nowhere. */}
+      <section style={{ ...card(), marginBottom: 12 }}>
+        <div style={{ color: DIM, fontSize: 12 }}>ganancia — realizada + abierta − costos</div>
+        <div style={{ fontSize: 30, marginTop: 2, color: totals.netUsd >= 0 ? UP : DOWN }}>{signed(totals.netUsd)}</div>
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 10 }}>
+          <Figure label="cobrada" value={signed(totals.realisedUsd)} color={totals.realisedUsd >= 0 ? UP : DOWN} />
+          <Figure label="sin cobrar" value={signed(totals.unrealisedUsd)} color={totals.unrealisedUsd >= 0 ? UP : DOWN} />
+          {/* Costs sit beside P&L on purpose: they are the same story, and on
+              small caps they are the reason most strategies lose. */}
+          <Figure label="pagado a la cadena" value={money(totals.costsUsd)} color={DIM} />
+        </div>
+      </section>
+
       <section style={{ ...card(), display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 12 }}>
         <Figure label="desplegado" value={money(totals.deployedUsd)} />
         <Figure label="valor de mercado" value={money(totals.marketValueUsd)} />
-        <Figure label="no realizado" value={signed(net)} color={net >= 0 ? UP : DOWN} />
-        {/* Costs sit beside P&L on purpose: they are the same story. */}
-        <Figure label="pagado a la cadena" value={money(totals.costsUsd)} color={DIM} />
         <Figure label="ejecuciones" value={`${totals.buys} compra / ${totals.sells} venta`} color={DIM} />
       </section>
 
@@ -106,6 +118,14 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4 }}>
           <span style={{ color: DIM, fontSize: 12 }}>{money(position.deployedUsd)} dentro</span>
+          {/* Banked money keeps its own slot, always. A position that closed
+              flat shows "—" for the open mark, and without this its realised
+              gain would have nowhere to appear. */}
+          {position.realisedUsd !== 0 && (
+            <span style={{ fontSize: 12, color: position.realisedUsd >= 0 ? UP : DOWN }}>
+              {signed(position.realisedUsd)} cobrado
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           <span style={{ color: colour }}>
             {pnl === null ? '—' : signed(pnl)}
@@ -124,6 +144,7 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
           <Line label="costo promedio" value={position.avgCostUsd === null ? '—' : price(position.avgCostUsd)} />
           <Line label="último precio" value={position.lastPriceUsd === null ? '—' : price(position.lastPriceUsd)} />
           <Line label="valor de mercado" value={position.marketValueUsd === null ? '—' : money(position.marketValueUsd)} />
+          <Line label="ganancia cobrada" value={signed(position.realisedUsd)} />
           <Line label="pagado a la cadena" value={money(position.costsUsd, 3)} />
           <Line label="capital asignado" value={money(position.capitalUsd, 0)} />
           <Line label="abierta hace" value={ago(position.openedAt)} />
