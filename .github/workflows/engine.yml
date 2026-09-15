@@ -21,11 +21,18 @@
 # was 2h52m — an unreliable dependency turned into a reliable one by asking it
 # for far less.
 #
-# Two limits worth knowing:
+# Three limits worth knowing:
 #
 #   - A job is capped at 6 hours by GitHub. That is what bounds MAX_CYCLES.
 #   - A scheduled workflow is DISABLED after 60 days with no commits to the
 #     repository. Push something, or turn it back on.
+#   - **A RUN PINS ITS COMMIT.** The checkout happens once, at the start, so a
+#     run started at 18:23 keeps running that code until it exits — a fix
+#     pushed at 18:30 does not reach production for another five hours. That is
+#     the price of the long loop, and it is paid on every deploy. To ship
+#     immediately: cancel the run and start a new one. Cancelling mid-cycle is
+#     safe by construction — fills are persisted as they happen and recovery
+#     reconciles anything that was in flight.
 
 name: engine
 
