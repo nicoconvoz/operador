@@ -345,3 +345,64 @@ describe('runCycle — a reservation nobody used gives up its slot', () => {
     expect(said?.body).toContain('6h')
   })
 })
+
+// ── Watching costs almost nothing; discovering costs everything ─────────────
+//
+// One cycle did both, so looking after open positions ran at the pace of the
+// scan: a held token got attention once every ~35 minutes, on 15-minute bars.
+// A scan is hundreds of throttled calls; a watch pass is one candle request and
+// one sell probe per position, under a minute for five of them.
+//
+// The asymmetry is the argument. A token you HOLD can rug in ten minutes. A new
+// opportunity missed by an hour is a missed opportunity — nothing more.
+
+describe('runCycle — a watch pass looks after what is open, and nothing else', () => {
+  it('advances open positions without going looking for new ones', async () => {
+    let scans = 0
+    const { deps, store, throttle } = rig({ scan: async () => { scans++; return [candidate('a', 90)] } })
+    await store.savePosition(position())
+
+    const result = await runCycle(deps, config, throttle, 'watch')
+
+    expect(scans).toBe(0)
+    expect(result.ticks).toHaveLength(1)
+    expect(result.opened).toEqual([])
+  })
+
+  it('still reconciles the past first — a watch pass is a prefix of a cycle, not a shortcut', async () => {
+    const { deps, store, throttle } = rig({ probe: async () => 'unknown' })
+    const inFlight: Order = { kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 15, comment: 'Entry' }
+    await store.savePosition(position({ pendingOrders: [inFlight], lastBarTime: 0 }))
+
+    // An order nobody can confirm halts the position. Skipping recovery on the
+    // cheap pass would be trading on state that was never verified.
+    const result = await runCycle(deps, config, throttle, 'watch')
+
+    expect(result.haltedIds).toEqual(['pos-1'])
+  })
+
+  it('still checkpoints, so a watch pass is not invisible to the dashboard', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(position())
+
+    await runCycle(deps, config, throttle, 'watch')
+
+    expect((await store.loadCheckpoint())?.savedAt).toBe(NOW)
+  })
+
+  it('takes no slots back, because nothing is waiting to use them', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(position({ id: 'idle-1', tokenAddress: 'Idle', symbol: 'IDLE', openedAt: NOW - 9 * HOUR, lastBarTime: NOW }))
+
+    // Releasing a slot needs a queue, and a watch pass never looked at one.
+    const result = await runCycle(deps, config, throttle, 'watch')
+
+    expect(result.releasedIds).toEqual([])
+  })
+
+  it('says which kind of pass it was', async () => {
+    const { deps, throttle } = rig()
+    expect((await runCycle(deps, config, throttle, 'watch')).kind).toBe('watch')
+    expect((await runCycle(deps, config, throttle)).kind).toBe('full')
+  })
+})

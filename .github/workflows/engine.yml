@@ -89,11 +89,20 @@ jobs:
           # cycle near five minutes. The rest are shown as unchecked, and the
           # next cycle is now genuinely fifteen minutes away.
           OPERADOR_MAX_SECURITY_CHECKS: ${{ vars.OPERADOR_MAX_SECURITY_CHECKS || '20' }}
-          # The pacing. A measured cycle spends ~12 minutes inside throttled
-          # providers, so a 3-minute rest between cycles lands the next one on
-          # roughly the next 15m bar. The loop sleeps AFTER the cycle, never
-          # during it: cycles cannot overlap themselves.
-          OPERADOR_CYCLE_MS: ${{ vars.OPERADOR_CYCLE_MS || '180000' }}
-          # ~20 cycles x ~15 minutes = ~5 hours of engine per run.
-          OPERADOR_MAX_CYCLES: ${{ vars.OPERADOR_MAX_CYCLES || '20' }}
+          # ── Two cadences, not one ──────────────────────────────────────
+          #
+          # Most passes are WATCH passes: recover, advance every open position,
+          # checkpoint. They cost one candle request and one sell probe per
+          # position — under a minute for five — so this is what decides how
+          # quickly a closed 15m bar gets acted on.
+          OPERADOR_CYCLE_MS: ${{ vars.OPERADOR_CYCLE_MS || '300000' }}
+          # How often a pass ALSO hunts for new tokens. A scan is hundreds of
+          # throttled calls and about half an hour; sharing one clock meant a
+          # held token got attention every ~35 minutes. A token you HOLD can rug
+          # in ten minutes, and an opportunity missed by an hour is only missed.
+          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '7200000' }}
+          # Generous: with watch passes now cheap, the 350-minute job timeout is
+          # what ends a run, not this. It is here so a pathological loop cannot
+          # spin forever.
+          OPERADOR_MAX_CYCLES: ${{ vars.OPERADOR_MAX_CYCLES || '120' }}
         run: npm run cycle

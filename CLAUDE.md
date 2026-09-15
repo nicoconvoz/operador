@@ -553,6 +553,27 @@ recover → halt what cannot be trusted → tick what can →
 open new positions with what is left → checkpoint → heartbeat
 ```
 
+### Two cadences, not one
+
+The cycle above has two halves that cost wildly different amounts, and they used
+to share a clock set by the expensive one:
+
+| | Cost | What it protects |
+|---|---|---|
+| **Watch** — recover, advance every open position, checkpoint | one candle request and one sell probe per position; under a minute for five | money already committed |
+| **Scan** — discovery, gates, ranking, allocation | hundreds of throttled calls; ~30 minutes | opportunities not yet taken |
+
+Bundled, a held token got attention every **~35 minutes on 15-minute bars** —
+the cheap half running at the pace of the expensive one. `runLoop` now paces
+them separately: `OPERADOR_CYCLE_MS` (5 min) is how often a pass happens, and
+`OPERADOR_SCAN_MS` (2 hours) is how often a pass is also a scan. `runCycle`
+takes a `CycleKind`, and `watch` is a strict PREFIX of `full` — never a
+shortcut, so recovery still runs and a position nobody can reconcile still
+halts.
+
+The asymmetry is the whole argument: **a token you HOLD can rug in ten minutes;
+an opportunity missed by an hour is only a missed opportunity.**
+
 - **Recovery runs first.** An engine that scans and allocates before
   reconciling its own past is building on state it has not verified.
 - **New positions come last**, because capital that might belong to an

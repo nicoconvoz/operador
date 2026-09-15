@@ -160,3 +160,71 @@ describe('shutdownSignal', () => {
     expect(exits).toEqual([1])
   })
 })
+
+// ── Two cadences, not one ───────────────────────────────────────────────────
+//
+// Advancing open positions and hunting for new tokens used to share a clock,
+// and the expensive half set it: a held token got looked at every ~35 minutes
+// on 15-minute bars. They are now paced separately, because a token you HOLD
+// can rug in ten minutes while a missed opportunity is only missed.
+
+describe('runLoop — watching runs faster than scanning', () => {
+  const kinds = (deps: CycleDeps) => {
+    const seen: string[] = []
+    return {
+      seen,
+      scan: async () => { seen.push('scan'); return [] },
+      deps,
+    }
+  }
+
+  it('scans on the very first pass — it has never looked', async () => {
+    const spy = kinds(rig().deps)
+    const { deps } = rig({ scan: spy.scan })
+
+    await runLoop(deps, config, new AlertThrottle(0), { intervalMs: 0, sleep: async () => {}, maxCycles: 1, scanIntervalMs: 60_000 })
+
+    expect(spy.seen).toEqual(['scan'])
+  })
+
+  it('watches between scans instead of scanning every pass', async () => {
+    const spy = kinds(rig().deps)
+    let clock = NOW
+    const { deps } = rig({ scan: spy.scan, now: () => clock })
+
+    // Four passes a minute apart, scanning at most every ten minutes.
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0,
+      sleep: async () => { clock += 60_000 },
+      maxCycles: 4,
+      scanIntervalMs: 10 * 60_000,
+    })
+
+    expect(spy.seen).toHaveLength(1)
+  })
+
+  it('scans again once the scan interval has actually elapsed', async () => {
+    const spy = kinds(rig().deps)
+    let clock = NOW
+    const { deps } = rig({ scan: spy.scan, now: () => clock })
+
+    // Passes five minutes apart, scanning every ten: pass 1 and pass 3 scan.
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0,
+      sleep: async () => { clock += 5 * 60_000 },
+      maxCycles: 4,
+      scanIntervalMs: 10 * 60_000,
+    })
+
+    expect(spy.seen).toHaveLength(2)
+  })
+
+  it('scans every pass when no scan interval is set — the old behaviour, unchanged', async () => {
+    const spy = kinds(rig().deps)
+    const { deps } = rig({ scan: spy.scan })
+
+    await runLoop(deps, config, new AlertThrottle(0), { intervalMs: 0, sleep: async () => {}, maxCycles: 3 })
+
+    expect(spy.seen).toHaveLength(3)
+  })
+})

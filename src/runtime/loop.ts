@@ -1,5 +1,5 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
-import { type CycleConfig, type CycleDeps, type CycleResult, runCycle } from '../application/orchestrator.js'
+import { type CycleConfig, type CycleDeps, type CycleKind, type CycleResult, runCycle } from '../application/orchestrator.js'
 
 /**
  * The supervised loop.
@@ -29,6 +29,19 @@ export interface LoopOptions {
   readonly stopSignal?: Promise<void>
   /** Bounded number of cycles. Omitted means run until stopped. */
   readonly maxCycles?: number
+  /**
+   * How often a pass also goes looking for NEW tokens.
+   *
+   * Omitted, every pass is a full cycle — which is what this loop always did,
+   * and it meant the two halves shared one clock set by the expensive one. A
+   * scan is hundreds of throttled calls and about half an hour; advancing the
+   * open positions is one candle request and one sell probe each.
+   *
+   * With it set, the passes in between are WATCH passes: recover, advance what
+   * is open, checkpoint. A token you hold can rug in ten minutes; an
+   * opportunity missed by an hour is only missed.
+   */
+  readonly scanIntervalMs?: number
 }
 
 export interface LoopReport {
@@ -52,6 +65,7 @@ export async function runLoop(
   options.stopSignal?.then(() => { stop = true })
 
   let cycles = 0
+  let lastScanAt: number | null = null
   let failures = 0
   let consecutiveFailures = 0
   let lastResult: CycleResult | null = null
@@ -67,8 +81,19 @@ export async function runLoop(
     }
 
     try {
-      lastResult = await runCycle(deps, config, throttle)
+      // The first pass always scans: an engine that has never looked has no
+      // reason to believe the book it woke up with is the one it wants.
+      const kind: CycleKind =
+        options.scanIntervalMs === undefined || lastScanAt === null || deps.now() - lastScanAt >= options.scanIntervalMs
+          ? 'full'
+          : 'watch'
+
+      lastResult = await runCycle(deps, config, throttle, kind)
       cycles++
+      // Stamped AFTER the pass, not before: the interval is time between the
+      // end of one scan and the start of the next, so a scan that took half an
+      // hour does not immediately owe another one.
+      if (kind === 'full') lastScanAt = deps.now()
 
       if (consecutiveFailures > 0) {
         // Say when it comes back. An error with no resolution is an error the

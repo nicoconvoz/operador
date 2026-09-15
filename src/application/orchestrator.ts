@@ -74,7 +74,25 @@ export interface CycleConfig {
   readonly idleSlots?: IdleSlotPolicy
 }
 
+/**
+ * How much of the cycle to run.
+ *
+ * `watch` is a strict PREFIX of `full`: recover, halt what cannot be trusted,
+ * advance what can, checkpoint. It stops before discovery and allocation.
+ *
+ * The split exists because the two halves cost wildly different amounts. A scan
+ * is hundreds of throttled calls and about half an hour; advancing five open
+ * positions is one candle request and one sell probe each, under a minute. In
+ * one cycle the cheap half ran at the pace of the expensive one, so a held
+ * token got attention every ~35 minutes on 15-minute bars.
+ *
+ * The asymmetry is the whole argument: a token you HOLD can rug in ten minutes,
+ * while an opportunity missed by an hour is only a missed opportunity.
+ */
+export type CycleKind = 'full' | 'watch'
+
 export interface CycleResult {
+  readonly kind: CycleKind
   readonly recovery: RecoveryPlan
   readonly ticks: readonly TickResult[]
   readonly opened: readonly PersistedPosition[]
@@ -94,6 +112,7 @@ export async function runCycle(
   deps: CycleDeps,
   config: CycleConfig,
   throttle: AlertThrottle,
+  kind: CycleKind = 'full',
 ): Promise<CycleResult> {
   const at = deps.now()
 
@@ -142,7 +161,10 @@ export async function runCycle(
   // ── 3. Open new positions with what is genuinely free ──────────────────────
   const opened: PersistedPosition[] = []
   const releasedIds: string[] = []
-  if (!recovery.killSwitchEngaged) {
+  // A watch pass stops here. Not as an optimisation — as the point: everything
+  // above looks after money already committed, and everything below goes
+  // looking for more. Only the second half is expensive.
+  if (kind === 'full' && !recovery.killSwitchEngaged) {
     const candidates = (await deps.scan())
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
@@ -254,12 +276,19 @@ export async function runCycle(
   const lastCompletedBar = ticks.reduce((latest, t) => Math.max(latest, t.position.lastBarTime), recovery.resumedFromBar ?? 0)
   await deps.store.saveCheckpoint({ savedAt: at, lastCompletedBar, killSwitchEngaged: recovery.killSwitchEngaged })
 
-  const beat = alert('heartbeat', '💓 Operador by Open Doors', `${recovery.positions.length} en curso · ${recovery.halted.length} detenidas · ${opened.length} abiertas`, at, {
-    killSwitch: recovery.killSwitchEngaged,
-  })
+  const beat = alert(
+    'heartbeat',
+    '💓 Operador by Open Doors',
+    kind === 'full'
+      ? `${recovery.positions.length} en curso · ${recovery.halted.length} detenidas · ${opened.length} abiertas`
+      : `${recovery.positions.length} en curso · ${recovery.halted.length} detenidas · vigilancia`,
+    at,
+    { killSwitch: recovery.killSwitchEngaged, kind },
+  )
   if (throttle.shouldSend(beat)) await deps.alerts.send(beat)
 
   return {
+    kind,
     recovery,
     ticks,
     opened,

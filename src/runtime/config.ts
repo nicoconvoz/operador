@@ -25,8 +25,28 @@ export interface RuntimeConfig {
   readonly maxPositions: number
   readonly gasUsdPerSwap: number
 
-  /** How long between cycles. The strategy is 1H, so this is about freshness, not speed. */
+  /**
+   * How long between PASSES.
+   *
+   * Most passes are watch passes: recover, advance every open position,
+   * checkpoint. On 15-minute bars this is what decides how quickly a closed bar
+   * gets acted on — five minutes means a bar is processed within five, instead
+   * of waiting out a scan.
+   */
   readonly cycleIntervalMs: number
+  /**
+   * How often a pass ALSO goes looking for new tokens.
+   *
+   * Separate from the pass interval because the two halves cost wildly
+   * different amounts: a scan is hundreds of throttled calls and about half an
+   * hour, while advancing five open positions is one candle request and one
+   * sell probe each. Sharing a clock meant a held token got attention every
+   * ~35 minutes on 15-minute bars.
+   *
+   * Two hours is deliberate. A token you HOLD can rug in ten minutes; a new
+   * opportunity missed by an hour is a missed opportunity and nothing worse.
+   */
+  readonly scanIntervalMs: number
   /** How often the death watch re-probes the sell path of open positions. */
   readonly healthIntervalMs: number
   /**
@@ -142,6 +162,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxPositions: number(env, 'OPERADOR_MAX_POSITIONS', 5),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
+    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 2 * 60 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
     maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),

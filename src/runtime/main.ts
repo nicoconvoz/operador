@@ -319,6 +319,10 @@ export async function main(ports: RuntimePorts): Promise<void> {
 
   const report = await runLoop(deps, cycleConfig, throttle, {
     intervalMs: config.cycleIntervalMs,
+    // Watching and hunting are paced separately. Most passes only look after
+    // what is already open, which costs a candle request and a sell probe per
+    // position instead of a scan.
+    scanIntervalMs: config.scanIntervalMs,
     stopSignal,
     // 0 means run forever. A scheduler sets 1 and gets a single cycle.
     ...(config.maxCycles > 0 ? { maxCycles: config.maxCycles } : {}),
