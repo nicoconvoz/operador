@@ -1,6 +1,7 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
+import { positionLedger } from './ledger.js'
 import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -128,7 +129,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
 
     const buys = fills.filter((f) => f.side === 'buy')
     const costsUsd = fills.reduce((sum, f) => sum + f.costUsd, 0)
-    const { qty, deployedUsd, avgCostUsd, realisedUsd } = walkFills(fills)
+    const { qty, deployedUsd, avgCostUsd, realisedUsd } = positionLedger(fills)
 
     const price = position.lastPriceUsd
     const marketValueUsd = price !== null && qty > 0 ? qty * price : null
@@ -216,56 +217,6 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   }
 }
 
-/**
- * Position and profit, walked forward through the fills in time order.
- *
- * Average-cost accounting, which is what the broker itself reports, so the
- * screen and the strategy never disagree about what a position cost.
- *
- * Doing it as a WALK rather than as sums is the whole point. The old code
- * totalled every buy ever made, so a position that had closed once and
- * re-entered reported both entries as deployed — twice the capital it held —
- * and divided that blend by every unit ever bought to get a cost basis. That
- * basis fed the unrealised number, so a position that had cycled was marked
- * against a price it never paid.
- *
- * A sale realises against the basis at that moment and LEAVES the basis
- * unchanged for what remains, which is exactly why the two numbers can be
- * separated at all.
- */
-function walkFills(fills: readonly PersistedFill[]): {
-  qty: number
-  deployedUsd: number
-  avgCostUsd: number | null
-  realisedUsd: number
-} {
-  let qty = 0
-  let basisUsd = 0
-  let realisedUsd = 0
-
-  for (const fill of [...fills].sort((a, b) => a.time - b.time)) {
-    if (fill.side === 'buy') {
-      qty += fill.qty
-      basisUsd += fill.price * fill.qty
-      continue
-    }
-
-    // Selling more than the record says is held cannot happen from our own
-    // orders, but a sale is the moment to be careful rather than clever: cap
-    // it, so a bad fill cannot invent profit out of a negative position.
-    const sold = Math.min(fill.qty, qty)
-    if (sold <= 0) continue
-    const avg = basisUsd / qty
-    realisedUsd += sold * (fill.price - avg)
-    basisUsd -= sold * avg
-    qty -= sold
-  }
-
-  // Floating point leaves crumbs after a full exit; a basis of 1e-17 on zero
-  // units is not a cost, it is noise.
-  if (qty <= 0) return { qty: 0, deployedUsd: 0, avgCostUsd: null, realisedUsd }
-  return { qty, deployedUsd: basisUsd, avgCostUsd: basisUsd / qty, realisedUsd }
-}
 
 const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
 

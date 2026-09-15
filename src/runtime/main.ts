@@ -303,7 +303,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       heartbeatMs: 60 * 60 * 1000,
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
-      idleSlots: { idleAfterMs: config.idleSlotHours * 60 * 60 * 1000 },
+      idleSlots: {
+        idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,
+        minScoreEdge: config.minScoreEdge,
+      },
     },
     throttle: new AlertThrottle(30 * 60 * 1000),
   }

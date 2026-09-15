@@ -646,6 +646,67 @@ than a reallocation.
 the 20-bar swing-high lookback the classic entry gate uses, so the setup had a
 fair chance before the slot moves on.
 
+## Slots that are not earning them
+
+A slot and its capital go to a token **before** the strategy enters it: the
+scanner says "worth running the machine on", and CASCADE DCA then waits for its
+own gates. Two ways that stops being a good deal, and they turn out to be one
+rule.
+
+|  | Holds tokens | Holds nothing |
+|---|---|---|
+| **What it is** | a COMMITMENT | a RESERVATION |
+| **Can the slot come back?** | not without selling — and selling is the strategy's decision, never the allocator's | at no cost, because nothing is in it |
+
+So `domain/risk/idle-slots.ts` only ever takes back slots with nothing in them,
+and it judges them on what the scanner thinks **today**:
+
+- **Never traded** → waits out `OPERADOR_IDLE_HOURS` (3) first. It was chosen by
+  this same ranking minutes ago, and the opportunity score moves bar to bar:
+  judging it immediately would open a position and close it on the next scan,
+  which is churn wearing the costume of discipline.
+- **Traded, now flat** → re-examined at once. It has shown what it can do, so
+  the question is no longer "did this ever work" but "is this still the right
+  token".
+
+Either is handed on when the scanner no longer lists it at all, or when a
+waiting candidate beats it by `OPERADOR_MIN_SCORE_EDGE` (10 points). The margin
+is not timidity — without it the book trades against its own noise and pays gas
+for the privilege. Never more slots than there are candidates to fill them, and
+nothing is blacklisted: the token did not fail a safety gate, it merely stopped
+being the best use of a slot.
+
+### A position keeps only what its ladder can spend
+
+A slot used to keep whatever the portfolio handed it at birth. Measured live:
+**five positions holding $285 each while a flat six-rung $15 ladder can only
+ever deploy about $95.** The surplus counted as committed, so the engine could
+neither spend it nor open anything with it — nine hundred and fifty dollars
+doing nothing.
+
+`ladderCapitalUsd` is the exact inverse of `deployableCapital`: run one on the
+other's answer and the nominal ladder comes back. Every cycle trims each
+position down to it, never below what is already deployed — that money is in the
+token — and never **up**, because raising an allocation is re-risking money
+nobody agreed to put there.
+
+### The common fund
+
+What the system has MADE is capital too, and it was ignored: the book was sized
+against a fixed number from the environment forever, so a profitable engine
+never got any bigger. `commonFund` walks **every fill ever recorded**, including
+those of positions that have closed and left — which is most of it, and is why
+`fills` has no foreign key to `positions`.
+
+Costs come out. They were paid in cash at the moment of each fill, so a fund
+built on gross profit hands the allocator dollars the chain already took — the
+single largest way a strategy that looks profitable is not.
+
+`application/ledger.ts` is the one implementation of "what does this position
+hold and what has it made". Three things need that answer — the screen, the
+allocator, and the fund — and any two of them disagreeing is how a book starts
+double-spending.
+
 ## The kill switch
 
 It lives in the **store**, not in the process. A switch held in memory can only

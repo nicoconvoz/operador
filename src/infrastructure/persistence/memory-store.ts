@@ -87,6 +87,12 @@ export class MemoryStore implements StatePort {
     this.fills.set(fill.idempotencyKey, structuredClone(fill))
   }
 
+  async allFills(): Promise<readonly PersistedFill[]> {
+    return [...this.fills.values()]
+      .sort((a, b) => a.time - b.time)
+      .map((f) => structuredClone(f))
+  }
+
   async fillsFor(positionId: string): Promise<readonly PersistedFill[]> {
     return [...this.fills.values()]
       .filter((f) => f.positionId === positionId)

@@ -107,6 +107,15 @@ export interface RuntimeConfig {
    * the capital those deep rungs reserve buys more by going to another token.
    */
   readonly maxDcaPerToken: number
+  /**
+   * How many points better a waiting candidate must score to take a flat
+   * position's slot.
+   *
+   * Not zero on purpose: the opportunity score is a heuristic that moves bar to
+   * bar, so swapping on any difference would trade the book against its own
+   * noise and pay gas for it.
+   */
+  readonly minScoreEdge: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -182,6 +191,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
+    minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

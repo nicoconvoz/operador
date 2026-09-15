@@ -123,6 +123,16 @@ export interface StatePort {
   /** No-op when a fill with the same idempotency key already exists. */
   recordFill(fill: PersistedFill): Promise<void>
   fillsFor(positionId: string): Promise<readonly PersistedFill[]>
+  /**
+   * Every fill ever recorded, oldest first — INCLUDING those of positions that
+   * have since closed.
+   *
+   * That inclusion is the point. Realised profit is the common fund the
+   * allocator spends, and most of it belongs to positions that are no longer in
+   * the working set. `fills` deliberately has no foreign key to `positions` for
+   * exactly this reason: a closed position leaves, its trade history does not.
+   */
+  allFills(): Promise<readonly PersistedFill[]>
   /** Whether this exact intended order was already filled. */
   hasFill(idempotencyKey: string): Promise<boolean>
 

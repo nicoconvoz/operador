@@ -336,7 +336,9 @@ describe('runCycle — a reservation nobody used gives up its slot', () => {
   })
 
   it('says so, naming the hours it sat there', async () => {
-    const { deps, store, alerts, throttle } = rig()
+    // The scan still rates it, and nothing clearly better is queued, so the
+    // rule that fires is the idle window rather than the re-examination.
+    const { deps, store, alerts, throttle } = rig({ scan: async () => [candidate('Idle', 85), candidate('a', 90)] })
     await store.savePosition(idle())
 
     await runCycle(deps, config, throttle)
@@ -404,5 +406,154 @@ describe('runCycle — a watch pass looks after what is open, and nothing else',
     const { deps, throttle } = rig()
     expect((await runCycle(deps, config, throttle, 'watch')).kind).toBe('watch')
     expect((await runCycle(deps, config, throttle)).kind).toBe('full')
+  })
+})
+
+// ── Capital that was reserved against rungs that do not exist ───────────────
+//
+// A slot kept whatever the portfolio handed it at birth. Measured live: five
+// positions holding $285 each while a flat six-rung $15 ladder can only ever
+// deploy about $95. The surplus counted as COMMITTED, so the engine could
+// neither spend it nor open anything with it.
+
+describe('runCycle — a position keeps only what its ladder can spend', () => {
+  const ladderConfig: CycleConfig = {
+    ...config,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 },
+    maxOpenEntries: 6,
+    gasUsdPerSwap: 0.05,
+    portfolio: { ...config.portfolio, totalCapitalUsd: 2_000, maxPositions: 6 },
+  }
+
+  it('trims an over-allocated position down to what six rungs need', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(position({ capitalUsd: 285, lastBarTime: NOW }))
+
+    await runCycle(deps, ladderConfig, throttle)
+
+    const [stored] = (await store.loadPositions()).filter((p) => p.id === 'pos-1')
+    expect(stored!.capitalUsd).toBeCloseTo(95.1, 1)
+  })
+
+  it('never trims below what is already in the token', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(position({ capitalUsd: 900, lastBarTime: NOW }))
+    // $400 of basis still held: that money is IN the token, and calling it free
+    // would hand the same dollars out twice.
+    await store.recordFill({ positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 1000, price: 4, qty: 100, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'k1' })
+
+    await runCycle(deps, ladderConfig, throttle)
+
+    const [stored] = (await store.loadPositions()).filter((p) => p.id === 'pos-1')
+    expect(stored!.capitalUsd).toBeCloseTo(400, 6)
+  })
+
+  it('only ever trims down — a small allocation is never topped up', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(position({ capitalUsd: 40, lastBarTime: NOW }))
+
+    // Raising it would be re-risking money the allocator never agreed to put
+    // here. A ladder that cannot fill its deeper rungs simply does not fill them.
+    await runCycle(deps, ladderConfig, throttle)
+
+    const [stored] = (await store.loadPositions()).filter((p) => p.id === 'pos-1')
+    expect(stored!.capitalUsd).toBe(40)
+  })
+
+  it('spends the freed capital on more tokens', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [candidate('a', 90), candidate('b', 85), candidate('c', 80)] })
+    await store.savePosition(position({ capitalUsd: 1_900, lastBarTime: NOW }))
+
+    // With $1,900 locked up there is nothing left. Trimmed to ~$95 there is.
+    const result = await runCycle(deps, ladderConfig, throttle)
+
+    expect(result.opened.length).toBeGreaterThan(0)
+  })
+})
+
+// ── The common fund ─────────────────────────────────────────────────────────
+//
+// What the system has MADE is capital too, and it was ignored: the book was
+// sized against a fixed number from the environment forever, so a profitable
+// engine never got any bigger.
+
+describe('runCycle — profit becomes capital', () => {
+  // Just enough for two slots at the portfolio's $200 floor, so a third can
+  // only ever come from money the system made.
+  const tight: CycleConfig = {
+    ...config,
+    portfolio: { ...config.portfolio, totalCapitalUsd: 600, maxPositions: 4 },
+  }
+
+  const banked = async (store: MemoryStore, sellPrice: number, costUsd: number) => {
+    // 'gone' is not in the working set; its fills are, and they are where the
+    // fund lives. `fills` has no foreign key to `positions` for this reason.
+    await store.recordFill({ positionId: 'gone', orderId: 'Entry', side: 'buy', time: NOW - 2000, price: 1, qty: 400, costUsd, comment: 'Entry', idempotencyKey: 'g1' })
+    await store.recordFill({ positionId: 'gone', orderId: 'Exit', side: 'sell', time: NOW - 1000, price: sellPrice, qty: 400, costUsd, comment: 'Exit', idempotencyKey: 'g2' })
+  }
+
+  const scan = async () => [candidate('a', 90), candidate('b', 85), candidate('c', 80)]
+
+  it('opens what the configured capital alone can carry', async () => {
+    const { deps, throttle } = rig({ scan })
+    expect((await runCycle(deps, tight, throttle)).opened).toHaveLength(2)
+  })
+
+  it('carries one more once a closed position has banked the money for it', async () => {
+    const { deps, store, throttle } = rig({ scan })
+    await banked(store, 1.75, 0) // +$300 realised
+
+    expect((await runCycle(deps, tight, throttle)).opened).toHaveLength(3)
+  })
+
+  it('takes the chain’s cut out of the fund, because that cash is already gone', async () => {
+    const { deps, store, throttle } = rig({ scan })
+    await banked(store, 1.75, 160) // +$300 gross, $320 of costs
+
+    // Gross profit would have funded a third ladder. Net, there is less money
+    // than the engine started with, and pretending otherwise spends dollars
+    // the chain already took.
+    expect((await runCycle(deps, tight, throttle)).opened).toHaveLength(2)
+  })
+})
+
+// ── Re-examined the moment it goes flat ─────────────────────────────────────
+
+describe('runCycle — a token that took its profit is re-examined at once', () => {
+  const traded = async (store: MemoryStore, score: number) => {
+    await store.savePosition(position({ id: 'flat-1', tokenAddress: 'Flat', symbol: 'FLAT', lastBarTime: NOW }))
+    await store.recordFill({ positionId: 'flat-1', orderId: 'Entry', side: 'buy', time: NOW - 2000, price: 1, qty: 10, costUsd: 0, comment: 'Entry', idempotencyKey: 'f1' })
+    await store.recordFill({ positionId: 'flat-1', orderId: 'Exit', side: 'sell', time: NOW - 1000, price: 1.2, qty: 10, costUsd: 0, comment: 'Exit', idempotencyKey: 'f2' })
+    return score
+  }
+
+  it('hands the slot on when something clearly better is waiting', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [candidate('Flat', 40), candidate('a', 90)] })
+    await traded(store, 40)
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual(['flat-1'])
+  })
+
+  it('keeps it when it is still the best thing available', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [candidate('Flat', 90), candidate('a', 45)] })
+    await traded(store, 90)
+
+    // It banked a profit and the scanner still rates it top. Swapping here
+    // would be churn dressed as discipline.
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual([])
+  })
+
+  it('does not re-examine a position that is still holding tokens', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [candidate('Held', 5), candidate('a', 95)] })
+    await store.savePosition(position({ lastBarTime: NOW }))
+    await store.recordFill({ positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 1000, price: 1, qty: 10, costUsd: 0, comment: 'Entry', idempotencyKey: 'h1' })
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual([])
   })
 })

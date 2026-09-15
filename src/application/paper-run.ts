@@ -79,6 +79,29 @@ export function deployableCapital(config: {
 }
 
 /**
+ * The wallet a ladder needs — the exact inverse of `deployableCapital`.
+ *
+ * Allocation was asking the forward question and then handing out whatever the
+ * portfolio had spare. Measured live: five positions holding $285 each while a
+ * flat $15 ladder of six rungs can only ever deploy about $95. Nine hundred and
+ * fifty dollars reserved against rungs that do not exist — capital the engine
+ * counted as committed, so it could neither spend it nor open anything with it.
+ *
+ * Inverse, not an estimate: run `deployableCapital` on the answer and the
+ * nominal ladder comes back exactly.
+ */
+export function ladderCapitalUsd(
+  params: CascadeParams,
+  maxOpenEntries: number,
+  gasUsdPerSwap: number,
+): number {
+  const rungs = Math.min(params.maxLevels + 1, maxOpenEntries)
+  const nominal = Array.from({ length: rungs }, (_, level) => usdForLevel(params, level)).reduce((a, b) => a + b, 0)
+  const swaps = rungs + 1 // the entries, and the one sell that closes them all
+  return nominal / (1 - PRICE_HEADROOM_PCT / 100) + gasUsdPerSwap * swaps
+}
+
+/**
  * Scales the strategy's nominal ladder down to what the pool can take.
  *
  * `usd(n)` is multiplied by the ratio the sizing allows for that level, so the

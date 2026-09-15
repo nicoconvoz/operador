@@ -135,17 +135,12 @@ export class PostgresStore implements StatePort {
     const { rows } = await this.sql.query<Record<string, string | number>>(
       'SELECT * FROM fills WHERE position_id = $1 ORDER BY time', [positionId],
     )
-    return rows.map((row) => ({
-      idempotencyKey: String(row.idempotency_key),
-      positionId: String(row.position_id),
-      orderId: String(row.order_id),
-      side: row.side as 'buy' | 'sell',
-      time: num(row.time),
-      price: num(row.price),
-      qty: num(row.qty),
-      costUsd: num(row.cost_usd),
-      comment: String(row.comment),
-    }))
+    return rows.map(toFill)
+  }
+
+  async allFills(): Promise<readonly PersistedFill[]> {
+    const { rows } = await this.sql.query<Record<string, string | number>>('SELECT * FROM fills ORDER BY time')
+    return rows.map(toFill)
   }
 
   async hasFill(idempotencyKey: string): Promise<boolean> {
@@ -289,3 +284,15 @@ export class PostgresStore implements StatePort {
     return new Set(rows.map((row) => `${row.chain}:${row.token_address}`))
   }
 }
+
+const toFill = (row: Record<string, string | number>): PersistedFill => ({
+  idempotencyKey: String(row.idempotency_key),
+  positionId: String(row.position_id),
+  orderId: String(row.order_id),
+  side: row.side as 'buy' | 'sell',
+  time: num(row.time),
+  price: num(row.price),
+  qty: num(row.qty),
+  costUsd: num(row.cost_usd),
+  comment: String(row.comment),
+})

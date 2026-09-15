@@ -7,7 +7,10 @@ import { type CascadeParams } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
 import { type Candles } from './replay.js'
 import { tickPosition, type TickResult } from './engine.js'
-import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy, type SlotHolder } from '../domain/risk/idle-slots.js'
+import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
+import { commonFund, positionLedger, type PositionLedger } from './ledger.js'
+import { ladderCapitalUsd } from './paper-run.js'
+import { PYRAMIDING } from '../domain/strategy/params.js'
 import { type SizingPolicy } from '../domain/economics/sizing.js'
 import { planRecovery, type OrderProbe, type RecoveryPlan } from './recovery.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
@@ -177,27 +180,53 @@ export async function runCycle(
       if (throttle.shouldSend(empty)) await deps.alerts.send(empty)
     }
 
-    // ── 3a. Take back the slots nobody used ──────────────────────────────────
+    // ── 3a. Every position's ledger, read once ───────────────────────────────
     //
-    // A slot is handed to a token BEFORE the strategy enters it, and CASCADE
-    // DCA then waits for its own gates. When those never line up the position
-    // sits at level 0 indefinitely, holding a slot and its capital against
-    // nothing — measured live at five hours and twenty minutes with candidates
-    // scoring 76 and 72 waiting outside.
+    // Three decisions below need the same answer — what does this position
+    // hold, and what has it made — and any two of them disagreeing is how a
+    // book starts double-spending. One walk over the fills, shared.
+    const ledgers = new Map<string, PositionLedger>()
+    for (const recovered of recovery.positions) {
+      ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
+    }
+
+    const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score]))
+    const heldNow = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
+    const waiting = candidates.filter((c) => !heldNow.has(`${c.snapshot.chain}:${c.snapshot.address}`))
+
+    // ── 3b. Slots that are not earning them ──────────────────────────────────
     //
-    // Only reservations are taken back, never commitments: a position with
-    // fills cannot give up its slot without selling, and selling is the
-    // strategy's decision, not the allocator's. Nothing is blacklisted here —
-    // the token did nothing wrong, it simply never set up, and it is welcome
-    // back the day it does.
-    const release = await releasable(deps, recovery.positions.map((r) => r.position), candidates.length, at, config)
-    for (const holder of release) {
+    // Two cases, one rule. A reservation the gates never armed, and a position
+    // that took its profit and went flat — both hold NOTHING, so handing the
+    // slot on costs nothing, and both are re-examined against what the scanner
+    // thinks today. A position still HOLDING tokens is never touched: its slot
+    // cannot come back without selling, and selling is the strategy's call.
+    //
+    // Nothing is blacklisted here. The token did not fail a safety gate, it
+    // merely stopped being the best use of a slot, and it is welcome back.
+    const release = releasableSlots(
+      recovery.positions.map((r) => ({
+        id: r.position.id,
+        chain: r.position.chain,
+        tokenAddress: r.position.tokenAddress,
+        symbol: r.position.symbol,
+        openedAt: r.position.openedAt,
+        openQty: ledgers.get(r.position.id)?.qty ?? 0,
+        hasFills: ledgers.get(r.position.id)?.hasFills ?? false,
+        score: scoreOf.get(`${r.position.chain}:${r.position.tokenAddress}`) ?? null,
+      })),
+      waiting.map((c) => c.opportunity.score),
+      at,
+      config.idleSlots ?? DEFAULT_IDLE_SLOT_POLICY,
+    )
+
+    for (const { holder, reason } of release) {
       await deps.store.closePosition(holder.id)
       releasedIds.push(holder.id)
       const handed = alert(
         'token-retired',
         `🔄 ${holder.symbol} cede su ranura`,
-        `Reservó una ranura y ${Math.round((at - holder.openedAt) / 3_600_000)}h después no había comprado nada. El capital y la ranura vuelven al reparto; el token no queda vetado y puede volver a entrar cuando arme.`,
+        `${reason}. El capital y la ranura vuelven al reparto; el token no queda vetado y puede volver a entrar cuando sea el mejor candidato otra vez.`,
         at,
         { position: holder.id, token: holder.tokenAddress },
       )
@@ -207,16 +236,55 @@ export async function runCycle(
     const released = new Set(releasedIds)
     const keeping = recovery.positions.filter((r) => !released.has(r.position.id))
     const held = new Set(keeping.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
+
+    // ── 3c. Trim each position to the wallet its ladder actually needs ───────
+    //
+    // A slot used to keep whatever the portfolio handed it at birth, and that
+    // was far more than its ladder can ever spend: five positions held $285
+    // each while a flat six-rung $15 ladder can only deploy about $95. The
+    // surplus was counted as committed, so the engine could neither spend it
+    // nor open anything with it — nine hundred and fifty dollars doing nothing.
+    //
+    // Never below what is already deployed: that money is in the token, and
+    // pretending otherwise would let the same dollars be handed out twice.
+    const ladderNeeds = ladderCapitalUsd(
+      config.params,
+      config.maxOpenEntries ?? PYRAMIDING,
+      config.gasUsdPerSwap ?? 0.05,
+    )
+    const kept: PersistedPosition[] = []
+    for (const recovered of keeping) {
+      const deployed = ledgers.get(recovered.position.id)?.deployedUsd ?? 0
+      const needs = Math.max(ladderNeeds, deployed)
+      if (recovered.position.capitalUsd <= needs + 0.01) {
+        kept.push(recovered.position)
+        continue
+      }
+      const trimmed = { ...recovered.position, capitalUsd: needs, updatedAt: at }
+      await deps.store.savePosition(trimmed)
+      kept.push(trimmed)
+    }
+
     // Capital committed to halted positions is NOT free. Treating it as free is
     // how an engine quietly doubles its own exposure after a bad restart.
-    const committed = [...keeping, ...recovery.halted].reduce((sum, r) => sum + r.position.capitalUsd, 0)
-    const free = Math.max(0, config.portfolio.totalCapitalUsd - committed)
+    const committed =
+      kept.reduce((sum, p) => sum + p.capitalUsd, 0) +
+      recovery.halted.reduce((sum, r) => sum + r.position.capitalUsd, 0)
+    // ── 3d. The common fund ──────────────────────────────────────────────────
+    //
+    // What the system has MADE is capital too, and it was being ignored: the
+    // book was sized against a fixed number from the environment forever, so a
+    // profitable engine never got any bigger. Built from every fill ever
+    // recorded, including those of positions that have closed and left — which
+    // is most of it. Costs come out, because that cash is already gone.
+    const fund = commonFund(await deps.store.allFills())
+    const free = Math.max(0, config.portfolio.totalCapitalUsd + fund.netUsd - committed)
     const slotsLeft = config.portfolio.maxPositions - keeping.length - recovery.halted.length
 
     // A token that just gave up its slot must not win it straight back in the
     // same breath: that is not a reallocation, it is a round trip through the
     // database. It is eligible again next cycle.
-    const justReleased = new Set(release.map((h) => `${h.chain}:${h.tokenAddress}`))
+    const justReleased = new Set(release.map((d) => `${d.holder.chain}:${d.holder.tokenAddress}`))
     const eligible = candidates
       .filter((c) => !held.has(`${c.snapshot.chain}:${c.snapshot.address}`))
       .filter((c) => !justReleased.has(`${c.snapshot.chain}:${c.snapshot.address}`))
@@ -303,33 +371,3 @@ export async function runCycle(
   }
 }
 
-/**
- * Which open positions reserved a slot and never used it.
- *
- * `hasFills` is read from the FILLS, never from the cascade level: a machine can
- * sit at level 1 believing it holds something the broker refused, and a
- * reservation dressed as a position is exactly the case this must not misread.
- */
-async function releasable(
-  deps: CycleDeps,
-  positions: readonly PersistedPosition[],
-  waiting: number,
-  at: number,
-  config: CycleConfig,
-): Promise<readonly SlotHolder[]> {
-  if (waiting <= 0 || positions.length === 0) return []
-
-  const holders: SlotHolder[] = []
-  for (const position of positions) {
-    holders.push({
-      id: position.id,
-      chain: position.chain,
-      tokenAddress: position.tokenAddress,
-      symbol: position.symbol,
-      openedAt: position.openedAt,
-      hasFills: (await deps.store.fillsFor(position.id)).length > 0,
-    })
-  }
-
-  return releasableSlots(holders, waiting, at, config.idleSlots ?? DEFAULT_IDLE_SLOT_POLICY)
-}
