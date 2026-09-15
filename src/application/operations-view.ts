@@ -1,5 +1,6 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
+import { type CascadeState } from '../domain/strategy/state.js'
 import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -30,6 +31,24 @@ export interface LadderRung {
   readonly beyondPyramiding: boolean
 }
 
+/**
+ * One of the rebound locks standing between the ladder and its next rung.
+ *
+ * All of them must hold for a DCA to fill — that is the anti-stacking rule from
+ * DCA.pine, and it is what stops the ladder buying into a falling knife.
+ *
+ * It is here because a token fell 28% below its entry, no rung fired, and the
+ * screen could not say why: answering took reading the cascade state out of the
+ * database by hand. A ladder that is correctly waiting and a ladder that is
+ * broken looked exactly alike, which makes the correct one impossible to trust.
+ */
+export interface LadderLock {
+  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound'
+  readonly held: boolean
+  /** What it is waiting for, in the numbers it is waiting on. */
+  readonly detail: string
+}
+
 export interface PositionOperations {
   readonly id: string
   readonly symbol: string
@@ -51,6 +70,14 @@ export interface PositionOperations {
   readonly costsUsd: number
 
   readonly ladder: readonly LadderRung[]
+  /**
+   * What the next rung is waiting for, or null when flat.
+   *
+   * The fifth lock of the reference — `close > open` — is not here: it is a
+   * property of the bar being evaluated, and nothing durable records the open.
+   * Four locks that are certain beat five where one is invented.
+   */
+  readonly locks: readonly LadderLock[] | null
   readonly fills: readonly PersistedFill[]
   readonly openedAt: number
   readonly updatedAt: number
@@ -149,6 +176,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       unrealisedPct: unrealisedUsd !== null && deployedUsd > 0 ? (unrealisedUsd / deployedUsd) * 100 : null,
       costsUsd,
       ladder,
+      locks: ladderLocks(position.cascade, params, position.lastPriceUsd),
       fills: [...fills].reverse(),
       openedAt: position.openedAt,
       updatedAt: position.updatedAt,
@@ -231,4 +259,70 @@ function walkFills(fills: readonly PersistedFill[]): {
   // units is not a cost, it is noise.
   if (qty <= 0) return { qty: 0, deployedUsd: 0, avgCostUsd: null, realisedUsd }
   return { qty, deployedUsd: basisUsd, avgCostUsd: basisUsd / qty, realisedUsd }
+}
+
+const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
+
+/**
+ * The rebound locks, evaluated against the state the position actually carries.
+ *
+ * Derived, never stored: these are four readings of `cascade`, and a second
+ * copy of them would be a second thing to keep in step with the strategy.
+ */
+function ladderLocks(
+  cascade: CascadeState,
+  params: CascadeParams,
+  close: number | null,
+): readonly LadderLock[] | null {
+  if (cascade.level < 1 || cascade.ep1 === null) return null
+
+  const low = cascade.cycleLow
+  const trigger = cascade.level <= params.maxLevels ? triggerPrice(params, cascade.ep1, cascade.level) : null
+  const separation = cascade.lastFill === null ? null : cascade.lastFill * (1 - params.minGapPct / 100)
+
+  return [
+    {
+      name: 'trigger',
+      held: low !== null && trigger !== null && low <= trigger,
+      detail:
+        low === null || trigger === null
+          ? 'todavía no hay un mínimo de ciclo que medir'
+          : low <= trigger
+            ? `el mínimo ${low.toPrecision(4)} tocó el disparador ${trigger.toPrecision(4)}`
+            : `falta que caiga a ${trigger.toPrecision(4)}; el mínimo va en ${low.toPrecision(4)}`,
+    },
+    {
+      // The hard separation lock: two rungs cannot sit on top of each other,
+      // however far the price has fallen since the last one.
+      name: 'separation',
+      held: low !== null && separation !== null && low <= separation,
+      detail:
+        low === null || separation === null
+          ? 'todavía no hay un mínimo de ciclo que medir'
+          : low <= separation
+            ? `separada ${pct((low / cascade.lastFill! - 1) * 100)} de la compra anterior`
+            : `hace falta ${params.minGapPct}% bajo la compra anterior (${separation.toPrecision(4)})`,
+    },
+    {
+      // The one that holds a falling token back, and the one people misread as
+      // a fault: a new low resets the count, so a token making new lows every
+      // bar never confirms a bottom at all. That is the rule working.
+      name: 'confirmation',
+      held: cascade.barsSinceLow >= params.confirmBars,
+      detail:
+        cascade.barsSinceLow >= params.confirmBars
+          ? `el piso aguantó ${cascade.barsSinceLow} barras`
+          : `${cascade.barsSinceLow} de ${params.confirmBars} barras sin un mínimo nuevo — cada mínimo nuevo reinicia la cuenta`,
+    },
+    {
+      name: 'rebound',
+      held: low !== null && close !== null && close >= low * (1 + params.reboundPct / 100),
+      detail:
+        low === null || close === null
+          ? 'todavía no hay un mínimo de ciclo que medir'
+          : close >= low * (1 + params.reboundPct / 100)
+            ? `rebotó ${pct((close / low - 1) * 100)} desde el piso`
+            : `hace falta un rebote de ${params.reboundPct}% sobre ${low.toPrecision(4)}; va ${pct((close / low - 1) * 100)}`,
+    },
+  ]
 }

@@ -128,11 +128,34 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
       {/* The ladder, always visible: it is the shape of the position. */}
       <Ladder rungs={position.ladder} />
 
+      {/* Why the next rung is not firing. A ladder that is correctly waiting
+          and a ladder that is broken looked exactly alike, which makes the
+          correct one impossible to trust — so the blocking lock is always on
+          screen, not buried behind a tap. */}
+      {position.locks && position.locks.some((l) => !l.held) && (
+        <div style={{ color: DIM, fontSize: 11, marginTop: 4 }}>
+          ⏸ {position.locks.find((l) => !l.held)!.detail}
+        </div>
+      )}
+
       {open && (
         <div style={{ marginTop: 10, fontSize: 13 }}>
           <Line label="costo promedio" value={position.avgCostUsd === null ? '—' : price(position.avgCostUsd)} />
           <Line label="último precio" value={position.lastPriceUsd === null ? '—' : price(position.lastPriceUsd)} />
           <Line label="valor de mercado" value={position.marketValueUsd === null ? '—' : money(position.marketValueUsd)} />
+          {position.locks && (
+            <div style={{ margin: '8px 0' }}>
+              <div style={{ color: DIM, fontSize: 12, marginBottom: 4 }}>
+                cerrojos del próximo peldaño — los cuatro tienen que ceder
+              </div>
+              {position.locks.map((lock) => (
+                <div key={lock.name} style={{ display: 'flex', gap: 6, fontSize: 12, padding: '2px 0' }}>
+                  <span>{lock.held ? '✅' : '⏸'}</span>
+                  <span style={{ color: lock.held ? UP : DIM }}>{lock.detail}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <Line label="ganancia cobrada" value={signed(position.realisedUsd)} />
           <Line label="pagado a la cadena" value={money(position.costsUsd, 3)} />
           <Line label="capital asignado" value={money(position.capitalUsd, 0)} />

@@ -268,3 +268,69 @@ describe('buildOperations — the money actually made', () => {
     expect(totals.netUsd).toBeCloseTo(2 + totals.unrealisedUsd - totals.costsUsd, 6)
   })
 })
+
+// ── Why the next rung is not firing ─────────────────────────────────────────
+//
+// A token fell 28% below its entry and no DCA fired, and the screen could not
+// say why. Working it out meant reading the cascade state out of the database
+// and doing the arithmetic by hand — which is the same as the system not
+// knowing.
+//
+// The five rebound locks are the answer, and "the ladder is waiting" is not a
+// bug: locks 1 and 2 were satisfied twenty-seven points earlier, and what held
+// was the confirmation window. On a token making a new low every bar,
+// `barsSinceLow` resets every bar and never reaches its twenty. That is the
+// anti-knife-catching rule doing its job — but it has to be VISIBLE, or every
+// quiet ladder looks identical to a broken one.
+
+describe('buildOperations — the locks between here and the next rung', () => {
+  const armed = (over = {}) => position({
+    cascade: {
+      ...initialState(), level: 1, ep1: 0.01, wasInTrade: true,
+      cycleLow: 0.007, lastFill: 0.01, barsSinceLow: 3, ...over,
+    },
+    lastPriceUsd: 0.00714,
+  })
+
+  it('says the price got low enough to arm the rung', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)], armed())
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    // trigger(1) is ep1 × 0.99 = 0.0099, and the cycle low is 0.007.
+    const trigger = view!.locks!.find((l) => l.name === 'trigger')
+    expect(trigger!.held).toBe(true)
+  })
+
+  it('names the confirmation window as what is actually holding it back', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)], armed())
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    const confirm = view!.locks!.find((l) => l.name === 'confirmation')
+    expect(confirm!.held).toBe(false)
+    expect(confirm!.detail).toContain('3')
+    expect(confirm!.detail).toContain('20')
+  })
+
+  it('a new low resets the window, which is why a falling token never confirms', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)], armed({ barsSinceLow: 0 }))
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    expect(view!.locks!.find((l) => l.name === 'confirmation')!.held).toBe(false)
+  })
+
+  it('holds every lock once the bottom has held and the price bounced', async () => {
+    const store = await seed(
+      [fill('Entry', 0.01, 1_000, NOW - 60 * MIN)],
+      { ...armed({ barsSinceLow: 25 }), lastPriceUsd: 0.0075 }, // 0.007 × 1.025 = 0.007175
+    )
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+
+    expect(view!.locks!.filter((l) => !l.held)).toEqual([])
+  })
+
+  it('reports nothing to unlock when the position is flat', async () => {
+    const store = await seed([], { cascade: initialState() })
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+    expect(view!.locks).toBeNull()
+  })
+})
