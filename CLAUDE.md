@@ -690,6 +690,29 @@ position down to it, never below what is already deployed — that money is in t
 token — and never **up**, because raising an allocation is re-risking money
 nobody agreed to put there.
 
+### The slot floor is derived, like the gas floor
+
+Freeing that capital opened no new tokens, because the book was capped twice
+over — and the lower cap was **stale**.
+
+`minPositionUsd: 200` was a real measurement: the first capital-floor run placed
+no orders below it. That measurement was superseded in the same document, by the
+sizing fixes that reserve gas for a full cycle plus 5% of price headroom and
+dropped the floor **to under $50**. The number never moved, so it kept dividing
+free capital by 200 and capping the book at four slots.
+
+The replacement is `slotFloorUsd`, and the subtlety is which ladder it prices.
+NOT the nominal one — `scaledParams` shrinks the ladder to what the wallet
+allows, so a smaller slot does not fail, it trades smaller rungs. What it cannot
+do is trade rungs the chain's fixed cost would eat. So the floor is the same
+ladder priced at `minFillUsd`, which is itself `gasFloorUsd`: **~$32 for six
+rungs at $0.05 a swap**, and it rises with gas exactly as it should.
+
+`maxPositions` went 5 → **10** alongside it. Five was paired with slots costing
+$200; a six-rung $15 ladder needs about $95, so $1,000 carries about ten. Scale
+comes from more tokens, not more size per token — finding 2 of the capital
+floor, which this is finally acting on.
+
 ### The common fund
 
 What the system has MADE is capital too, and it was ignored: the book was sized

@@ -181,7 +181,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     chains: chains as readonly Chain[],
     databaseUrl: required(env, 'DATABASE_URL'),
     totalCapitalUsd: number(env, 'OPERADOR_CAPITAL_USD', 1_000),
-    maxPositions: number(env, 'OPERADOR_MAX_POSITIONS', 5),
+    // Ten, because a six-rung $15 ladder needs about $95 and $1,000 of capital
+    // therefore carries about ten of them. Five was paired with slots costing
+    // $200 each; keeping it after the ladder shrank would leave half the book
+    // unused and the scale on the table — and scale is where the edge is, per
+    // finding 2 of the capital floor.
+    maxPositions: number(env, 'OPERADOR_MAX_POSITIONS', 10),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
     scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 2 * 60 * 60 * 1000),

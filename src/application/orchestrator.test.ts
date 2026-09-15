@@ -109,10 +109,13 @@ describe('runCycle — a halted position is contained, not ignored', () => {
 
   it('its capital is NOT free — the engine does not double its own exposure', async () => {
     const { deps, store, throttle } = rig({ probe: async () => 'unknown' })
-    await store.savePosition(position({ capitalUsd: 1_900, pendingOrders: [pending] }))
+    await store.savePosition(position({ capitalUsd: 1_990, pendingOrders: [pending] }))
+
+    // $2,000 total with $1,990 committed to a halted position leaves $10 — under
+    // the gas floor for a single rung, so nothing new opens. A halted position
+    // is unresolved, not finished: its capital may still be in the token.
     const result = await runCycle(deps, config, throttle)
-    // $2,000 total with $1,900 committed to a halted position leaves $100 —
-    // under the floor, so nothing new opens.
+
     expect(result.opened).toEqual([])
   })
 
@@ -478,11 +481,11 @@ describe('runCycle — a position keeps only what its ladder can spend', () => {
 // engine never got any bigger.
 
 describe('runCycle — profit becomes capital', () => {
-  // Just enough for two slots at the portfolio's $200 floor, so a third can
-  // only ever come from money the system made.
+  // Narrow enough that capital, not the slot ceiling, is what binds — so any
+  // extra token can only have come from money the system made.
   const tight: CycleConfig = {
     ...config,
-    portfolio: { ...config.portfolio, totalCapitalUsd: 600, maxPositions: 4 },
+    portfolio: { ...config.portfolio, totalCapitalUsd: 120, maxPositions: 8 },
   }
 
   const banked = async (store: MemoryStore, sellPrice: number, costUsd: number) => {
@@ -492,28 +495,32 @@ describe('runCycle — profit becomes capital', () => {
     await store.recordFill({ positionId: 'gone', orderId: 'Exit', side: 'sell', time: NOW - 1000, price: sellPrice, qty: 400, costUsd, comment: 'Exit', idempotencyKey: 'g2' })
   }
 
-  const scan = async () => [candidate('a', 90), candidate('b', 85), candidate('c', 80)]
+  const scan = async () => Array.from({ length: 8 }, (_, i) => candidate(`t${i}`, 90 - i))
+  const throttle = () => new AlertThrottle(60_000)
 
-  it('opens what the configured capital alone can carry', async () => {
-    const { deps, throttle } = rig({ scan })
-    expect((await runCycle(deps, tight, throttle)).opened).toHaveLength(2)
-  })
+  it('carries more tokens once a closed position has banked the money for them', async () => {
+    const withoutFund = rig({ scan })
+    const before = (await runCycle(withoutFund.deps, tight, throttle())).opened.length
 
-  it('carries one more once a closed position has banked the money for it', async () => {
-    const { deps, store, throttle } = rig({ scan })
-    await banked(store, 1.75, 0) // +$300 realised
+    const withFund = rig({ scan })
+    await banked(withFund.store, 1.75, 0) // +$300 realised, nothing paid away
+    const after = (await runCycle(withFund.deps, tight, throttle())).opened.length
 
-    expect((await runCycle(deps, tight, throttle)).opened).toHaveLength(3)
+    expect(after).toBeGreaterThan(before)
   })
 
   it('takes the chain’s cut out of the fund, because that cash is already gone', async () => {
-    const { deps, store, throttle } = rig({ scan })
-    await banked(store, 1.75, 160) // +$300 gross, $320 of costs
+    const gross = rig({ scan })
+    await banked(gross.store, 1.75, 0) // +$300, no costs
+    const onGross = (await runCycle(gross.deps, tight, throttle())).opened.length
 
-    // Gross profit would have funded a third ladder. Net, there is less money
-    // than the engine started with, and pretending otherwise spends dollars
-    // the chain already took.
-    expect((await runCycle(deps, tight, throttle)).opened).toHaveLength(2)
+    const net = rig({ scan })
+    await banked(net.store, 1.75, 160) // +$300 gross, $320 of costs: net NEGATIVE
+    const onNet = (await runCycle(net.deps, tight, throttle())).opened.length
+
+    // Spending the gross would hand the allocator dollars the chain already
+    // took, which is the commonest way a strategy that looks profitable is not.
+    expect(onNet).toBeLessThan(onGross)
   })
 })
 
@@ -555,5 +562,51 @@ describe('runCycle — a token that took its profit is re-examined at once', () 
     const result = await runCycle(deps, config, throttle)
 
     expect(result.releasedIds).toEqual([])
+  })
+})
+
+// ── Two ceilings, and the lower one was stale ───────────────────────────────
+//
+// Freeing $950 opened no new tokens, because the book was capped twice over:
+// maxPositions at 5, and a $200 floor per slot that dated from before the
+// sizing fixes. CLAUDE.md records that measurement being superseded — reserving
+// gas and 5% of price headroom dropped the floor where the system trades at all
+// from ~$200 to under $50 — but the number stayed, still enforcing the old
+// reality.
+//
+// The floor is not a guess any more. It is what the ladder needs, derived from
+// the ladder that will actually run, exactly as the gas floor is.
+
+describe('runCycle — the slot floor is the ladder, not a remembered number', () => {
+  const production: CycleConfig = {
+    ...config,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 },
+    maxOpenEntries: 6,
+    gasUsdPerSwap: 0.05,
+    portfolio: { ...config.portfolio, totalCapitalUsd: 600, maxPositions: 8, minPositionUsd: 200 },
+  }
+
+  it('opens the slots a $95 ladder can fund, not the ones a $200 floor allowed', async () => {
+    const { deps, throttle } = rig({
+      scan: async () => Array.from({ length: 8 }, (_, i) => candidate(`t${i}`, 90 - i)),
+    })
+
+    // $570 deployable. At the stale $200 floor that is two slots; at what the
+    // ladder actually needs it is six.
+    const result = await runCycle(deps, production, throttle)
+
+    expect(result.opened.length).toBeGreaterThan(2)
+  })
+
+  it('still refuses to open more slots than the hard ceiling allows', async () => {
+    const { deps, throttle } = rig({
+      scan: async () => Array.from({ length: 20 }, (_, i) => candidate(`t${i}`, 90 - i)),
+    })
+
+    // Capital is not the only limit. The ceiling bounds how many tokens can be
+    // dying at once, and that is a risk decision, not an arithmetic one.
+    const result = await runCycle(deps, { ...production, portfolio: { ...production.portfolio, maxPositions: 3 } }, throttle)
+
+    expect(result.opened).toHaveLength(3)
   })
 })

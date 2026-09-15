@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deployableCapital, ladderCapitalUsd, paperRun, scaledParams, type PaperRunConfig } from './paper-run.js'
+import { deployableCapital, ladderCapitalUsd, paperRun, scaledParams, slotFloorUsd, type PaperRunConfig } from './paper-run.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { usdForLevel } from '../domain/strategy/ladder.js'
@@ -157,5 +157,45 @@ describe('ladderCapitalUsd — the wallet a ladder needs, and not a dollar more'
     const short = { ...flat15, maxLevels: 2 }
     // maxLevels 2 means the entry plus two rungs, whatever the venue allows.
     expect(ladderCapitalUsd(short, 10, 0)).toBeCloseTo(ladderCapitalUsd(short, 3, 0), 6)
+  })
+})
+
+// ── The floor below which a slot places no orders at all ────────────────────
+//
+// `minPositionUsd` was 200 from a real measurement — the first run placed no
+// orders below it — and that measurement was superseded when sizing began
+// reserving gas and 5% of price headroom. The number stayed, and it capped the
+// book at four slots however much capital was free.
+//
+// Deriving it is the fix, and the derivation is NOT the nominal ladder: the
+// ladder SCALES to the capital, so a slot with less simply trades smaller
+// rungs. What it cannot do is trade rungs under the gas floor.
+
+describe('slotFloorUsd — the least a slot can do anything with', () => {
+  const flat15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+
+  it('is far below what the nominal ladder wants, because the ladder shrinks', () => {
+    expect(slotFloorUsd(flat15, 6, 0.05, 5)).toBeLessThan(ladderCapitalUsd(flat15, 6, 0.05))
+  })
+
+  it('is six rungs at the gas floor, plus gas for the whole cycle', () => {
+    // 6 × $5 of nominal, grossed up for headroom, plus seven swaps of gas.
+    expect(slotFloorUsd(flat15, 6, 0.05, 5)).toBeCloseTo(31.93, 2)
+  })
+
+  it('matches what the capital-floor experiment measured after the sizing fixes', () => {
+    // CLAUDE.md: the floor where the system trades at all dropped from ~$200
+    // to under $50 once orders stopped being sized to the last cent.
+    expect(slotFloorUsd(flat15, 6, 0.05, 5)).toBeLessThan(50)
+  })
+
+  it('rises with gas, because the gas floor does', () => {
+    expect(slotFloorUsd(flat15, 6, 0.2, 20)).toBeGreaterThan(slotFloorUsd(flat15, 6, 0.05, 5))
+  })
+
+  it('does not depend on the ladder being flat — only on its rung count', () => {
+    // The reference ladder is far larger nominally, and scales down to the same
+    // smallest fill. The floor is a property of the gas, not of the ambition.
+    expect(slotFloorUsd(DEFAULT_PARAMS, 6, 0.05, 5)).toBeCloseTo(slotFloorUsd(flat15, 6, 0.05, 5), 6)
   })
 })

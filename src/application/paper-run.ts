@@ -176,3 +176,31 @@ export function paperRun(
 
   return { token: snapshot.symbol, tradeable: true, reason: null, sizing, replay: result, broker, summary }
 }
+
+/**
+ * The least capital a slot can place any order with.
+ *
+ * NOT the nominal ladder — that is `ladderCapitalUsd`, and demanding it would
+ * be far too strict, because `scaledParams` shrinks the ladder to whatever the
+ * wallet and the pool allow. A slot with less does not fail; it trades smaller
+ * rungs.
+ *
+ * What it cannot do is trade rungs below the GAS FLOOR, where the chain's fixed
+ * cost eats the fill. So the floor is the same ladder priced at that floor:
+ * every rung at `minFillUsd`, grossed up for price headroom, plus gas for a
+ * full cycle of swaps.
+ *
+ * It replaces `minPositionUsd: 200`, which was a real measurement — the first
+ * capital-floor run placed no orders below it — taken BEFORE sizing began
+ * reserving gas and headroom. That change dropped the floor to under $50 and
+ * the number never moved, so it kept capping the book at four slots however
+ * much capital was free. A floor that is derived cannot go stale that way.
+ */
+export function slotFloorUsd(
+  params: CascadeParams,
+  maxOpenEntries: number,
+  gasUsdPerSwap: number,
+  minFillUsd: number,
+): number {
+  return ladderCapitalUsd({ ...params, maxUsdPerLevel: minFillUsd, baseUsd: minFillUsd, amountIncrement: 0 }, maxOpenEntries, gasUsdPerSwap)
+}

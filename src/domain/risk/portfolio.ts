@@ -32,9 +32,16 @@ export interface PortfolioPolicy {
    */
   readonly maxPositionPct: number
   /**
-   * Capital below which a slot is not worth opening. Under this the ladder
-   * cannot clear the gas floor and the position places no orders at all —
-   * measured, not guessed: the first run traded nothing under ~$200.
+   * Capital below which a slot is not worth opening: under it the ladder cannot
+   * clear the gas floor and the position places no orders at all.
+   *
+   * The live engine DERIVES this and overrides whatever is here, via
+   * `slotFloorUsd`. The 200 below was a real measurement — the first
+   * capital-floor run traded nothing under it — taken before sizing began
+   * reserving gas and 5% of price headroom. That change dropped the floor to
+   * under $50 and this number did not move, so it spent weeks capping the book
+   * at four slots however much capital was free. Kept as a conservative default
+   * for offline experiments; a floor that is derived cannot go stale that way.
    */
   readonly minPositionUsd: number
   /** Held back from allocation for gas and rebalancing. */

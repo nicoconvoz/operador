@@ -9,7 +9,8 @@ import { type Candles } from './replay.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
 import { commonFund, positionLedger, type PositionLedger } from './ledger.js'
-import { ladderCapitalUsd } from './paper-run.js'
+import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
+import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { type SizingPolicy } from '../domain/economics/sizing.js'
 import { planRecovery, type OrderProbe, type RecoveryPlan } from './recovery.js'
@@ -293,7 +294,28 @@ export async function runCycle(
       const plan = planPortfolio(
         eligible.map((c) => ({ snapshot: c.snapshot, quality: c.marketQuality, score: c.opportunity.score })),
         config.params,
-        { ...config.portfolio, totalCapitalUsd: free, maxPositions: slotsLeft },
+        {
+          ...config.portfolio,
+          totalCapitalUsd: free,
+          maxPositions: slotsLeft,
+          // The floor is DERIVED, never remembered. `minPositionUsd` was 200
+          // from a real measurement — the first capital-floor run placed no
+          // orders below it — taken BEFORE sizing began reserving gas and 5%
+          // of price headroom. That change dropped the floor to under $50, and
+          // the number never moved: it kept capping the book at four slots
+          // however much capital was free.
+          //
+          // And it is the GAS floor, not the nominal ladder. `scaledParams`
+          // shrinks the ladder to what the wallet allows, so a smaller slot
+          // does not fail — it trades smaller rungs. What it cannot do is
+          // trade rungs the chain's fixed cost would eat.
+          minPositionUsd: slotFloorUsd(
+            config.params,
+            config.maxOpenEntries ?? PYRAMIDING,
+            config.gasUsdPerSwap ?? 0.05,
+            (config.sizing ?? DEFAULT_SIZING_POLICY).minFillUsd,
+          ),
+        },
       )
 
       if (plan.floorOverrodeCap) {
