@@ -137,10 +137,23 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const deps: CycleDeps = {
     store,
     alerts,
-    // No live venue yet, so an in-flight order can never be confirmed either
-    // way. 'unknown' halts the position, which is the correct answer until a
-    // wallet adapter can actually ask the chain.
-    probe: async () => 'unknown',
+    // Did this pending order actually happen?
+    //
+    // In PAPER the broker is OURS: deterministic, in-process, and the fills
+    // table is the complete record of everything it did. No recorded fill
+    // means the order did not happen — a fact about a venue we own, not a
+    // guess. Recovery resumes the position and the tick executes the order at
+    // the next bar's open, which is where it was always going to happen.
+    //
+    // This said 'unknown' back when the engine had no execution step at all,
+    // and that was honest then. It became a lie the moment orders started
+    // filling: every position was halted for an order that was merely still
+    // scheduled, and five of them sat frozen with nothing wrong.
+    //
+    // In LIVE it must go back to 'unknown' until a wallet adapter can ask the
+    // chain. An order sent to a real venue genuinely can have landed without
+    // us hearing about it, and halting is the only honest answer to that.
+    probe: async () => (config.mode === 'paper' ? 'not-filled' : 'unknown'),
     candlesFor: async (position) => {
       try {
         return await gecko.candles(position.chain, position.pairAddress, config.barSize, 1000)

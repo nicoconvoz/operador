@@ -174,3 +174,29 @@ describe('MemoryStore — the reference implementation', () => {
     expect(await store.fillsFor('pos-1')).toHaveLength(1)
   })
 })
+
+describe('planRecovery — a venue we own has no unknowns', () => {
+  it('resumes a position whose order simply has not executed yet', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position({ pendingOrders: [entry] }))
+
+    // In paper mode the broker IS ours: deterministic, and the fills table is
+    // the complete record. No recorded fill means it did not happen — that is
+    // a fact, not a guess, so the position resumes and the tick executes the
+    // order at the next bar's open.
+    const plan = await planRecovery(store, async () => 'not-filled')
+
+    expect(plan.halted).toEqual([])
+    expect(plan.positions).toHaveLength(1)
+    expect(plan.positions[0]!.position.pendingOrders).toHaveLength(1)
+  })
+
+  it('still halts when the answer is genuinely unknown', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position({ pendingOrders: [entry] }))
+
+    // Which is what a real chain will give us, and why the rule stays.
+    const plan = await planRecovery(store, async () => 'unknown')
+    expect(plan.halted).toHaveLength(1)
+  })
+})
