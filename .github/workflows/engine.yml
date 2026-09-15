@@ -82,9 +82,11 @@ jobs:
           OPERADOR_CHAIN: solana,bsc
           OPERADOR_TIMEFRAME: 15m
           OPERADOR_CAPITAL_USD: ${{ vars.OPERADOR_CAPITAL_USD || '1000' }}
-          # A six-rung $15 ladder needs about $95, so $1,000 carries about ten.
-          # Five was paired with slots costing $200 each.
-          OPERADOR_MAX_POSITIONS: ${{ vars.OPERADOR_MAX_POSITIONS || '10' }}
+          # ZERO means no ceiling: the capital decides, at one ladder's worth
+          # each. With every slot the same size, what bounds the damage one
+          # token can do is that size, not the count — and a count cap only
+          # leaves capital idle. $1,500 at a $95 ladder is about fourteen.
+          OPERADOR_MAX_POSITIONS: ${{ vars.OPERADOR_MAX_POSITIONS || '0' }}
           OPERADOR_GAS_USD: ${{ vars.OPERADOR_GAS_USD || '0.05' }}
           # Tokens per chain given the expensive checks. Each costs ~9
           # throttled seconds on Solana and ~6 on BSC, so 20 keeps a two-chain

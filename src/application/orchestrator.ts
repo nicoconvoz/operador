@@ -309,6 +309,12 @@ export async function runCycle(
           // shrinks the ladder to what the wallet allows, so a smaller slot
           // does not fail — it trades smaller rungs. What it cannot do is
           // trade rungs the chain's fixed cost would eat.
+          // What a slot SHOULD get: the wallet a full ladder needs, and not a
+          // dollar more. Without it the split is deployable/slots, which hands
+          // each slot an even share of everything — and a flat six-rung $15
+          // ladder can only ever spend $95, so the rest comes straight back as
+          // idle capital.
+          targetPositionUsd: ladderNeeds,
           minPositionUsd: slotFloorUsd(
             config.params,
             config.maxOpenEntries ?? PYRAMIDING,

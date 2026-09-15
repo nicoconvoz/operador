@@ -708,10 +708,36 @@ do is trade rungs the chain's fixed cost would eat. So the floor is the same
 ladder priced at `minFillUsd`, which is itself `gasFloorUsd`: **~$32 for six
 rungs at $0.05 a swap**, and it rises with gas exactly as it should.
 
-`maxPositions` went 5 → **10** alongside it. Five was paired with slots costing
-$200; a six-rung $15 ladder needs about $95, so $1,000 carries about ten. Scale
-comes from more tokens, not more size per token — finding 2 of the capital
-floor, which this is finally acting on.
+### The width of the book is the division
+
+Raising the ceiling was not enough either, because the split was
+`deployable / slots`: ten slots and $1,425 handed **$142 to each**, and a flat
+six-rung $15 ladder can only ever spend $95. The surplus came straight back as
+idle capital.
+
+So a slot is now given `targetPositionUsd` — the wallet a full ladder needs, and
+not a dollar more — and **how many slots there are is the division**.
+`maxPositions` defaults to **0, meaning no ceiling**: once every slot is the
+same size, what bounds the damage one token can do is that SIZE, and capping the
+count only leaves capital idle.
+
+Measured on the production ladder:
+
+| | |
+|---|---|
+| Deployable from $1,500 | $1,425 |
+| A six-rung $15 ladder needs | **$95.09** |
+| Positions | **14** |
+| Allocated | $1,331 |
+| Idle | $94 |
+
+Against five positions of $285 before, where $190 of each was reserved against
+rungs that did not exist. This is finding 2 of the capital floor finally being
+acted on: **scale comes from more tokens, not more size per token.**
+
+One thing to watch: fourteen positions is fourteen candle requests per watch
+pass. The providers are rate-limited by IP on a shared runner, and this is the
+first change that makes the WATCH side, rather than the scan, the heavier user.
 
 ### The common fund
 

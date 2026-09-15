@@ -23,7 +23,14 @@ import { type TokenSnapshot } from '../scanner/snapshot.js'
 export interface PortfolioPolicy {
   /** Capital the portfolio may deploy in total. */
   readonly totalCapitalUsd: number
-  /** Hard ceiling on simultaneous positions, whatever the capital allows. */
+  /**
+   * Hard ceiling on simultaneous positions, whatever the capital allows.
+   *
+   * ZERO means no ceiling: the capital decides, at `targetPositionUsd` each.
+   * That is the honest default once every slot is the same size — what bounds
+   * the damage one token can do is then the SIZE of a slot, not how many there
+   * are, and capping the count only leaves capital idle.
+   */
   readonly maxPositions: number
   /**
    * Largest share of the portfolio one token may be allocated, in percent.
@@ -44,6 +51,21 @@ export interface PortfolioPolicy {
    * for offline experiments; a floor that is derived cannot go stale that way.
    */
   readonly minPositionUsd: number
+  /**
+   * What a slot SHOULD get when the capital allows it: the wallet a full ladder
+   * needs, and not a dollar more.
+   *
+   * Without it the split is `deployable / slots`, which spreads everything
+   * across whatever slots exist — ten slots and $1,425 handed $142 each while a
+   * flat six-rung $15 ladder can only ever spend $95. The surplus came straight
+   * back as idle capital, and "why only five tokens" had a number nobody had
+   * recomputed as its answer.
+   *
+   * With it, a slot gets what its ladder wants and the WIDTH of the book is the
+   * division — which is finding 2 of the capital floor: scale comes from more
+   * tokens, not more size per token.
+   */
+  readonly targetPositionUsd?: number
   /** Held back from allocation for gas and rebalancing. */
   readonly reservePct: number
 }
@@ -127,9 +149,20 @@ export function planPortfolio(
   const deployableUsd = policy.totalCapitalUsd - reserveUsd
   const skipped: Skipped[] = []
 
-  // How many slots the capital can fund above the floor — the portfolio's real
-  // width, which is a property of the wallet, not of the shortlist.
-  const affordableSlots = Math.floor(deployableUsd / policy.minPositionUsd)
+  // How many slots the capital can fund AT THE SIZE A LADDER WANTS — the
+  // portfolio's real width, which is a property of the wallet, not of the
+  // shortlist. Falls back to the floor when nothing says what a ladder wants,
+  // which is the old behaviour exactly.
+  // A target above the concentration cap means nothing: no slot can be given
+  // that much, whatever its ladder would like. Clamping here is what keeps an
+  // unscaled reference ladder — nominally tens of thousands — from making the
+  // book look unaffordable, when in practice `scaledParams` shrinks it to fit.
+  const concentrationCapUsd = (deployableUsd * policy.maxPositionPct) / 100
+  const slotSize = Math.max(
+    Math.min(policy.targetPositionUsd ?? policy.minPositionUsd, concentrationCapUsd),
+    policy.minPositionUsd,
+  )
+  const affordableSlots = Math.floor(deployableUsd / slotSize)
   if (affordableSlots < 1) {
     for (const c of candidates) {
       skipped.push({ snapshot: c.snapshot, reason: 'no-capital', detail: `$${deployableUsd.toFixed(0)} deployable cannot fund one $${policy.minPositionUsd} slot` })
@@ -138,14 +171,20 @@ export function planPortfolio(
   }
 
   const ranked = [...candidates].sort((a, b) => b.score - a.score || a.snapshot.address.localeCompare(b.snapshot.address))
-  const slots = Math.min(affordableSlots, policy.maxPositions, ranked.length)
+  // Zero is not a ceiling of zero — it is no ceiling at all, and the capital
+  // decides. With every slot the same size, what bounds the damage one token
+  // can do is that size, not the count.
+  const ceiling = policy.maxPositions > 0 ? policy.maxPositions : Number.POSITIVE_INFINITY
+  const slots = Math.min(affordableSlots, ceiling, ranked.length)
 
-  // Equal weight, clipped by the concentration cap — but never below the floor.
-  // `slots` is already bounded by what the capital can fund above the floor,
-  // so raising a slot back to the floor is always affordable.
+  // What a ladder wants, clipped by the concentration cap, never below the
+  // floor — and never more than an even share, because a slot cannot be given
+  // capital the book does not have. `slots` is already bounded by what the
+  // capital can fund, so raising back to the floor is always affordable.
   const evenUsd = deployableUsd / slots
-  const capUsd = (deployableUsd * policy.maxPositionPct) / 100
-  const perSlotUsd = Math.max(Math.min(evenUsd, capUsd), policy.minPositionUsd)
+  const capUsd = concentrationCapUsd
+  const wanted = Math.min(evenUsd, policy.targetPositionUsd ?? evenUsd)
+  const perSlotUsd = Math.max(Math.min(wanted, capUsd), policy.minPositionUsd)
   const floorOverrodeCap = perSlotUsd > capUsd
 
   const allocations: Allocation[] = []

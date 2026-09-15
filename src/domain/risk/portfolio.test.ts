@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_PORTFOLIO_POLICY as P, planPortfolio, type AllocationCandidate, type PortfolioPolicy } from './portfolio.js'
+import { DEFAULT_PORTFOLIO_POLICY, DEFAULT_PORTFOLIO_POLICY as P, planPortfolio, type AllocationCandidate, type PortfolioPolicy } from './portfolio.js'
 import { DEFAULT_PARAMS } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type TokenSnapshot } from '../scanner/snapshot.js'
@@ -138,5 +138,67 @@ describe('planPortfolio — empty and degenerate input', () => {
   it('a zero reserve deploys everything', () => {
     const policy: PortfolioPolicy = { ...P, reservePct: 0 }
     expect(planPortfolio(five, DEFAULT_PARAMS, policy).deployableUsd).toBe(policy.totalCapitalUsd)
+  })
+})
+
+// ── The book is as wide as the capital, at the size the ladder wants ────────
+//
+// `evenUsd = deployable / slots` spreads everything across whatever slots exist,
+// so ten slots and $1,425 handed $142 to each — and a flat six-rung $15 ladder
+// can only ever spend $95. The surplus came straight back as idle capital, and
+// the answer to "why only five tokens" was a number nobody had recomputed.
+//
+// A slot should get what its ladder needs. How many slots there are is then the
+// division, not a constant.
+
+describe('planPortfolio — sized to the ladder, counted by the capital', () => {
+  const target = 95.1
+  const wide = (over: Partial<PortfolioPolicy> = {}): PortfolioPolicy => ({
+    ...DEFAULT_PORTFOLIO_POLICY,
+    totalCapitalUsd: 1_500,
+    minPositionUsd: 32,
+    targetPositionUsd: target,
+    maxPositions: 0, // capital decides
+    maxPositionPct: 30,
+    ...over,
+  })
+
+  const many = (n: number) => Array.from({ length: n }, (_, i) => candidate(`t${i}`, 90 - i))
+
+  it('gives a slot what its ladder needs, not an even share of everything', () => {
+    const plan = planPortfolio(many(20), DEFAULT_PARAMS, wide())
+    for (const allocation of plan.allocations) {
+      expect(allocation.capitalUsd).toBeCloseTo(target, 6)
+    }
+  })
+
+  it('opens as many tokens as the capital funds at that size', () => {
+    // $1,500 less 5% reserve is $1,425; at $95.10 a ladder that is fourteen.
+    expect(planPortfolio(many(30), DEFAULT_PARAMS, wide()).allocations).toHaveLength(14)
+  })
+
+  it('leaves almost nothing idle', () => {
+    const plan = planPortfolio(many(30), DEFAULT_PARAMS, wide())
+    expect(plan.idleUsd).toBeLessThan(target)
+  })
+
+  it('still obeys an explicit ceiling when one is set', () => {
+    // Capital is not the only limit worth having. The ceiling bounds how many
+    // tokens can be dying at once, which is a risk decision, not arithmetic.
+    expect(planPortfolio(many(30), DEFAULT_PARAMS, wide({ maxPositions: 6 })).allocations).toHaveLength(6)
+  })
+
+  it('never hands a slot more than the concentration cap, target or not', () => {
+    const plan = planPortfolio(many(30), DEFAULT_PARAMS, wide({ totalCapitalUsd: 200, maxPositionPct: 30 }))
+    for (const allocation of plan.allocations) {
+      expect(allocation.capitalUsd).toBeLessThanOrEqual((190 * 30) / 100 + 1e-9)
+    }
+  })
+
+  it('falls back to spreading evenly when no target is given', () => {
+    const { targetPositionUsd, ...noTarget } = wide({ maxPositions: 2 })
+    const plan = planPortfolio(many(2), DEFAULT_PARAMS, noTarget)
+    // Two slots, $1,425 deployable, 30% cap each.
+    expect(plan.allocations[0]!.capitalUsd).toBeCloseTo((1_425 * 30) / 100, 6)
   })
 })
