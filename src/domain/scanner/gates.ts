@@ -81,6 +81,16 @@ export const SOLANA_CANONICAL_SYMBOLS: Readonly<Record<string, string>> = {
   RAY: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
   WBTC: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh',
   WETH: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',
+  // The UNWRAPPED names, pointed at the same wrapped mints.
+  //
+  // Bitcoin and Ether have no native mint on Solana — the wrapped tokens are
+  // the only things those names can honestly refer to. The map knew WBTC and
+  // not BTC, which left the most recognisable ticker in crypto as the one
+  // symbol anybody could borrow: a fifteen-day-old memecoin was scanned,
+  // ranked and ALLOCATED under the name "BTC" with a $267k pool and not one
+  // blocker against it.
+  BTC: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh',
+  ETH: '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs',
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = {

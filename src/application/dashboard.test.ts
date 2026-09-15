@@ -116,6 +116,17 @@ describe('buildDashboard — warnings a human should act on', () => {
     expect(view.warnings.some((w) => w.includes('is the engine running?'))).toBe(true)
   })
 
+  it('reports "no bar yet" as nothing, not as 1970', async () => {
+    const store = new MemoryStore()
+    // A cycle that opened positions without ticking any of them checkpoints a
+    // lastCompletedBar of zero. Rendered as a date that is the Unix epoch, and
+    // on a money screen "1 Jan 1970" reads as a dead engine rather than as a
+    // cycle that simply had nothing to advance yet.
+    await store.saveCheckpoint({ savedAt: NOW, lastCompletedBar: 0, killSwitchEngaged: false })
+    const view = await buildDashboard(store, options)
+    expect(view.lastCompletedBar).toBeNull()
+  })
+
   it('a healthy system warns about nothing', async () => {
     const store = new MemoryStore()
     await store.saveCheckpoint({ savedAt: NOW, lastCompletedBar: NOW, killSwitchEngaged: false })

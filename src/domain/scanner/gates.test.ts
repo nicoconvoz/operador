@@ -106,6 +106,21 @@ describe('gates — not a trade at all', () => {
     expect(failedGates(clean({ address: 'Fresh', symbol: 'GOOD' }))).toEqual([])
   })
 
+  it('the UNWRAPPED majors are impostors too — there is no native BTC on Solana', () => {
+    // Live, holding money: a fifteen-day-old memecoin at
+    // E4Ap4icMLwKot8rkkTbq5JkS5kZxt5XCE3yfxbzYBjHx wearing the ticker "BTC",
+    // with a $267k pool and not one blocker against it. The map knew WBTC and
+    // did not know BTC, so the most recognisable ticker in crypto was the one
+    // symbol anybody could borrow.
+    //
+    // Bitcoin and Ether have no native mint on Solana. Only the wrapped ones
+    // exist, so ANY other address wearing those names is not the asset.
+    expect(failedGates(clean({ address: 'E4Ap4icMLwKot8rkkTbq5JkS5kZxt5XCE3yfxbzYBjHx', symbol: 'BTC' }))).toEqual(['impersonation:failed'])
+    expect(failedGates(clean({ address: 'Fake', symbol: 'ETH' }))).toEqual(['impersonation:failed'])
+    // And the real wrapped mints still answer to both names.
+    expect(failedGates(clean({ address: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'BTC' }))).toEqual([])
+  })
+
   it('a large cap is not what the strategy was tuned for', () => {
     expect(failedGates(clean({ fdvUsd: 240_000_000 }))).toEqual(['marketCap:failed'])
     expect(failedGates(clean({ fdvUsd: 49_000_000 }))).toEqual([])

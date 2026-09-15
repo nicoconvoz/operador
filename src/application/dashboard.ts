@@ -114,7 +114,12 @@ export async function buildDashboard(store: StatePort, options: DashboardOptions
   return {
     generatedAt,
     killSwitchEngaged: checkpoint?.killSwitchEngaged ?? false,
-    lastCompletedBar: checkpoint?.lastCompletedBar ?? null,
+    // Zero is not a bar, it is the ABSENCE of one: a cycle that opened
+    // positions without ticking any of them checkpoints a lastCompletedBar of
+    // zero, and rendering that literally puts "1 Jan 1970" on the screen. On a
+    // money screen an epoch date reads as a dead engine, which is a worse lie
+    // than showing nothing at all. No market ever traded a bar at zero.
+    lastCompletedBar: checkpoint?.lastCompletedBar || null,
     positions: views,
     totals: {
       positions: views.length,
