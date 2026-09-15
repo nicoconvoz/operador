@@ -610,3 +610,55 @@ describe('runCycle — the slot floor is the ladder, not a remembered number', (
     expect(result.opened).toHaveLength(3)
   })
 })
+
+// ── A free slot does not wait out a scan ────────────────────────────────────
+//
+// Opening was fused to RUNNING a scan, so an empty slot sat through half an
+// hour of throttled discovery before anything could go in it — with candidates
+// already examined, already stored, already good. The fusion was never
+// necessary: the expensive half of a scan is fetching, and gates, scoring and
+// ranking are pure.
+
+describe('runCycle — a watch pass fills free slots from the shelf', () => {
+  const shelved = async () => [candidate('a', 90), candidate('b', 85)]
+
+  it('opens positions without running a scan', async () => {
+    let scans = 0
+    const { deps, throttle } = rig({
+      scan: async () => { scans++; return [] },
+      recall: async () => ({ candidates: await shelved() }),
+    })
+
+    const result = await runCycle(deps, config, throttle, 'watch')
+
+    expect(scans).toBe(0)
+    expect(result.opened).toHaveLength(2)
+  })
+
+  it('opens nothing when the shelf is empty or too old to trust', async () => {
+    const { deps, throttle } = rig({ recall: async () => null })
+    expect((await runCycle(deps, config, throttle, 'watch')).opened).toEqual([])
+  })
+
+  it('never swaps one token for another on a watch pass', async () => {
+    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: await shelved() }) })
+    await store.savePosition(position({ id: 'idle-1', tokenAddress: 'Idle', symbol: 'IDLE', openedAt: NOW - 9 * HOUR, lastBarTime: NOW }))
+
+    // Taking a slot off one token and giving it to another is a judgement about
+    // which is better RIGHT NOW, and it deserves data gathered right now.
+    // Filling a slot that is already empty does not.
+    const result = await runCycle(deps, config, throttle, 'watch')
+
+    expect(result.releasedIds).toEqual([])
+  })
+
+  it('still refuses a token it already holds, or one on the blacklist', async () => {
+    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: [candidate('a', 90), candidate('b', 85)] }) })
+    await store.savePosition(position({ tokenAddress: 'a', symbol: 'A', lastBarTime: NOW }))
+    await store.blacklist('solana', 'b', 'died', NOW - HOUR)
+
+    const result = await runCycle(deps, config, throttle, 'watch')
+
+    expect(result.opened).toEqual([])
+  })
+})

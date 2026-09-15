@@ -29,6 +29,7 @@ import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js
 
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
+import { recallCandidates } from '../application/recall.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
 /**
@@ -219,6 +220,25 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // universe can show them together. One chain failing must not cost the
     // others their turn: a rate limit on Solana is not a reason to stop
     // looking at BSC.
+    // What a WATCH pass allocates from: the last scan off the shelf, re-ranked
+    // offline. Same policy, same gates, same measured impact — no network.
+    // A free slot no longer waits out half an hour of throttled discovery
+    // before anything can go in it.
+    recall: () =>
+      recallCandidates(store, {
+        now: () => Date.now(),
+        ranking: {
+          gates: DEFAULT_GATE_POLICY,
+          opportunity: DEFAULT_OPPORTUNITY_POLICY,
+          watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
+          minScore: 0,
+        },
+        referenceUsd: 100,
+        spreadPct: 0.3,
+        // Twice the scan interval: one missed scan is a delay, two is a shelf
+        // nobody should be spending from.
+        maxAgeMs: 2 * config.scanIntervalMs,
+      }),
     scan: async () => {
       const candidates: Candidate[] = []
       for (const chain of config.chains) {

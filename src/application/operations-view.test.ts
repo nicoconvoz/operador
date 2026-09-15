@@ -352,3 +352,75 @@ describe('buildOperations — the rungs the venue will never fill', () => {
     expect(view!.ladder.filter((r) => r.beyondPyramiding).map((r) => r.level)).toEqual([10, 11])
   })
 })
+
+// ── Profit does not leave when the position does ────────────────────────────
+//
+// Reported live: a token that had made the most money ceded its slot, and its
+// gain vanished — not shown as banked anywhere, as if it had never won.
+//
+// The view read `loadPositions()` and summed only those, so a position that
+// closed took its realised profit off the screen with it. The fills stayed in
+// the database — `fills` has no foreign key to `positions` precisely so they
+// survive — and nothing was reading them.
+//
+// Worse than cosmetic: the allocator counts that money, through commonFund over
+// every fill, and the screen did not. Two answers to "how much have we made",
+// disagreeing. The one on the screen is the one you would believe.
+
+describe('buildOperations — a closed position keeps its profit on the screen', () => {
+  const winner = async (store: MemoryStore) => {
+    // No row in `positions`: this one closed. Only its fills remain.
+    await store.recordFill({ positionId: 'gone-1', orderId: 'Entry', side: 'buy', time: NOW - 40 * MIN, price: 1, qty: 100, costUsd: 0.2, comment: '🟢 Entry', idempotencyKey: 'w1' })
+    await store.recordFill({ positionId: 'gone-1', orderId: 'Exit', side: 'sell', time: NOW - 20 * MIN, price: 1.5, qty: 100, costUsd: 0.3, comment: '🏁 Exit', idempotencyKey: 'w2' })
+  }
+
+  it('still counts the gain of a position that has left the book', async () => {
+    const store = new MemoryStore()
+    await winner(store)
+
+    const { totals } = await buildOperations(store, { now: () => NOW })
+
+    expect(totals.realisedUsd).toBeCloseTo(50, 6)
+  })
+
+  it('still counts what the chain took from it', async () => {
+    const store = new MemoryStore()
+    await winner(store)
+
+    const { totals } = await buildOperations(store, { now: () => NOW })
+
+    expect(totals.costsUsd).toBeCloseTo(0.5, 6)
+    expect(totals.netUsd).toBeCloseTo(49.5, 6)
+  })
+
+  it('counts its executions, so the tape is not quietly short', async () => {
+    const store = new MemoryStore()
+    await winner(store)
+
+    const { totals } = await buildOperations(store, { now: () => NOW })
+
+    expect(totals.buys).toBe(1)
+    expect(totals.sells).toBe(1)
+  })
+
+  it('keeps it in the tape, so the winning trade can still be read', async () => {
+    const store = new MemoryStore()
+    await winner(store)
+
+    const view = await buildOperations(store, { now: () => NOW })
+
+    expect(view.recentFills.map((f) => f.comment)).toEqual(['🏁 Exit', '🟢 Entry'])
+  })
+
+  it('adds up open and closed together, and never twice', async () => {
+    const store = await seed([
+      fill('Entry', 0.01, 1_000, NOW - 30 * MIN),
+      fill('Exit', 0.012, 1_000, NOW - 10 * MIN, 'sell'),
+    ], { cascade: initialState() })
+    await winner(store)
+
+    const { totals } = await buildOperations(store, { now: () => NOW })
+
+    expect(totals.realisedUsd).toBeCloseTo(52, 6) // $2 open-book, $50 departed
+  })
+})

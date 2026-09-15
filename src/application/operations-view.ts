@@ -1,7 +1,7 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
-import { positionLedger } from './ledger.js'
+import { commonFund, positionLedger } from './ledger.js'
 import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -119,13 +119,28 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   const generatedAt = options.now()
   const params = options.params ?? DEFAULT_PARAMS
   const positions = await store.loadPositions()
+  // EVERY fill, not just the open book's. A position that closes — released,
+  // retired or dead — leaves the working set, and its realised profit used to
+  // leave the screen with it: a token that had made the most money ceded its
+  // slot and its gain simply vanished, as if it had never won.
+  //
+  // `fills` has no foreign key to `positions` precisely so they survive that,
+  // and nothing was reading them. Worse than cosmetic: the allocator counts
+  // this money through `commonFund`, so the screen and the allocator were
+  // giving different answers to "how much have we made".
+  const allFills = await store.allFills()
+  const symbolOf = new Map(positions.map((p) => [p.id, p.symbol]))
 
   const built: PositionOperations[] = []
-  const tape: (PersistedFill & { symbol: string })[] = []
+  const tape: (PersistedFill & { symbol: string })[] = allFills.map((fill) => ({
+    ...fill,
+    // A departed position left no symbol behind. Its id is `chain:address:at`,
+    // and the address is more use than a blank.
+    symbol: symbolOf.get(fill.positionId) ?? fill.positionId.split(':')[1]?.slice(0, 6) ?? '—',
+  }))
 
   for (const position of positions) {
-    const fills = await store.fillsFor(position.id)
-    for (const fill of fills) tape.push({ ...fill, symbol: position.symbol })
+    const fills = allFills.filter((fill) => fill.positionId === position.id)
 
     const buys = fills.filter((f) => f.side === 'buy')
     const costsUsd = fills.reduce((sum, f) => sum + f.costUsd, 0)
@@ -192,6 +207,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   }
 
   tape.sort((a, b) => b.time - a.time)
+  const fund = commonFund(allFills)
 
   return {
     generatedAt,
@@ -200,17 +216,18 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     totals: {
       deployedUsd: built.reduce((s, p) => s + p.deployedUsd, 0),
       marketValueUsd: built.reduce((s, p) => s + (p.marketValueUsd ?? 0), 0),
-      realisedUsd: built.reduce((s, p) => s + p.realisedUsd, 0),
+      // From every fill, so money made by a position that has since closed is
+      // still money made. The same walk the allocator's common fund uses —
+      // one implementation, because two would eventually disagree and the one
+      // on the screen is the one you would believe.
+      realisedUsd: fund.realisedUsd,
       unrealisedUsd: built.reduce((s, p) => s + (p.unrealisedUsd ?? 0), 0),
-      costsUsd: built.reduce((s, p) => s + p.costsUsd, 0),
+      costsUsd: fund.costsUsd,
       // The one number that answers "are we ahead". Costs are subtracted here
       // and ALSO reported on their own: netting them silently would hide the
       // single largest reason a small-cap strategy fails, which is that the
       // chain takes more than the edge.
-      netUsd:
-        built.reduce((s, p) => s + p.realisedUsd, 0) +
-        built.reduce((s, p) => s + (p.unrealisedUsd ?? 0), 0) -
-        built.reduce((s, p) => s + p.costsUsd, 0),
+      netUsd: fund.netUsd + built.reduce((s, p) => s + (p.unrealisedUsd ?? 0), 0),
       buys: tape.filter((f) => f.side === 'buy').length,
       sells: tape.filter((f) => f.side === 'sell').length,
     },

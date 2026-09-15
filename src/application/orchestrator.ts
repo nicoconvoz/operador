@@ -63,6 +63,15 @@ export interface CycleDeps {
   readonly confirmSellable?: (snapshot: Candidate['snapshot']) => Promise<boolean>
   /** Fresh scanner output. Empty is a valid answer and is alerted on. */
   readonly scan: () => Promise<readonly Candidate[]>
+  /**
+   * The LAST scan, re-ranked from the shelf. No network.
+   *
+   * What a watch pass allocates from. Opening a position needs a scan that is
+   * RECENT, not one that is running: the expensive half of a scan is fetching,
+   * and the deciding half is pure. Returns nothing when the shelf is empty or
+   * too old to count as evidence.
+   */
+  readonly recall?: () => Promise<{ readonly candidates: readonly Candidate[] } | null>
   readonly now: () => number
 }
 
@@ -169,11 +178,17 @@ export async function runCycle(
   // ── 3. Open new positions with what is genuinely free ──────────────────────
   const opened: PersistedPosition[] = []
   const releasedIds: string[] = []
-  // A watch pass stops here. Not as an optimisation — as the point: everything
-  // above looks after money already committed, and everything below goes
-  // looking for more. Only the second half is expensive.
-  if (kind === 'full' && !recovery.killSwitchEngaged) {
-    const candidates = (await deps.scan())
+  if (!recovery.killSwitchEngaged) {
+    // A watch pass does not RUN a scan. It reads the last one off the shelf and
+    // re-ranks it, which costs nothing: the expensive half of a scan is
+    // fetching, not deciding, and gates, scoring and ranking are pure.
+    //
+    // Opening was fused to scanning, so a free slot waited out half an hour of
+    // throttled discovery before anything could go in it — with candidates
+    // already examined, already stored, already good. The fusion was never
+    // necessary.
+    const found = kind === 'full' ? await deps.scan() : ((await deps.recall?.())?.candidates ?? [])
+    const candidates = found
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
     if (candidates.length === 0) {
@@ -205,7 +220,10 @@ export async function runCycle(
     //
     // Nothing is blacklisted here. The token did not fail a safety gate, it
     // merely stopped being the best use of a slot, and it is welcome back.
-    const release = releasableSlots(
+    // Only on a full pass. Taking a slot off one token and giving it to another
+    // is a judgement about which is better RIGHT NOW, and it deserves data
+    // gathered right now. Filling a slot that is already empty does not.
+    const release = kind !== 'full' ? [] : releasableSlots(
       recovery.positions.map((r) => ({
         id: r.position.id,
         chain: r.position.chain,
