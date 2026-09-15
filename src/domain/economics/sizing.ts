@@ -33,6 +33,21 @@ export interface SizingPolicy {
   readonly maxExitCostPct: number
   /** Below this, gas and rounding dominate and the fill is not worth placing. */
   readonly minFillUsd: number
+  /**
+   * How many entries the venue will hold open at once, when production wants
+   * fewer than the reference.
+   *
+   * Omitted means `PYRAMIDING` — the 10 from the `strategy()` header, which the
+   * parity harness asserts is the backtest's input. That number is EVIDENCE,
+   * so a production preference composes its own value rather than editing it,
+   * exactly as `maxUsdPerLevel` does.
+   *
+   * The case for fewer: with `linInc` at 3, DCA-5 already needs a 13% fall and
+   * DCA-10 needs 28%. A token down 28% is rarely an opportunity, and the
+   * capital those deep rungs reserve buys more by going to another token —
+   * which is finding 2 of the capital floor, arriving by a different road.
+   */
+  readonly maxOpenEntries?: number
 }
 
 /**
@@ -141,7 +156,7 @@ export function sizeLadder(
   // does not trade rather than a position that was sized wrong.
   const positionCap = Math.min(maxOrderUsd(exitImpactBudget, depth.usd), availableCapitalUsd)
 
-  const fillable = Math.min(params.maxLevels + 1, PYRAMIDING)
+  const fillable = Math.min(params.maxLevels + 1, policy.maxOpenEntries ?? PYRAMIDING)
   const nominalTotalUsd = Array.from({ length: fillable }, (_, level) => usdForLevel(params, level)).reduce((a, b) => a + b, 0)
 
   const empty = (reason: string): LadderSizing => ({

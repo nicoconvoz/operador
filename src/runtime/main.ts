@@ -28,6 +28,7 @@ import { PostgresStore, type SqlClient } from '../infrastructure/persistence/pos
 import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js'
 
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
+import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
 /**
@@ -122,7 +123,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       broker = new PaperBroker({
         gasUsdPerSwap: config.gasUsdPerSwap,
         initialCapital: position.capitalUsd,
-        maxOpenEntries: 10,
+        // Five DCAs plus the entry. The reference's ten stays in PYRAMIDING,
+        // which the parity harness asserts; production composes its own.
+        maxOpenEntries: config.maxDcaPerToken + 1,
         quality: () => position.quality,
       })
       // Seeded from the fills, which are the only record that survives a
@@ -291,7 +294,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // The same numbers the broker charges, so the ladder is sized against
       // the costs it will actually pay rather than against a guess.
       gasUsdPerSwap: config.gasUsdPerSwap,
-      maxOpenEntries: 10,
+      maxOpenEntries: config.maxDcaPerToken + 1,
+      // The ladder is sized for the rungs that can actually fill. Sizing for
+      // ten while the venue holds six would reserve capital for four rungs
+      // that are never coming.
+      sizing: { ...DEFAULT_SIZING_POLICY, maxOpenEntries: config.maxDcaPerToken + 1 },
       portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: config.totalCapitalUsd, maxPositions: config.maxPositions },
       heartbeatMs: 60 * 60 * 1000,
       // A slot handed to a token that never enters is capital held against

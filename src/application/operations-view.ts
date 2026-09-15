@@ -106,6 +106,12 @@ export interface OperationsOptions {
   readonly now: () => number
   readonly params?: CascadeParams
   readonly tapeLength?: number
+  /**
+   * How many entries the venue holds open at once, when production wants fewer
+   * than the reference's ten. Drawing the reference's cap would show rungs as
+   * reachable that the broker is going to refuse.
+   */
+  readonly maxOpenEntries?: number
 }
 
 export async function buildOperations(store: StatePort, options: OperationsOptions): Promise<OperationsView> {
@@ -155,8 +161,8 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
         fillPrice: fill?.price ?? null,
         fillUsd: fill ? fill.price * fill.qty : null,
         pending: level === waitingOn && !fill,
-        // The venue fills ten entries; the machine keeps signalling past that.
-        beyondPyramiding: level >= PYRAMIDING,
+        // The machine keeps signalling past whatever the venue will hold.
+        beyondPyramiding: level >= (options.maxOpenEntries ?? PYRAMIDING),
       }
     })
 

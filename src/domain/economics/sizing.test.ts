@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder } from './sizing.js'
-import { DEFAULT_PARAMS } from '../strategy/params.js'
+import { DEFAULT_PARAMS, PYRAMIDING } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
 const quality = (over: Partial<MarketQuality> = {}): MarketQuality => ({
@@ -140,5 +140,46 @@ describe('gasFloorUsd — the floor is derived, not guessed', () => {
     const capped = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
     const policy = { ...P, minFillUsd: gasFloorUsd(0.20, 1) }
     expect(sizeLadder(capped, quality(), policy, 200).tradeable).toBe(false)
+  })
+})
+
+// ── The venue cap is production's to choose ─────────────────────────────────
+//
+// PYRAMIDING is 10 because that is what the `strategy()` header ran, and the
+// parity harness asserts those inputs are the backtest's. It is evidence, not a
+// preference — so production overriding it must never edit it, exactly as with
+// maxUsdPerLevel.
+//
+// The user's reason for 5: with linInc at 3, DCA-5 already needs a 13% fall and
+// DCA-10 needs 28%. A token down 28% is rarely an opportunity, and the capital
+// those deep rungs reserve buys more by going to another token — which is
+// finding 2 of the capital floor, arriving again by a different road.
+
+describe('sizeLadder — how many rungs the venue will actually fill', () => {
+  /** Deep enough that depth never binds, so only the rung count moves. */
+  const deep = quality({ liquidityUsd: 500_000_000, slippagePct: 0.001 })
+
+  it('fills ten by default, which is what TradingView ran', () => {
+    const sized = sizeLadder(DEFAULT_PARAMS, deep, P, 1_000_000)
+    expect(sized.levels).toHaveLength(10)
+  })
+
+  it('fills six when production allows five DCAs — the entry plus its ladder', () => {
+    const sized = sizeLadder(DEFAULT_PARAMS, deep, { ...P, maxOpenEntries: 6 }, 1_000_000)
+    expect(sized.levels).toHaveLength(6)
+  })
+
+  it('leaves the reference untouched, because the harness asserts it', () => {
+    expect(PYRAMIDING).toBe(10)
+    expect(P.maxOpenEntries).toBeUndefined()
+  })
+
+  it('reserves capital for six swaps, not eleven, when the ladder is capped', () => {
+    // The nominal total is what the ladder WANTS before any cap applies, and
+    // a shorter ladder wants less. Sizing that against the old count would
+    // hold back capital for rungs that can never fill.
+    const ten = sizeLadder(DEFAULT_PARAMS, deep, P, 1_000_000)
+    const six = sizeLadder(DEFAULT_PARAMS, deep, { ...P, maxOpenEntries: 6 }, 1_000_000)
+    expect(six.nominalTotalUsd).toBeLessThan(ten.nominalTotalUsd)
   })
 })

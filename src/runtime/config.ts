@@ -1,4 +1,5 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
+import { DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -94,6 +95,18 @@ export interface RuntimeConfig {
    * entry gate looks back over, so the setup had a fair chance.
    */
   readonly idleSlotHours: number
+  /**
+   * DCA rungs production will actually fill, per token. Entry is not one of
+   * them, so 5 means six open entries.
+   *
+   * NOT `PYRAMIDING`, which is 10 because that is what the `strategy()` header
+   * ran and the parity harness asserts it. Evidence, not a preference.
+   *
+   * The user's reason for 5: with `linInc` at 3, DCA-5 already needs a 13%
+   * fall and DCA-10 needs 28%. A token down 28% is rarely an opportunity, and
+   * the capital those deep rungs reserve buys more by going to another token.
+   */
+  readonly maxDcaPerToken: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -166,8 +179,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
     maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),
-    maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', 15),
+    maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
+    maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

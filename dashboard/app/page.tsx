@@ -1,5 +1,7 @@
 import { buildDashboard } from '../../src/application/dashboard.js'
 import { buildUniverse } from '../../src/application/universe-view.js'
+import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
+import { productionLadder } from '../../src/application/production-ladder.js'
 import { buildOperations } from '../../src/application/operations-view.js'
 import { openStore } from '../lib/store.js'
 import { Console, type ConsoleData } from './console.js'
@@ -15,10 +17,17 @@ async function load(): Promise<ConsoleData | { error: string }> {
   try {
     const store = openStore()
     const now = () => Date.now()
+    const ladder = productionLadder(process.env)
     const [dashboard, universe, operations] = await Promise.all([
       buildDashboard(store, { now }),
       buildUniverse(store, { now }),
-      buildOperations(store, { now }),
+      buildOperations(store, {
+        now,
+        // The ladder the ENGINE runs, not the reference's. Drawing
+        // DEFAULT_PARAMS put a $1,000 rung beside a $15 order for days.
+        params: { ...DEFAULT_PARAMS, maxUsdPerLevel: ladder.maxUsdPerLevel },
+        maxOpenEntries: ladder.maxOpenEntries,
+      }),
     ])
     return { dashboard, universe, operations }
   } catch (error) {

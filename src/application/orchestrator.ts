@@ -8,6 +8,7 @@ import { initialState } from '../domain/strategy/state.js'
 import { type Candles } from './replay.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy, type SlotHolder } from '../domain/risk/idle-slots.js'
+import { type SizingPolicy } from '../domain/economics/sizing.js'
 import { planRecovery, type OrderProbe, type RecoveryPlan } from './recovery.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
@@ -68,6 +69,8 @@ export interface CycleConfig {
   /** Passed to the tick, which sizes each position's ladder against them. */
   readonly gasUsdPerSwap?: number
   readonly maxOpenEntries?: number
+  /** Sizing policy, including how many rungs the venue will hold open. */
+  readonly sizing?: SizingPolicy
   /** Emit a heartbeat when this long has passed since the last one. */
   readonly heartbeatMs: number
   /** When a reserved slot that never traded may be handed to somebody else. */
@@ -150,6 +153,7 @@ export async function runCycle(
         ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
         ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
         ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
+        ...(config.sizing ? { sizing: config.sizing } : {}),
       },
       deps.store,
       deps.alerts,

@@ -66,7 +66,7 @@ try {
         const broker = new PaperBroker({
           gasUsdPerSwap: Number(process.env.OPERADOR_GAS_USD ?? 0.05),
           initialCapital: position.capitalUsd,
-          maxOpenEntries: 10,
+          maxOpenEntries: Number(process.env.OPERADOR_MAX_DCA ?? 5) + 1,
           quality: () => position.quality,
         })
         broker.seed(await store.fillsFor(position.id))

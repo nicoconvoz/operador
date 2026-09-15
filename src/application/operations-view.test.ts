@@ -334,3 +334,21 @@ describe('buildOperations — the locks between here and the next rung', () => {
     expect(view!.locks).toBeNull()
   })
 })
+
+describe('buildOperations — the rungs the venue will never fill', () => {
+  it('marks everything past the production cap, not past the reference', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)])
+    // Five DCAs: the entry plus its ladder is six, so rung 6 onward is signal
+    // only. Reading PYRAMIDING here would draw four rungs as reachable that
+    // the broker is going to refuse.
+    const [view] = (await buildOperations(store, { now: () => NOW, maxOpenEntries: 6 })).positions
+
+    expect(view!.ladder.filter((r) => r.beyondPyramiding).map((r) => r.level)).toEqual([6, 7, 8, 9, 10, 11])
+  })
+
+  it('falls back to the reference when production says nothing', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)])
+    const [view] = (await buildOperations(store, { now: () => NOW })).positions
+    expect(view!.ladder.filter((r) => r.beyondPyramiding).map((r) => r.level)).toEqual([10, 11])
+  })
+})

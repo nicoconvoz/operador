@@ -503,6 +503,32 @@ over ten fills, where gas is 0.33% of each. The old $20 floor refused it
 outright; the derived floor accepts it on Solana and still refuses it if gas
 climbs to $0.20, which is the right answer in both cases.
 
+### Five DCA rungs, not nine
+
+`OPERADOR_MAX_DCA` defaults to **5**, so the venue holds **six** entries open:
+the entry plus its ladder. It is NOT `PYRAMIDING`, which stays 10 because that
+is what the `strategy()` header ran — the same rule as `maxUsdPerLevel`:
+evidence that can be edited to express a preference has stopped being evidence.
+
+The user's reason is the ladder's own geometry. With `linInc` at 3:
+
+| Rung | Needs a fall of |
+|---|---|
+| DCA-1 | 1% |
+| DCA-5 | **13%** |
+| DCA-10 | **28%** |
+
+A token down 28% is rarely an opportunity, and the capital those deep rungs
+reserve buys more by going to another token — which is finding 2 of the capital
+floor, arriving by a different road.
+
+Both numbers live in `application/production-ladder.ts`, alone, because TWO
+things need them and neither may own them: the engine that sizes the ladder and
+the dashboard that draws it. The dashboard used `DEFAULT_PARAMS` instead and
+showed a $1,000 rung beside a $15 order for days — a screen disagreeing with the
+engine about the size of a trade, which is the exact failure the read model
+exists to prevent.
+
 A consequence worth stating: a thin pool is no longer REFUSED, it is SHRUNK.
 The budgets, not the floor, are what bound the risk — a $14 fill on a $3.8k
 pool costs the same 1% as a $750 fill on a deep one.
