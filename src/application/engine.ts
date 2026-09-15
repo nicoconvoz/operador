@@ -2,10 +2,10 @@ import { type AlertPort, AlertThrottle, alert } from '../domain/notifications/al
 import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_EXIT_COMMENT, type AssetHealthObservation, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { idempotencyKeyFor, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { stepCascade } from '../domain/strategy/cascade.js'
-import { computeSignals } from '../domain/strategy/signals.js'
+import { computeSignals, type Signals } from '../domain/strategy/signals.js'
 import { initialState } from '../domain/strategy/state.js'
 import { type CascadeParams } from '../domain/strategy/params.js'
-import { type Order, type PositionSnapshot } from '../domain/strategy/state.js'
+import { type Order } from '../domain/strategy/state.js'
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { orderKeyPart } from './recovery.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/economics/sizing.js'
@@ -30,7 +30,7 @@ import { type Candles } from './replay.js'
 
 export interface TickInput {
   readonly position: PersistedPosition
-  /** Closed bars, oldest first. The last one is the bar being evaluated. */
+  /** Closed bars, oldest first. The last one is the newest closed bar. */
   readonly candles: Candles
   /** Latest health observation, or null when no monitor ran this tick. */
   readonly health: AssetHealthObservation | null
@@ -53,15 +53,37 @@ export interface TickResult {
   /** Orders the strategy wanted that the death watch removed. */
   readonly vetoed: readonly Order[]
   readonly skipped: 'already-processed' | 'no-bars' | null
+  /** Closed bars this tick advanced. One in the ordinary case, more after a slow cycle. */
+  readonly barsAdvanced: number
 }
 
 /**
- * Advances one position by one closed bar.
+ * How far behind the engine is willing to walk in one tick.
  *
- * `lastBarTime` is the guard against deciding twice: a process that crashes
- * after saving but before submitting comes back, sees the bar is already
- * processed, and does nothing — rather than re-emitting an order it has no
- * way to know was already sent.
+ * 96 bars is a day at 15 minutes. Past that the engine was not late, it was
+ * DOWN — and replaying a week of history would decide orders against prices
+ * nobody can trade at any more, filling a ladder from a market that is gone.
+ */
+export const MAX_CATCH_UP_BARS = 96
+
+/**
+ * Advances one position to the latest closed bar.
+ *
+ * It used to advance ONE bar per call, which was correct only while a cycle
+ * was faster than a bar. In production a cycle took ~37 minutes against
+ * 15-minute bars, so the engine saw ten of every twenty-two — and every
+ * parameter counted in BARS silently changed meaning. `confirmBars: 20` stopped
+ * being five hours and became eleven, which is longer than these positions
+ * live: the rebound confirmation could never complete, and the DCA ladder never
+ * fired once. Ten entries, six exits, zero DCAs.
+ *
+ * So the engine walks every bar it missed. A slow scheduler is now a latency
+ * problem, which is what it should have been all along, instead of a silent
+ * change to what the strategy computes.
+ *
+ * `lastBarTime` is still the guard against deciding twice: a process that
+ * crashes after saving but before submitting comes back, sees those bars are
+ * already processed, and does nothing.
  */
 export async function tickPosition(
   input: TickInput,
@@ -70,14 +92,109 @@ export async function tickPosition(
   alerts: AlertPort,
   throttle: AlertThrottle,
 ): Promise<TickResult> {
-  const { position, candles, broker } = input
-  const barIndex = candles.time.length - 1
-  if (barIndex < 0) return { position, orders: [], vetoed: [], skipped: 'no-bars' }
+  const { candles, broker } = input
+  const last = candles.time.length - 1
+  if (last < 0) return { position: input.position, orders: [], vetoed: [], skipped: 'no-bars', barsAdvanced: 0 }
 
-  const barTime = candles.time[barIndex]!
-  if (barTime <= position.lastBarTime) {
-    return { position, orders: [], vetoed: [], skipped: 'already-processed' }
+  const first = firstUnprocessedBar(candles.time, input.position.lastBarTime, last)
+  if (first === null) {
+    return { position: input.position, orders: [], vetoed: [], skipped: 'already-processed', barsAdvanced: 0 }
   }
+
+  // ── Sized once, not per bar ────────────────────────────────────────────────
+  //
+  // The strategy speaks in Pine's nominal sizes — level 0 is $1,000 — and a
+  // position holds whatever the portfolio allotted it. Unsized, a $285
+  // position emits a $1,000 entry, the broker refuses it for funds, and
+  // nothing is recorded anywhere: a silent rejection is indistinguishable
+  // from a strategy with no signals. It ran that way in production.
+  //
+  // Neither the wallet's capital nor the pool's quality moves within a
+  // catch-up, so this is constant across the walk.
+  const sizing = sizeLadder(
+    config.params,
+    input.position.quality,
+    config.sizing ?? DEFAULT_SIZING_POLICY,
+    deployableCapital({
+      initialCapital: input.position.capitalUsd,
+      gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
+      maxOpenEntries: config.maxOpenEntries ?? PYRAMIDING,
+      params: config.params,
+    }),
+  )
+  const params = sizing.tradeable ? scaledParams(config.params, sizing) : config.params
+
+  // Indicators are causal — every one of them reads backwards only — so the
+  // context at bar i is the same whether the series ends at i or at the end.
+  // Computing them once turns a catch-up from quadratic into a walk.
+  const signals = computeSignals(candles, params)
+
+  let position = input.position
+  let orders: readonly Order[] = []
+  let vetoed: readonly Order[] = []
+
+  for (let barIndex = first; barIndex <= last; barIndex++) {
+    const advanced = await advanceOneBar(
+      {
+        position,
+        candles,
+        // The health reading is a measurement of NOW, not of each bar that
+        // went by. Applying it once per replayed bar would let one observation
+        // accumulate into a death sentence it never earned.
+        health: barIndex === last ? input.health : null,
+        broker,
+      },
+      barIndex,
+      { params, signals, tradeable: sizing.tradeable },
+      config,
+      store,
+      alerts,
+      throttle,
+    )
+    position = advanced.position
+    orders = advanced.orders
+    vetoed = advanced.vetoed
+  }
+
+  return { position, orders, vetoed, skipped: null, barsAdvanced: last - first + 1 }
+}
+
+/**
+ * The first bar this position has not seen, or null when it is up to date.
+ *
+ * A position the portfolio just opened carries `lastBarTime: -1`, which does
+ * not mean "infinitely behind" — it means "no history of its own". It starts at
+ * the newest bar, because replaying the provider's whole window would open a
+ * ladder at prices that are days old.
+ */
+function firstUnprocessedBar(times: readonly number[], lastBarTime: number, last: number): number | null {
+  if (lastBarTime < 0) return last
+
+  const next = times.findIndex((time) => time > lastBarTime)
+  if (next < 0) return null
+  return Math.max(next, last - MAX_CATCH_UP_BARS + 1)
+}
+
+/** What the whole walk shares: the sized params and the indicators over them. */
+interface WalkContext {
+  readonly params: CascadeParams
+  readonly signals: Signals
+  readonly tradeable: boolean
+}
+
+async function advanceOneBar(
+  input: TickInput,
+  barIndex: number,
+  walk: WalkContext,
+  config: EngineConfig,
+  store: StatePort,
+  alerts: AlertPort,
+  throttle: AlertThrottle,
+): Promise<{ position: PersistedPosition; orders: readonly Order[]; vetoed: readonly Order[] }> {
+  const { position, candles, broker } = input
+  const barTime = candles.time[barIndex]!
+  const barOpen = candles.open[barIndex]!
+  const barClose = candles.close[barIndex]!
 
   // ── 0. Execute what the PREVIOUS bar decided, at THIS bar's open ──────────
   //
@@ -94,13 +211,19 @@ export async function tickPosition(
   // the order was DECIDED on, which is the position's last bar, not the one it
   // fills at. Writing the filling bar instead would leave recovery unable to
   // find its own fills and it would halt every position it had just traded.
+  let exitRefused = false
   for (const order of position.pendingOrders) {
     const key = idempotencyKeyFor(position.id, position.lastBarTime, orderKeyPart(order))
     // Guarded here as well as in SQL: the store would reject the duplicate
     // anyway, but a second execute() would also move the broker's cash.
     if (await store.hasFill(key)) continue
 
-    const fills = broker.execute([order], candles.open[barIndex]!, barTime)
+    if (refusesToSellAtALoss(order, broker.snapshot(barOpen).avgPrice, barOpen)) {
+      exitRefused = true
+      continue
+    }
+
+    const fills = broker.execute([order], barOpen, barTime)
     for (const [index, fill] of fills.entries()) {
       await store.recordFill({
         positionId: position.id,
@@ -119,6 +242,25 @@ export async function tickPosition(
     }
   }
 
+  // ── 0b. Say that the position was kept ────────────────────────────────────
+  //
+  // Nothing has to be rolled back here, and that is worth stating because the
+  // obvious design is to roll something back. `stepCascade` resets the ladder
+  // on `!inPosition && wasInTrade` — it reacts to the BROKER going flat, never
+  // to the exit being signalled. A sale that does not happen leaves the broker
+  // holding, so the machine simply never resets and the ladder survives on its
+  // own. The fills are the facts, once again.
+  if (exitRefused) {
+    const kept = alert(
+      'ladder-frozen',
+      `🛡️ ${position.symbol} no se vendió a pérdida`,
+      'La salida se decidió con ganancia y la apertura siguiente quedó por debajo del costo promedio. La posición se mantiene y la escalera sigue viva.',
+      barTime,
+      { position: position.id },
+    )
+    if (throttle.shouldSend(kept, `no-loss:${position.id}`)) await alerts.send(kept)
+  }
+
   // ── 1. The death watch speaks first ────────────────────────────────────────
   let deathWatch = position.deathWatch
   if (input.health) {
@@ -134,18 +276,6 @@ export async function tickPosition(
     }
   }
 
-  // ── 1b. Size the ladder to THIS wallet and THIS pool ──────────────────────
-  //
-  // The strategy speaks in Pine's nominal sizes — level 0 is $1,000 — and a
-  // position holds whatever the portfolio allotted it. Unsized, a $285
-  // position emits a $1,000 entry, the broker refuses it for funds, and
-  // nothing is recorded anywhere: a silent rejection is indistinguishable
-  // from a strategy with no signals. It ran that way in production.
-  //
-  // `sizeLadder` and `scaledParams` already existed and were already tested;
-  // only the offline paper run ever called them. Scaling the PARAMS rather
-  // than the orders keeps the shape of the ladder — growing size as price
-  // falls — while matching its scale to the venue and the wallet.
   // ── 1a. The broker is the truth about what is held ────────────────────────
   //
   // The state machine advances on the SIGNAL — that is Pine's semantics and
@@ -159,7 +289,7 @@ export async function tickPosition(
   // combination that cannot be honest. Flat WITH something pending is normal
   // for exactly one bar — decided at a close, filled at the next open — so the
   // pending check is what keeps this from firing on healthy positions.
-  const beforeStrategy = broker.snapshot(candles.close[barIndex]!)
+  const beforeStrategy = broker.snapshot(barClose)
   const desynced = beforeStrategy.size === 0 && position.pendingOrders.length === 0 && position.cascade.level > 0
   const cascadeIn = desynced ? initialState() : position.cascade
   if (desynced) {
@@ -172,49 +302,35 @@ export async function tickPosition(
     ))
   }
 
-  const sizing = sizeLadder(
-    config.params,
-    position.quality,
-    config.sizing ?? DEFAULT_SIZING_POLICY,
-    deployableCapital({
-      initialCapital: position.capitalUsd,
-      gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
-      maxOpenEntries: config.maxOpenEntries ?? PYRAMIDING,
-      params: config.params,
-    }),
-  )
-  const params = sizing.tradeable ? scaledParams(config.params, sizing) : config.params
-
   // ── 2. The strategy evaluates the closed bar ───────────────────────────────
-  const signals = computeSignals(candles, params)
-  const snapshot: PositionSnapshot = beforeStrategy
   const stepped = stepCascade(
     cascadeIn,
-    params,
-    { open: candles.open[barIndex]!, high: candles.high[barIndex]!, low: candles.low[barIndex]!, close: candles.close[barIndex]! },
-    signals.contexts[barIndex]!,
-    snapshot,
+    walk.params,
+    { open: barOpen, high: candles.high[barIndex]!, low: candles.low[barIndex]!, close: barClose },
+    walk.signals.contexts[barIndex]!,
+    beforeStrategy,
   )
 
   // ── 3. The death watch gets the last word ──────────────────────────────────
-  const inPosition = snapshot.size > 0
+  const inPosition = beforeStrategy.size > 0
   const afterDeath = applyDeathVerdict(stepped.orders, deathWatch.stage, inPosition)
   // A pool too thin to size against must not trap the money already in it:
   // entries stop, exits never do.
-  const orders = sizing.tradeable ? afterDeath : afterDeath.filter((o) => o.kind !== 'entry')
+  const orders = walk.tradeable ? afterDeath : afterDeath.filter((o) => o.kind !== 'entry')
   const kept = new Set(orders)
   const vetoed = stepped.orders.filter((o) => !kept.has(o))
 
   // ── 4. Write before sending ────────────────────────────────────────────────
   // The order is persisted as pending FIRST. If the process dies here, recovery
   // finds it and asks the venue whether it happened — which is only possible
-  // because it was written down before it was sent.
+  // because it was written down first.
+  //
   const next: PersistedPosition = {
     ...position,
     cascade: stepped.state,
     deathWatch,
     lastBarTime: barTime,
-    lastPriceUsd: candles.close[barIndex]!,
+    lastPriceUsd: barClose,
     pendingOrders: orders,
     updatedAt: barTime,
   }
@@ -223,12 +339,39 @@ export async function tickPosition(
   for (const order of orders) {
     if (order.kind === 'closeAll' && order.comment === DEATH_EXIT_COMMENT) continue // already alerted
     if (order.kind === 'entry') {
-      const opened = position.cascade.level === 0
-      await alerts.send(alert(opened ? 'position-opened' : 'dca-filled', `${opened ? '🟢' : '➕'} ${position.symbol} ${order.id}`, `$${order.usd.toFixed(2)} at ${candles.close[barIndex]!.toPrecision(6)}`, barTime, { position: position.id, key: idempotencyKeyFor(position.id, barTime, orderKeyPart(order)) }))
+      const opened = cascadeIn.level === 0
+      await alerts.send(alert(opened ? 'position-opened' : 'dca-filled', `${opened ? '🟢' : '➕'} ${position.symbol} ${order.id}`, `$${order.usd.toFixed(2)} at ${barClose.toPrecision(6)}`, barTime, { position: position.id, key: idempotencyKeyFor(position.id, barTime, orderKeyPart(order)) }))
     } else {
       await alerts.send(alert('position-closed', `🏁 ${position.symbol} cerrada`, order.comment, barTime, { position: position.id }))
     }
   }
 
-  return { position: next, orders, vetoed, skipped: null }
+  return { position: next, orders, vetoed }
+}
+
+/**
+ * Whether this pending sale must not go through at this price.
+ *
+ * "Never exit at a loss" is a premise of the whole strategy, not a preference:
+ * the ladder's argument is that a drop is an opportunity to average down, so
+ * selling into one destroys the edge the system exists to harvest.
+ *
+ * The rule was enforced at DECISION time, where price is above average cost by
+ * construction — and leaked at EXECUTION time, where the next bar's open can be
+ * anywhere. Production sold at -13.1% under the comment "🏁 Exit" because the
+ * gap between that close and that open was -14.8%. On 15-minute small caps the
+ * execution gap is routinely larger than the entire +2% profit target, so a
+ * rule that only holds at the close does not hold at all.
+ *
+ * The death exit is the one exception, and it is not really an exception — it
+ * answers a different question. A stop loss sells because the PRICE fell; a
+ * death exit sells because the ASSET stopped being an asset, and holding out
+ * for a better price on something unsellable is how you hold it forever.
+ */
+function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: number): boolean {
+  if (order.kind !== 'closeAll') return false
+  if (order.comment === DEATH_EXIT_COMMENT) return false
+  // Nothing held, so no cost basis and no loss to make.
+  if (avgPrice === null) return false
+  return fillPrice < avgPrice
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tickPosition, type EngineConfig, type TickInput } from './engine.js'
+import { MAX_CATCH_UP_BARS, tickPosition, type EngineConfig, type TickInput } from './engine.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
@@ -331,5 +331,198 @@ describe('tickPosition — the broker is the truth about what is held', () => {
 
     const { result } = await tick({ candles, position: waiting }, r)
     expect(result.position.cascade.level).not.toBe(0)
+  })
+})
+
+// ── Catch-up: the strategy's clock is the BAR, not the cycle ─────────────────
+//
+// Production ran one tick per cycle and one cycle per ~37 minutes. On 15-minute
+// bars that meant the engine saw ten of every twenty-two bars, and every
+// parameter counted in bars silently changed meaning: `confirmBars: 20` stopped
+// being five hours and became eleven, so the rebound confirmation could never
+// complete inside a position's life and the DCA ladder NEVER fired once in
+// production. Ten entries, six exits, zero DCAs.
+//
+// A scheduler getting slower must not change what the strategy computes.
+
+/** A flat series — no gates fire, so these tests measure only bar walking. */
+const flat = (bars: number, price = 1): Candles => ({
+  time: Array.from({ length: bars }, (_, i) => i * HOUR),
+  open: Array.from({ length: bars }, () => price),
+  high: Array.from({ length: bars }, () => price * 1.001),
+  low: Array.from({ length: bars }, () => price * 0.999),
+  close: Array.from({ length: bars }, () => price),
+  volume: Array.from({ length: bars }, () => 10_000),
+})
+
+describe('tickPosition — it advances every bar it missed', () => {
+  it('walks each unprocessed bar instead of jumping to the newest', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    // Five bars behind: the shape of a cycle that took longer than a bar.
+    const stale = position({ lastBarTime: candles.time[294]! })
+
+    const result = await tickPosition({ position: stale, candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(result.barsAdvanced).toBe(5)
+    expect(result.position.lastBarTime).toBe(candles.time[299])
+  })
+
+  it('a position that is up to date does nothing', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    const current = position({ lastBarTime: candles.time[299]! })
+
+    const result = await tickPosition({ position: current, candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(result.skipped).toBe('already-processed')
+    expect(result.barsAdvanced).toBe(0)
+  })
+
+  it('a brand new position starts at the newest bar — it does not replay history', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+
+    // lastBarTime is -1 on a position the portfolio just opened. Walking from
+    // there would replay every candle the provider returned and fill a ladder
+    // at prices that are days old.
+    const result = await tickPosition({ position: position({ lastBarTime: -1 }), candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(result.barsAdvanced).toBe(1)
+    expect(result.position.lastBarTime).toBe(candles.time[299])
+  })
+
+  it('an outage longer than the cap resumes at the cap, not at the beginning', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(400)
+
+    const result = await tickPosition(
+      { position: position({ lastBarTime: candles.time[0]! }), candles, health: null, broker },
+      config, store, alerts, throttle,
+    )
+
+    // Replaying a week of bars would decide orders against prices nobody can
+    // trade at any more. Bounded, and the position still ends up current.
+    expect(result.barsAdvanced).toBe(MAX_CATCH_UP_BARS)
+    expect(result.position.lastBarTime).toBe(candles.time[399])
+  })
+
+  it('executes a pending order at the bar that FOLLOWS the decision, not at the newest', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    const decidedAt = candles.time[294]!
+    const order = { kind: 'entry' as const, id: 'Entry', level: 0, usd: 15, qty: 15, comment: '🟢 Entry' }
+
+    await tickPosition(
+      { position: position({ lastBarTime: decidedAt, pendingOrders: [order], cascade: { ...initialState(), level: 1, ep1: 1 } }), candles, health: null, broker },
+      config, store, alerts, throttle,
+    )
+
+    const fills = await store.fillsFor('pos-1')
+    const entry = fills.find((f) => f.side === 'buy')
+    // An order decided at bar 294 fills at bar 295's open. Filling it at bar
+    // 299 would book a price five bars away from the decision that caused it.
+    expect(entry?.time).toBe(candles.time[295])
+  })
+})
+
+// ── Never exit at a loss on price ───────────────────────────────────────────
+//
+// CLAUDE.md states it as a premise, not a preference: the strategy exits a
+// DEAD ASSET, never a falling one. The ladder's whole argument is that a drop
+// is an opportunity to average down, so selling into one destroys the edge the
+// system exists to harvest.
+//
+// It leaked anyway, and not through the rule — through EXECUTION. The exit is
+// decided at a bar's close, where price IS above average cost, and fills at the
+// next bar's OPEN. Production sold BinanceTown at -13.1% with the comment
+// "🏁 Exit" because the gap between that close and that open was -14.8%. On
+// 15-minute small caps the execution gap is routinely larger than the whole
+// +2% profit target, so a rule enforced only at decision time is not enforced.
+//
+// A real venue can look at the price before it sends the order. So it does.
+
+const held = (entryPrice: number, qty: number) => {
+  const { store, alerts, throttle } = rig()
+  const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+  broker.seed([{ orderId: 'Entry', side: 'buy', time: 0, price: entryPrice, qty, costUsd: 0, comment: '🟢 Entry' }])
+  return { store, alerts, throttle, broker }
+}
+
+/** Flat until the last bar, which opens at `gapTo` — the gap-down. */
+const gapDown = (bars: number, price: number, gapTo: number): Candles => {
+  const c = flat(bars, price)
+  return {
+    ...c,
+    open: [...c.open.slice(0, -1), gapTo],
+    low: [...c.low.slice(0, -1), gapTo * 0.999],
+    close: [...c.close.slice(0, -1), gapTo],
+  }
+}
+
+describe('tickPosition — a falling price is not a reason to sell', () => {
+  // The ladder is still THREE LEVELS DEEP while the exit is in flight, and that
+  // is not a detail of the fixture — it is the invariant. `stepCascade` resets
+  // the cycle on `!inPosition && wasInTrade`: it reacts to the BROKER going
+  // flat, never to the exit being signalled. So a position with an unfilled
+  // exit still carries its ladder, and nothing has to be rolled back.
+  const exiting = (lastBarTime: number) => position({
+    lastBarTime,
+    cascade: { ...initialState(), level: 3, ep1: 1, wasInTrade: true },
+    pendingOrders: [{ kind: 'closeAll' as const, comment: '🏁 Exit' as const }],
+  })
+
+  it('refuses a normal exit that would fill below average cost', async () => {
+    const { store, alerts, throttle, broker } = held(1, 100)
+    const candles = gapDown(300, 1, 0.87) // the -13% production actually booked
+
+    await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    const sells = (await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')
+    expect(sells).toEqual([])
+  })
+
+  it('keeps the ladder alive, so the drop can become a DCA instead of a loss', async () => {
+    const { store, alerts, throttle, broker } = held(1, 100)
+    const candles = gapDown(300, 1, 0.87)
+
+    // A machine that reset to flat here would have walked away from a ladder it
+    // was three levels into — the very ladder whose job is to average this drop
+    // down. It survives because the broker still holds, and the broker is what
+    // the reset listens to.
+    const result = await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(result.position.cascade.level).toBe(3)
+    expect(result.position.cascade.ep1).toBe(1)
+  })
+
+  it('sells the moment the price is back above average cost', async () => {
+    const { store, alerts, throttle, broker } = held(1, 100)
+    const candles = gapDown(300, 1, 1.05)
+
+    await tickPosition({ position: exiting(candles.time[298]!), candles, health: null, broker }, config, store, alerts, throttle)
+
+    const sells = (await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')
+    expect(sells).toHaveLength(1)
+    expect(sells[0]!.price).toBeCloseTo(1.05, 2) // minus the venue spread
+  })
+
+  it('a death exit sells at ANY price — a dead asset is the one exception', async () => {
+    const { store, alerts, throttle, broker } = held(1, 100)
+    const candles = gapDown(300, 1, 0.42)
+    const dying = position({
+      lastBarTime: candles.time[298]!,
+      cascade: { ...initialState(), level: 3, ep1: 1, wasInTrade: true },
+      pendingOrders: [{ kind: 'closeAll' as const, comment: '☠️ Death Exit' as const }],
+    })
+
+    // The no-loss rule assumes the asset mean-reverts. When the asset has
+    // stopped being an asset, holding out for a better price is how you end up
+    // holding something unsellable.
+    await tickPosition({ position: dying, candles, health: null, broker }, config, store, alerts, throttle)
+
+    const sells = (await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')
+    expect(sells).toHaveLength(1)
+    expect(sells[0]!.price).toBeCloseTo(0.42, 2) // minus the venue spread
   })
 })

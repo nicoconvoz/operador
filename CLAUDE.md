@@ -729,8 +729,8 @@ identifiers, comments and documentation stay English.
 
 ## The engine tick
 
-`application/engine.ts` advances ONE position by ONE closed bar. The order of
-its steps is the design:
+`application/engine.ts` advances ONE position to the LATEST closed bar,
+walking every bar it missed. The order of its steps is the design:
 
 0. **Execute what the PREVIOUS bar decided, at THIS bar's open.** An order
    decided at a close fills at the NEXT bar's open — the execution model the
@@ -762,6 +762,39 @@ its steps is the design:
 4. **Write before sending.** Orders are persisted as `pendingOrders` BEFORE
    submission. A process that dies at this exact point is recoverable only
    because the intent was written down first.
+
+**The walk exists because a cycle is not a bar.** The engine used to advance
+one bar per call, which is correct only while a cycle is faster than a bar. In
+production a cycle took ~37 minutes against 15-minute bars, so it saw TEN of
+every TWENTY-TWO — and every parameter counted in BARS silently changed
+meaning. `confirmBars: 20` stopped being five hours and became eleven, longer
+than these positions live, so the rebound confirmation could never complete.
+The measured result: **ten entries, six exits, and not one DCA fill.** The
+cascade never cascaded, and no parameter was wrong — the clock was.
+
+A slow scheduler is now a latency problem, which is what it always should have
+been. Bounded at `MAX_CATCH_UP_BARS` (96, a day at 15m): past that the engine
+was not late, it was down, and replaying a week would fill a ladder from a
+market that is gone.
+
+### Never exit at a loss — enforced where it actually leaks
+
+The rule was enforced at DECISION time, where price is above average cost by
+construction. It leaked at EXECUTION time, where the next bar's open can be
+anywhere. Production sold BinanceTown at **-13.1% under the comment `🏁 Exit`**
+because the gap between the deciding close and the filling open was -14.8%.
+
+On 15-minute small caps the execution gap is routinely **larger than the entire
++2% profit target**, so a rule that only holds at the close does not hold. A
+real venue can look at the price before sending the order, so now it does: a
+non-death `closeAll` does not fill below average cost.
+
+Nothing is rolled back when that happens, and the reason is worth keeping.
+`stepCascade` resets the cycle on `!inPosition && wasInTrade` — it reacts to the
+BROKER going flat, never to the exit being signalled. A sale that does not
+happen leaves the broker holding, so the machine never resets and the ladder
+survives on its own. The obvious design here is a remembered pre-exit snapshot;
+it is unnecessary, and it would have needed a column the store does not have.
 
 Two guards worth naming:
 
