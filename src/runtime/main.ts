@@ -294,6 +294,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       maxOpenEntries: 10,
       portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: config.totalCapitalUsd, maxPositions: config.maxPositions },
       heartbeatMs: 60 * 60 * 1000,
+      // A slot handed to a token that never enters is capital held against
+      // nothing. Measured live at five hours and twenty minutes.
+      idleSlots: { idleAfterMs: config.idleSlotHours * 60 * 60 * 1000 },
     },
     throttle: new AlertThrottle(30 * 60 * 1000),
   }

@@ -64,6 +64,16 @@ export interface RuntimeConfig {
    * Raise it as the capital grows. That was always the plan.
    */
   readonly maxUsdPerLevel: number
+  /**
+   * Hours a reserved slot may sit without a single fill before it goes back to
+   * the pool.
+   *
+   * A slot is handed to a token BEFORE the strategy enters it, so a token whose
+   * gates never line up holds capital and a slot against nothing. Three hours
+   * is twelve bars at 15m — most of the 20-bar swing-high window the classic
+   * entry gate looks back over, so the setup had a fair chance.
+   */
+  readonly idleSlotHours: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -136,6 +146,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
     maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', 15),
+    idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

@@ -246,3 +246,102 @@ describe('runCycle — a new position is born knowing its price', () => {
     expect(opened!.lastPriceUsd).toBeGreaterThan(0)
   })
 })
+
+// ── Slots reserved and never used ───────────────────────────────────────────
+//
+// A slot is handed to a token BEFORE the strategy enters it, and CASCADE DCA
+// then waits for its own gates. When those never line up the position sits at
+// level 0 indefinitely, holding a slot and its capital against nothing.
+//
+// Measured live: a token open five hours and twenty minutes with zero fills,
+// holding $285 and one of five slots, while candidates scoring 76 and 72 waited
+// outside. slotsLeft and committed counted it exactly as they counted a
+// position three DCA levels deep.
+
+describe('runCycle — a reservation nobody used gives up its slot', () => {
+  const idle = (over: Partial<PersistedPosition> = {}) => position({
+    id: 'idle-1', tokenAddress: 'Idle', symbol: 'IDLE', openedAt: NOW - 6 * HOUR, lastBarTime: NOW, ...over,
+  })
+
+  it('closes a position that reserved a slot and never bought anything', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(idle())
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual(['idle-1'])
+    expect((await store.loadPositions()).map((p) => p.symbol)).not.toContain('IDLE')
+  })
+
+  it('hands the freed capital and slot to the candidates that were waiting', async () => {
+    const { deps, store, throttle } = rig()
+    // Four slots, three already taken, one of them by a reservation that has
+    // never traded. Without the release the book can add exactly one.
+    await store.savePosition(idle())
+    await store.savePosition(position({ id: 'busy-1', tokenAddress: 'Busy1', symbol: 'BUSY1' }))
+    await store.savePosition(position({ id: 'busy-2', tokenAddress: 'Busy2', symbol: 'BUSY2' }))
+    await store.recordFill({ positionId: 'busy-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR, price: 1, qty: 10, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'b1' })
+    await store.recordFill({ positionId: 'busy-2', orderId: 'Entry', side: 'buy', time: NOW - HOUR, price: 1, qty: 10, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'b2' })
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual(['idle-1'])
+    expect(result.opened).toHaveLength(2)
+  })
+
+  it('never takes the slot of a position that has traded', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(idle({ openedAt: NOW - 90 * HOUR }))
+    await store.recordFill({ positionId: 'idle-1', orderId: 'Entry', side: 'buy', time: NOW - 80 * HOUR, price: 1, qty: 10, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'x1' })
+
+    // With fills it is a COMMITMENT, not a reservation: the slot cannot come
+    // back without selling, and selling is the strategy's call.
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual([])
+    expect((await store.loadPositions()).map((p) => p.id)).toContain('idle-1')
+  })
+
+  it('does not blacklist what it releases — the token did nothing wrong', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(idle())
+
+    await runCycle(deps, config, throttle)
+
+    // It never set up. That is not a verdict, and it is welcome back the day
+    // its gates do line up.
+    expect((await store.blacklisted()).size).toBe(0)
+  })
+
+  it('does not hand the slot straight back to the token that just gave it up', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [candidate('Idle', 99), candidate('a', 90)] })
+    await store.savePosition(idle())
+
+    const result = await runCycle(deps, config, throttle)
+
+    // Top of the ranking and freshly evicted. Re-opening it in the same breath
+    // is not a reallocation, it is a round trip through the database.
+    expect(result.opened.map((p) => p.tokenAddress)).not.toContain('Idle')
+  })
+
+  it('keeps a reservation when nothing is waiting for its slot', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [] })
+    await store.savePosition(idle())
+
+    // Freeing a slot into an empty queue is pure loss: the incumbent might
+    // still enter, and nothing else can use what it gives up.
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual([])
+  })
+
+  it('says so, naming the hours it sat there', async () => {
+    const { deps, store, alerts, throttle } = rig()
+    await store.savePosition(idle())
+
+    await runCycle(deps, config, throttle)
+
+    const said = alerts.sent.find((a) => a.title.includes('IDLE'))
+    expect(said?.body).toContain('6h')
+  })
+})

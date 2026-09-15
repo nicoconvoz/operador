@@ -7,6 +7,7 @@ import { type CascadeParams } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
 import { type Candles } from './replay.js'
 import { tickPosition, type TickResult } from './engine.js'
+import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy, type SlotHolder } from '../domain/risk/idle-slots.js'
 import { planRecovery, type OrderProbe, type RecoveryPlan } from './recovery.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
@@ -69,6 +70,8 @@ export interface CycleConfig {
   readonly maxOpenEntries?: number
   /** Emit a heartbeat when this long has passed since the last one. */
   readonly heartbeatMs: number
+  /** When a reserved slot that never traded may be handed to somebody else. */
+  readonly idleSlots?: IdleSlotPolicy
 }
 
 export interface CycleResult {
@@ -76,6 +79,8 @@ export interface CycleResult {
   readonly ticks: readonly TickResult[]
   readonly opened: readonly PersistedPosition[]
   readonly haltedIds: readonly string[]
+  /** Slots reclaimed from positions that reserved them and never traded. */
+  readonly releasedIds: readonly string[]
   readonly killSwitchEngaged: boolean
   readonly at: number
 }
@@ -136,16 +141,9 @@ export async function runCycle(
 
   // ── 3. Open new positions with what is genuinely free ──────────────────────
   const opened: PersistedPosition[] = []
+  const releasedIds: string[] = []
   if (!recovery.killSwitchEngaged) {
-    const held = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
-    // Capital committed to halted positions is NOT free. Treating it as free is
-    // how an engine quietly doubles its own exposure after a bad restart.
-    const committed = [...recovery.positions, ...recovery.halted].reduce((sum, r) => sum + r.position.capitalUsd, 0)
-    const free = Math.max(0, config.portfolio.totalCapitalUsd - committed)
-    const slotsLeft = config.portfolio.maxPositions - recovery.positions.length - recovery.halted.length
-
     const candidates = (await deps.scan())
-      .filter((c) => !held.has(`${c.snapshot.chain}:${c.snapshot.address}`))
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
     if (candidates.length === 0) {
@@ -153,9 +151,53 @@ export async function runCycle(
       if (throttle.shouldSend(empty)) await deps.alerts.send(empty)
     }
 
+    // ── 3a. Take back the slots nobody used ──────────────────────────────────
+    //
+    // A slot is handed to a token BEFORE the strategy enters it, and CASCADE
+    // DCA then waits for its own gates. When those never line up the position
+    // sits at level 0 indefinitely, holding a slot and its capital against
+    // nothing — measured live at five hours and twenty minutes with candidates
+    // scoring 76 and 72 waiting outside.
+    //
+    // Only reservations are taken back, never commitments: a position with
+    // fills cannot give up its slot without selling, and selling is the
+    // strategy's decision, not the allocator's. Nothing is blacklisted here —
+    // the token did nothing wrong, it simply never set up, and it is welcome
+    // back the day it does.
+    const release = await releasable(deps, recovery.positions.map((r) => r.position), candidates.length, at, config)
+    for (const holder of release) {
+      await deps.store.closePosition(holder.id)
+      releasedIds.push(holder.id)
+      const handed = alert(
+        'token-retired',
+        `🔄 ${holder.symbol} cede su ranura`,
+        `Reservó una ranura y ${Math.round((at - holder.openedAt) / 3_600_000)}h después no había comprado nada. El capital y la ranura vuelven al reparto; el token no queda vetado y puede volver a entrar cuando arme.`,
+        at,
+        { position: holder.id, token: holder.tokenAddress },
+      )
+      if (throttle.shouldSend(handed, `released:${holder.id}`)) await deps.alerts.send(handed)
+    }
+
+    const released = new Set(releasedIds)
+    const keeping = recovery.positions.filter((r) => !released.has(r.position.id))
+    const held = new Set(keeping.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
+    // Capital committed to halted positions is NOT free. Treating it as free is
+    // how an engine quietly doubles its own exposure after a bad restart.
+    const committed = [...keeping, ...recovery.halted].reduce((sum, r) => sum + r.position.capitalUsd, 0)
+    const free = Math.max(0, config.portfolio.totalCapitalUsd - committed)
+    const slotsLeft = config.portfolio.maxPositions - keeping.length - recovery.halted.length
+
+    // A token that just gave up its slot must not win it straight back in the
+    // same breath: that is not a reallocation, it is a round trip through the
+    // database. It is eligible again next cycle.
+    const justReleased = new Set(release.map((h) => `${h.chain}:${h.tokenAddress}`))
+    const eligible = candidates
+      .filter((c) => !held.has(`${c.snapshot.chain}:${c.snapshot.address}`))
+      .filter((c) => !justReleased.has(`${c.snapshot.chain}:${c.snapshot.address}`))
+
     if (slotsLeft > 0 && free > 0) {
       const plan = planPortfolio(
-        candidates.map((c) => ({ snapshot: c.snapshot, quality: c.marketQuality, score: c.opportunity.score })),
+        eligible.map((c) => ({ snapshot: c.snapshot, quality: c.marketQuality, score: c.opportunity.score })),
         config.params,
         { ...config.portfolio, totalCapitalUsd: free, maxPositions: slotsLeft },
       )
@@ -222,7 +264,39 @@ export async function runCycle(
     ticks,
     opened,
     haltedIds: recovery.halted.map((h) => h.position.id),
+    releasedIds,
     killSwitchEngaged: recovery.killSwitchEngaged,
     at,
   }
+}
+
+/**
+ * Which open positions reserved a slot and never used it.
+ *
+ * `hasFills` is read from the FILLS, never from the cascade level: a machine can
+ * sit at level 1 believing it holds something the broker refused, and a
+ * reservation dressed as a position is exactly the case this must not misread.
+ */
+async function releasable(
+  deps: CycleDeps,
+  positions: readonly PersistedPosition[],
+  waiting: number,
+  at: number,
+  config: CycleConfig,
+): Promise<readonly SlotHolder[]> {
+  if (waiting <= 0 || positions.length === 0) return []
+
+  const holders: SlotHolder[] = []
+  for (const position of positions) {
+    holders.push({
+      id: position.id,
+      chain: position.chain,
+      tokenAddress: position.tokenAddress,
+      symbol: position.symbol,
+      openedAt: position.openedAt,
+      hasFills: (await deps.store.fillsFor(position.id)).length > 0,
+    })
+  }
+
+  return releasableSlots(holders, waiting, at, config.idleSlots ?? DEFAULT_IDLE_SLOT_POLICY)
 }

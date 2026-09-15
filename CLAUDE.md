@@ -562,6 +562,43 @@ open new positions with what is left → checkpoint → heartbeat
 - **A token already held or already blacklisted is never reopened**, however
   highly the scanner ranks it.
 
+## Slots reserved and never used
+
+A slot and its capital are handed to a token **before** the strategy enters it:
+the scanner says "worth running the machine on", and CASCADE DCA then waits for
+its own gates — a drop from the swing high, a lateral zone. When those never
+line up, the position sits at level 0 indefinitely, holding a slot against
+nothing.
+
+Measured live: a token open **five hours and twenty minutes with zero fills**,
+holding $285 and one of five slots, while candidates scoring 76 and 72 waited
+outside. `slotsLeft` and `committed` counted it exactly as they counted a
+position three DCA levels deep.
+
+The distinction they were missing:
+
+> A position with fills is a **commitment**. The slot cannot come back without
+> selling, and selling is the strategy's decision, never the allocator's.
+>
+> A position with no fills is a **reservation**. Cancelling it costs nothing,
+> because nothing was ever spent.
+
+`domain/risk/idle-slots.ts` releases only the second kind, and only when
+something is waiting to use what it gives up — freeing a slot into an empty
+queue is pure loss, since the incumbent might still enter. `hasFills` is read
+from the FILLS, never from the cascade level: a machine can sit at level 1
+believing it holds something the broker refused, and a reservation dressed as a
+position is exactly the case this must not misread.
+
+Nothing is blacklisted. The token did not fail a gate, it simply never set up,
+and it is welcome back the day it does — though not in the same cycle, because
+re-opening what was just released is a round trip through the database rather
+than a reallocation.
+
+`OPERADOR_IDLE_HOURS` (default 3) is the window: twelve bars at 15m, most of
+the 20-bar swing-high lookback the classic entry gate uses, so the setup had a
+fair chance before the slot moves on.
+
 ## The kill switch
 
 It lives in the **store**, not in the process. A switch held in memory can only
