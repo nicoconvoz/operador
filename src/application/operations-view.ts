@@ -105,6 +105,16 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       if (Number.isFinite(level)) filledByLevel.set(level, fill)
     }
 
+    // The rung whose ORDER is in flight, when there is one.
+    //
+    // The machine advances to level N the moment it SIGNALS that level, but
+    // the order does not fill until the next bar's open. Pointing at the
+    // machine's level during that window says "waiting for DCA-1" while the
+    // Entry — the order actually in flight — sits unmarked, and a reader would
+    // conclude the entry had already happened.
+    const inFlight = position.pendingOrders.find((order) => order.kind === 'entry')
+    const waitingOn = inFlight?.level ?? position.cascade.level
+
     const ladder: LadderRung[] = Array.from({ length: Math.min(params.maxLevels + 1, 12) }, (_, level) => {
       const fill = filledByLevel.get(level)
       return {
@@ -114,7 +124,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
         filled: fill !== undefined,
         fillPrice: fill?.price ?? null,
         fillUsd: fill ? fill.price * fill.qty : null,
-        pending: level === position.cascade.level && !fill,
+        pending: level === waitingOn && !fill,
         // The venue fills ten entries; the machine keeps signalling past that.
         beyondPyramiding: level >= PYRAMIDING,
       }

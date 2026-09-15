@@ -149,3 +149,34 @@ describe('buildOperations — what needs attention', () => {
     expect(p!.deathStage).toBe('frozen')
   })
 })
+
+describe('buildOperations — the ladder points at what is actually waiting', () => {
+  it('marks the rung whose ORDER is in flight, not the level the machine reached', async () => {
+    // The machine advances to level 1 the moment it signals the Entry, but the
+    // Entry itself does not fill until the next bar's open. Pointing at rung 1
+    // then says "waiting for DCA-1" while rung 0 — the order actually in
+    // flight — sits unmarked. Reading that, you would think the entry had
+    // happened.
+    const store = await seed([], {
+      cascade: { ...initialState(), level: 1, ep1: 0.01, wasInTrade: true },
+      pendingOrders: [{ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 1500, comment: 'Entry' }],
+    })
+    const { ladder } = (await buildOperations(store, options)).positions[0]!
+
+    expect(ladder[0]!.pending).toBe(true)
+    expect(ladder[1]!.pending).toBe(false)
+  })
+
+  it('falls back to the level being waited on when nothing is in flight', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 30 * MIN)], {
+      cascade: { ...initialState(), level: 1, ep1: 0.01, wasInTrade: true },
+      pendingOrders: [],
+    })
+    const { ladder } = (await buildOperations(store, options)).positions[0]!
+
+    // Entry filled, nothing in flight: the ladder points at the trigger the
+    // strategy is watching for.
+    expect(ladder[0]!.filled).toBe(true)
+    expect(ladder[1]!.pending).toBe(true)
+  })
+})
