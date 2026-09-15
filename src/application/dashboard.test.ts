@@ -70,13 +70,17 @@ describe('buildDashboard — warnings a human should act on', () => {
     expect(view.warnings[0]).toContain('Kill switch is engaged')
   })
 
-  it('warns about an unconfirmed order in flight, by name', async () => {
+  it('counts a pending order without warning about it', async () => {
     const store = new MemoryStore()
     const pending: Order = { kind: 'entry', id: 'DCA-1', level: 1, usd: 100, qty: 1, comment: 'DCA-1' }
     await store.savePosition(position({ pendingOrders: [pending] }))
     const view = await buildDashboard(store, options)
+
+    // Counted, because it is worth seeing. Not WARNED about, because an order
+    // decided at a close and waiting for the next open is the ordinary state
+    // of a working engine — this warning used to fire on every healthy cycle.
     expect(view.totals.pending).toBe(1)
-    expect(view.warnings.some((w) => w.includes('unconfirmed order') && w.includes('DREGG'))).toBe(true)
+    expect(view.warnings.filter((w) => w.includes('sin ejecutar'))).toEqual([])
   })
 
   it('warns about frozen positions and shows why', async () => {
@@ -118,5 +122,30 @@ describe('buildDashboard — warnings a human should act on', () => {
     await store.savePosition(position())
     const view = await buildDashboard(store, options)
     expect(view.warnings).toEqual([])
+  })
+})
+
+describe('buildDashboard — a pending order is normal, a STUCK one is not', () => {
+  const HOUR_MS = 3_600_000
+
+  it('says nothing about an order decided on the last bar', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position({ pendingOrders: [{ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 100, comment: 'Entry' }], updatedAt: NOW - 60_000 }))
+
+    // An order decided at a close fills at the NEXT bar's open. Having one
+    // pending IS the normal state of a position that just decided something,
+    // and a warning that fires on normal operation is a warning people learn
+    // to scroll past — which costs you the one that matters.
+    const view = await buildDashboard(store, { now: () => NOW })
+    expect(view.warnings.filter((w) => w.includes('flight'))).toEqual([])
+  })
+
+  it('warns when an order has been pending far longer than a bar', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position({ pendingOrders: [{ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 100, comment: 'Entry' }], updatedAt: NOW - 5 * HOUR_MS }))
+
+    // THAT is the anomaly: it should have filled and did not.
+    const view = await buildDashboard(store, { now: () => NOW })
+    expect(view.warnings.some((w) => w.includes('sin ejecutar'))).toBe(true)
   })
 })

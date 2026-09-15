@@ -25,7 +25,7 @@ export interface PositionView {
   readonly deathSignals: readonly string[]
   readonly lastPriceUsd: number | null
   readonly updatedAt: number
-  /** True when an order is in flight and unconfirmed. */
+  /** True when an order has been decided and is waiting for the next bar's open. */
   readonly hasPendingOrders: boolean
 }
 
@@ -87,9 +87,16 @@ export async function buildDashboard(store: StatePort, options: DashboardOptions
   const warnings: string[] = []
   if (checkpoint?.killSwitchEngaged) warnings.push('Kill switch is engaged — no new positions will open.')
 
-  const pending = views.filter((v) => v.hasPendingOrders)
-  if (pending.length > 0) {
-    warnings.push(`${pending.length} position(s) have an unconfirmed order in flight: ${pending.map((v) => v.symbol).join(', ')}.`)
+  // A pending order is NORMAL: an order decided at a close fills at the next
+  // bar's open, so every position that just decided something is carrying one.
+  // Warning on that fired constantly during healthy operation, and a warning
+  // that cries wolf costs you the one that matters.
+  //
+  // The anomaly is an order that should have filled and did not — which is the
+  // same staleness the check below measures, so it uses the same window.
+  const stuck = views.filter((v) => v.hasPendingOrders && generatedAt - v.updatedAt > staleAfterMs)
+  if (stuck.length > 0) {
+    warnings.push(`${stuck.length} posición(es) con una orden sin ejecutar hace horas: ${stuck.map((v) => v.symbol).join(', ')}.`)
   }
 
   const frozen = views.filter((v) => v.deathStage === 'frozen')
@@ -113,7 +120,7 @@ export async function buildDashboard(store: StatePort, options: DashboardOptions
       positions: views.length,
       committedUsd: views.reduce((sum, v) => sum + v.capitalUsd, 0),
       frozen: frozen.length,
-      pending: pending.length,
+      pending: views.filter((v) => v.hasPendingOrders).length,
     },
     blacklistedCount: blacklisted.size,
     lastScan: scan ? { at: scan.scannedAt, tokensSeen: scan.snapshots.length } : null,
