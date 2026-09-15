@@ -1,7 +1,7 @@
 import { evaluateGates, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { scoreOpportunity, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
-import { type StatePort } from '../domain/persistence/store.js'
+import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 
 /**
@@ -194,6 +194,23 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     }
   })
 
+  // ── A position is never invisible ─────────────────────────────────────────
+  //
+  // The universe above is built from the latest scan, and discovery lists churn
+  // every cycle. A held token that falls out of them used to stop existing on
+  // the screen: found live with five open positions and four bodies drawn, and
+  // the missing one was holding money.
+  //
+  // The case matters most where you would least want it to fail. A token that
+  // drops off every discovery list may be a token that is dying — so the screen
+  // went blank at the exact moment it had something to say.
+  const drawn = new Set(tokens.map((t) => `${t.chain}:${t.address}`))
+  for (const position of positions) {
+    const key = `${position.chain}:${position.tokenAddress}`
+    if (drawn.has(key)) continue
+    tokens.push(fromPositionAlone(position))
+  }
+
   const counts = Object.fromEntries(TIERS.map((tier) => [tier, tokens.filter((t) => t.tier === tier).length])) as Record<TokenTier, number>
 
   return {
@@ -206,5 +223,43 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     tokens: [...tokens].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || b.score - a.score),
     counts,
     chains: [...new Set(tokens.map((t) => t.chain))].sort(),
+  }
+}
+
+/**
+ * A held token drawn from what the POSITION knows, because the scan said
+ * nothing about it this cycle.
+ *
+ * Everything the scanner would have supplied is absent, and absent is what it
+ * reports. The score is zero rather than a stale one, and the blockers say the
+ * scanner did not see it — because an empty blockers list reads as "checked and
+ * fine", which is the single thing nobody checked.
+ *
+ * Liquidity and price come from the position's own record: the quality measured
+ * when it was opened and the last close the engine acted on. Both are real
+ * measurements with a date on them, which is more than a placeholder would be.
+ */
+function fromPositionAlone(position: PersistedPosition): UniverseToken {
+  return {
+    id: `${position.chain}:${position.tokenAddress}`,
+    symbol: position.symbol,
+    chain: position.chain,
+    address: position.tokenAddress,
+    pairAddress: position.pairAddress,
+    tier: 'held',
+    score: 0,
+    components: {},
+    liquidityUsd: position.quality.liquidityUsd,
+    volume24hUsd: 0,
+    priceUsd: position.lastPriceUsd ?? 0,
+    change24hPct: null,
+    ageHours: null,
+    frictionPct: 2 * (position.quality.spreadPct + position.quality.slippagePct),
+    blockers: ['el escáner no la encontró en este ciclo — los datos son los de la posición'],
+    position: {
+      capitalUsd: position.capitalUsd,
+      filledDcas: position.cascade.level > 0 ? position.cascade.level - 1 : 0,
+      deathStage: position.deathWatch.stage,
+    },
   }
 }

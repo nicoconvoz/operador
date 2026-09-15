@@ -224,3 +224,68 @@ describe('buildUniverse — an unexamined token lists why it was REJECTED', () =
     expect(t!.blockers.some((b) => b.includes('sell simulation'))).toBe(true)
   })
 })
+
+// ── A position is never invisible ───────────────────────────────────────────
+//
+// The universe was built from the latest scan and nothing else, so a held token
+// that fell out of this cycle's discovery lists simply stopped existing on the
+// screen. Found live: five open positions, four bodies drawn, and the missing
+// one was holding money.
+//
+// The case matters most in exactly the situation you would least want it to
+// fail. A token that drops off every discovery list is a token that may be
+// dying — so the screen went blank at the precise moment it had something to
+// say.
+
+describe('buildUniverse — a held token is always on the radar', () => {
+  it('draws a position the latest scan did not include', async () => {
+    const store = await seed([token('Seen')])
+    await store.savePosition(position('Seen'))
+    await store.savePosition(position('Vanished', { symbol: 'BTC', capitalUsd: 285 }))
+
+    const view = await buildUniverse(store, options)
+    const symbols = view.tokens.filter((t) => t.tier === 'held').map((t) => t.symbol)
+
+    expect(symbols).toContain('BTC')
+    expect(view.counts.held).toBe(2)
+  })
+
+  it('carries what the POSITION knows, since the scanner said nothing', async () => {
+    const store = await seed([])
+    await store.savePosition(position('Vanished', { symbol: 'BTC', capitalUsd: 285, lastPriceUsd: 0.5 }))
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    expect(drawn).toMatchObject({
+      symbol: 'BTC',
+      chain: 'solana',
+      address: 'Vanished',
+      tier: 'held',
+      priceUsd: 0.5,
+      liquidityUsd: 250_000, // the quality measured when it was opened
+    })
+    expect(drawn!.position).toMatchObject({ capitalUsd: 285, filledDcas: 2 })
+  })
+
+  it('says the scanner did not see it, rather than inventing a verdict', async () => {
+    const store = await seed([])
+    await store.savePosition(position('Vanished', { symbol: 'BTC' }))
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    // Silence is not a clean bill of health. An empty blockers list here would
+    // read as "checked and fine", which is the one thing nobody checked.
+    expect(drawn!.blockers.join(' ')).toMatch(/escáner|escaner/i)
+    expect(drawn!.score).toBe(0)
+  })
+
+  it('does not draw a held token twice when the scan did find it', async () => {
+    const store = await seed([token('Seen')])
+    await store.savePosition(position('Seen'))
+
+    const view = await buildUniverse(store, options)
+
+    expect(view.tokens.filter((t) => t.address === 'Seen')).toHaveLength(1)
+    expect(view.counts.held).toBe(1)
+  })
+})
