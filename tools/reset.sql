@@ -1,0 +1,40 @@
+-- Starting over, on purpose.
+--
+-- Run it in Neon's SQL editor. Nothing here is reversible, and the engine
+-- recreates every table it needs at boot, so nothing has to be put back.
+--
+-- The tables fall into two groups and the difference matters more than it
+-- used to:
+--
+--   STATE  — this IS the system. Erasing it is the reset.
+--   CACHE  — only ever an optimisation. Erasing it costs one slow cycle.
+--
+-- Two things in the STATE group are worth stopping on before you run this:
+--
+--   `fills` is no longer just a history. Realised profit and the COMMON FUND
+--   are both derived from it, so truncating it does not erase a record — it
+--   erases the money you made, and the allocator goes back to believing it has
+--   exactly the capital in OPERADOR_CAPITAL_USD.
+--
+--   `blacklist` holds the death-exit verdicts. Emptying it lets the scanner
+--   offer you a token that was already proven to be a rug.
+
+-- ── Everything. A genuine fresh start. ──────────────────────────────────────
+TRUNCATE TABLE positions, fills, checkpoint, blacklist, alerts;
+TRUNCATE TABLE scans, pool_discovery, pool_history, token_security;
+
+-- ── Or: start the book over, KEEP what was learned ──────────────────────────
+--
+-- Positions and their ladders go; the profit history, the death-exit verdicts
+-- and every cached measurement stay. This is usually what "let's start clean"
+-- actually means: a fresh book, not an engine with amnesia.
+--
+-- TRUNCATE TABLE positions, checkpoint;
+
+-- ── Or: only forget the measurements ────────────────────────────────────────
+--
+-- After changing a gate or a scoring policy, when the cached verdicts were
+-- reached under rules that no longer apply. Costs one slow cycle and nothing
+-- else — every row here is rebuilt from the providers.
+--
+-- TRUNCATE TABLE scans, pool_discovery, pool_history, token_security;
