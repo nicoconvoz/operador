@@ -204,3 +204,23 @@ describe('buildUniverse — rejected for being thin is not the same as dangerous
     expect((await buildUniverse(store, options)).tokens[0]!.tier).toBe('unsafe')
   })
 })
+
+describe('buildUniverse — an unexamined token lists why it was REJECTED', () => {
+  it('drops the security unknowns, which are noise when nobody looked', async () => {
+    const store = await seed([{ ...token('THIN', { liquidityUsd: 500 }), security: UNKNOWN, securityChecked: false }])
+    const [t] = (await buildUniverse(store, options)).tokens
+
+    // Measured live: 180 of 185 filtered tokens led with six lines of
+    // "mint authority unknown", "blacklist capability unknown" and so on,
+    // burying the one line that was the actual reason. They are true and they
+    // are useless: the gates fail closed, and nobody examined this token.
+    expect(t!.blockers.some((b) => b.includes('unknown') || b.includes('unavailable'))).toBe(false)
+    expect(t!.blockers.some((b) => b.includes('liquidity'))).toBe(true)
+  })
+
+  it('keeps every blocker when the token WAS examined', async () => {
+    const store = await seed([token('RUG', {}, { honeypot: true })])
+    const [t] = (await buildUniverse(store, options)).tokens
+    expect(t!.blockers.some((b) => b.includes('sell simulation'))).toBe(true)
+  })
+})

@@ -133,7 +133,13 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     }
     const opportunity = scoreOpportunity(snapshot, opportunityPolicy, null, quality)
 
-    const blockers = gateResult.failures.map((f) => f.detail)
+    // An unexamined token fails every security gate for the same reason —
+    // nobody looked — and those six lines bury the one that is the actual
+    // cause. Measured live: 180 of 185 filtered tokens led with them.
+    // True, and useless. The real reason is the market gate it hit.
+    const blockers = gateResult.failures
+      .filter((f) => snapshot.securityChecked !== false || !SAFETY_GATES.has(f.gate))
+      .map((f) => f.detail)
     const unsafe = gateResult.failures.some((f) => SAFETY_GATES.has(f.gate))
 
     // A token nobody examined has an all-null security report, and the gates

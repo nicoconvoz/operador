@@ -81,7 +81,7 @@ const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filter
  * Collapsed, not hidden: the cluster carries its count, and tapping it filters
  * to exactly those tokens so they expand again. Nothing becomes unreachable.
  */
-const COLLAPSED_TIERS: readonly TokenTier[] = ['pending', 'unsafe']
+const COLLAPSED_TIERS: readonly TokenTier[] = ['pending', 'unsafe', 'filtered']
 
 interface Cluster {
   readonly tier: TokenTier
