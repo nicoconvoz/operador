@@ -14,6 +14,24 @@ export interface GatePolicy {
   readonly minLiquidityUsd: number
   readonly minAgeHours: number
   readonly minVolume24hUsd: number
+  /**
+   * A fall this deep, in a window this short, and the token is not an
+   * opportunity — it is an exit in progress.
+   *
+   * It lives with the ENTRY gates and must never reach the death exit. Price
+   * may not cause an exit: a death exit that reacts to price is a stop loss
+   * under another name, and the ladder's premise is that a drop is something to
+   * average into. Choosing what to ENTER on price is a different question, and
+   * the strategy already answers it — the classic gate is a drop from the swing
+   * high.
+   *
+   * The user asked for three hours. The providers report 1h, 6h and 24h, so
+   * three sits between two of them, and the gate reads BOTH rather than
+   * inventing the window it wants: half gone inside an hour is a collapse, half
+   * gone over six is a bleed. 24h is deliberately ignored — half a day is not
+   * freefall, it is a bad day, and the strategy was built for bad days.
+   */
+  readonly maxFallPct: number
   readonly maxTransferTaxPct: number
   readonly minLpLockedPct: number
   readonly maxTopHoldersPct: number
@@ -97,6 +115,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   minLiquidityUsd: 20_000,
   minAgeHours: 24,
   minVolume24hUsd: 10_000,
+  maxFallPct: 50,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
   maxTopHoldersPct: 40,
@@ -124,6 +143,7 @@ export type GateName =
   | 'liquidity'
   | 'age'
   | 'volume'
+  | 'freefall'
   | 'proxy'
   | 'denylist'
   | 'marketCap'
@@ -182,6 +202,9 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
   if (snapshot.volumeUsd.h24 < policy.minVolume24hUsd) {
     failures.push(fail('volume', 'failed', `24h volume $${snapshot.volumeUsd.h24.toFixed(0)} < $${policy.minVolume24hUsd}`))
   }
+
+  const fall = freefall(snapshot, policy)
+  if (fall) failures.push(fall)
 
   return { passed: failures.length === 0, failures }
 }
@@ -269,5 +292,34 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
     failures.push(fail('volume', 'failed', `24h volume $${snapshot.volumeUsd.h24.toFixed(0)} < $${policy.minVolume24hUsd}`))
   }
 
+  const fall = freefall(snapshot, policy)
+  if (fall) failures.push(fall)
+
   return { passed: failures.length === 0, failures }
+}
+
+/**
+ * A token losing more than half its price in about three hours.
+ *
+ * Both short windows are read because three hours is not one the providers
+ * report, and a single one would miss half the cases: a token can crash inside
+ * an hour and look calm over six, or bleed steadily over six without any single
+ * hour looking alarming. Either shape is an exit in progress.
+ *
+ * A null is not a crash. An unreported window means the provider said nothing,
+ * and rejecting on silence would reject on absence rather than on evidence —
+ * which is the opposite of how the SAFETY gates fail, and rightly so: those
+ * guard against a rug, this one against a bad entry.
+ */
+function freefall(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {
+  const windows: readonly (readonly [string, number | null])[] = [
+    ['1h', snapshot.priceChangePct.h1],
+    ['6h', snapshot.priceChangePct.h6],
+  ]
+
+  for (const [label, change] of windows) {
+    if (change === null || change >= -policy.maxFallPct) continue
+    return fail('freefall', 'failed', `cayó ${Math.abs(change).toFixed(0)}% en ${label} — es una salida en curso, no una oportunidad`)
+  }
+  return null
 }

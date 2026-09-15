@@ -129,6 +129,29 @@ This reorders the work; it does not soften it. A token that clears the free
 gates still faces the full set, security included — and a test pins that any
 market failure appears in both.
 
+### Freefall — an entry gate, and deliberately not an exit
+
+A token that has lost more than half its price in about three hours is not an
+opportunity; it is an exit in progress. `maxFallPct` (50) rejects it.
+
+Where this lives matters more than what it does. It is an ENTRY gate and must
+never reach the death exit: **price may not cause an exit.** A death exit that
+reacts to price is a stop loss under another name, and the ladder's premise is
+that a drop is something to average into. Choosing what to ENTER on price is a
+different question, and the strategy already answers it — the classic gate is a
+drop from the swing high. Nothing here touches an open position: a ladder with
+money in it goes on averaging down, which is its job.
+
+Three hours is not a window the providers report. They give 1h, 6h and 24h, so
+the gate reads **both short ones** rather than inventing the one it wants: a
+token can collapse inside an hour and look calm over six, or bleed over six
+without any single hour looking alarming. 24h is ignored on purpose — half a day
+is not freefall, it is a bad day, and the strategy was built for bad days.
+
+An unreported window is silence, not a crash. Unlike the SAFETY gates, which
+fail closed because unknown danger IS evidence, this one fires only on a number
+somebody measured.
+
 **The scanner produces a WATCHLIST, not entry signals.** It decides which
 tokens are worth running the strategy on; CASCADE DCA's own gates (drop
 from swing high, lateral zone) decide *when* to enter. One executor state

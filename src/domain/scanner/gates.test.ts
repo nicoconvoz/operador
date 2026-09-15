@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
+import { DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
 const HOUR = 3_600_000
@@ -253,5 +253,58 @@ describe('evaluateGates — what it costs to get out', () => {
     // token the probe budget could not reach this cycle.
     const result = evaluateGates(clean({ measuredImpactPct: null }), P)
     expect(result.failures.map((f) => f.gate)).not.toContain('impact')
+  })
+})
+
+// ── Freefall ────────────────────────────────────────────────────────────────
+//
+// The user's rule: do not open on a token that has fallen more than half in
+// about three hours.
+//
+// It belongs HERE and nowhere near the death exit. CLAUDE.md is categorical
+// that price may never cause an exit — a death exit that reacts to price is a
+// stop loss wearing a different name, and the ladder's whole premise is that a
+// drop is an opportunity to average down. Choosing what to ENTER on price is a
+// different question entirely, and the strategy already does it: the classic
+// gate is a drop from the swing high.
+//
+// Three hours is not a window the providers report. They give 1h, 6h and 24h,
+// so three sits between two of them and the gate reads BOTH rather than
+// inventing the one it wants: half gone inside an hour is a collapse, half gone
+// over six is a bleed, and neither is something to open into.
+
+describe('gates — a token in freefall is not an opportunity', () => {
+  it('refuses one that lost more than half within the hour', () => {
+    expect(failedGates(clean({ priceChangePct: { h1: -62, h6: -10, h24: 5 } }))).toEqual(['freefall:failed'])
+  })
+
+  it('refuses one that lost more than half across six hours', () => {
+    expect(failedGates(clean({ priceChangePct: { h1: -4, h6: -55, h24: -60 } }))).toEqual(['freefall:failed'])
+  })
+
+  it('says how far it fell and over what', () => {
+    const [failure] = evaluateGates(clean({ priceChangePct: { h1: -3, h6: -70, h24: 0 } }), DEFAULT_GATE_POLICY).failures
+    expect(failure!.detail).toContain('70')
+    expect(failure!.detail).toContain('6h')
+  })
+
+  it('leaves a hard but survivable drop alone — that is what the ladder is for', () => {
+    // Down 40% is exactly the shape the cascade exists to buy into. A gate that
+    // rejected it would be a stop loss applied before the position opens.
+    expect(failedGates(clean({ priceChangePct: { h1: -18, h6: -40, h24: -45 } }))).toEqual([])
+  })
+
+  it('never reads the 24h window, where a whole day of noise adds up', () => {
+    // Half a day is not "in freefall", it is a bad day, and the strategy was
+    // built for bad days.
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -80 } }))).toEqual([])
+  })
+
+  it('stays quiet when the provider reported nothing — silence is not a crash', () => {
+    expect(failedGates(clean({ priceChangePct: { h1: null, h6: null, h24: null } }))).toEqual([])
+  })
+
+  it('is not fooled by a rise', () => {
+    expect(failedGates(clean({ priceChangePct: { h1: 220, h6: 340, h24: 900 } }))).toEqual([])
   })
 })
