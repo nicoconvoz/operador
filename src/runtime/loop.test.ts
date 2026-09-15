@@ -281,3 +281,32 @@ describe('runLoop — it begins with what it already knows', () => {
     expect(scans).toBe(1)
   })
 })
+
+describe('runLoop — it says what it did, every pass', () => {
+  it('reports each pass, so silence means stopped rather than working', async () => {
+    const seen: string[] = []
+    const { deps } = rig({ recall: async () => ({ candidates: [], scannedAt: NOW - 60_000 }) })
+
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0, sleep: async () => {}, maxCycles: 2, scanIntervalMs: 10 * 60_000,
+      onPass: (result) => seen.push(result.kind),
+    })
+
+    // A watch pass prints nothing of its own — no scan, no progress — so four
+    // minutes of empty log looked exactly like a hang. It was a working engine.
+    expect(seen).toEqual(['watch', 'watch'])
+  })
+
+  it('reports a failed pass too, rather than going quiet on the one that matters', async () => {
+    const passes: unknown[] = []
+    const { deps } = rig({ candlesFor: async () => { throw new Error('provider down') } })
+
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0, sleep: async () => {}, maxCycles: 1, backoffMs: 0,
+      onPass: (result) => passes.push(result),
+      stopSignal: Promise.resolve(),
+    })
+
+    expect(passes).toEqual([])
+  })
+})

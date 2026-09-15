@@ -42,6 +42,16 @@ export interface LoopOptions {
    * opportunity missed by an hour is only missed.
    */
   readonly scanIntervalMs?: number
+  /**
+   * Called after every pass that completed.
+   *
+   * A WATCH pass prints nothing of its own — it runs no scan, so there is no
+   * progress to report — and four minutes of empty log looked exactly like a
+   * hung process. It was a working engine advancing bars. A silent engine is
+   * indistinguishable from a dead one, which is the whole reason the heartbeat
+   * exists; the log deserves the same courtesy.
+   */
+  readonly onPass?: (result: CycleResult, elapsedMs: number) => void
 }
 
 export interface LoopReport {
@@ -99,7 +109,9 @@ export async function runLoop(
           ? 'full'
           : 'watch'
 
+      const startedAt = deps.now()
       lastResult = await runCycle(deps, config, throttle, kind)
+      options.onPass?.(lastResult, deps.now() - startedAt)
       cycles++
       // Stamped AFTER the pass, not before: the interval is time between the
       // end of one scan and the start of the next, so a scan that took half an

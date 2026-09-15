@@ -363,6 +363,23 @@ export async function main(ports: RuntimePorts): Promise<void> {
     stopSignal,
     // 0 means run forever. A scheduler sets 1 and gets a single cycle.
     ...(config.maxCycles > 0 ? { maxCycles: config.maxCycles } : {}),
+    // Every pass, not just the ones that scan. Without this a watch pass was
+    // four minutes of empty log, which reads as a hung process rather than an
+    // engine quietly advancing bars.
+    onPass: (result, elapsedMs) => {
+      const bars = result.ticks.reduce((most, tick) => Math.max(most, tick.barsAdvanced), 0)
+      console.log(
+        `[${result.kind}]`,
+        JSON.stringify({
+          positions: result.ticks.length,
+          bars,
+          opened: result.opened.length,
+          released: result.releasedIds.length,
+          halted: result.haltedIds.length,
+          seconds: Math.round(elapsedMs / 1000),
+        }),
+      )
+    },
   })
 
   console.log('[exit]', JSON.stringify(report.stoppedBy), report.cycles, 'cycles')
