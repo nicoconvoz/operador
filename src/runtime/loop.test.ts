@@ -228,3 +228,56 @@ describe('runLoop — watching runs faster than scanning', () => {
     expect(spy.seen).toHaveLength(3)
   })
 })
+
+// ── A restart does not owe a scan it already has ────────────────────────────
+//
+// The first pass always scanned, so every restart spent half an hour of
+// throttled discovery before it could put anything in a free slot — even with
+// a scan minutes old sitting in the database. Cancel a run and relaunch it and
+// the clock started over; three relaunches in twenty-three minutes never once
+// reached the allocation step.
+//
+// A shelf fresh enough to ALLOCATE from is fresh enough to START from.
+
+describe('runLoop — it begins with what it already knows', () => {
+  it('starts by watching when the shelf is recent, so slots fill in seconds', async () => {
+    let scans = 0
+    const { deps } = rig({
+      scan: async () => { scans++; return [] },
+      recall: async () => ({ candidates: [], scannedAt: NOW - 60_000 }),
+    })
+
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0, sleep: async () => {}, maxCycles: 1, scanIntervalMs: 10 * 60_000,
+    })
+
+    expect(scans).toBe(0)
+  })
+
+  it('scans first when there is no shelf at all', async () => {
+    let scans = 0
+    const { deps } = rig({ scan: async () => { scans++; return [] }, recall: async () => null })
+
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0, sleep: async () => {}, maxCycles: 1, scanIntervalMs: 10 * 60_000,
+    })
+
+    expect(scans).toBe(1)
+  })
+
+  it('scans first when the shelf is already past its window', async () => {
+    let scans = 0
+    let clock = NOW
+    const { deps } = rig({
+      scan: async () => { scans++; return [] },
+      recall: async () => ({ candidates: [], scannedAt: NOW - 60 * 60_000 }),
+      now: () => clock,
+    })
+
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0, sleep: async () => { clock += 1000 }, maxCycles: 1, scanIntervalMs: 10 * 60_000,
+    })
+
+    expect(scans).toBe(1)
+  })
+})

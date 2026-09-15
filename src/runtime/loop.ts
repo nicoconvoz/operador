@@ -65,7 +65,18 @@ export async function runLoop(
   options.stopSignal?.then(() => { stop = true })
 
   let cycles = 0
-  let lastScanAt: number | null = null
+  // A shelf fresh enough to ALLOCATE from is fresh enough to START from.
+  //
+  // The first pass always scanned, so every restart spent half an hour of
+  // throttled discovery before it could put anything in a free slot — with a
+  // scan minutes old sitting in the database. Cancel a run, relaunch it, and
+  // the clock started over: three relaunches in twenty-three minutes never once
+  // reached the allocation step, and from outside that is indistinguishable
+  // from a book that refuses to grow.
+  //
+  // `recall` returns nothing when the shelf is missing or past its window, so
+  // this stays null and the first pass scans, which is the right answer then.
+  let lastScanAt: number | null = (await deps.recall?.())?.scannedAt ?? null
   let failures = 0
   let consecutiveFailures = 0
   let lastResult: CycleResult | null = null

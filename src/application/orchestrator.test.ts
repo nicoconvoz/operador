@@ -626,7 +626,7 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
     let scans = 0
     const { deps, throttle } = rig({
       scan: async () => { scans++; return [] },
-      recall: async () => ({ candidates: await shelved() }),
+      recall: async () => ({ candidates: await shelved(), scannedAt: NOW - 60_000 }),
     })
 
     const result = await runCycle(deps, config, throttle, 'watch')
@@ -641,7 +641,7 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
   })
 
   it('never swaps one token for another on a watch pass', async () => {
-    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: await shelved() }) })
+    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: await shelved(), scannedAt: NOW - 60_000 }) })
     await store.savePosition(position({ id: 'idle-1', tokenAddress: 'Idle', symbol: 'IDLE', openedAt: NOW - 9 * HOUR, lastBarTime: NOW }))
 
     // Taking a slot off one token and giving it to another is a judgement about
@@ -653,7 +653,7 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
   })
 
   it('still refuses a token it already holds, or one on the blacklist', async () => {
-    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: [candidate('a', 90), candidate('b', 85)] }) })
+    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: [candidate('a', 90), candidate('b', 85)], scannedAt: NOW - 60_000 }) })
     await store.savePosition(position({ tokenAddress: 'a', symbol: 'A', lastBarTime: NOW }))
     await store.blacklist('solana', 'b', 'died', NOW - HOUR)
 

@@ -71,7 +71,7 @@ export interface CycleDeps {
    * and the deciding half is pure. Returns nothing when the shelf is empty or
    * too old to count as evidence.
    */
-  readonly recall?: () => Promise<{ readonly candidates: readonly Candidate[] } | null>
+  readonly recall?: () => Promise<{ readonly candidates: readonly Candidate[]; readonly scannedAt: number } | null>
   readonly now: () => number
 }
 
