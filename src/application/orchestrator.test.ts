@@ -662,3 +662,56 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
     expect(result.opened).toEqual([])
   })
 })
+
+// ── Zero means no ceiling, everywhere it is read ────────────────────────────
+//
+// `maxPositions: 0` was given the meaning "the capital decides" inside
+// planPortfolio, and the orchestrator went on computing `maxPositions - open`
+// to get the slots left. With five positions open that is MINUS FIVE, and the
+// guard is `slotsLeft > 0`, so the book froze at five while $950 of freed
+// capital and thirty-eight candidates sat waiting.
+//
+// A sentinel that means one thing in one file and another thing next door is
+// not a sentinel, it is a trap.
+
+describe('runCycle — no ceiling means no ceiling', () => {
+  const uncapped: CycleConfig = {
+    ...config,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 },
+    maxOpenEntries: 6,
+    gasUsdPerSwap: 0.05,
+    portfolio: { ...config.portfolio, totalCapitalUsd: 1_500, maxPositions: 0 },
+  }
+
+  const many = async () => Array.from({ length: 30 }, (_, i) => candidate(`t${i}`, 90 - i))
+
+  it('keeps opening past the number already held', async () => {
+    const { deps, store, throttle } = rig({ scan: many })
+    for (let i = 0; i < 5; i++) {
+      await store.savePosition(position({ id: `p${i}`, tokenAddress: `H${i}`, symbol: `H${i}`, capitalUsd: 95.09, lastBarTime: NOW }))
+    }
+
+    const result = await runCycle(deps, uncapped, throttle)
+
+    expect(result.opened.length).toBeGreaterThan(0)
+  })
+
+  it('fills the book to what the capital carries, not to what is already in it', async () => {
+    const { deps, throttle } = rig({ scan: many })
+
+    // $1,500 at a $95 ladder is about fourteen.
+    const result = await runCycle(deps, uncapped, throttle)
+
+    expect(result.opened.length).toBeGreaterThanOrEqual(13)
+  })
+
+  it('still stops at an explicit ceiling', async () => {
+    const { deps, store, throttle } = rig({ scan: many })
+    await store.savePosition(position({ id: 'p0', tokenAddress: 'H0', symbol: 'H0', capitalUsd: 95.09, lastBarTime: NOW }))
+
+    const result = await runCycle(deps, { ...uncapped, portfolio: { ...uncapped.portfolio, maxPositions: 3 } }, throttle)
+
+    // One already open, so two more and no further.
+    expect(result.opened).toHaveLength(2)
+  })
+})

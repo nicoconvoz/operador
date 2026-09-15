@@ -298,7 +298,19 @@ export async function runCycle(
     // is most of it. Costs come out, because that cash is already gone.
     const fund = commonFund(await deps.store.allFills())
     const free = Math.max(0, config.portfolio.totalCapitalUsd + fund.netUsd - committed)
-    const slotsLeft = config.portfolio.maxPositions - keeping.length - recovery.halted.length
+    // Zero is NOT a ceiling of zero — it means the capital decides, and that
+    // meaning has to hold here as well as inside planPortfolio. Subtracting the
+    // open positions from it gave MINUS FIVE with five open, and minus five
+    // fails the guard below: the book froze while $950 of freed capital and
+    // thirty-eight candidates sat waiting. With an empty book it gave zero,
+    // which fails the same guard, so nothing would ever have opened at all.
+    //
+    // A sentinel that means one thing in one file and another next door is not
+    // a sentinel, it is a trap.
+    const uncapped = config.portfolio.maxPositions <= 0
+    const slotsLeft = uncapped
+      ? Number.POSITIVE_INFINITY
+      : config.portfolio.maxPositions - keeping.length - recovery.halted.length
 
     // A token that just gave up its slot must not win it straight back in the
     // same breath: that is not a reallocation, it is a round trip through the
@@ -315,7 +327,8 @@ export async function runCycle(
         {
           ...config.portfolio,
           totalCapitalUsd: free,
-          maxPositions: slotsLeft,
+          // Back into planPortfolio's own convention on the way out.
+          maxPositions: uncapped ? 0 : slotsLeft,
           // The floor is DERIVED, never remembered. `minPositionUsd` was 200
           // from a real measurement — the first capital-floor run placed no
           // orders below it — taken BEFORE sizing began reserving gas and 5%
