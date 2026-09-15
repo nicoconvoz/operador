@@ -8,7 +8,9 @@ import type { UniverseToken, UniverseView, TokenTier } from '../../src/applicati
  *
  * Every mark on screen is a real measurement, not decoration:
  *
- *   ring position  ← tier: held at the centre, dead drifting at the edge
+ *   colour + glow  ← tier. NOT the distance from the centre: the sky is mixed
+ *                    on purpose, so a position sits among the candidates
+ *                    instead of on a lane of its own
  *   size           ← liquidity (log scale, or a memecoin and a bluechip
  *                    cannot share a screen)
  *   colour         ← tier
@@ -37,15 +39,15 @@ import type { UniverseToken, UniverseView, TokenTier } from '../../src/applicati
  * into "en" — chips that read as nothing at all. A shorter name is a different
  * name, not a prefix of the longer one.
  */
-const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string; short: string; ring: number }> = {
-  held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', short: 'operando', ring: 0.2 },
-  prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', short: 'óptima', ring: 0.42 },
-  eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', short: 'elegible', ring: 0.62 },
+const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string; short: string }> = {
+  held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', short: 'operando' },
+  prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', short: 'óptima' },
+  eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', short: 'elegible' },
   // Violet, between eligible and filtered: it is queued, not judged.
-  pending: { core: '#9d7cd8', halo: '157,124,216', label: 'SIN REVISAR', short: 'pendiente', ring: 0.71 },
-  filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', short: 'filtrada', ring: 0.8 },
-  unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'INSEGURA', short: 'insegura', ring: 0.93 },
-  dead: { core: '#3a2030', halo: '90,40,60', label: 'MUERTA', short: 'muerta', ring: 1.02 },
+  pending: { core: '#9d7cd8', halo: '157,124,216', label: 'SIN REVISAR', short: 'pendiente' },
+  filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', short: 'filtrada' },
+  unsafe: { core: '#ff6b6b', halo: '255,107,107', label: 'INSEGURA', short: 'insegura' },
+  dead: { core: '#3a2030', halo: '90,40,60', label: 'MUERTA', short: 'muerta' },
 }
 
 /** The score's own vocabulary, in the language the reader speaks. */
@@ -152,6 +154,35 @@ export function Universe({ view }: { view: UniverseView }) {
    */
   const anglesRef = useRef<Map<string, number>>(new Map())
   const [chainFilter, setChainFilter] = useState<string | 'all'>('all')
+  /**
+   * Zoom and pan, in a ref rather than in state.
+   *
+   * The draw loop reads them sixty times a second; putting them in state would
+   * tear down and rebuild the whole animation effect on every pinch frame, and
+   * the sky would stutter exactly while being looked at closely.
+   */
+  const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 })
+  const [zoomLabel, setZoomLabel] = useState(1)
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null)
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number; moved: number } | null>(null)
+
+  const MIN_ZOOM = 1
+  const MAX_ZOOM = 6
+
+  /** Zoom about a point, so what is under the finger stays under the finger. */
+  const zoomTo = (next: number, aboutX?: number, aboutY?: number) => {
+    const view = viewRef.current
+    const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
+    if (aboutX !== undefined && aboutY !== undefined) {
+      const ratio = clamped / view.zoom
+      view.panX = aboutX - (aboutX - view.panX) * ratio
+      view.panY = aboutY - (aboutY - view.panY) * ratio
+    }
+    view.zoom = clamped
+    // At rest the sky is centred; a pan that survives a zoom-out strands it.
+    if (clamped === MIN_ZOOM) { view.panX = 0; view.panY = 0 }
+    setZoomLabel(clamped)
+  }
   const [tierFilter, setTierFilter] = useState<TokenTier | 'all'>('all')
   const [paused, setPaused] = useState(false)
   const [compact, setCompact] = useState(false)
@@ -212,17 +243,18 @@ export function Universe({ view }: { view: UniverseView }) {
     // one unreadable blob. Spacing them evenly around their own ring, with a
     // little jitter so it does not look like a clock face, keeps every body
     // reachable by a fingertip.
-    const perTier = new Map<TokenTier, number>()
-    for (const token of visible) perTier.set(token.tier, (perTier.get(token.tier) ?? 0) + 1)
     const seen = new Map<TokenTier, number>()
 
-    const tokenBodies: Body[] = visible.map((token) => {
+    const tokenBodies: Body[] = visible.map((token, index) => {
         const seed = hash(token.id)
         const style = TIER_STYLE[token.tier]
-        const index = seen.get(token.tier) ?? 0
-        seen.set(token.tier, index + 1)
-        const slots = perTier.get(token.tier) ?? 1
-        const spread = (index / slots) * Math.PI * 2 + (seed - 0.5) * (Math.PI / slots)
+        seen.set(token.tier, (seen.get(token.tier) ?? 0) + 1)
+        // Spread around the whole disc rather than around a tier's own ring.
+        // Evenly by index so three tokens cannot land in the same few degrees
+        // and become one unreadable blob, with a little jitter so it does not
+        // read as a clock face.
+        const spread =
+          (index / Math.max(visible.length, 1)) * Math.PI * 2 + (seed - 0.5) * (Math.PI / Math.max(visible.length, 1))
         // Liquidity spans six orders of magnitude; log keeps a $40k pool and a
         // $5M pool on the same screen without one becoming a dot.
         const size = Math.log10(Math.max(token.liquidityUsd, 1_000)) - 3
@@ -232,7 +264,11 @@ export function Universe({ view }: { view: UniverseView }) {
           token,
           cluster: null,
           key: token.id,
-          orbit: style.ring + (seed - 0.5) * 0.07,
+          // Radius comes from the TOKEN, not from its tier: the sky is mixed, so
+          // a position sits among the candidates instead of on a lane of its
+          // own. sqrt because a uniform radius clumps everything at the centre
+          // — area grows with r², so the radius has to grow with its root.
+          orbit: Math.sqrt(hash(`${token.id}:r`)) * 0.94 + 0.06,
           angle: anglesRef.current.get(token.id) ?? spread,
           // Lively tokens orbit faster; held ones barely drift, so they anchor.
           speed: (token.tier === 'held' ? 0.04 : 0.11) * (0.35 + Math.min(volatility, 40) / 40) * (seed > 0.5 ? 1 : -1),
@@ -255,7 +291,9 @@ export function Universe({ view }: { view: UniverseView }) {
         token: null,
         cluster,
         key,
-        orbit: style.ring,
+        // Kept to the outside: a cluster is a summary of things not worth
+        // looking at individually, and it is big enough to hide what is.
+        orbit: 0.82 + hash(key) * 0.14,
         angle: anglesRef.current.get(key) ?? (index / Math.max(clusters.length, 1)) * Math.PI * 2 + 0.6,
         speed: 0.03,
         radius: (compact ? 9 : 12) + Math.log10(Math.max(cluster.count, 1)) * (compact ? 4 : 6),
@@ -306,9 +344,10 @@ export function Universe({ view }: { view: UniverseView }) {
     function draw() {
       const w = canvas!.clientWidth
       const h = canvas!.clientHeight
-      const cx = w / 2
-      const cy = h / 2
-      const unit = Math.min(w, h) / 2 - (compact ? 18 : 30)
+      const view = viewRef.current
+      const cx = w / 2 + view.panX
+      const cy = h / 2 + view.panY
+      const unit = (Math.min(w, h) / 2 - (compact ? 18 : 30)) * view.zoom
 
       ctx!.fillStyle = '#070910'
       ctx!.fillRect(0, 0, w, h)
@@ -319,14 +358,9 @@ export function Universe({ view }: { view: UniverseView }) {
       const sunReach = (compact ? 30 : 40) + corePulse * 8
       ctx!.drawImage(glows.get('prime')!, cx - sunReach, cy - sunReach, sunReach * 2, sunReach * 2)
 
-      // Faint orbit guides, so the rings read as tiers rather than as chaos.
-      ctx!.strokeStyle = 'rgba(255,255,255,0.035)'
-      ctx!.lineWidth = 1
-      for (const tier of TIER_ORDER) {
-        ctx!.beginPath()
-        ctx!.arc(cx, cy, TIER_STYLE[tier].ring * unit, 0, Math.PI * 2)
-        ctx!.stroke()
-      }
+      // No ring guides any more. They drew the TIER lanes, and the sky is
+      // mixed now: a guide under a disc nobody is sorted into would be a line
+      // pretending to mean something.
 
       for (const body of bodies) {
         if (!paused && !still) {
@@ -335,6 +369,9 @@ export function Universe({ view }: { view: UniverseView }) {
           // restarting it.
           angles.set(body.key, body.angle)
         }
+        // The bodies grow with the zoom, but slower than the distances do:
+        // magnifying a dot to the size of a coin is not what zoom is for.
+        const scale = Math.sqrt(view.zoom)
         const r = body.orbit * unit
         body.x = cx + Math.cos(body.angle) * r
         body.y = cy + Math.sin(body.angle) * r * 0.82 // slight tilt, so it reads as a disc
@@ -343,6 +380,7 @@ export function Universe({ view }: { view: UniverseView }) {
         const tier = token?.tier ?? cluster!.tier
         const chain = token?.chain ?? cluster!.chain
         const style = TIER_STYLE[tier]
+        const drawn = body.radius * scale
         const isSelected = selectedId === body.key
         const isHovered = hoveredId === body.key
 
@@ -350,7 +388,7 @@ export function Universe({ view }: { view: UniverseView }) {
         for (let i = 0; i < body.ripples; i++) {
           const progress = (t * (0.5 + body.strength) * 0.012 + body.phase + i / body.ripples) % 1
           ctx!.beginPath()
-          ctx!.arc(body.x, body.y, body.radius + progress * (18 + body.strength * 30), 0, Math.PI * 2)
+          ctx!.arc(body.x, body.y, drawn + progress * (18 + body.strength * 30) * scale, 0, Math.PI * 2)
           ctx!.strokeStyle = `rgba(${style.halo},${(0.34 * (1 - progress) * body.strength).toFixed(3)})`
           ctx!.lineWidth = 1.4
           ctx!.stroke()
@@ -359,14 +397,14 @@ export function Universe({ view }: { view: UniverseView }) {
         // ── Glow: money is in it. One blit, no gradient. ────────────────────
         if (tier === 'held') {
           const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * 0.05 + body.phase)
-          const reach = body.radius * (5 + pulse * 2.5)
+          const reach = drawn * (5 + pulse * 2.5)
           const sprite = token?.position?.deathStage === 'frozen' ? frozenGlow : glows.get('held')!
           ctx!.drawImage(sprite, body.x - reach, body.y - reach, reach * 2, reach * 2)
         }
 
         if (isSelected || isHovered) {
           ctx!.beginPath()
-          ctx!.arc(body.x, body.y, body.radius + 9, 0, Math.PI * 2)
+          ctx!.arc(body.x, body.y, drawn + 9, 0, Math.PI * 2)
           ctx!.strokeStyle = '#ffffff'
           ctx!.lineWidth = isSelected ? 2 : 1
           ctx!.stroke()
@@ -377,14 +415,14 @@ export function Universe({ view }: { view: UniverseView }) {
         ctx!.fillStyle = style.core
         ctx!.beginPath()
         if (chain === 'bsc') {
-          const s = body.radius
+          const s = drawn
           ctx!.moveTo(body.x, body.y - s)
           ctx!.lineTo(body.x + s, body.y)
           ctx!.lineTo(body.x, body.y + s)
           ctx!.lineTo(body.x - s, body.y)
           ctx!.closePath()
         } else {
-          ctx!.arc(body.x, body.y, body.radius, 0, Math.PI * 2)
+          ctx!.arc(body.x, body.y, drawn, 0, Math.PI * 2)
         }
         ctx!.fill()
         ctx!.globalAlpha = 1
@@ -395,24 +433,36 @@ export function Universe({ view }: { view: UniverseView }) {
           ctx!.textAlign = 'center'
           ctx!.fillStyle = style.core
           ctx!.font = `${compact ? 13 : 15}px ui-monospace, monospace`
-          ctx!.fillText(String(cluster.count), body.x, body.y + body.radius + 16)
+          ctx!.fillText(String(cluster.count), body.x, body.y + drawn + 16)
           ctx!.fillStyle = 'rgba(200,200,210,0.7)'
           ctx!.font = `${compact ? 9 : 10}px ui-monospace, monospace`
           ctx!.fillText(
             `${chain === 'bsc' ? 'BSC' : 'SOL'} ${style.short}`,
             body.x,
-            body.y + body.radius + (compact ? 28 : 31),
+            body.y + drawn + (compact ? 28 : 31),
           )
           continue
         }
 
-        // Labels only where they can be read. On a phone, only what is touched.
-        const labelled = isHovered || isSelected || tier === 'held' || (!compact && tier === 'prime')
+        // Named: everything the executor is allowed to act on.
+        //
+        // The label used to be reserved for held tokens and, on a wide screen,
+        // for prime — so an ÓPTIMA and an ELEGIBLE were anonymous dots, and
+        // "which one is that" needed a tap. They are the shortlist; a shortlist
+        // whose members have no names is a picture of a shortlist.
+        //
+        // The clutter that argument was protecting against is now navigable:
+        // the sky zooms, and the tiers that come in dozens are collapsed into
+        // clusters rather than drawn one by one.
+        const NAMED: readonly TokenTier[] = ['held', 'prime', 'eligible']
+        const labelled = isHovered || isSelected || NAMED.includes(tier)
         if (labelled) {
-          ctx!.fillStyle = 'rgba(230,230,230,0.85)'
-          ctx!.font = `${compact ? 10 : 11}px ui-monospace, monospace`
+          // Held keeps the brightest label: it is the only tier with money in
+          // it, and at a glance that distinction has to survive the crowd.
+          ctx!.fillStyle = tier === 'held' ? 'rgba(235,235,235,0.92)' : 'rgba(210,214,222,0.62)'
+          ctx!.font = `${(compact ? 10 : 11) * Math.min(scale, 1.6)}px ui-monospace, monospace`
           ctx!.textAlign = 'center'
-          ctx!.fillText(token!.symbol.slice(0, 12), body.x, body.y + body.radius + 14)
+          ctx!.fillText(token!.symbol.slice(0, 12), body.x, body.y + drawn + 14 * Math.min(scale, 1.6))
         }
       }
 
@@ -438,7 +488,7 @@ export function Universe({ view }: { view: UniverseView }) {
     for (const body of bodies) {
       const distance = Math.hypot(body.x - x, body.y - y)
       // A generous radius on touch: fingers are not mice.
-      const reach = body.radius + (compact ? 22 : 10)
+      const reach = body.radius * Math.sqrt(viewRef.current.zoom) + (compact ? 22 : 10)
       if (distance < reach && (!best || distance < best.distance)) best = { body, distance }
     }
     return best?.body ?? null
@@ -504,16 +554,69 @@ export function Universe({ view }: { view: UniverseView }) {
         <Chip active={paused} onClick={() => setPaused((p) => !p)}>
           {paused ? '▶' : '❚❚'}
         </Chip>
+        {/* Buttons as well as gestures. A pinch is not discoverable, and on a
+            trackpad it is not available at all. */}
+        <Chip active={false} onClick={() => zoomTo(viewRef.current.zoom * 1.5)}>＋</Chip>
+        <Chip active={false} onClick={() => zoomTo(viewRef.current.zoom / 1.5)}>－</Chip>
+        {zoomLabel > 1 && (
+          <Chip active onClick={() => zoomTo(1)}>
+            {zoomLabel.toFixed(1)}× ✕
+          </Chip>
+        )}
       </div>
 
       <canvas
         ref={canvasRef}
+        onWheel={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect()
+          zoomTo(viewRef.current.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX - rect.left, e.clientY - rect.top)
+        }}
         onMouseMove={(e) => !compact && setHoveredId(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect())?.key ?? null)}
         onMouseLeave={() => setHoveredId(null)}
         onClick={(e) => tap(pickAt(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect()))}
         onTouchStart={(e) => {
+          if (e.touches.length === 2) {
+            const [a, b] = [e.touches[0]!, e.touches[1]!]
+            pinchRef.current = { distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: viewRef.current.zoom }
+            dragRef.current = null
+            return
+          }
           const touch = e.touches[0]
-          if (touch) tap(pickAt(touch.clientX, touch.clientY, e.currentTarget.getBoundingClientRect()))
+          if (!touch) return
+          // A drag and a tap start identically. Which one it was is decided at
+          // the END, by how far the finger travelled — otherwise panning the
+          // sky would open a detail sheet every time.
+          dragRef.current = { x: touch.clientX, y: touch.clientY, panX: viewRef.current.panX, panY: viewRef.current.panY, moved: 0 }
+        }}
+        onTouchMove={(e) => {
+          if (e.touches.length === 2 && pinchRef.current) {
+            const [a, b] = [e.touches[0]!, e.touches[1]!]
+            const rect = e.currentTarget.getBoundingClientRect()
+            const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+            zoomTo(
+              pinchRef.current.zoom * (distance / pinchRef.current.distance),
+              (a.clientX + b.clientX) / 2 - rect.left,
+              (a.clientY + b.clientY) / 2 - rect.top,
+            )
+            return
+          }
+          const touch = e.touches[0]
+          const drag = dragRef.current
+          if (!touch || !drag || viewRef.current.zoom <= MIN_ZOOM) return
+          const dx = touch.clientX - drag.x
+          const dy = touch.clientY - drag.y
+          drag.moved = Math.max(drag.moved, Math.hypot(dx, dy))
+          viewRef.current.panX = drag.panX + dx
+          viewRef.current.panY = drag.panY + dy
+        }}
+        onTouchEnd={(e) => {
+          pinchRef.current = null
+          const drag = dragRef.current
+          dragRef.current = null
+          // Eight pixels of slack: a finger never holds perfectly still, and a
+          // tap that needs stillness is a tap that keeps missing.
+          if (!drag || drag.moved > 8) return
+          tap(pickAt(drag.x, drag.y, e.currentTarget.getBoundingClientRect()))
         }}
         style={{
           width: '100%',
@@ -524,8 +627,9 @@ export function Universe({ view }: { view: UniverseView }) {
           borderRadius: 12,
           background: '#070910',
           cursor: hovered ? 'pointer' : 'default',
-          // The canvas is the interaction surface; let it own the gesture.
-          touchAction: 'manipulation',
+          // The canvas owns every gesture: pinch to zoom, drag to pan. Letting
+          // the browser keep them would scroll the page instead.
+          touchAction: 'none',
         }}
       />
 
@@ -576,17 +680,75 @@ function Hint({ token }: { token: UniverseToken }) {
   )
 }
 
+/**
+ * The token's own screen, and a sheet you throw away.
+ *
+ * It used to be a panel under the canvas with a 34vh cap on a phone, so the
+ * thing you had just tapped to read about was the thing you had to scroll
+ * inside a letterbox to read. Full screen costs nothing here — the sky is not
+ * being watched while a token is being read — and it buys every row at a
+ * legible size.
+ *
+ * Dismissed by dragging DOWN, because that is the gesture the shape already
+ * promises: a sheet that came up from the bottom goes back down. The ✕ stays
+ * for pointers and for anyone who does not know the gesture.
+ */
 function Detail({ token, compact, onClose }: { token: UniverseToken; compact: boolean; onClose: () => void }) {
   const style = TIER_STYLE[token.tier]
+  const [dragY, setDragY] = useState(0)
+  const startRef = useRef<number | null>(null)
+
+  // Only from the top of the sheet, and only downward: a drag that started
+  // halfway down a scrolled list is someone scrolling, not someone leaving.
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
   return (
-    <div style={{ ...panel(14, compact), maxHeight: compact ? '34vh' : 'none', overflowY: 'auto' }}>
+    <div
+      role="dialog"
+      aria-label={token.symbol}
+      onTouchStart={(e) => {
+        if ((scrollRef.current?.scrollTop ?? 0) > 0) return
+        startRef.current = e.touches[0]?.clientY ?? null
+      }}
+      onTouchMove={(e) => {
+        const start = startRef.current
+        const y = e.touches[0]?.clientY
+        if (start === null || y === undefined) return
+        setDragY(Math.max(0, y - start))
+      }}
+      onTouchEnd={() => {
+        // A quarter of the screen. Less and a scroll that overshoots the top
+        // throws the sheet away; more and the gesture stops feeling like one.
+        if (dragY > window.innerHeight * 0.25) onClose()
+        setDragY(0)
+        startRef.current = null
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
+        background: '#0b0e16',
+        transform: `translateY(${dragY}px)`,
+        transition: dragY === 0 ? 'transform 180ms ease-out' : 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        overscrollBehavior: 'contain',
+      }}
+    >
+      {/* The handle is the instruction. Nobody reads "swipe down to close". */}
+      <div style={{ padding: '10px 0 4px', display: 'flex', justifyContent: 'center', flex: '0 0 auto' }}>
+        <div style={{ width: 44, height: 5, borderRadius: 3, background: '#2a3240' }} />
+      </div>
+
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: compact ? '4px 16px 28px' : '4px 22px 28px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <strong style={{ color: style.core, fontSize: 16 }}>
+        <strong style={{ color: style.core, fontSize: 22 }}>
           {token.chain === 'bsc' ? '◆' : '●'} {token.symbol}
         </strong>
         <button
           onClick={onClose}
-          style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', font: 'inherit', fontSize: 18, minWidth: 32, minHeight: 32 }}
+          aria-label="cerrar"
+          style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer', font: 'inherit', fontSize: 22, minWidth: 44, minHeight: 44 }}
         >
           ✕
         </button>
@@ -622,6 +784,7 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
           ))}
         </div>
       )}
+      </div>
     </div>
   )
 }

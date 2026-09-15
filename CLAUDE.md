@@ -817,7 +817,7 @@ Every mark is a measurement, not decoration:
 
 | Mark | Means |
 |---|---|
-| Ring | tier — held nearest the sun, dead drifting at the edge |
+| Colour + glow | tier |
 | Size | liquidity, on a log scale (a $40k pool and a $5M one must share a screen) |
 | Colour | tier |
 | Glow | money is in it; blue instead of green when the death watch froze it |
@@ -830,9 +830,30 @@ The tiers separate two things a single "rejected" list would conflate:
 SAFETY gate. One is a missed chance; the other is a bullet dodged, and they
 should not look alike.
 
+**Position in the sky is deliberately meaningless.** It used to encode the tier
+as a ring, which sorted every token onto a lane of its own — and a held token on
+its own lane is a held token you cannot compare to anything. Bodies are now
+spread across the whole disc by a hash of their address, on a `sqrt` radius so
+they do not clump at the centre, and the tier survives in the colour, the glow
+and the label. The user's words for it: mixed in with the others.
+
 Tapping a body opens what it knows — score, liquidity, age, round-trip cost,
 and **the five score components as bars**, so "why is this ranked here" is
-answerable without reading code.
+answerable without reading code. That opens FULL SCREEN and is thrown away by
+dragging down: it used to be a panel capped at 34vh on a phone, so the thing you
+tapped to read about was the thing you then read through a letterbox.
+
+**The sky zooms** — pinch, wheel, or the ＋/－ chips — up to 6×, about the point
+under the finger so what you were looking at stays where it was. Bodies grow on
+the square root of the zoom: magnifying a dot into a coin is not what zoom is
+for. A drag pans, and tap versus drag is decided at the END by how far the
+finger travelled, because a pan that opens a detail sheet is a pan nobody can
+perform.
+
+**Every token the executor may act on is named** — held, prime and eligible. The
+label was once reserved for held, so the shortlist was a crowd of anonymous
+dots, which is a picture of a shortlist rather than a shortlist. The tiers that
+arrive in dozens are collapsed into clusters, so naming the rest costs nothing.
 
 It runs on a phone, which forced four decisions:
 
