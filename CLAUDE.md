@@ -487,6 +487,16 @@ Solana at $0.01 a swap and reckless on a congested chain at $0.20.
 | $0.05 | **$5** (the default) |
 | $0.20 | $20 |
 
+**`OPERADOR_MAX_USD_PER_LEVEL` is that cap, and it defaults to 15.** It is NOT
+`DEFAULT_PARAMS.maxUsdPerLevel`, which is 5,000 because that is what
+TradingView ran — the parity harness asserts those params are exactly the
+backtest's inputs, so they are evidence and must not be edited to express a
+preference. The runtime composes `{ ...DEFAULT_PARAMS, maxUsdPerLevel }`.
+
+This section claimed the $15 ladder for weeks while the runtime used
+`DEFAULT_PARAMS` directly and ran a $1,000 level 0 in production. Documenting a
+choice is not making it.
+
 This is what makes a **$15 ladder** viable: `max_usd_cap = 15` produces a FLAT
 ladder — `min(1000 × (1 + 1.2n), 15)` is $15 at every level — totalling $150
 over ten fills, where gas is 0.33% of each. The old $20 floor refused it

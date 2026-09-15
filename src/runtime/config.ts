@@ -47,6 +47,23 @@ export interface RuntimeConfig {
    * around five minutes. The rest are reported as unchecked, not dropped.
    */
   readonly maxSecurityChecks: number
+  /**
+   * USD cap per ladder level, in production.
+   *
+   * NOT `DEFAULT_PARAMS.maxUsdPerLevel`, which is 5,000 because that is what
+   * TradingView ran — the parity harness asserts those params are exactly the
+   * backtest's inputs, so they are evidence and must not be edited to express
+   * a preference.
+   *
+   * 15 is the user's decision for 15-minute bars, and it changes the SHAPE of
+   * the ladder as well as its size: `min(1000 × (1 + 1.2n), 15)` is $15 at
+   * every level, so the ladder is flat rather than growing. Ten fills come to
+   * $150, where gas at $0.05 a swap is 0.33% of each — which is what makes a
+   * ladder this small viable at all.
+   *
+   * Raise it as the capital grows. That was always the plan.
+   */
+  readonly maxUsdPerLevel: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -118,6 +135,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
     maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),
+    maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', 15),
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

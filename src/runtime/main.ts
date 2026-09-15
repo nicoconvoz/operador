@@ -284,7 +284,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   return {
     deps,
     cycleConfig: {
-      params: DEFAULT_PARAMS,
+      // The reference params with production's own ladder cap. DEFAULT_PARAMS
+      // stays untouched: it is what TradingView ran, and the parity harness
+      // asserts it.
+      params: { ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel },
       // The same numbers the broker charges, so the ladder is sized against
       // the costs it will actually pay rather than against a guess.
       gasUsdPerSwap: config.gasUsdPerSwap,

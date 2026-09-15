@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ConfigError, describeConfig, loadConfig } from './config.js'
+import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 
 const valid = {
   DATABASE_URL: 'postgres://user:secret@host:5432/db',
@@ -77,5 +78,18 @@ describe('loadConfig — bar size', () => {
   it('rejects a timeframe nobody has measured', () => {
     expect(() => loadConfig({ ...valid, OPERADOR_TIMEFRAME: '5m' })).toThrow(/1h/)
     expect(() => loadConfig({ ...valid, OPERADOR_TIMEFRAME: '4h' })).toThrow(ConfigError)
+  })
+})
+
+describe('loadConfig — the production ladder is not the reference ladder', () => {
+  it('caps each level at $15 by default — the size chosen for 15m bars', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(15)
+  })
+
+  it('scales up when the capital does, without touching the reference', () => {
+    expect(loadConfig({ ...valid, OPERADOR_MAX_USD_PER_LEVEL: '50' }).maxUsdPerLevel).toBe(50)
+    // DEFAULT_PARAMS is what TradingView ran, and the parity harness asserts
+    // it. Production making a different choice must never edit the evidence.
+    expect(DEFAULT_PARAMS.maxUsdPerLevel).toBe(5_000)
   })
 })
