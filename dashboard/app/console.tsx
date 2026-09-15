@@ -68,7 +68,7 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
 
   const { dashboard, universe, operations } = data
   const open = operations.positions.length
-  const net = operations.totals.unrealisedUsd
+  const { realisedUsd, unrealisedUsd, netUsd, costsUsd } = operations.totals
 
   return (
     <>
@@ -78,6 +78,27 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
           {dashboard.killSwitchEngaged ? '🛑 DETENIDO' : '▶️ Funcionando'}
         </span>
       </header>
+
+      {/* The profit, directly under the engine's state, on every tab.
+          It used to live inside Operaciones, which meant the one number the
+          system exists to produce was two taps away — and while the Universe
+          tab was open, invisible. */}
+      <section style={{ border: '1px solid #1f2630', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+        <div style={{ color: '#8b949e', fontSize: 12 }}>ganancia — cobrada + sin cobrar − costos</div>
+        <div style={{ fontSize: 34, lineHeight: 1.1, marginTop: 2, color: netUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>
+          {signed(netUsd)}
+        </div>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
+          <span style={{ color: realisedUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>{signed(realisedUsd)} cobrada</span>
+          <span style={{ color: unrealisedUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>{signed(unrealisedUsd)} sin cobrar</span>
+          {/* Costs never get netted away in silence: on small caps the chain
+              taking more than the edge is the most common way to lose. */}
+          <span style={{ color: '#8b949e' }}>{exact(costsUsd)} a la cadena</span>
+          <span style={{ color: '#8b949e' }}>
+            {operations.totals.buys} compra / {operations.totals.sells} venta
+          </span>
+        </div>
+      </section>
 
       {staleReason !== null && (
         <section style={{ border: '1px solid #ff6b6b', borderRadius: 8, padding: '8px 14px', marginBottom: 12, color: '#ff6b6b', fontSize: 13 }}>
@@ -98,7 +119,6 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
       <section style={{ display: 'flex', gap: 22, marginBottom: 14, flexWrap: 'wrap' }}>
         <Stat label="Posiciones" value={String(dashboard.totals.positions)} />
         <Stat label="Comprometido" value={money(dashboard.totals.committedUsd)} />
-        <Stat label="No realizado" value={`${net >= 0 ? '+' : ''}${money(net)}`} color={net >= 0 ? '#63e6a5' : '#ff6b6b'} />
         <Stat label="Universo" value={String(universe.tokens.length)} />
         <Stat label="Congeladas" value={String(dashboard.totals.frozen)} />
         <Stat label="En lista negra" value={String(dashboard.blacklistedCount)} />
@@ -124,6 +144,15 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
 }
 
 const money = (n: number) => `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+
+/**
+ * Cents, kept. The whole-dollar formatter above is right for committed capital
+ * and wrong for profit: on a $15 ladder a gain of $6.02 rounds to "$6" and
+ * $0.83 of chain costs round to "$0", which is the difference between a cost
+ * being visible and being invisible.
+ */
+const exact = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const signed = (n: number) => `${n >= 0 ? '+' : '−'}${exact(n)}`
 
 const ago = (ms: number) => {
   const minutes = Math.round((Date.now() - ms) / 60_000)

@@ -47,25 +47,14 @@ export function Operations({ view }: { view: OperationsView }) {
 
   return (
     <>
-      {/* GANANCIA first, and on its own line, because it is the question the
-          whole system exists to answer. It was missing entirely: a position
-          that sold everything showed nothing at all, so the only money the
-          system had genuinely made appeared nowhere. */}
-      <section style={{ ...card(), marginBottom: 12 }}>
-        <div style={{ color: DIM, fontSize: 12 }}>ganancia — realizada + abierta − costos</div>
-        <div style={{ fontSize: 30, marginTop: 2, color: totals.netUsd >= 0 ? UP : DOWN }}>{signed(totals.netUsd)}</div>
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 10 }}>
-          <Figure label="cobrada" value={signed(totals.realisedUsd)} color={totals.realisedUsd >= 0 ? UP : DOWN} />
-          <Figure label="sin cobrar" value={signed(totals.unrealisedUsd)} color={totals.unrealisedUsd >= 0 ? UP : DOWN} />
-          {/* Costs sit beside P&L on purpose: they are the same story, and on
-              small caps they are the reason most strategies lose. */}
-          <Figure label="pagado a la cadena" value={money(totals.costsUsd)} color={DIM} />
-        </div>
-      </section>
-
+      {/* The profit itself lives in the header now, above the tabs, so it is
+          visible from the Universe too. Repeating it here would be the same
+          number twice on one screen. What belongs here is the detail behind
+          it: what is committed and what it is worth right now. */}
       <section style={{ ...card(), display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 12 }}>
         <Figure label="desplegado" value={money(totals.deployedUsd)} />
         <Figure label="valor de mercado" value={money(totals.marketValueUsd)} />
+        <Figure label="pagado a la cadena" value={money(totals.costsUsd)} color={DIM} />
         <Figure label="ejecuciones" value={`${totals.buys} compra / ${totals.sells} venta`} color={DIM} />
       </section>
 
