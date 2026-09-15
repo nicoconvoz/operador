@@ -44,8 +44,12 @@ export interface RuntimeConfig {
    * sell probe each. Sharing a clock meant a held token got attention every
    * ~35 minutes on 15-minute bars.
    *
-   * Two hours is deliberate. A token you HOLD can rug in ten minutes; a new
-   * opportunity missed by an hour is a missed opportunity and nothing worse.
+   * ONE HOUR, the user's decision: scan only when there is no scan from the
+   * last hour, and spend the rest of the engine's life on the positions that
+   * already have money in them.
+   *
+   * A token you HOLD can rug in ten minutes; a new opportunity missed by an
+   * hour is a missed opportunity and nothing worse.
    */
   readonly scanIntervalMs: number
   /** How often the death watch re-probes the sell path of open positions. */
@@ -198,7 +202,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxPositions: numberOrZero(env, 'OPERADOR_MAX_POSITIONS', 0),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
-    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 2 * 60 * 60 * 1000),
+    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 60 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
     maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),

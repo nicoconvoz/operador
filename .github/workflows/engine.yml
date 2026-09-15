@@ -100,11 +100,11 @@ jobs:
           # position — under a minute for five — so this is what decides how
           # quickly a closed 15m bar gets acted on.
           OPERADOR_CYCLE_MS: ${{ vars.OPERADOR_CYCLE_MS || '300000' }}
-          # How often a pass ALSO hunts for new tokens. A scan is hundreds of
-          # throttled calls and about half an hour; sharing one clock meant a
-          # held token got attention every ~35 minutes. A token you HOLD can rug
-          # in ten minutes, and an opportunity missed by an hour is only missed.
-          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '7200000' }}
+          # Scan only when there is no scan from the last hour. Everything else
+          # is a watch pass over the positions that already have money in them.
+          # A token you HOLD can rug in ten minutes; an opportunity missed by an
+          # hour is only missed.
+          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '3600000' }}
           # Generous: with watch passes now cheap, the 350-minute job timeout is
           # what ends a run, not this. It is here so a pathological loop cannot
           # spin forever.
