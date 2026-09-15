@@ -19,6 +19,7 @@ export type AlertKind =
   | 'ladder-frozen'
   | 'position-halted'
   | 'kill-switch'
+  | 'token-retired'
   // Operations
   | 'engine-started'
   | 'heartbeat'
@@ -52,6 +53,11 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   'ladder-frozen': 'warn',
   'position-halted': 'critical',
   'kill-switch': 'critical',
+  // A person reached in and took a token off the board. Critical is not about
+  // danger here, it is about never being throttled: this is the one event the
+  // log must carry even if it repeats, because it is the only kind the system
+  // did not decide for itself.
+  'token-retired': 'critical',
   'engine-started': 'info',
   heartbeat: 'info',
   'scan-empty': 'warn',

@@ -14,6 +14,7 @@
     "build": "tsc --noEmit false --outDir dist --module nodenext --moduleResolution nodenext",
     "start": "node dist/runtime/index.js",
     "cycle": "tsx src/runtime/index.ts",
+    "retire": "tsx src/runtime/retire.ts",
     "dev:phone-api": "tsx src/runtime/demo-server.ts"
   },
   "devDependencies": {

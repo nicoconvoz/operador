@@ -1,0 +1,55 @@
+# Taking one token off the board, by hand.
+#
+# Separate from `engine` on purpose. The engine decides for itself and runs
+# unattended; this is a person overruling it. Sharing a workflow would mean
+# sharing a schedule, and nothing here should ever run on a timer.
+#
+# It is one-way safe in the same sense the kill switch is: it can only leave
+# the system holding less. It sells what a position holds, closes it, and
+# blacklists the token. It cannot open a position, size one, or move capital
+# toward anything.
+#
+# The engine may be mid-cycle when this runs. That is survivable: the sale is
+# recorded as a fill with its own idempotency key, and the fills are what the
+# broker is rebuilt from — so the next cycle sees a flat position and a token
+# that recovery now skips.
+
+name: retire
+
+on:
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: 'Chain'
+        required: true
+        type: choice
+        options: [solana, bsc]
+      address:
+        description: 'Token address (the mint or contract, not the pair)'
+        required: true
+        type: string
+      reason:
+        description: 'Why — this goes in the blacklist row and in the alert'
+        required: true
+        type: string
+
+jobs:
+  retire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Retire the token
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          OPERADOR_GAS_USD: ${{ vars.OPERADOR_GAS_USD || '0.05' }}
+        run: npm run retire -- "${{ inputs.chain }}" "${{ inputs.address }}" "${{ inputs.reason }}"
