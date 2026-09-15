@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { MAX_CATCH_UP_BARS, tickPosition, type EngineConfig, type TickInput } from './engine.js'
+import { entryAlertLabel, MAX_CATCH_UP_BARS, tickPosition, type EngineConfig, type TickInput } from './engine.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
@@ -524,5 +524,32 @@ describe('tickPosition — a falling price is not a reason to sell', () => {
     const sells = (await store.fillsFor('pos-1')).filter((f) => f.side === 'sell')
     expect(sells).toHaveLength(1)
     expect(sells[0]!.price).toBeCloseTo(0.42, 2) // minus the venue spread
+  })
+})
+
+// ── What an entry alert says it is ──────────────────────────────────────────
+//
+// The label was chosen from the machine's level, read BEFORE stepCascade runs
+// its own reset. After a sale the machine still says "in trade" on that bar, so
+// a full re-opening went out as "➕ … Entry" — the plus sign that means DCA.
+//
+// Live, that read as the ladder finally firing while the DCA count was still
+// zero. The ORDER knows better than the machine does: both entry doors emit
+// level 0, and a DCA emits its own level.
+
+describe('entryAlertLabel — the order is the fact, not the machine', () => {
+  it('names the classic door', () => {
+    expect(entryAlertLabel({ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 1, comment: '🟢 Entry' }))
+      .toEqual({ opening: true, icon: '🟢', name: 'Entry' })
+  })
+
+  it('names the trend re-entry as its own door, not as a DCA', () => {
+    expect(entryAlertLabel({ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 1, comment: '🚀 Re-Entry' }))
+      .toEqual({ opening: true, icon: '🚀', name: 'Re-Entry' })
+  })
+
+  it('still marks a real ladder rung with the plus', () => {
+    expect(entryAlertLabel({ kind: 'entry', id: 'DCA-3', level: 3, usd: 40, qty: 1, comment: 'DCA-3' }))
+      .toEqual({ opening: false, icon: '➕', name: 'DCA-3' })
   })
 })

@@ -339,8 +339,8 @@ async function advanceOneBar(
   for (const order of orders) {
     if (order.kind === 'closeAll' && order.comment === DEATH_EXIT_COMMENT) continue // already alerted
     if (order.kind === 'entry') {
-      const opened = cascadeIn.level === 0
-      await alerts.send(alert(opened ? 'position-opened' : 'dca-filled', `${opened ? '🟢' : '➕'} ${position.symbol} ${order.id}`, `$${order.usd.toFixed(2)} at ${barClose.toPrecision(6)}`, barTime, { position: position.id, key: idempotencyKeyFor(position.id, barTime, orderKeyPart(order)) }))
+      const { opening, icon, name } = entryAlertLabel(order)
+      await alerts.send(alert(opening ? 'position-opened' : 'dca-filled', `${icon} ${position.symbol} ${name}`, `$${order.usd.toFixed(2)} at ${barClose.toPrecision(6)}`, barTime, { position: position.id, key: idempotencyKeyFor(position.id, barTime, orderKeyPart(order)) }))
     } else {
       await alerts.send(alert('position-closed', `🏁 ${position.symbol} cerrada`, order.comment, barTime, { position: position.id }))
     }
@@ -374,4 +374,29 @@ function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: 
   // Nothing held, so no cost basis and no loss to make.
   if (avgPrice === null) return false
   return fillPrice < avgPrice
+}
+
+/**
+ * How to announce an entry, taken from the ORDER rather than from the machine.
+ *
+ * The label used to come from the cascade level read BEFORE `stepCascade` ran.
+ * But the machine resets on `!inPosition && wasInTrade`, INSIDE the step — so
+ * on the bar where a sale settles and the trend door fires again, the level
+ * still said "in trade" and a full re-opening went out as "➕ … Entry". Live,
+ * that read as the DCA ladder finally firing while the DCA count was zero,
+ * which is the one thing the reader was watching for.
+ *
+ * The order cannot be wrong about this: both entry doors emit level 0 and
+ * carry their own comment — '🟢 Entry' or '🚀 Re-Entry' — while a rung emits
+ * its own level and is named for it.
+ */
+export function entryAlertLabel(order: Order & { kind: 'entry' }): { opening: boolean; icon: string; name: string } {
+  if (order.level !== 0) return { opening: false, icon: '➕', name: order.id }
+
+  // The comment leads with the door's own icon. Splitting it keeps the two
+  // doors distinguishable on the phone, where they are otherwise both "Entry"
+  // and a re-entry looks like a position that opened twice.
+  const space = order.comment.indexOf(' ')
+  if (space <= 0) return { opening: true, icon: '🟢', name: order.comment }
+  return { opening: true, icon: order.comment.slice(0, space), name: order.comment.slice(space + 1) }
 }
