@@ -877,3 +877,42 @@ describe('runCycle — it only fetches what a new bar would change', () => {
     expect(asked).toBe(1)
   })
 })
+
+describe('runCycle — a frozen ladder gives back what it can no longer spend', () => {
+  const held = (over: Partial<PersistedPosition> = {}) => position({
+    id: 'held-1', tokenAddress: 'Held', symbol: 'HELD', openedAt: NOW - 6 * HOUR, lastBarTime: NOW, capitalUsd: 95, ...over,
+  })
+  const entryFill = { positionId: 'held-1', orderId: 'Entry', side: 'buy' as const, time: NOW - HOUR, price: 1, qty: 15, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'h1' }
+
+  it('trims a frozen position to what it has actually deployed', async () => {
+    // The operator asked the right question: six frozen positions, and none of
+    // them ever hands its slot on. The SLOT genuinely cannot move — it holds
+    // tokens, and selling them is the strategy's decision and never the
+    // allocator's. But frozen means NO NEW CAPITAL ENTERS, so every dollar it
+    // reserves for rungs that can never fire is dead money.
+    //
+    // With `maxPositions: 0` the book is bounded by capital rather than by slot
+    // count, so freeing that reserve is exactly what buys another token.
+    const { deps, store, throttle } = rig()
+    await store.savePosition(held({ deathWatch: { ...held().deathWatch, stage: 'frozen' } }))
+    await store.recordFill(entryFill)
+
+    await runCycle(deps, config, throttle)
+
+    const after = (await store.loadPositions()).find((p) => p.id === 'held-1')
+    expect(after?.capitalUsd).toBe(15)
+  })
+
+  it('leaves a healthy position the whole ladder it is still going to climb', async () => {
+    // The trim is about a ladder that CANNOT fire, never about one that simply
+    // has not yet. A healthy position one rung in is still going to cascade.
+    const { deps, store, throttle } = rig()
+    await store.savePosition(held())
+    await store.recordFill(entryFill)
+
+    await runCycle(deps, config, throttle)
+
+    const after = (await store.loadPositions()).find((p) => p.id === 'held-1')
+    expect(after?.capitalUsd).toBeGreaterThan(15)
+  })
+})

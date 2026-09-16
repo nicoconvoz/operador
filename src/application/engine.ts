@@ -448,7 +448,13 @@ async function assessHealth(
 
   // Persisted, or the streak restarts from zero on every pass and a freeze
   // clears exactly never — which is the shape of the bug this replaces.
-  const next: PersistedPosition = { ...position, deathWatch: assessment.state }
+  //
+  // And STAMPED, because writing the row without touching `updatedAt` left the
+  // dashboard reporting "sin barras nuevas hace más de 2h" about a position the
+  // death watch was observing every five minutes. Ten of them at once, under a
+  // warning whose whole purpose is to name the right suspect — and it named the
+  // token while the engine was doing exactly its job.
+  const next: PersistedPosition = { ...position, deathWatch: assessment.state, updatedAt: at }
   await store.savePosition(next)
   return next
 }

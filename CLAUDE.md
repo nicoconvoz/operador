@@ -447,6 +447,16 @@ is twelve empty 15m bars, three times worse than the gate tolerates, and a
 freeze only pauses buying. Twelve hours is half a day without a single trade;
 waiting the other half is waiting for a buyer who is not coming.
 
+**A third failure made all of this look far worse than it was.** `assessHealth`
+persisted the new death-watch state — it has to, or the clean streak restarts
+every pass and a freeze clears exactly never — but it wrote the row WITHOUT
+touching `updatedAt`. So the dashboard went on reporting *"sin barras nuevas hace
+más de 2h"* about positions the death watch was observing faithfully every five
+minutes. Ten of them at once, under a warning whose entire purpose is to name
+the right suspect, naming the token while the engine was doing its job. The same
+lesson as the rate-limit counters that printed 556 seconds of waiting inside a
+356-second scan: a diagnostic that misleads is worse than none.
+
 Two failures had to be fixed before any of it could be seen, and the second is
 the one worth remembering: **`tickPosition` returned `already-processed` before
 the death watch ran.** A position whose pool stopped producing bars got no
@@ -849,6 +859,33 @@ is not timidity — without it the book trades against its own noise and pays ga
 for the privilege. Never more slots than there are candidates to fill them, and
 nothing is blacklisted: the token did not fail a safety gate, it merely stopped
 being the best use of a slot.
+
+### A frozen ladder keeps only what it already holds
+
+Six positions frozen at once, and the operator asked the obvious question: *if
+they are frozen, shouldn't they be swapped for other tokens? Do they just sit
+there forever?*
+
+Half of the answer is no, and for a good reason. The SLOT cannot move: it holds
+tokens, and selling them is the strategy's decision and never the allocator's —
+`idle-slots.ts` skips anything with `openQty > 0` precisely so a reservation and
+a commitment are never confused.
+
+The other half is yes, and it was not being done. **Frozen means no new capital
+enters** — that is the whole definition of stage 1 — so every dollar the
+position reserves against future rungs is unreachable until the freeze clears or
+the token dies. Six positions were sitting on about thirty dollars each of
+reserve nothing could spend, on a book bounded by CAPITAL rather than by slot
+count (`maxPositions: 0`). That is a token and a half of capacity, idle.
+
+So the trim below takes a frozen position down to what it has actually
+deployed. The slot stays; only the money nothing can reach moves.
+
+The cost, stated rather than hidden: the trim only ever goes DOWN, so a freeze
+that later clears finds its position smaller and climbs fewer rungs than it
+would have. That is the cheaper side — the alternative is holding capital idle
+for hours against a rung that may never fire, on a book whose whole thesis is
+that scale comes from more tokens rather than more size per token.
 
 ### A position keeps only what its ladder can spend
 

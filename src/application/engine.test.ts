@@ -75,6 +75,28 @@ describe('tickPosition — never decides the same bar twice', () => {
     expect(result.orders).toEqual([])
   })
 
+  it('stamps the time it looked, so a watched position does not read as an abandoned one', async () => {
+    // The death watch runs on a position with no new bars — that is the whole
+    // point of it running there. But it wrote the row back WITHOUT touching
+    // `updatedAt`, so the dashboard went on reporting "sin barras nuevas hace
+    // más de 2h" about a token being observed faithfully every five minutes.
+    //
+    // Ten positions were shown that way at once, under a warning that blames
+    // the token: "el motor sigue avanzando las demás, así que dejó de operarse
+    // ese token." The engine was doing exactly its job, and the screen said the
+    // opposite. A diagnostic that misleads is worse than none.
+    const candles = decline(300)
+    const last = candles.time.at(-1)!
+    const observedAt = last + 9_000_000
+    const { result } = await tick({
+      candles,
+      position: position({ lastBarTime: last, updatedAt: last }),
+      health: healthy({ observedAt }),
+    })
+    expect(result.skipped).toBe('already-processed')
+    expect(result.position.updatedAt).toBe(observedAt)
+  })
+
   it('skips an empty candle set instead of crashing', async () => {
     const empty: Candles = { time: [], open: [], high: [], low: [], close: [], volume: [] }
     const { result } = await tick({ candles: empty })

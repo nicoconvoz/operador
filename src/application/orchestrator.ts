@@ -326,7 +326,25 @@ export async function runCycle(
     const kept: PersistedPosition[] = []
     for (const recovered of keeping) {
       const deployed = ledgers.get(recovered.position.id)?.deployedUsd ?? 0
-      const needs = Math.max(ladderNeeds, deployed)
+      // A FROZEN ladder needs nothing beyond what it already holds.
+      //
+      // Frozen means no new capital enters — that is the whole definition — so
+      // every dollar reserved against future rungs is dead until the freeze
+      // clears or the position dies. Six frozen positions were sitting on about
+      // thirty dollars each of reserve that could not be spent, while the book
+      // is bounded by CAPITAL rather than by slot count.
+      //
+      // The slot itself stays, and must: it holds tokens, and selling them is
+      // the strategy's decision and never the allocator's. What moves is only
+      // the money nothing can reach.
+      //
+      // The cost, stated rather than hidden: a freeze that later CLEARS finds
+      // its position smaller, because the trim only ever goes down. A thawed
+      // ladder therefore climbs fewer rungs than it would have. That is the
+      // cheaper side — the alternative is reserving capital for hours against a
+      // rung that may never fire, on a book whose whole thesis is that scale
+      // comes from more tokens rather than more size per token.
+      const needs = recovered.position.deathWatch.stage === 'frozen' ? deployed : Math.max(ladderNeeds, deployed)
       if (recovered.position.capitalUsd <= needs + 0.01) {
         kept.push(recovered.position)
         continue
