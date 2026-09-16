@@ -390,3 +390,53 @@ describe('gates — a sustained bleed over a full day', () => {
     expect(failedGates(clean({ priceChangePct: { h1: null, h6: null, h24: null } }))).toEqual([])
   })
 })
+
+// ── An hour with nothing in it ──────────────────────────────────────────────
+//
+// The 24h figures cannot catch this: `world` was reported live with $168k of
+// daily volume and FIVE HOURS without a new bar. A daily average is a lagging
+// one — a token can trade heavily in the morning and be dead by the afternoon,
+// and the 24h number keeps quoting the morning.
+//
+// It is the last hour that says whether the pool is alive NOW, and the
+// threshold is tied to the bar size rather than guessed: the strategy runs on
+// 15-minute bars, so an hour holds FOUR of them. Fewer than four trades in an
+// hour guarantees empty bars, and an empty bar produces no candle — which is
+// precisely how a position ends up frozen with nothing new to act on.
+
+describe('gates — an hour with no trades in it', () => {
+  it('refuses a token nobody traded in the last hour', () => {
+    expect(failedGates(clean({ txns: { h1: { buys: 0, sells: 0 }, h24: { buys: 900, sells: 850 } } })))
+      .toEqual(['idle:failed'])
+  })
+
+  it('refuses one with fewer trades than the hour has bars', () => {
+    // Three trades across four 15-minute bars: at least one bar is empty, and
+    // an empty bar is a bar the strategy never sees.
+    expect(failedGates(clean({ txns: { h1: { buys: 2, sells: 1 }, h24: { buys: 900, sells: 850 } } })))
+      .toEqual(['idle:failed'])
+  })
+
+  it('accepts one trading at least once a bar', () => {
+    expect(failedGates(clean({ txns: { h1: { buys: 3, sells: 1 }, h24: { buys: 900, sells: 850 } } })))
+      .toEqual([])
+  })
+
+  it('is not fooled by a healthy DAY behind a dead hour', () => {
+    // The exact shape reported: $168k over 24h, nothing since.
+    const zombie = clean({
+      volumeUsd: { h1: 0, h6: 40_000, h24: 168_000 },
+      txns: { h1: { buys: 0, sells: 0 }, h24: { buys: 4_000, sells: 3_900 } },
+    })
+    expect(failedGates(zombie)).toContain('idle:failed')
+  })
+
+  it('says how many trades it counted, and against what', () => {
+    const [failure] = evaluateGates(
+      clean({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } }),
+      DEFAULT_GATE_POLICY,
+    ).failures
+    expect(failure!.detail).toContain('1')
+    expect(failure!.detail).toContain('4')
+  })
+})

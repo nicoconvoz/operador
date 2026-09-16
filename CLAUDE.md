@@ -164,6 +164,20 @@ Both gates survive, because they answer different questions. A ratio cannot save
 a pool nobody can get $15 out of; a dollar floor cannot see that a large pool
 has stopped moving.
 
+### Is it alive NOW?
+
+The 24h figures cannot answer that. A token was reported live with **$168k of
+daily volume and five hours without a new bar**: a daily average is a lagging
+one, and a pool that traded heavily in the morning keeps quoting the morning
+long after it died.
+
+`minHourlyTxns` is **4**, and the number is tied to the bar size rather than
+guessed. The strategy runs on 15-minute bars, so an hour holds four of them —
+fewer than four trades guarantees empty bars, and an empty bar produces no
+candle. That is exactly how a position ends up frozen with nothing new to act
+on, so the gate refuses it at the door instead of the dashboard reporting it
+afterwards.
+
 ### Freefall — an entry gate, and deliberately not an exit
 
 A token that has lost more than half its price in about three hours is not an

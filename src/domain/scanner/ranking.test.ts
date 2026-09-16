@@ -68,7 +68,10 @@ describe('ranking — gates first, then score, then slots', () => {
     // no price movement, plenty of pool turnover.
     const boring = token('boring', {
       volumeUsd: { h1: 0, h6: 1_000, h24: 60_000 },
-      txns: { h1: { buys: 0, sells: 0 }, h24: { buys: 50, sells: 50 } },
+      // Alive — one trade a bar, so no bar is empty — but going nowhere.
+      // Rejected by a gate and dropped by score are different verdicts, and
+      // this test exists to keep them apart.
+      txns: { h1: { buys: 2, sells: 2 }, h24: { buys: 50, sells: 50 } },
       priceChangePct: { h1: 0, h6: 0, h24: 0 },
     })
     const strict = { ...policy, minScore: 30 }

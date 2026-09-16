@@ -85,7 +85,7 @@ export async function buildDashboard(store: StatePort, options: DashboardOptions
   }))
 
   const warnings: string[] = []
-  if (checkpoint?.killSwitchEngaged) warnings.push('Kill switch is engaged — no new positions will open.')
+  if (checkpoint?.killSwitchEngaged) warnings.push('Corte de emergencia activo — no se abrirán posiciones nuevas.')
 
   // A pending order is NORMAL: an order decided at a close fills at the next
   // bar's open, so every position that just decided something is carrying one.
@@ -100,16 +100,36 @@ export async function buildDashboard(store: StatePort, options: DashboardOptions
   }
 
   const frozen = views.filter((v) => v.deathStage === 'frozen')
-  if (frozen.length > 0) warnings.push(`${frozen.length} position(s) frozen: ${frozen.map((v) => v.symbol).join(', ')}.`)
-
-  const stale = views.filter((v) => generatedAt - v.updatedAt > staleAfterMs)
-  // A position nobody has touched in hours is the shape of a silently dead
-  // engine — the failure that looks exactly like "nothing is happening".
-  if (stale.length > 0) {
-    warnings.push(`${stale.length} position(s) not updated in over ${Math.round(staleAfterMs / 3_600_000)}h — is the engine running?`)
+  if (frozen.length > 0) {
+    warnings.push(`${frozen.length} posición(es) congelada(s): ${frozen.map((v) => v.symbol).join(', ')}.`)
   }
 
-  if (positions.length === 0 && !checkpoint) warnings.push('No positions and no checkpoint: the engine has never completed a cycle.')
+  const stale = views.filter((v) => generatedAt - v.updatedAt > staleAfterMs)
+  if (stale.length > 0) {
+    const hours = Math.round(staleAfterMs / 3_600_000)
+    const names = stale.map((v) => v.symbol).join(', ')
+    // WHICH one stopped — the engine, or the token? That distinction is the
+    // whole diagnosis, and the warning used to skip it and accuse the engine
+    // every time. Reported live with the engine demonstrably fine: six
+    // positions had just advanced to the newest bar while three had not.
+    //
+    // All of them stale is an engine that stopped. SOME of them, while the
+    // rest advance, is those tokens going quiet — their pools stopped
+    // producing candles, so there is no new bar to act on. That is the
+    // abandonment signal's territory, not an outage.
+    //
+    // A warning that names the wrong suspect sends the reader to check the
+    // wrong thing, and the next warning gets believed a little less.
+    warnings.push(
+      stale.length === views.length
+        ? `Ninguna posición avanzó en ${hours}h — revisá si el motor está corriendo.`
+        : `${names}: sin barras nuevas hace más de ${hours}h. El motor sigue avanzando las demás, así que dejó de operarse ese token.`,
+    )
+  }
+
+  if (positions.length === 0 && !checkpoint) {
+    warnings.push('Sin posiciones y sin checkpoint: el motor nunca completó un ciclo.')
+  }
 
   return {
     generatedAt,

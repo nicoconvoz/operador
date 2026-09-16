@@ -57,6 +57,21 @@ export interface GatePolicy {
    * dollar floor cannot see that a large pool has stopped moving.
    */
   readonly minTurnoverRatio: number
+  /**
+   * Trades in the LAST HOUR, below which the pool is not alive now.
+   *
+   * The 24h figures cannot catch this: a token was reported live with $168k of
+   * daily volume and FIVE HOURS without a new bar. A daily average is a lagging
+   * one — a pool can trade heavily in the morning and be dead by the afternoon,
+   * and the 24h number keeps quoting the morning.
+   *
+   * Tied to the bar size rather than guessed. The strategy runs on 15-minute
+   * bars, so an hour holds FOUR of them; fewer than four trades guarantees
+   * empty bars, and an empty bar produces no candle. That is exactly how a
+   * position ends up frozen with nothing new to act on — the symptom this gate
+   * exists to prevent at the door instead of reporting from the screen.
+   */
+  readonly minHourlyTxns: number
   readonly maxTransferTaxPct: number
   readonly minLpLockedPct: number
   readonly maxTopHoldersPct: number
@@ -143,6 +158,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   maxFallPct: 50,
   maxDailyFallPct: 70,
   minTurnoverRatio: 1,
+  minHourlyTxns: 4,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
   maxTopHoldersPct: 40,
@@ -172,6 +188,7 @@ export type GateName =
   | 'volume'
   | 'freefall'
   | 'turnover'
+  | 'idle'
   | 'proxy'
   | 'denylist'
   | 'marketCap'
@@ -241,6 +258,13 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
     if (turnover < policy.minTurnoverRatio) {
       failures.push(fail('turnover', 'failed', `rota ${turnover.toFixed(2)}× su liquidez en 24h, menos de ${policy.minTurnoverRatio}× — el pool está quieto`))
     }
+  }
+
+  // Is it alive NOW? The last hour is the only window that answers that, and
+  // it is the one a daily average hides.
+  const lastHour = snapshot.txns.h1.buys + snapshot.txns.h1.sells
+  if (lastHour < policy.minHourlyTxns) {
+    failures.push(fail('idle', 'failed', `${lastHour} operaciones en la última hora, menos de ${policy.minHourlyTxns} — con barras de 15m eso deja barras vacías, y una barra vacía no existe para la estrategia`))
   }
 
   return { passed: failures.length === 0, failures }
@@ -339,6 +363,13 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
     if (turnover < policy.minTurnoverRatio) {
       failures.push(fail('turnover', 'failed', `rota ${turnover.toFixed(2)}× su liquidez en 24h, menos de ${policy.minTurnoverRatio}× — el pool está quieto`))
     }
+  }
+
+  // Is it alive NOW? The last hour is the only window that answers that, and
+  // it is the one a daily average hides.
+  const lastHour = snapshot.txns.h1.buys + snapshot.txns.h1.sells
+  if (lastHour < policy.minHourlyTxns) {
+    failures.push(fail('idle', 'failed', `${lastHour} operaciones en la última hora, menos de ${policy.minHourlyTxns} — con barras de 15m eso deja barras vacías, y una barra vacía no existe para la estrategia`))
   }
 
   return { passed: failures.length === 0, failures }

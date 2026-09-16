@@ -25,7 +25,7 @@ describe('buildDashboard — what is running', () => {
     const view = await buildDashboard(new MemoryStore(), options)
     expect(view.positions).toEqual([])
     expect(view.totals.committedUsd).toBe(0)
-    expect(view.warnings).toContain('No positions and no checkpoint: the engine has never completed a cycle.')
+    expect(view.warnings).toContain('Sin posiciones y sin checkpoint: el motor nunca completó un ciclo.')
   })
 
   it('maps a position into what a human needs to see', async () => {
@@ -67,7 +67,7 @@ describe('buildDashboard — warnings a human should act on', () => {
     await store.saveCheckpoint({ savedAt: NOW, lastCompletedBar: NOW, killSwitchEngaged: true })
     const view = await buildDashboard(store, options)
     expect(view.killSwitchEngaged).toBe(true)
-    expect(view.warnings[0]).toContain('Kill switch is engaged')
+    expect(view.warnings[0]).toContain('Corte de emergencia activo')
   })
 
   it('counts a pending order without warning about it', async () => {
@@ -93,7 +93,7 @@ describe('buildDashboard — warnings a human should act on', () => {
     await store.savePosition(position({ deathWatch: frozen }))
     const view = await buildDashboard(store, options)
     expect(view.totals.frozen).toBe(1)
-    expect(view.warnings.some((w) => w.includes('frozen') && w.includes('DREGG'))).toBe(true)
+    expect(view.warnings.some((w) => w.includes('congelada') && w.includes('DREGG'))).toBe(true)
     expect(view.positions[0]!.deathSignals[0]).toContain('30.0% of entry')
   })
 
@@ -113,7 +113,7 @@ describe('buildDashboard — warnings a human should act on', () => {
     const store = new MemoryStore()
     await store.savePosition(position({ updatedAt: NOW - 5 * HOUR }))
     const view = await buildDashboard(store, { now: () => NOW, staleAfterMs: 2 * HOUR })
-    expect(view.warnings.some((w) => w.includes('is the engine running?'))).toBe(true)
+    expect(view.warnings.some((w) => w.includes('revisá si el motor'))).toBe(true)
   })
 
   it('reports "no bar yet" as nothing, not as 1970', async () => {
@@ -158,5 +158,74 @@ describe('buildDashboard — a pending order is normal, a STUCK one is not', () 
     // THAT is the anomaly: it should have filled and did not.
     const view = await buildDashboard(store, { now: () => NOW })
     expect(view.warnings.some((w) => w.includes('sin ejecutar'))).toBe(true)
+  })
+})
+
+// ── Which one is stopped: the engine, or the token? ─────────────────────────
+//
+// The warning asked "is the engine running?" whenever any position had gone
+// quiet for hours. Reported live with the engine demonstrably fine — six
+// positions had just advanced to the newest bar while three had not, and the
+// three were tokens whose pools had stopped producing candles.
+//
+// The distinction is the diagnosis. ALL of them stale is an engine that
+// stopped. SOME of them stale, while others advance, is those tokens going
+// quiet — which is the abandonment signal's territory, not an outage.
+//
+// A warning that names the wrong suspect sends the reader to check the wrong
+// thing, and the next one gets believed less.
+
+describe('buildDashboard — a stale position accuses the right thing', () => {
+  const both = async () => {
+    const store = new MemoryStore()
+    await store.saveCheckpoint({ savedAt: NOW, lastCompletedBar: NOW, killSwitchEngaged: false })
+    await store.savePosition(position({ id: 'fresh', tokenAddress: 'F', symbol: 'FRESH', updatedAt: NOW - 10 * 60_000 }))
+    await store.savePosition(position({ id: 'quiet', tokenAddress: 'Q', symbol: 'QUIET', updatedAt: NOW - 5 * HOUR }))
+    return store
+  }
+
+  it('blames the TOKEN when the rest of the book is advancing', async () => {
+    const view = await buildDashboard(await both(), { now: () => NOW, staleAfterMs: 2 * HOUR })
+    const warning = view.warnings.find((w) => w.includes('QUIET'))
+
+    expect(warning).toBeDefined()
+    // Naming the engine to EXONERATE it is the point; what it must not do is
+    // send the reader to check on it.
+    expect(warning).not.toMatch(/revisá si el motor/i)
+    expect(warning).toMatch(/barras nuevas/i)
+  })
+
+  it('blames the ENGINE when nothing at all has moved', async () => {
+    const store = new MemoryStore()
+    await store.saveCheckpoint({ savedAt: NOW, lastCompletedBar: NOW, killSwitchEngaged: false })
+    await store.savePosition(position({ id: 'a', tokenAddress: 'A', symbol: 'A', updatedAt: NOW - 5 * HOUR }))
+    await store.savePosition(position({ id: 'b', tokenAddress: 'B', symbol: 'B', updatedAt: NOW - 5 * HOUR }))
+
+    const view = await buildDashboard(store, { now: () => NOW, staleAfterMs: 2 * HOUR })
+
+    expect(view.warnings.some((w) => /revisá si el motor/i.test(w))).toBe(true)
+  })
+
+  it('names the tokens either way — a count alone is not actionable', async () => {
+    const view = await buildDashboard(await both(), { now: () => NOW, staleAfterMs: 2 * HOUR })
+    expect(view.warnings.join(' ')).toContain('QUIET')
+  })
+
+  it('says all of it in Spanish, like everything else on the screen', async () => {
+    const store = await both()
+    const frozen: DeathWatchState = {
+      ...startDeathWatch(100_000, NOW), stage: 'frozen',
+      evidence: [{ observedAt: NOW, source: 's', signals: [{ kind: 'liquidityCollapse', stage: 1, detail: 'x' }], stageAfter: 'frozen', verdict: 'freeze' }],
+    }
+    await store.savePosition(position({ id: 'cold', tokenAddress: 'C', symbol: 'COLD', deathWatch: frozen }))
+
+    const view = await buildDashboard(store, { now: () => NOW, staleAfterMs: 2 * HOUR })
+
+    // The interface is Spanish; code and docs are English. These were left
+    // half-translated, so the one line a reader sees in an emergency was the
+    // one in the wrong language.
+    for (const warning of view.warnings) {
+      expect(warning, warning).not.toMatch(/position\(s\)|is the engine running|frozen:/)
+    }
   })
 })
