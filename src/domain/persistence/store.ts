@@ -185,6 +185,15 @@ export interface StatePort {
   historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null>
   recordHistoryBars(chain: Chain, poolAddress: string, bars: number, measuredAt: number): Promise<void>
 
+  /**
+   * How many tokens of this chain have ever been examined.
+   *
+   * Zero is the only interesting answer: it means this is the beginning of
+   * everything, and `securityBudgetFor` lifts the per-cycle budget for that one
+   * pass. See `application/bootstrap.ts`.
+   */
+  examinedCount(chain: Chain): Promise<number>
+
   /** The last security examination of a token, or null if never examined. */
   cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null>
   recordSecurity(chain: Chain, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void>

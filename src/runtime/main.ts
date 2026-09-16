@@ -32,6 +32,7 @@ import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { recallCandidates } from '../application/recall.js'
 import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
+import { securityBudgetFor } from '../application/bootstrap.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
@@ -313,6 +314,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             JSON.stringify({ hits: now.hits - then.hits, waitedMs: now.waitedMs - then.waitedMs })
           return `goplus=${delta(goplus.rateLimit, before.goplus)} gecko=${delta(gecko.rateLimit, before.gecko)}`
         }
+        // Lifted on the ONE pass where nothing of this chain has ever been
+        // examined. A budget of twenty against a deep sweep of seven hundred
+        // looks at under three percent of the universe and then opens the first
+        // positions out of that sample — and a slot handed out is a commitment.
+        // Self-terminating: one examination and the budget is back.
+        const budget = await securityBudgetFor(store, chain, config.maxSecurityChecks)
+        if (budget === undefined) console.log('[scan:bootstrap]', JSON.stringify({ chain, securityBudget: 'unbounded' }))
+
         try {
           const result = await scanOnce(
             {
@@ -361,7 +370,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // about nine throttled seconds and a cycle has to finish inside
               // one bar. What it cannot reach is reported as unchecked rather
               // than dropped, and the next cycle is fifteen minutes away.
-              maxSecurityChecks: config.maxSecurityChecks,
+              // Lifted on the ONE pass where nothing has ever been examined.
+              // A budget of twenty against a deep sweep of seven hundred would
+              // look at under three percent of the universe and then open the
+              // first positions out of that sample — and a slot handed out is a
+              // commitment. Self-terminating: one examination and it is back.
+              ...(budget === undefined ? {} : { maxSecurityChecks: budget }),
             },
           )
           await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: result.snapshots })

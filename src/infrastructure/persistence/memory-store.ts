@@ -68,6 +68,12 @@ export class MemoryStore implements StatePort {
 
   private readonly security = new Map<string, CachedSecurity>()
 
+  async examinedCount(chain: Chain): Promise<number> {
+    let count = 0
+    for (const key of this.security.keys()) if (key.startsWith(`${chain}:`)) count++
+    return count
+  }
+
   async cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null> {
     return this.security.get(`${chain}:${address}`) ?? null
   }

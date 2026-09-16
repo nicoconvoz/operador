@@ -1463,6 +1463,54 @@ ahead of the tick for the case where positions DO exist would leave open money
 unwatched for half an hour, which is the trade the watch pass was built to
 avoid: an opportunity missed by an hour is only missed.
 
+#### The beginning of everything is not a cycle
+
+Sweeping discovery deeper achieved nothing on its own, and the reason is the
+stage AFTER it. `maxSecurityChecks` is **20 per chain per cycle** — a good rule
+for a recurring cycle, where each examined token costs a throttled GoPlus call,
+a sell quote and a candle download, and the pass has to finish inside a
+15-minute bar. What it cannot reach is reported unchecked, the cache remembers
+what was looked at, and the next cycle reaches further down the list.
+
+Against a **virgin Neon** that budget is a trap:
+
+| | |
+|---|---|
+| Discovered by the deep sweep | up to 700 per chain |
+| Examined on the first pass | **20** |
+| Share of the universe | **2.8%** |
+| Everything else | `securityChecked: false` → gates fail closed → ineligible |
+| Time to cover the rest at 20/scan | **~3 days** |
+
+And the engine does not wait those three days. It opens its first positions out
+of that 2.8% sample — and **a slot handed out is a commitment**: it does not
+come back without selling, which is the strategy's decision and never the
+allocator's. The book would be filled on day one, from the first twenty tokens
+that happened to clear the free gates, while the other six hundred and eighty
+arrived over the rest of the week to find no room.
+
+So on that one pass the budget is **lifted** (`application/bootstrap.ts`). Every
+argument for it is absent at the beginning of everything: no position is open,
+so no money goes unwatched; no bar has to be kept up with, because there is
+nothing to advance; and nothing downstream is waiting, since the allocation it
+feeds is the first one — better late than made on a sample.
+
+**It is self-terminating, which is what makes it safe to leave in.** The
+condition is "no token of this chain has ever been examined", so one recorded
+examination ends it. There is no flag to forget to clear, and no way for neglect
+to turn it into a permanently unbounded scan.
+
+Per chain, deliberately: Solana having been swept says nothing about BSC, so a
+chain added months later gets the same cold sweep the first one got rather than
+inheriting its neighbour's warmth.
+
+**The first run is therefore long — expect one to three hours, not minutes**,
+and it must be allowed to finish. Everything is written as it goes
+(`recordSecurity` per token, `saveScan` per chain), so a killed job loses no
+work — but the run after it is no longer the beginning of anything and drops
+back to 20 per scan. To redo a bootstrap that was cut short, clear
+`token_security` for that chain and relaunch.
+
 ### The engine does not need a server — CORRECTED
 
 This section used to say the opposite, citing "live WebSocket subscriptions to

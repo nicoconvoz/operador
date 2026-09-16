@@ -257,6 +257,16 @@ export class PostgresStore implements StatePort {
     )
   }
 
+  async examinedCount(chain: Chain): Promise<number> {
+    // Only whether it is zero ever matters, so this stops at the first row.
+    // Counting seven hundred rows to learn "not empty" is work nobody reads.
+    const { rows } = await this.sql.query<{ one: number }>(
+      'SELECT 1 AS one FROM token_security WHERE chain = $1 LIMIT 1',
+      [chain],
+    )
+    return rows.length
+  }
+
   async cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null> {
     const { rows } = await this.sql.query<{ security: SecurityReport; slippage_pct: string | number | null; measured_at: string | number }>(
       'SELECT security, slippage_pct, measured_at FROM token_security WHERE chain = $1 AND address = $2',
