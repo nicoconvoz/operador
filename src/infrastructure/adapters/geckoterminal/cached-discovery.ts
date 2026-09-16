@@ -49,6 +49,17 @@ export interface CachedDiscoveryOptions {
 /** Six hours — a quarter of the 2.6 days the history gate demands. */
 const DEFAULT_STALE_AFTER_MS = 6 * 60 * 60 * 1000
 
+/**
+ * Pages to request when there is NOTHING on the shelf.
+ *
+ * Ten is GeckoTerminal's own ceiling for a list endpoint, so this is not a
+ * tuned number — it is "everything they will give us". The argument for
+ * spending it exactly once is that a cold start is the only pass with no
+ * alternative: a warm refresh is looking for what APPEARED, and what appeared
+ * is on page one. The tail is old pools, and old pools do not move.
+ */
+export const DEEP_SWEEP_PAGES = 10
+
 export class CachedDiscovery implements PoolDiscoverySource {
   private readonly staleAfterMs: number
 
@@ -67,7 +78,13 @@ export class CachedDiscovery implements PoolDiscoverySource {
     }
 
     try {
-      const found = await this.source.discoverPools(chain, pages)
+      // Nothing on the shelf at all is the one pass that gets the deep sweep.
+      // `remembered` distinguishes it from a REFRESH, where an old list exists
+      // and expired — and those are different questions. A refresh asks what
+      // appeared since, which is page one. A cold start asks what EXISTS, and
+      // answering that with five pages of trending is answering a different
+      // question quietly.
+      const found = await this.source.discoverPools(chain, remembered ? pages : (pages ?? DEEP_SWEEP_PAGES))
       // An empty answer is not evidence that a chain has no pools; it is far
       // more likely to be a provider having a bad minute. Remembering it would
       // blind the chain for the whole window.

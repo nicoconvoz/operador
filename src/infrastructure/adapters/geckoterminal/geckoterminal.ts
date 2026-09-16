@@ -133,7 +133,17 @@ export class GeckoTerminal {
    * the caller does not have to look the pair up again.
    */
   async discoverPools(chain: Chain, pages = 5): Promise<{ tokenAddress: string; poolAddress: string }[]> {
-    const lists = ['trending_pools', 'pools']
+    // 'new_pools' was missing while this function's own comment claimed it,
+    // and it is the only source in the whole universe that is not ranked by
+    // popularity NOW. Without it "newest" was a word in a doc string.
+    //
+    // Expect most of what it returns to be REJECTED, and that is fine rather
+    // than wasteful: the history gate wants 250 bars, which is 2.6 days at 15m,
+    // so a pool born this morning cannot pass. What it catches is the token
+    // that is old but whose POOL is new — a migration, a redeploy, a second
+    // venue — which every popularity list misses until it trends, and by then
+    // the move is over.
+    const lists = ['trending_pools', 'pools', 'new_pools']
     const found = new Map<string, string>()
 
     for (const list of lists) {

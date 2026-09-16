@@ -137,6 +137,21 @@ describe('GeckoTerminal — a universe that works on any chain', () => {
     expect(await gt.discoverPools('bsc', 1)).toEqual([{ tokenAddress: '0xdef', poolAddress: 'poolC' }])
   })
 
+  it('asks for the newest pools too, not only what is trending and what is big', async () => {
+    // The doc comment on `discoverPools` has claimed 'trending, top by
+    // liquidity, and NEWEST' since it was written. The list was
+    // ['trending_pools', 'pools'] — two of the three. Every remaining source
+    // ranks by popularity NOW, so nothing in the universe was there because it
+    // was new; the user asked for newer and older, and only one end was wired.
+    const seen: string[] = []
+    const gt = new GeckoTerminal(async (url) => {
+      seen.push(url)
+      return { status: 200, json: async () => ({ data: [] }) }
+    })
+    await gt.discoverPools('bsc', 1)
+    expect(seen.some((url) => url.includes('/new_pools'))).toBe(true)
+  })
+
   it('works the same on solana', async () => {
     const solUrl = `${GECKOTERMINAL_BASE}/networks/solana`
     const gt = new GeckoTerminal(stubHttp({ [solUrl]: { body: pools([['Mint1', 'PoolX']]) } }))

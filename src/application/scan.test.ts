@@ -351,3 +351,26 @@ describe('scanOnce — what we already hold comes first', () => {
     expect(out.snapshots.map((s) => s.address)).toEqual(['trending'])
   })
 })
+
+describe('scanOnce — a cap that bites says so', () => {
+  it('reports how many the cap dropped, instead of reporting only what it kept', async () => {
+    // A silent truncation reads exactly like a universe that small. Sweeping
+    // deeper on a cold start buys nothing if the cut then throws the tail away
+    // without a word, and from a log that only ever prints what survived those
+    // two cases are indistinguishable.
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [
+        { chainId: 'solana', tokenAddress: 'a' },
+        { chainId: 'solana', tokenAddress: 'b' },
+        { chainId: 'solana', tokenAddress: 'c' },
+      ] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/a`]: { body: [pair('a')] },
+    })
+    const progress: { stage: string; dropped?: number }[] = []
+    await scanOnce({ ...deps, onProgress: (p) => progress.push(p as never) }, { ...config, maxTokens: 1 })
+
+    expect(progress.find((p) => p.stage === 'universe')?.dropped).toBe(2)
+  })
+})

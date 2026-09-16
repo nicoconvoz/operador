@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CachedDiscovery } from './cached-discovery.js'
+import { CachedDiscovery, DEEP_SWEEP_PAGES } from './cached-discovery.js'
 import { MemoryStore } from '../../persistence/memory-store.js'
 
 const NOW = 1_800_000_000_000
@@ -10,13 +10,38 @@ const pools = (n: number) => Array.from({ length: n }, (_, i) => ({ tokenAddress
 const rig = (source: () => Promise<{ tokenAddress: string; poolAddress: string }[]>, now = () => NOW) => {
   const store = new MemoryStore()
   let calls = 0
+  const asked: (number | undefined)[] = []
   const discovery = new CachedDiscovery(
-    { discoverPools: async () => { calls++; return source() } },
+    { discoverPools: async (_chain, pages) => { calls++; asked.push(pages); return source() } },
     store,
     { now, staleAfterMs: 6 * HOUR },
   )
-  return { store, discovery, calls: () => calls }
+  return { store, discovery, calls: () => calls, asked }
 }
+
+describe('CachedDiscovery — a cold shelf is swept to the bottom', () => {
+  it('goes as deep as the provider allows when it has never looked', async () => {
+    // The user's rule: with nothing cached, sweep EVERYTHING before starting —
+    // newer and older — and only then go to the positions. A first pass is
+    // already the slowest one; spending it on half the universe buys nothing.
+    const { discovery, asked } = rig(async () => pools(3))
+    await discovery.discoverPools('solana')
+    expect(asked[0]).toBe(DEEP_SWEEP_PAGES)
+  })
+
+  it('refreshes a stale shelf at the shallow depth, not the deep one', async () => {
+    // A refresh is looking for what APPEARED since. The deep tail was already
+    // swept and cannot have moved: pools do not become older than they were.
+    // Paying thirty throttled calls an hour for that would make every scan the
+    // cold one.
+    let clock = NOW
+    const { discovery, asked } = rig(async () => pools(3), () => clock)
+    await discovery.discoverPools('solana')
+    clock += 7 * HOUR
+    await discovery.discoverPools('solana')
+    expect(asked[1]).toBeUndefined()
+  })
+})
 
 describe('CachedDiscovery — the universe does not change minute to minute', () => {
   it('asks the provider when it has never looked', async () => {

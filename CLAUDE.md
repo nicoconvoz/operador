@@ -123,7 +123,7 @@ Fixed by running **the free gates before the paid ones**
 (`evaluateMarketGates`): liquidity, age, volume, FDV, denylist and
 impersonation need no network call, so they decide first and only the
 survivors cost a throttled security request and a sell quote. The cap is now
-300, which is the whole visible universe.
+**700**, which is the whole visible universe once discovery sweeps deep.
 
 This reorders the work; it does not soften it. A token that clears the free
 gates still faces the full set, security included — and a test pins that any
@@ -364,7 +364,7 @@ Evaluated continuously for every open position, independent of price.
 | Mint / freeze authority reinstated | 2 | On-chain authority check |
 | Wallet blacklisted / transfers paused | 2 | Contract state or failed transfer simulation |
 | Dev or top-holder dump | 1 | Top-N holder moves a significant share of supply |
-| Abandonment | 1 → 2 | No trades for N hours; volume near zero |
+| Abandonment | 1 → 2 | No trades for N hours — **freeze at 3, exit at 12** |
 
 #### What the runtime actually observed — CORRECTED
 
@@ -422,6 +422,38 @@ on invented data confirm nothing while looking exactly like proof.**
    *first* confirmed signal, not to discover the exit is already closed.
 5. **Every death exit is logged with its full evidence chain** — which signal,
    which source, which observations. These become test fixtures.
+
+#### Abandonment: the signal that had never fired
+
+`hoursSinceLastTrade` was hardcoded `null` for the life of the project, so the
+one signal the user cares most about — *"quiero tokens con mucha actividad; cuando
+notemos que eso no pasa nos vamos de ahí"* — could not fire.
+
+It was excluded deliberately, on the argument that we measure volume and not the
+time of the last trade, and deriving one from the other would hand the signal an
+invented number. That is true of the SCAN, which is all `health-from-scan.ts`
+sees. It is false of the CANDLES: **the newest bar carrying volume IS when
+somebody last traded.** `idle-hours.ts` reads it there, and `healthFor` takes the
+candles the tick already fetched — no extra request.
+
+It returns **null, never zero**, when nothing in the series ever traded. Zero
+would tell the abandonment signal the pool is lively, which is the exact
+opposite of what an all-empty series means.
+
+**The thresholds now agree with the door.** They were 6 and 24 hours against an
+entry gate that refuses a token with fewer than four trades in the LAST HOUR —
+strict on the way in, indefinite once inside, about the same token. Three hours
+is twelve empty 15m bars, three times worse than the gate tolerates, and a
+freeze only pauses buying. Twelve hours is half a day without a single trade;
+waiting the other half is waiting for a buyer who is not coming.
+
+Two failures had to be fixed before any of it could be seen, and the second is
+the one worth remembering: **`tickPosition` returned `already-processed` before
+the death watch ran.** A position whose pool stopped producing bars got no
+observation at all — so a freeze could never clear, and a dying token could
+never be condemned. The watch was blind in exactly the two cases it exists for,
+and the symptom was PURR sitting frozen across three relaunches while the
+evidence that froze it had already been corrected.
 
 ## The capital floor — measured, not guessed
 
@@ -1385,6 +1417,51 @@ Same two failure rules as the history cache, learned the same way: a failure is
 never cached, because an empty list would turn one rate limit into a chain that
 does not exist for six hours — and a failure falls back to the STALE list,
 because an old universe beats no universe.
+
+#### A cold shelf is swept to the bottom
+
+The user's rule: with nothing cached, sweep EVERYTHING before starting — newer
+and older, all of it — and only then go to the positions.
+
+It rests on a distinction the cache was already making and not using. Nothing
+remembered is not the same as something remembered that expired:
+
+| | Asks | Depth |
+|---|---|---|
+| **Cold** — nothing on the shelf | what EXISTS | 10 pages, GeckoTerminal's own ceiling |
+| **Refresh** — a list expired | what APPEARED since | 5 pages |
+
+Five pages of trending answers the refresh question well and the cold one
+badly. The tail of the list is old, quiet pools — exactly the half a
+popularity ranking never reaches — and old pools do not move, so paying the
+deep sweep once is enough.
+
+**`new_pools` was missing while `discoverPools`'s own comment claimed it.** The
+lists were `trending_pools` and `pools`; every other source in the universe
+ranks by popularity NOW, so nothing was ever there for being new. Most of what
+it returns will be rejected by the history gate — 250 bars is 2.6 days, and a
+pool born this morning cannot have them. What it catches is the token that is
+old whose POOL is new: a migration, a redeploy, a second venue, invisible to
+every popularity list until it trends, by which time the move is over.
+
+**The cap had to rise with it**, to 700. Three lists at ten pages is up to six
+hundred pools per chain, and a 300 cap would have discarded half of that by
+arrival order — paying for the sweep and throwing away its tail. Affordable
+because the expensive stage is capped separately: market data is one
+DexScreener call per thirty tokens, the free gates cost nothing, and security
+stays bounded by `maxSecurityChecks` and rotates through its cache, so a wider
+universe reaches FURTHER over cycles rather than costing more per cycle.
+
+And the cut now reports what it DROPPED, not only what it kept. A log that
+prints the survivors alone reads identically whether the cap bit or the day was
+quiet — so the one number that would tell you to raise it was the one nobody
+could see.
+
+**The order stays as it is.** "Only then start with the positions" is already
+true on a cold start, because a cold start has no positions. Moving the scan
+ahead of the tick for the case where positions DO exist would leave open money
+unwatched for half an hour, which is the trade the watch pass was built to
+avoid: an opportunity missed by an hour is only missed.
 
 ### The engine does not need a server — CORRECTED
 

@@ -245,7 +245,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           topHolderMovedPct: null,
           // Measured from the candles this tick already fetched: the newest bar
           // with volume is when somebody last traded this pool. The signal it
-          // feeds — freeze at six hours, condemn at twenty-four — had never
+          // feeds — freeze at three hours, condemn at twelve — had never
           // fired, because this was hardcoded null for the life of the project.
           hoursSinceLastTrade: hoursSinceLastTrade(candles, Date.now()),
         }
@@ -345,7 +345,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // The whole visible universe: Jupiter's lists return ~220 unique
               // Solana tokens and GeckoTerminal adds BSC's pools; the free
               // gates cut that to what is worth paying for.
-              maxTokens: 300,
+              // Raised with the cold deep sweep: three GeckoTerminal lists at
+              // ten pages is up to six hundred pools per chain, and a cap of
+              // three hundred would have thrown half of that away by ARRIVAL
+              // ORDER — paying for the sweep and discarding its tail.
+              //
+              // Affordable because the expensive stage is capped separately.
+              // Market data is one DexScreener call per thirty tokens and the
+              // free gates cost nothing; security is bounded by
+              // `maxSecurityChecks` and rotates through the cache, so a wider
+              // universe reaches further over cycles instead of costing more
+              // per cycle.
+              maxTokens: 700,
               // A bounded budget per chain, because each surviving token costs
               // about nine throttled seconds and a cycle has to finish inside
               // one bar. What it cannot reach is reported as unchecked rather

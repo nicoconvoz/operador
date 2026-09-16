@@ -127,7 +127,7 @@ export interface ScanConfig {
  * fixing the cause and guessing at it.
  */
 export type ScanProgress =
-  | { readonly stage: 'universe'; readonly chain: Chain; readonly discovered: number }
+  | { readonly stage: 'universe'; readonly chain: Chain; readonly discovered: number; readonly dropped: number }
   | { readonly stage: 'market'; readonly chain: Chain; readonly priced: number }
   | { readonly stage: 'budget'; readonly chain: Chain; readonly affordable: number; readonly checking: number }
   | { readonly stage: 'checked'; readonly chain: Chain; readonly done: number; readonly of: number }
@@ -209,8 +209,18 @@ export async function scanOnce(
   // would otherwise start dropping its own positions out of the scan, which is
   // the failure this whole ordering exists to prevent.
   const discovered = [...universe].filter((address) => !held.has(address))
-  const addresses = [...held, ...discovered.slice(0, Math.max(0, config.maxTokens - held.size))]
-  deps.onProgress?.({ stage: 'universe', chain: config.chain, discovered: addresses.length })
+  const room = Math.max(0, config.maxTokens - held.size)
+  const addresses = [...held, ...discovered.slice(0, room)]
+  // What the cap THREW AWAY, not only what it kept. A cut this size is a
+  // decision about the universe, and a log that prints the survivors alone
+  // reads identically whether the cap bit or the day was quiet — so the number
+  // that would tell you to raise it is the one nobody could see.
+  deps.onProgress?.({
+    stage: 'universe',
+    chain: config.chain,
+    discovered: addresses.length,
+    dropped: Math.max(0, discovered.length - room),
+  })
 
   // ── 2. Market, in batches of 30 ────────────────────────────────────────────
   const markets = []
