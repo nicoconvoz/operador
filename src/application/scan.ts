@@ -84,6 +84,24 @@ export interface ScanConfig {
   /** Cap on tokens whose MARKET data is fetched. Cheap: 30 per request. */
   readonly maxTokens: number
   /**
+   * Addresses we already hold on this chain. They are never candidates.
+   *
+   * Every universe source is a list of what is POPULAR NOW — Jupiter's lists,
+   * GeckoTerminal's trending pools, DexScreener's boosts. A token bought six
+   * hours ago that has since stopped trending falls out of all of them, and
+   * then gets cut twice more: by `maxTokens`, and by a security budget shared
+   * out on opportunity score. Measured in production: most open positions
+   * reporting "el escáner no la encontró en este ciclo".
+   *
+   * That is the priority exactly inverted. A token holding our money is not
+   * competing for attention, it has already won — and its security status is
+   * the one we most need current, because it is the one a rug would cost us.
+   *
+   * So they enter the universe FIRST, survive the cap, and take the security
+   * budget ahead of any candidate.
+   */
+  readonly held?: readonly string[]
+  /**
    * Cap on tokens given the expensive treatment — one throttled security call
    * and one sell quote each. Omitted means every token that cleared the free
    * gates, which is the honest default now that those gates run first.
@@ -168,7 +186,10 @@ export async function scanOnce(
   const errors: ScanError[] = []
 
   // ── 1. Universe: every source we have, deduplicated, capped ────────────────
-  const universe = new Set<string>()
+  // What we hold goes in before anything is discovered, so the cap below can
+  // never be what decides whether our own position is looked at.
+  const held = new Set(config.held ?? [])
+  const universe = new Set<string>(held)
   if (deps.decimals.discover) {
     try {
       for (const address of await deps.decimals.discover()) universe.add(address)
@@ -184,7 +205,11 @@ export async function scanOnce(
     }
   }
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
-  const addresses = [...universe].slice(0, config.maxTokens)
+  // The cap bounds DISCOVERY, never what we hold. A book wider than the cap
+  // would otherwise start dropping its own positions out of the scan, which is
+  // the failure this whole ordering exists to prevent.
+  const discovered = [...universe].filter((address) => !held.has(address))
+  const addresses = [...held, ...discovered.slice(0, Math.max(0, config.maxTokens - held.size))]
   deps.onProgress?.({ stage: 'universe', chain: config.chain, discovered: addresses.length })
 
   // ── 2. Market, in batches of 30 ────────────────────────────────────────────
@@ -263,10 +288,14 @@ export async function scanOnce(
   // next cycle, so the next cycle's budget reaches further down the list.
   const unexamined = affordable.filter((market) => !remembered.has(market.address))
   const budget = config.maxSecurityChecks ?? unexamined.length
-  const ordered =
+  const byScore =
     budget >= unexamined.length
       ? unexamined
       : [...unexamined].sort((a, b) => provisionalScore(b, config) - provisionalScore(a, config))
+  // Ours first, unranked. A held token is not competing with candidates for a
+  // look — the money is already in it, and an unexamined position is one whose
+  // honeypot answer nobody has refreshed since it was bought.
+  const ordered = [...byScore.filter((m) => held.has(m.address)), ...byScore.filter((m) => !held.has(m.address))]
 
   // What the budget could not reach still goes on the screen, marked unchecked.
   // The gates fail closed, so an unexamined token is never a candidate — but
@@ -372,7 +401,12 @@ export async function scanOnce(
     // What the venue said, recorded on the snapshot — so the gate can refuse
     // an inescapable pool and the screen can show the real cost, instead of
     // both inferring a friendly number from reported liquidity.
-    const snapshot: TokenSnapshot = { ...market, security, historyBars, measuredImpactPct: slippagePct }
+    // `securityChecked: true` explicitly. A token examined THIS cycle left the
+    // field undefined while one read from cache set true and one the budget
+    // skipped set false — three values for two meanings. Readers survived it by
+    // testing `!== false`, which is a trap waiting for the first reader that
+    // tests `=== true`.
+    const snapshot: TokenSnapshot = { ...market, security, historyBars, securityChecked: true, measuredImpactPct: slippagePct }
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,

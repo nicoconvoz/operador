@@ -274,3 +274,77 @@ describe('scanOnce — the budget rotates, so nothing waits forever', () => {
     expect(checked(later.http)).toEqual(['a', 'b', 'c'])
   })
 })
+
+// ── A token holding our money is never a candidate ──────────────────────────
+//
+// Reported live: many HELD positions showing "el escáner no la encontró en
+// este ciclo — los datos son los de la posición". The universe comes from
+// discovery — Jupiter's lists, GeckoTerminal's trending pools, DexScreener's
+// boosts — and every one of those is a list of what is POPULAR NOW. A token
+// bought six hours ago that has since stopped trending simply falls out, and
+// then gets cut twice more: by `maxTokens`, and by a security budget shared
+// out on opportunity score.
+//
+// That is the priority exactly inverted. A token holding our money is not
+// competing for attention; it has already won. Its security status is the one
+// we most need current, because it is the one a rug would cost us.
+
+describe('scanOnce — what we already hold comes first', () => {
+  const table = {
+    [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'trending' }] },
+    [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/ours,trending`]: { body: [pair('ours'), pair('trending')] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/trending,ours`]: { body: [pair('trending'), pair('ours')] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/ours`]: { body: [pair('ours')] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/trending`]: { body: [pair('trending')] },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=ours`]: { body: { code: 1, message: 'ok', result: { ours: safe } } },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=trending`]: { body: { code: 1, message: 'ok', result: { trending: safe } } },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=ours`]: { body: goodQuote },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=trending`]: { body: goodQuote },
+  }
+
+  it('scans a held token no discovery source mentioned', async () => {
+    const { deps } = build(table)
+
+    const out = await scanOnce(deps, { ...config, held: ['ours'] })
+
+    // Nothing put 'ours' in the universe. Holding it is what puts it there.
+    expect(out.snapshots.map((s) => s.address).sort()).toEqual(['ours', 'trending'])
+  })
+
+  it('survives the maxTokens cut, however long the trending list is', async () => {
+    const { deps } = build(table)
+
+    // One slot, and discovery got there first. The cut must not be what
+    // decides whether our own position is looked at.
+    const out = await scanOnce(deps, { ...config, maxTokens: 1, held: ['ours'] })
+
+    expect(out.snapshots.map((s) => s.address)).toContain('ours')
+  })
+
+  it('takes the security budget ahead of any candidate', async () => {
+    const { deps } = build(table)
+
+    // Budget of one, and 'trending' outranks 'ours' on nothing in particular —
+    // it does not matter. A held token is not ranked against candidates.
+    const out = await scanOnce(deps, { ...config, maxSecurityChecks: 1, held: ['ours'] })
+
+    const ours = out.snapshots.find((s) => s.address === 'ours')
+    expect(ours?.securityChecked).toBe(true)
+  })
+
+  it('does not double-count one we hold that discovery also found', async () => {
+    const { deps } = build(table)
+
+    const out = await scanOnce(deps, { ...config, held: ['trending'] })
+
+    expect(out.snapshots.filter((s) => s.address === 'trending')).toHaveLength(1)
+  })
+
+  it('changes nothing when we hold nothing', async () => {
+    const { deps } = build(table)
+    const out = await scanOnce(deps, { ...config, held: [] })
+    expect(out.snapshots.map((s) => s.address)).toEqual(['trending'])
+  })
+})

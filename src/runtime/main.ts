@@ -248,6 +248,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       }),
     scan: async () => {
       const candidates: Candidate[] = []
+      // What we already hold, per chain. Every universe source is a list of
+      // what is POPULAR NOW, so a token bought six hours ago that has stopped
+      // trending falls out of all of them — and then out of the maxTokens cut,
+      // and then out of a security budget shared on opportunity score.
+      // Measured in production: most open positions reporting "el escáner no la
+      // encontró en este ciclo", which means nobody had re-checked their
+      // honeypot answer since the day they were bought.
+      const open = await store.loadPositions()
       for (const chain of config.chains) {
         // The counters live on adapters SHARED by every chain, so they are
         // cumulative. Reporting them raw labelled the second chain with the
@@ -279,9 +287,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               ranking: {
                 gates: DEFAULT_GATE_POLICY,
                 opportunity: DEFAULT_OPPORTUNITY_POLICY,
-                watchSlots: config.maxPositions,
+                watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
                 minScore: 0,
               },
+              // Ours first: into the universe before discovery, past the cap,
+              // and ahead of every candidate for the security budget.
+              held: open.filter((p) => p.chain === chain).map((p) => p.tokenAddress),
               referenceUsd: 100,
               spreadPct: 0.3,
               // The whole visible universe: Jupiter's lists return ~220 unique

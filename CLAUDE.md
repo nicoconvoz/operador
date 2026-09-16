@@ -129,6 +129,27 @@ This reorders the work; it does not soften it. A token that clears the free
 gates still faces the full set, security included — and a test pins that any
 market failure appears in both.
 
+### What we already hold is never a candidate
+
+Every universe source is a list of what is **popular now** — Jupiter's lists,
+GeckoTerminal's trending pools, DexScreener's boosts. A token bought six hours
+ago that has since stopped trending falls out of all of them, and is then cut
+twice more: by `maxTokens`, and by a security budget shared out on opportunity
+score.
+
+Measured in production: most open positions reporting *"el escáner no la
+encontró en este ciclo"* — which means nobody had re-checked their honeypot
+answer since the day they were bought.
+
+That is the priority exactly inverted. **A token holding our money is not
+competing for attention; it has already won.** Its security status is the one we
+most need current, because it is the one a rug would cost us.
+
+So `ScanConfig.held` puts them in the universe **before** discovery runs, past
+the cap — which bounds discovery, never the book — and **ahead of every
+candidate** for the security budget, unranked. A held token is not scored
+against strangers for the right to be looked at.
+
 ### Freefall — an entry gate, and deliberately not an exit
 
 A token that has lost more than half its price in about three hours is not an
