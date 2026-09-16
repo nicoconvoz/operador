@@ -28,8 +28,82 @@ export interface ConsoleData {
 
 const REFRESH_MS = 20_000
 
+/**
+ * Where the viewer was, kept across a page load.
+ *
+ * The data refresh never reloads — that was the whole point of the poller — but
+ * a page load can still happen for reasons the page does not control: Android
+ * recreating the Activity, a deploy invalidating the chunk an open tab is
+ * holding, the OS reclaiming a backgrounded WebView. Every one of those dropped
+ * the reader back on Universo mid-read, which looks exactly like the app
+ * reopening on its own.
+ *
+ * sessionStorage rather than localStorage: this is "where I was just now", not
+ * a preference. A tab opened tomorrow should start at the sky.
+ *
+ * Wrapped, because a private window or blocked site data makes these THROW
+ * rather than return null, and a dashboard that will not render because it
+ * could not remember a tab has traded the whole page for a nicety.
+ */
+const TAB_KEY = 'operador:tab'
+const SCROLL_KEY = 'operador:scroll'
+type Tab = 'universe' | 'operations'
+
+const rememberedTab = (): Tab | null => {
+  try {
+    const saved = sessionStorage.getItem(TAB_KEY)
+    return saved === 'operations' || saved === 'universe' ? saved : null
+  } catch {
+    return null
+  }
+}
+
 export function Console({ initial, live = true }: { initial: ConsoleData; live?: boolean }) {
-  const [tab, setTab] = useState<'universe' | 'operations'>('universe')
+  const [tab, setTab] = useState<Tab>('universe')
+
+  // Read AFTER mounting, never during render: the server has no sessionStorage,
+  // so reading it in the initial state would render one tree on the server and
+  // a different one in the browser, and React would throw out the hydration.
+  useEffect(() => {
+    const saved = rememberedTab()
+    if (saved) setTab(saved)
+
+    // And back to where they were reading. After the tab is restored, so the
+    // page is the right height to scroll within.
+    try {
+      const y = Number(sessionStorage.getItem(SCROLL_KEY))
+      if (Number.isFinite(y) && y > 0) requestAnimationFrame(() => window.scrollTo(0, y))
+    } catch {
+      // Nothing to restore. The top is a fine place to start.
+    }
+  }, [])
+
+  // Written on a timer rather than on every scroll event: a phone fires
+  // hundreds of those a second, and sessionStorage writes are synchronous.
+  useEffect(() => {
+    const remember = () => {
+      try {
+        sessionStorage.setItem(SCROLL_KEY, String(window.scrollY))
+      } catch {
+        // Per-viewer convenience. Losing it costs nothing.
+      }
+    }
+    const timer = setInterval(remember, 1_000)
+    window.addEventListener('pagehide', remember)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('pagehide', remember)
+    }
+  }, [])
+
+  const showTab = (next: Tab) => {
+    setTab(next)
+    try {
+      sessionStorage.setItem(TAB_KEY, next)
+    } catch {
+      // Remembering is a convenience; failing to remember is not an error.
+    }
+  }
   const [data, setData] = useState(initial)
   /** null while everything is fine; the reason when it is not. */
   const [staleReason, setStaleReason] = useState<string | null>(null)
@@ -128,10 +202,10 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
       </section>
 
       <nav style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
-        <Tab active={tab === 'universe'} onClick={() => setTab('universe')}>
+        <Tab active={tab === 'universe'} onClick={() => showTab('universe')}>
           Universo <Count>{universe.tokens.length}</Count>
         </Tab>
-        <Tab active={tab === 'operations'} onClick={() => setTab('operations')}>
+        <Tab active={tab === 'operations'} onClick={() => showTab('operations')}>
           Operaciones {open > 0 && <Count>{open}</Count>}
         </Tab>
       </nav>

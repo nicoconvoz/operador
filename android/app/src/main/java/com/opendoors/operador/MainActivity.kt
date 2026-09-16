@@ -22,6 +22,7 @@ import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
@@ -219,6 +220,45 @@ class MainActivity : AppCompatActivity() {
                 // error over a page that loaded fine.
                 if (request?.isForMainFrame != true) return
                 showLoadFailure()
+            }
+
+            /**
+             * The renderer died. Survive it.
+             *
+             * Android runs a WebView's rendering in its OWN process and reclaims
+             * it under memory pressure — and a canvas animating at 60fps is a
+             * prime candidate. Returning false, which is what NOT overriding
+             * this does, tells Android to kill the whole app process with it.
+             *
+             * From the outside that is indistinguishable from the app reopening
+             * on its own: the process dies, Android restarts it, onCreate runs,
+             * and the reader is back on the first screen at the top. Which is
+             * exactly what it looked like, because it is exactly what happened.
+             *
+             * The dead WebView cannot be reused — it has to be thrown away and
+             * rebuilt. Returning true is what keeps everything else alive:
+             * the foreground service, the alert cursor, the process.
+             */
+            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                val container = view?.parent as? FrameLayout
+                view?.let {
+                    container?.removeView(it)
+                    it.destroy()
+                }
+                webView = null
+
+                if (container != null) {
+                    container.addView(buildWebView())
+                    reload()
+                    // Said out loud. A screen that silently rebuilt itself is a
+                    // screen the reader cannot trust, and this is the one event
+                    // that used to take the app down without explanation.
+                    toast(
+                        if (detail?.didCrash() == true) "El visor se cayó y se reconstruyó"
+                        else "Android liberó memoria; el visor se reconstruyó",
+                    )
+                }
+                return true
             }
         }
         view.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)

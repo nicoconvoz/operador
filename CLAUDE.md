@@ -1026,6 +1026,24 @@ dead engine, the failure that looks identical to "nothing is happening".
 Rendering is `force-dynamic`: a cached view of a trading system is worse than
 no view, because a stale "all healthy" reads exactly like a live one.
 
+**There is no meta refresh, and its absence is load-bearing.** One lived in
+`layout.tsx` — `content="60"` — from before the page could update itself. The
+console has polled `/api/view` every twenty seconds since, swapping the data
+underneath precisely so the canvas keeps turning and the reader keeps their
+place; the meta tag went on reloading the whole document over the top of it.
+
+Every sixty seconds, mid-read, the browser threw the page away: back to the
+Universo tab, scrolled to the top, orbits restarted, selection gone. It read as
+the app reopening on its own, and it was reported that way. What located it was
+the user noticing it happened **on the web as well as in the Android shell** —
+nothing in Kotlin can do that to a browser.
+
+**A fix that survives its own replacement stops being a fix.** The tab and the
+scroll position are now remembered in `sessionStorage` anyway, because a page
+load can still arrive from outside — a deploy invalidating an open tab's chunk,
+Android reclaiming a WebView — and landing somewhere else is a bad answer to
+any of them.
+
 ## The phone
 
 `android/` — an Android app, and `dashboard/app/api/` the endpoints it reads.

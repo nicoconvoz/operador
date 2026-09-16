@@ -16,10 +16,25 @@ export const viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        {/* The page refreshes itself; a trading view nobody reloads is a lie. */}
-        <meta httpEquiv="refresh" content="60" />
-      </head>
+      {/*
+        No meta refresh.
+
+        There used to be one here — `content="60"` — from before the page could
+        update itself, with the comment "a trading view nobody reloads is a
+        lie". The reasoning was right and the mechanism outlived it: the console
+        has polled /api/view every twenty seconds since, swapping the data
+        underneath without a reload, precisely so the canvas keeps turning and
+        the reader keeps their place.
+
+        The two then fought for months. Every sixty seconds, mid-read, the
+        browser threw the whole page away and rebuilt it: back to the Universo
+        tab, scrolled to the top, orbits restarted, selection gone. From the
+        outside it looked exactly like the app reopening by itself, because it
+        was. It happened in the Android shell and on the web alike, which is
+        what finally located it — nothing in Kotlin could do that to a browser.
+
+        A fix that survives its own replacement stops being a fix.
+      */}
       <body
         style={{
           margin: 0,
