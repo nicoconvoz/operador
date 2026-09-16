@@ -84,6 +84,15 @@ export interface CycleConfig {
   readonly maxOpenEntries?: number
   /** Sizing policy, including how many rungs the venue will hold open. */
   readonly sizing?: SizingPolicy
+  /**
+   * Bar size in milliseconds, so the cycle can tell whether a position has
+   * anything new to look at before it pays a throttled request to find out.
+   *
+   * Omitted, every position is refreshed every pass — which is what this did
+   * before, and what put ~216 candle requests an hour against a provider that
+   * rate-limits by IP.
+   */
+  readonly barMs?: number
   /** Emit a heartbeat when this long has passed since the last one. */
   readonly heartbeatMs: number
   /** When a reserved slot that never traded may be handed to somebody else. */
@@ -115,6 +124,14 @@ export interface CycleResult {
   readonly haltedIds: readonly string[]
   /** Slots reclaimed from positions that reserved them and never traded. */
   readonly releasedIds: readonly string[]
+  /**
+   * Positions whose candles could not be fetched this pass.
+   *
+   * Not merely a statistic. Skipping the tick skips the DEATH WATCH with it,
+   * so an unreachable position is an UNWATCHED one — and the token a provider
+   * is failing on is exactly the kind worth worrying about.
+   */
+  readonly unreachableIds: readonly string[]
   readonly killSwitchEngaged: boolean
   readonly at: number
 }
@@ -155,9 +172,32 @@ export async function runCycle(
 
   // ── 2. Advance every position that can be trusted ──────────────────────────
   const ticks: TickResult[] = []
+  const unreachableIds: string[] = []
+  // Bars are stamped by their OPEN, so the newest CLOSED bar opened two bar
+  // widths ago. A position already standing on it has nothing to do, and the
+  // engine acts on closed bars only — asking anyway is how it spends the quota
+  // that the positions with real work to do then cannot get.
+  const latestClosedBar = config.barMs === undefined ? null : Math.floor(at / config.barMs) * config.barMs - config.barMs
+
   for (const recovered of recovery.positions) {
+    if (latestClosedBar !== null && recovered.position.lastBarTime >= latestClosedBar) continue
+
     const candles = await deps.candlesFor(recovered.position)
-    if (!candles) continue
+    if (!candles) {
+      // Never silently. A position was skipped here without a word, and the
+      // book drifted into bars four hours apart while every pass logged
+      // healthy — the failure that looks exactly like nothing happening.
+      unreachableIds.push(recovered.position.id)
+      const unreachable = alert(
+        'provider-degraded',
+        `📡 ${recovered.position.symbol} sin datos`,
+        'No se pudieron traer sus velas, así que esta pasada no avanzó ni corrió su vigilancia de muerte. Suele ser un límite de tasa del proveedor; si se repite durante horas, la posición está sin vigilar.',
+        at,
+        { position: recovered.position.id },
+      )
+      if (throttle.shouldSend(unreachable, `unreachable:${recovered.position.id}`)) await deps.alerts.send(unreachable)
+      continue
+    }
 
     const result = await tickPosition(
       { position: recovered.position, candles, health: await deps.healthFor(recovered.position), broker: await deps.brokerFor(recovered.position) },
@@ -425,6 +465,7 @@ export async function runCycle(
     opened,
     haltedIds: recovery.halted.map((h) => h.position.id),
     releasedIds,
+    unreachableIds,
     killSwitchEngaged: recovery.killSwitchEngaged,
     at,
   }

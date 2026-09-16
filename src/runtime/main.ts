@@ -328,6 +328,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       sizing: { ...DEFAULT_SIZING_POLICY, maxOpenEntries: config.maxDcaPerToken + 1 },
       portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: config.totalCapitalUsd, maxPositions: config.maxPositions },
       heartbeatMs: 60 * 60 * 1000,
+      // So a pass can tell whether a position has a new bar to look at before
+      // paying a throttled request to find out.
+      barMs: config.barSize.timeframe === 'hour' ? 60 * 60 * 1000 : (config.barSize.aggregate ?? 1) * 60_000,
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
       idleSlots: {
@@ -375,6 +378,7 @@ export async function main(ports: RuntimePorts): Promise<void> {
           bars,
           opened: result.opened.length,
           released: result.releasedIds.length,
+          unreachable: result.unreachableIds.length,
           halted: result.haltedIds.length,
           seconds: Math.round(elapsedMs / 1000),
         }),

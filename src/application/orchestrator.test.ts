@@ -715,3 +715,125 @@ describe('runCycle — no ceiling means no ceiling', () => {
     expect(result.opened).toHaveLength(2)
   })
 })
+
+// ── A position that cannot be refreshed is not a position to ignore ─────────
+//
+// Found live: eighteen positions sitting at bars four hours apart while the
+// engine logged healthy passes. The tick loop reads
+//
+//   const candles = await deps.candlesFor(position)
+//   if (!candles) continue
+//
+// and the adapter swallows every error into null. So a position whose candle
+// request was rate-limited was skipped in SILENCE — and skipped means its
+// DEATH WATCH did not run either, because the whole tick is one step.
+//
+// That inverts the guarantee exactly: the position the provider is failing on
+// is the one that stops being watched.
+
+describe('runCycle — a position it could not refresh', () => {
+  it('says so, rather than skipping it quietly', async () => {
+    const { deps, store, alerts, throttle } = rig({ candlesFor: async () => null })
+    await store.savePosition(position({ lastBarTime: NOW - 9 * HOUR }))
+
+    await runCycle(deps, config, throttle)
+
+    const said = alerts.sent.find((a) => a.title.includes('HELD') || a.body.includes('HELD'))
+    expect(said, 'a skipped position must produce an alert').toBeDefined()
+  })
+
+  it('grades it as a risk, because an unwatched position is one', async () => {
+    const { deps, store, alerts, throttle } = rig({ candlesFor: async () => null })
+    await store.savePosition(position({ lastBarTime: NOW - 9 * HOUR }))
+
+    await runCycle(deps, config, throttle)
+
+    // Skipping the tick skips the death watch with it. A token that cannot be
+    // priced is exactly the shape of one worth worrying about.
+    const said = alerts.sent.find((a) => a.kind === 'provider-degraded' || a.kind === 'position-halted')
+    expect(said?.level).not.toBe('info')
+  })
+
+  it('reports which ones it could not reach', async () => {
+    const { deps, store, throttle } = rig({ candlesFor: async () => null })
+    await store.savePosition(position({ lastBarTime: NOW - 9 * HOUR }))
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.unreachableIds).toEqual(['pos-1'])
+  })
+
+  it('one unreachable position never stops the others', async () => {
+    let asked = 0
+    const { deps, store, throttle } = rig({
+      candlesFor: async () => (++asked === 1 ? null : flat()),
+    })
+    await store.savePosition(position({ id: 'a', tokenAddress: 'A', symbol: 'A', lastBarTime: NOW - 9 * HOUR }))
+    await store.savePosition(position({ id: 'b', tokenAddress: 'B', symbol: 'B', lastBarTime: NOW - 9 * HOUR }))
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.unreachableIds).toHaveLength(1)
+    expect(result.ticks).toHaveLength(1)
+  })
+})
+
+// ── Do not ask for candles a position already has ───────────────────────────
+//
+// Eighteen positions asking for candles every five minutes is ~216 throttled
+// requests an hour, against a provider that limits by IP on a runner shared
+// with thousands of unrelated jobs. But there are only FOUR closed bars in an
+// hour: three quarters of those requests could not have told the engine
+// anything it did not already know.
+//
+// The engine acts on closed bars only, so a position already standing on the
+// latest closed bar has nothing to do — and asking is how it runs out of quota
+// for the positions that do.
+
+describe('runCycle — it only fetches what a new bar would change', () => {
+  const FIFTEEN = 15 * 60_000
+  const paced: CycleConfig = { ...config, barMs: FIFTEEN }
+  // Bars are stamped by their OPEN, so the newest CLOSED one opened two bars ago.
+  const latestClosed = Math.floor(NOW / FIFTEEN) * FIFTEEN - FIFTEEN
+
+  it('skips the request for a position already on the latest closed bar', async () => {
+    let asked = 0
+    const { deps, store, throttle } = rig({ candlesFor: async () => { asked++; return flat() } })
+    await store.savePosition(position({ lastBarTime: latestClosed }))
+
+    await runCycle(deps, paced, throttle)
+
+    expect(asked).toBe(0)
+  })
+
+  it('still asks once a bar has closed under it', async () => {
+    let asked = 0
+    const { deps, store, throttle } = rig({ candlesFor: async () => { asked++; return flat() } })
+    await store.savePosition(position({ lastBarTime: latestClosed - FIFTEEN }))
+
+    await runCycle(deps, paced, throttle)
+
+    expect(asked).toBe(1)
+  })
+
+  it('a skipped request is NOT an unreachable position', async () => {
+    const { deps, store, throttle } = rig({ candlesFor: async () => { throw new Error('should not be called') } })
+    await store.savePosition(position({ lastBarTime: latestClosed }))
+
+    // Nothing to do is not the same as could not be reached, and conflating
+    // them would raise an alarm every five minutes on a healthy book.
+    const result = await runCycle(deps, paced, throttle)
+
+    expect(result.unreachableIds).toEqual([])
+  })
+
+  it('asks for everything when no bar size is configured — the old behaviour', async () => {
+    let asked = 0
+    const { deps, store, throttle } = rig({ candlesFor: async () => { asked++; return flat() } })
+    await store.savePosition(position({ lastBarTime: latestClosed }))
+
+    await runCycle(deps, config, throttle)
+
+    expect(asked).toBe(1)
+  })
+})
