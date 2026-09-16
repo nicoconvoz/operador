@@ -1560,20 +1560,38 @@ across them the THROTTLES bind, not the latencies:
 | Jupiter | 1,100ms | 2 | 2.2s |
 | **GeckoTerminal** | **2,500ms** | **1** | **2.5s** |
 
-**2.5 seconds per token**, set by GeckoTerminal. Worst case — every one of the
-700 discovered surviving the free gates — that is **29 minutes per chain**, so
-under an hour for both, plus about 75 seconds of deep discovery each.
+**2.5 seconds per token**, set by GeckoTerminal — not by any latency.
 
-Two honest caveats on that number. The free-gate survival rate was **not
-measured**, so 700 is a ceiling rather than an expectation; most discovered
-pools are thin, quiet or young and never reach the paid stage. And the timings
-above come from a home connection: **GeckoTerminal limits by IP, and a CI runner
-shares its address with thousands of unrelated jobs** — the same cold scan from
-a runner measured 50 rejections and 304 seconds of backoff. Expect the runner to
-be worse, plausibly two to three times.
+The one unknown was how many tokens the FREE gates let through, so it was
+measured too: a real cold run stopped at `maxSecurityChecks: 0`, which halts
+immediately before the paid stage (2026-09-16, home IP, the economies above in
+place):
 
-So: **about an hour at best, a few hours if the runner is throttled hard.** It
-must be allowed to finish. Everything is written as it goes
+| | Discovered | Clear the free gates | Rate | Discovery |
+|---|---|---|---|---|
+| Solana | 480 | **57** | 11.9% | 187s |
+| BSC | 452 | **41** | 9.1% | 209s |
+
+**Roughly one token in ten reaches the paid stage.** The gates are doing far
+more work than assumed — an estimate of 80–150 survivors per chain was nearly
+three times the truth.
+
+| | Solana | BSC |
+|---|---|---|
+| Discovery | 187s | 209s |
+| Examination (57 and 41 × 2.5s) | 143s | 103s |
+| **Total** | **5.6 min** | **5.2 min** |
+
+**About eleven minutes for both chains**, against the "one to three hours" this
+section claimed before the economies. Also worth noting: `dropped: 0` — the
+700-token cap never bit at 480 and 452, so it is a ceiling and not a cut.
+
+One caveat that survives measurement. These timings come from a home
+connection, and **GeckoTerminal limits by IP while a CI runner shares its
+address with thousands of unrelated jobs** — the same cold scan from a runner
+measured 50 rejections and 304 seconds of backoff. Discovery is 60 calls and the
+history counts another 98, so expect the runner to be two or three times worse:
+**twenty to thirty-five minutes.** It must still be allowed to finish. Everything is written as it goes
 (`recordSecurity` per token, `saveScan` per chain), so a killed job loses no
 work — but the run after it is no longer the beginning of anything and drops
 back to 20 per scan. To redo a bootstrap that was cut short, clear
