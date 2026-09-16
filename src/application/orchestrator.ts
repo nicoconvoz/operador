@@ -6,6 +6,7 @@ import { type PersistedPosition, type StatePort } from '../domain/persistence/st
 import { type CascadeParams } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
 import { type Candles } from './replay.js'
+import { type EntryConfirmation } from './confirm-entry.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
 import { commonFund, positionLedger, type PositionLedger } from './ledger.js'
@@ -54,19 +55,24 @@ export interface CycleDeps {
    */
   readonly brokerFor: (position: PersistedPosition) => Promise<BrokerPort>
   /**
-   * Re-confirms, right now, that this token can still be sold.
+   * Re-examines a chosen token from scratch, right now, before anything is
+   * bought — and re-runs the WHOLE gate set on what comes back.
    *
-   * The scanner's security verdict can be up to a couple of hours old: its
-   * reports are cached so the examination budget can rotate and reach every
-   * token instead of re-checking the same twenty forever. That trade is fine
-   * for ranking and wrong at the moment capital is committed, because the
-   * honeypot answer is the one that ages worst and the one everything rests
-   * on. So it is asked again here, for the handful about to be opened.
+   * The scanner's verdict is deliberately not fresh. Security reports are
+   * cached so the examination budget can rotate and reach every token instead
+   * of re-checking the same twenty forever, and a WATCH pass allocates from
+   * `recall`, a shelf up to twice the scan interval old. Both are right for
+   * RANKING and wrong at the moment capital is committed.
+   *
+   * It used to re-ask ONE question — can this still be sold. That is the answer
+   * that ages worst, and it is one of eight: a token that became mintable an
+   * hour ago still quotes a perfectly good sell, and was bought.
    *
    * Optional: absent, positions open on the scanner's verdict as before. It is
-   * a second look, not a gate that should fail closed on its own absence.
+   * a second look, not a gate that should fail closed on its own absence — but
+   * when it RUNS and cannot see, it refuses. See `confirm-entry.ts`.
    */
-  readonly confirmSellable?: (snapshot: Candidate['snapshot']) => Promise<boolean>
+  readonly confirmEntry?: (snapshot: Candidate['snapshot']) => Promise<EntryConfirmation>
   /** Fresh scanner output. Empty is a valid answer and is alerted on. */
   readonly scan: () => Promise<readonly Candidate[]>
   /**
@@ -407,16 +413,30 @@ export async function runCycle(
       }
 
       for (const allocation of plan.allocations) {
-        if (deps.confirmSellable && !(await deps.confirmSellable(allocation.snapshot))) {
-          const refused = alert(
-            'provider-degraded',
-            `⚠️ ${allocation.snapshot.symbol} no se pudo confirmar`,
-            'La ruta de venta no respondió al re-confirmarla. No se abre la posición.',
-            at,
-            { token: allocation.snapshot.address },
-          )
-          if (throttle.shouldSend(refused, `unsellable:${allocation.snapshot.address}`)) await deps.alerts.send(refused)
-          continue
+        if (deps.confirmEntry) {
+          const confirmation = await deps.confirmEntry(allocation.snapshot)
+          if (!confirmation.ok) {
+            // WHY it was refused, because the two reasons ask for different
+            // things from whoever reads it. A gate that turned is the system
+            // working — the token changed between the scan and the buy, which
+            // is exactly what this check exists to catch. A provider that could
+            // not answer is the system blind, and if it keeps happening the
+            // book stops growing for a reason nobody would guess from "no se
+            // abre la posición".
+            const why =
+              confirmation.reason === 'gates'
+                ? confirmation.failures.map((f) => f.detail).slice(0, 2).join(' · ')
+                : `No se pudo verificar: ${confirmation.detail}`
+            const refused = alert(
+              'provider-degraded',
+              `⚠️ ${allocation.snapshot.symbol} cambió antes de comprar`,
+              `${why}. No se abre la posición.`,
+              at,
+              { token: allocation.snapshot.address, reason: confirmation.reason },
+            )
+            if (throttle.shouldSend(refused, `unconfirmed:${allocation.snapshot.address}`)) await deps.alerts.send(refused)
+            continue
+          }
         }
 
         const position: PersistedPosition = {

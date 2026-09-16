@@ -11,7 +11,7 @@ import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
-import { scanOnce } from '../application/scan.js'
+import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
@@ -33,6 +33,7 @@ import { recallCandidates } from '../application/recall.js'
 import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { securityBudgetFor } from '../application/bootstrap.js'
+import { confirmEntry } from '../application/confirm-entry.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
@@ -255,22 +256,41 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       }
     },
     brokerFor,
-    // The scanner's verdict can be hours old by design. The sell path is the
-    // one answer that must be current at the moment capital moves, so it is
-    // asked again — for the handful about to be opened, which costs seconds.
-    confirmSellable: async (snapshot) => {
-      try {
-        const decimals = await decimalsFor.decimals(snapshot.chain, snapshot.address)
-        if (decimals === null || snapshot.priceUsd <= 0) return false
-        const amountRaw = BigInt(Math.floor((100 / snapshot.priceUsd) * 10 ** decimals))
-        const assessment = await sellProbeFor(snapshot.chain).assessSell(snapshot.address, amountRaw, decimals, 100)
-        // 'unknown' is not a yes. An unanswered sell path at the moment of
-        // entry is exactly the shape of the thing this prevents.
-        return assessment.sellQuote === 'ok'
-      } catch {
-        return false
-      }
-    },
+    // The scanner's verdict is hours old BY DESIGN — cached security reports so
+    // the budget can rotate, and a watch pass allocating from a shelf up to
+    // twice the scan interval old. Right for ranking, wrong the moment capital
+    // moves: between the scan and the buy a mint authority can come back, an LP
+    // can be unlocked and a pool can be drained.
+    //
+    // So the chosen token is examined again from scratch — through the SAME
+    // `examineToken` the scan uses, never a second implementation of what makes
+    // a token safe — and the whole gate set runs on what comes back. Only for
+    // the handful about to be opened, which costs a few seconds each.
+    confirmEntry: (snapshot) =>
+      confirmEntry(snapshot.address, async (address) => {
+        const pairs = await dex.tokens(snapshot.chain, [address])
+        const market = dex.toMarketSnapshots(snapshot.chain, pairs)[0]
+        if (!market) return null
+        const { snapshot: fresh } = await examineToken(
+          {
+            dex,
+            goplus,
+            sellProbe: sellProbeFor(snapshot.chain),
+            decimals: decimalsFor,
+            history,
+            // Recorded, so the next scan does not repeat an examination made
+            // seconds ago. A fresh look is a fresh look whoever asked for it.
+            securityCache: store,
+          },
+          { chain: snapshot.chain, referenceUsd: 100 },
+          market,
+          Date.now(),
+          // Errors are not swallowed into a pass: `confirmEntry` fails closed on
+          // an unreadable provider, and a gate that failed 'unknown' does too.
+          (stage: ScanError['stage'], error: unknown) => console.warn('[confirm]', stage, String(error).slice(0, 200)),
+        )
+        return fresh
+      }, DEFAULT_GATE_POLICY),
     // Every configured chain, each scan stored under its own chain so the
     // universe can show them together. One chain failing must not cost the
     // others their turn: a rate limit on Solana is not a reason to stop

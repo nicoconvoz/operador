@@ -202,29 +202,69 @@ describe('runCycle — liveness', () => {
   })
 })
 
-describe('runCycle — the sell path is confirmed before money moves', () => {
-  it('refuses to open a token whose sell path cannot be confirmed NOW', async () => {
+describe('runCycle — the chosen token is re-examined before money moves', () => {
+  it('refuses to open a token that no longer passes its gates', async () => {
     const { deps, alerts, throttle } = rig()
     const asked: string[] = []
 
     await runCycle(
-      { ...deps, confirmSellable: async (snapshot) => { asked.push(snapshot.address); return false } },
+      {
+        ...deps,
+        confirmEntry: async (snapshot) => {
+          asked.push(snapshot.address)
+          return { ok: false, reason: 'gates', failures: [{ gate: 'mintAuthority', reason: 'failed', detail: 'mint authority is active again' }] }
+        },
+      },
       config,
       throttle,
     )
 
-    // The scanner's verdict can be up to two hours old, because its security
-    // reports are cached so the budget can reach every token. A cached
-    // honeypot flag is exactly the one that must not be trusted at the moment
-    // capital is committed.
+    // The scanner's verdict can be hours old: security reports are cached so
+    // the budget can reach every token, and a watch pass allocates from a shelf
+    // up to twice the scan interval old. Both are right for ranking and wrong
+    // at the moment capital is committed.
     expect(asked.length).toBeGreaterThan(0)
     expect(await deps.store.loadPositions()).toEqual([])
     expect(alerts.sent.some((a) => a.kind === 'provider-degraded')).toBe(true)
   })
 
-  it('opens normally when the sell path still answers', async () => {
+  it('says WHICH gate turned, not just that something did', async () => {
+    // "No se abre la posición" alone sends the reader nowhere. A gate that
+    // turned is the check working; a provider that could not answer is the
+    // system blind, and those ask for very different reactions.
+    const { deps, alerts, throttle } = rig()
+    await runCycle(
+      {
+        ...deps,
+        confirmEntry: async () => ({
+          ok: false,
+          reason: 'gates',
+          failures: [{ gate: 'mintAuthority', reason: 'failed', detail: 'la autoridad de minteo volvió' }],
+        }),
+      },
+      config,
+      throttle,
+    )
+    expect(alerts.sent.some((a) => a.body.includes('la autoridad de minteo volvió'))).toBe(true)
+  })
+
+  it('refuses rather than guesses when the token cannot be read at all', async () => {
     const { deps, throttle } = rig()
-    await runCycle({ ...deps, confirmSellable: async () => true }, config, throttle)
+    await runCycle(
+      { ...deps, confirmEntry: async () => ({ ok: false, reason: 'unreadable', detail: '502' }) },
+      config,
+      throttle,
+    )
+    expect(await deps.store.loadPositions()).toEqual([])
+  })
+
+  it('opens normally when the token still passes everything', async () => {
+    const { deps, throttle } = rig()
+    await runCycle(
+      { ...deps, confirmEntry: async (snapshot) => ({ ok: true, snapshot }) },
+      config,
+      throttle,
+    )
     expect((await deps.store.loadPositions()).length).toBeGreaterThan(0)
   })
 

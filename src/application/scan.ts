@@ -170,6 +170,108 @@ const UNKNOWN_SECURITY: SecurityReport = {
 }
 
 /**
+ * Everything the expensive stage does to ONE token: security, the sell quote
+ * that doubles as the honeypot test, and how much history its pool has.
+ *
+ * Extracted because a SECOND caller needed it — `confirmEntry`, the last look
+ * before capital moves. Two implementations of "examine this token" would
+ * eventually disagree about what makes one safe, and the one that disagreed
+ * quietly would be the one standing between the money and a rug. This codebase
+ * has already paid for that shape twice: a ladder sized only on the offline
+ * path, and an execution step that existed nowhere but `replay.ts`.
+ *
+ * Three providers, three independent rate limiters, run as three branches — a
+ * token costs the LONGEST of them rather than their sum. Measured at 16.8
+ * seconds per token before that, against a 15-minute bar.
+ */
+export async function examineToken(
+  deps: ScanDeps,
+  config: Pick<ScanConfig, 'chain' | 'referenceUsd'>,
+  market: Omit<TokenSnapshot, 'security' | 'historyBars'>,
+  at: number,
+  record: (stage: ScanError['stage'], error: unknown) => void,
+): Promise<{ readonly snapshot: TokenSnapshot; readonly slippagePct: number | null }> {
+  const askGoPlus = async (): Promise<Partial<SecurityReport> | null> => {
+    try {
+      return await deps.goplus.securityReport(config.chain, market.address)
+    } catch (error) {
+      record('security', error)
+      return null
+    }
+  }
+
+  const askMetadataProvider = async (): Promise<{
+    audit: Partial<SecurityReport> | null
+    sell: SellAssessment | null
+  }> => {
+    let audit: Partial<SecurityReport> | null = null
+    if (deps.decimals.security) {
+      try {
+        audit = await deps.decimals.security(config.chain, market.address)
+      } catch (error) {
+        record('security', error)
+      }
+    }
+    if (!deps.sellProbe) return { audit, sell: null }
+    try {
+      const decimals = await deps.decimals.decimals(config.chain, market.address)
+      if (decimals === null || market.priceUsd <= 0) return { audit, sell: null }
+      const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
+      // One quote answers both questions: whether the token can be SOLD at
+      // all — the honeypot test, and the only one worth trusting because it
+      // is a fact rather than a third party's flag — and what the impact of
+      // a real order actually is.
+      return { audit, sell: await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd) }
+    } catch (error) {
+      record('quote', error)
+      return { audit, sell: null }
+    }
+  }
+
+  const askHistory = async (): Promise<number | null> => {
+    if (!deps.history) return null
+    try {
+      return await deps.history.historyBars(config.chain, market.pairAddress)
+    } catch (error) {
+      record('history', error)
+      return null
+    }
+  }
+
+  const [primary, metadata, historyBars] = await Promise.all([askGoPlus(), askMetadataProvider(), askHistory()])
+
+  // Merged in TRUST order, which the concurrency must not disturb: GoPlus
+  // first, then the metadata provider's audit, then venue heuristics.
+  // Danger from any source wins; unknowns fill in from the next.
+  const opinions: Partial<SecurityReport>[] = []
+  if (primary) opinions.push(primary)
+  if (metadata.audit) opinions.push(metadata.audit)
+  if (config.chain === 'solana') opinions.push(lpLockFromVenue(market.dexId))
+
+  let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
+  let slippagePct: number | null = null
+  if (metadata.sell) {
+    // A probe result beats any reported flag, in both directions.
+    const { sellQuote } = metadata.sell
+    security = { ...security, honeypot: sellQuote === 'ok' ? false : sellQuote === 'unknown' ? security.honeypot : true }
+    slippagePct = metadata.sell.priceImpactPct
+  }
+
+  await deps.securityCache?.recordSecurity(config.chain, market.address, security, slippagePct, at)
+
+  // What the venue said, recorded on the snapshot — so the gate can refuse
+  // an inescapable pool and the screen can show the real cost, instead of
+  // both inferring a friendly number from reported liquidity.
+  // `securityChecked: true` explicitly. A token examined THIS cycle left the
+  // field undefined while one read from cache set true and one the budget
+  // skipped set false — three values for two meanings. Readers survived it by
+  // testing `!== false`, which is a trap waiting for the first reader that
+  // tests `=== true`.
+  const snapshot: TokenSnapshot = { ...market, security, historyBars, securityChecked: true, measuredImpactPct: slippagePct }
+  return { snapshot, slippagePct }
+}
+
+/**
  * One pass of the scanner: discover → market → security → sell probe → rank.
  *
  * A token that errors at any stage is skipped and recorded; one bad token
@@ -340,83 +442,7 @@ export async function scanOnce(
     const record = (stage: ScanError['stage'], error: unknown) =>
       errors.push({ address: market.address, stage, error: String(error) })
 
-    const askGoPlus = async (): Promise<Partial<SecurityReport> | null> => {
-      try {
-        return await deps.goplus.securityReport(config.chain, market.address)
-      } catch (error) {
-        record('security', error)
-        return null
-      }
-    }
-
-    const askMetadataProvider = async (): Promise<{
-      audit: Partial<SecurityReport> | null
-      sell: SellAssessment | null
-    }> => {
-      let audit: Partial<SecurityReport> | null = null
-      if (deps.decimals.security) {
-        try {
-          audit = await deps.decimals.security(config.chain, market.address)
-        } catch (error) {
-          record('security', error)
-        }
-      }
-      if (!deps.sellProbe) return { audit, sell: null }
-      try {
-        const decimals = await deps.decimals.decimals(config.chain, market.address)
-        if (decimals === null || market.priceUsd <= 0) return { audit, sell: null }
-        const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
-        // One quote answers both questions: whether the token can be SOLD at
-        // all — the honeypot test, and the only one worth trusting because it
-        // is a fact rather than a third party's flag — and what the impact of
-        // a real order actually is.
-        return { audit, sell: await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd) }
-      } catch (error) {
-        record('quote', error)
-        return { audit, sell: null }
-      }
-    }
-
-    const askHistory = async (): Promise<number | null> => {
-      if (!deps.history) return null
-      try {
-        return await deps.history.historyBars(config.chain, market.pairAddress)
-      } catch (error) {
-        record('history', error)
-        return null
-      }
-    }
-
-    const [primary, metadata, historyBars] = await Promise.all([askGoPlus(), askMetadataProvider(), askHistory()])
-
-    // Merged in TRUST order, which the concurrency must not disturb: GoPlus
-    // first, then the metadata provider's audit, then venue heuristics.
-    // Danger from any source wins; unknowns fill in from the next.
-    const opinions: Partial<SecurityReport>[] = []
-    if (primary) opinions.push(primary)
-    if (metadata.audit) opinions.push(metadata.audit)
-    if (config.chain === 'solana') opinions.push(lpLockFromVenue(market.dexId))
-
-    let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
-    let slippagePct: number | null = null
-    if (metadata.sell) {
-      // A probe result beats any reported flag, in both directions.
-      const { sellQuote } = metadata.sell
-      security = { ...security, honeypot: sellQuote === 'ok' ? false : sellQuote === 'unknown' ? security.honeypot : true }
-      slippagePct = metadata.sell.priceImpactPct
-    }
-
-    await deps.securityCache?.recordSecurity(config.chain, market.address, security, slippagePct, scannedAt)
-
-    // What the venue said, recorded on the snapshot — so the gate can refuse
-    // an inescapable pool and the screen can show the real cost, instead of
-    // both inferring a friendly number from reported liquidity.
-    // `securityChecked: true` explicitly. A token examined THIS cycle left the
-    // field undefined while one read from cache set true and one the budget
-    // skipped set false — three values for two meanings. Readers survived it by
-    // testing `!== false`, which is a trap waiting for the first reader that
-    // tests `=== true`.
-    const snapshot: TokenSnapshot = { ...market, security, historyBars, securityChecked: true, measuredImpactPct: slippagePct }
+    const { snapshot, slippagePct } = await examineToken(deps, config, market, scannedAt, record)
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,

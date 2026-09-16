@@ -1504,8 +1504,39 @@ Per chain, deliberately: Solana having been swept says nothing about BSC, so a
 chain added months later gets the same cold sweep the first one got rather than
 inheriting its neighbour's warmth.
 
-**The first run is therefore long — expect one to three hours, not minutes**,
-and it must be allowed to finish. Everything is written as it goes
+**How long the cold run takes — measured per token, extrapolated**
+
+One real token per chain, timed end to end (2026-09-16, from a home IP):
+
+| | GoPlus | decimals | sell quote | history | longest branch |
+|---|---|---|---|---|---|
+| Solana (USDC) | 1.02s | 0.32s | 0.98s | 1.51s | **1.51s** |
+| BSC (CAKE) | 0.43s | — | 0.92s | 1.22s | **1.22s** |
+
+The three providers run as three parallel branches, so a token costs the
+LONGEST of them and not their sum. But tokens are examined **sequentially**, so
+across them the THROTTLES bind, not the latencies:
+
+| Provider | Interval | Calls per token | Floor |
+|---|---|---|---|
+| GoPlus | 2,000ms | 1 | 2.0s |
+| Jupiter | 1,100ms | 2 | 2.2s |
+| **GeckoTerminal** | **2,500ms** | **1** | **2.5s** |
+
+**2.5 seconds per token**, set by GeckoTerminal. Worst case — every one of the
+700 discovered surviving the free gates — that is **29 minutes per chain**, so
+under an hour for both, plus about 75 seconds of deep discovery each.
+
+Two honest caveats on that number. The free-gate survival rate was **not
+measured**, so 700 is a ceiling rather than an expectation; most discovered
+pools are thin, quiet or young and never reach the paid stage. And the timings
+above come from a home connection: **GeckoTerminal limits by IP, and a CI runner
+shares its address with thousands of unrelated jobs** — the same cold scan from
+a runner measured 50 rejections and 304 seconds of backoff. Expect the runner to
+be worse, plausibly two to three times.
+
+So: **about an hour at best, a few hours if the runner is throttled hard.** It
+must be allowed to finish. Everything is written as it goes
 (`recordSecurity` per token, `saveScan` per chain), so a killed job loses no
 work — but the run after it is no longer the beginning of anything and drops
 back to 20 per scan. To redo a bootstrap that was cut short, clear
