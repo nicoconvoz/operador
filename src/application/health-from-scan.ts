@@ -29,9 +29,13 @@ import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
  *  - `transfersBlocked` ← `hasBlacklist` says the contract HAS a blacklist
  *    function, not that we are on it. The sell probe is the test that answers
  *    the real question, and it already runs.
- *  - `hoursSinceLastTrade` ← we measure volume, not the time of the last
- *    trade. Deriving one from the other would be inventing a number the
- *    abandonment signal then treats as measured.
+ *
+ * `hoursSinceLastTrade` used to be on that list, and it did not belong there.
+ * The argument was that we measure volume, not the time of the last trade — true
+ * of the SCAN, which is all this file sees. It is false of the CANDLES, where
+ * the newest bar carrying volume IS when somebody last traded. `idle-hours.ts`
+ * reads it there, and the engine hands it over per tick, because that is the
+ * layer holding the measurement.
  *
  * Four honest readings beat eight where half are guesses: the death exit
  * requires CONFIRMATION, and confirmations built on invented data confirm

@@ -218,4 +218,18 @@ describe('death exit — policy sanity', () => {
     expect(P.liquidityExitRatio).toBeLessThan(P.liquidityFreezeRatio)
     expect(P.abandonmentExitHours).toBeGreaterThan(P.abandonmentFreezeHours)
   })
+
+  it('does not hold for a day what the door would refuse after an hour', () => {
+    // The entry gate demands `minHourlyTxns` trades in the LAST HOUR. A token
+    // that has not traded for six is one the scanner would not let us buy
+    // today, and one we would not have bought yesterday either.
+    //
+    // Holding it for a full day is the two rules disagreeing about the same
+    // token: strict at the door, indefinite once inside. The freeze may be
+    // several times the gate's tolerance because a freeze only stops buying;
+    // the exit may not be a day, because by then there is nothing to exit to.
+    const gateHours = 1
+    expect(P.abandonmentFreezeHours).toBeLessThanOrEqual(gateHours * 4)
+    expect(P.abandonmentExitHours).toBeLessThan(24)
+  })
 })

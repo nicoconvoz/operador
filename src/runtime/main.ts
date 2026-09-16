@@ -31,6 +31,7 @@ import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { recallCandidates } from '../application/recall.js'
 import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
+import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
@@ -190,7 +191,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         return null
       }
     },
-    healthFor: async (position) => {
+    healthFor: async (position, candles) => {
       try {
         // ── The scanner's verdict, folded in ONCE ──────────────────────────
         //
@@ -242,7 +243,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // not mean what the signal needs them to mean.
           transfersBlocked: null,
           topHolderMovedPct: null,
-          hoursSinceLastTrade: null,
+          // Measured from the candles this tick already fetched: the newest bar
+          // with volume is when somebody last traded this pool. The signal it
+          // feeds — freeze at six hours, condemn at twenty-four — had never
+          // fired, because this was hardcoded null for the life of the project.
+          hoursSinceLastTrade: hoursSinceLastTrade(candles, Date.now()),
         }
       } catch {
         return null

@@ -78,8 +78,15 @@ export const DEFAULT_DEATH_EXIT_POLICY: DeathExitPolicy = {
   liquidityExitRatio: 0.2,
   liquidityFloorUsd: 5_000,
   holderDumpFreezePct: 10,
-  abandonmentFreezeHours: 6,
-  abandonmentExitHours: 24,
+  // Tied to the entry gate, which refuses a token with fewer than four trades
+  // in the LAST HOUR. Six and twenty-four were the old numbers, and they said
+  // something the door does not: strict on the way in, patient to the point of
+  // indefinite once inside. Three hours is twelve empty 15m bars — three times
+  // worse than the gate tolerates, and a freeze costs nothing but a pause. At
+  // twelve hours the pool has not traded for half a day; waiting the other half
+  // is waiting for a buyer who is not coming.
+  abandonmentFreezeHours: 3,
+  abandonmentExitHours: 12,
   exitConfirmations: 3,
   clearObservations: 6,
 }

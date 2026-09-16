@@ -632,3 +632,107 @@ describe('tickPosition — a ladder six rungs deep', () => {
     expect(result.position.cascade.awaitReentry).toBe(true)
   })
 })
+
+// ── The death watch does not wait for a bar ─────────────────────────────────
+//
+// PURR sat frozen for four hours and would have stayed frozen forever. Its pool
+// had stopped producing candles, and tickPosition returns 'already-processed'
+// BEFORE the death watch runs:
+//
+//   const first = firstUnprocessedBar(...)
+//   if (first === null) return { skipped: 'already-processed' }
+//
+// No new bar → no tick → no observation → no clean streak → the freeze can
+// never lift. And the same door is shut on the way in: a token going quiet
+// could never be CONDEMNED either.
+//
+// Which inverts the guarantee exactly. A pool that stopped trading is the
+// profile of one being abandoned, and that is when the watch should be most
+// awake. CLAUDE.md says it plainly: evaluated continuously for every open
+// position, INDEPENDENT of price. Coupling it to candles was a mistake.
+
+describe('tickPosition — health is assessed even with no new bar', () => {
+  const upToDate = (candles: Candles) => position({
+    lastBarTime: candles.time.at(-1)!,
+    cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true },
+  })
+
+  it('still reports already-processed — nothing was decided', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+
+    const result = await tickPosition(
+      { position: upToDate(candles), candles, health: healthy(), broker },
+      config, store, alerts, throttle,
+    )
+
+    expect(result.skipped).toBe('already-processed')
+    expect(result.barsAdvanced).toBe(0)
+  })
+
+  it('but folds the observation in, so a freeze can still clear', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    const frozen: DeathWatchState = {
+      ...startDeathWatch(1_000_000, 0), stage: 'frozen', cleanStreak: 5,
+      evidence: [{ observedAt: 0, source: 's', signals: [{ kind: 'lpRemoved', stage: 2, detail: 'LP unlocked' }], stageAfter: 'frozen', verdict: 'freeze' }],
+    }
+
+    // The sixth clean reading. Without this the streak could never reach it,
+    // because the only place it advances was behind the early return.
+    const result = await tickPosition(
+      { position: upToDate(candles) as PersistedPosition, candles, health: healthy(), broker },
+      config, store, alerts, throttle,
+    )
+    expect(result.position.deathWatch).toBeDefined()
+
+    const withFrozen = { ...upToDate(candles), deathWatch: frozen }
+    const cleared = await tickPosition(
+      { position: withFrozen, candles, health: healthy(), broker },
+      config, store, alerts, throttle,
+    )
+    expect(cleared.position.deathWatch.stage).toBe('healthy')
+  })
+
+  it('persists what it learned, or the next pass starts from nothing', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    await store.savePosition(upToDate(candles))
+
+    await tickPosition(
+      { position: upToDate(candles), candles, health: healthy(), broker },
+      config, store, alerts, throttle,
+    )
+
+    const [stored] = await store.loadPositions()
+    expect(stored!.deathWatch.cleanStreak).toBeGreaterThan(0)
+  })
+
+  it('can still condemn a token that went quiet AND stopped being sellable', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    let position = { ...upToDate(candles), deathWatch: startDeathWatch(1_000_000, 0) }
+
+    // A pool with no candles and no sell route is the shape of a rug. It used
+    // to be the one case nothing looked at.
+    for (let i = 0; i < 4; i++) {
+      const result = await tickPosition(
+        { position, candles, health: healthy({ sellQuote: 'failed', observedAt: i }), broker },
+        config, store, alerts, throttle,
+      )
+      position = result.position
+    }
+
+    expect(position.deathWatch.stage).toBe('dead')
+  })
+
+  it('does nothing at all when no monitor ran', async () => {
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    const before = upToDate(candles)
+
+    const result = await tickPosition({ position: before, candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(result.position).toBe(before)
+  })
+})

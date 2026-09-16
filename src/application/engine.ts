@@ -98,7 +98,21 @@ export async function tickPosition(
 
   const first = firstUnprocessedBar(candles.time, input.position.lastBarTime, last)
   if (first === null) {
-    return { position: input.position, orders: [], vetoed: [], skipped: 'already-processed', barsAdvanced: 0 }
+    // No new bar, but the DEATH WATCH still runs.
+    //
+    // It used to return here, before any health was assessed, and that shut a
+    // door in both directions on exactly the wrong tokens. A pool that stops
+    // producing candles gets no tick, so no observation, so no clean streak —
+    // a position frozen on a quiet token could never be cleared, and one dying
+    // on a quiet token could never be condemned. PURR sat frozen for four
+    // hours and would have stayed that way for good.
+    //
+    // A pool that stopped trading is the profile of one being abandoned, and
+    // that is when the watch should be most awake. It is meant to evaluate
+    // continuously and INDEPENDENTLY of price; tying it to candles was the
+    // mistake.
+    const watched = await assessHealth(input, config, store, alerts, throttle)
+    return { position: watched, orders: [], vetoed: [], skipped: 'already-processed', barsAdvanced: 0 }
   }
 
   // ── Sized once, not per bar ────────────────────────────────────────────────
@@ -399,4 +413,42 @@ export function entryAlertLabel(order: Order & { kind: 'entry' }): { opening: bo
   const space = order.comment.indexOf(' ')
   if (space <= 0) return { opening: true, icon: '🟢', name: order.comment }
   return { opening: true, icon: order.comment.slice(0, space), name: order.comment.slice(space + 1) }
+}
+
+/**
+ * The death watch, run on a position the strategy has nothing to say about.
+ *
+ * Returns the position with its watch advanced, persisted. Orders are NOT
+ * placed: a death exit decided here has no bar to fill at, and inventing one
+ * would be inventing a price. It alerts, it records, and the exit goes out on
+ * the first bar that does arrive — which for a truly dead pool may be never,
+ * and is exactly why CLAUDE.md says a death exit may fail and why detection
+ * runs continuously rather than waiting for one.
+ */
+async function assessHealth(
+  input: TickInput,
+  config: EngineConfig,
+  store: StatePort,
+  alerts: AlertPort,
+  throttle: AlertThrottle,
+): Promise<PersistedPosition> {
+  const { position } = input
+  if (!input.health) return position
+
+  const assessment = assessAssetHealth(position.deathWatch, config.deathPolicy ?? DEFAULT_DEATH_EXIT_POLICY, input.health)
+  const at = input.health.observedAt
+
+  if (assessment.verdict === 'exit') {
+    await store.blacklist(position.chain, position.tokenAddress, assessment.signals.map((s) => s.detail).join('; '), at)
+    await alerts.send(alert('death-exit', `☠️ ${position.symbol} murió`, assessment.signals.map((s) => s.detail).join('\n'), at, { position: position.id }))
+  } else if (assessment.verdict === 'freeze') {
+    const frozen = alert('ladder-frozen', `❄️ ${position.symbol} congelada`, assessment.signals.map((s) => s.detail).join('\n'), at, { position: position.id })
+    if (throttle.shouldSend(frozen, `${frozen.kind}:${position.id}`)) await alerts.send(frozen)
+  }
+
+  // Persisted, or the streak restarts from zero on every pass and a freeze
+  // clears exactly never — which is the shape of the bug this replaces.
+  const next: PersistedPosition = { ...position, deathWatch: assessment.state }
+  await store.savePosition(next)
+  return next
 }

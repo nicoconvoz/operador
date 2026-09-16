@@ -38,7 +38,13 @@ export interface CycleDeps {
   /** Candles for a position, oldest first. Null when unavailable this cycle. */
   readonly candlesFor: (position: PersistedPosition) => Promise<Candles | null>
   /** Latest health observation, or null when no monitor ran. */
-  readonly healthFor: (position: PersistedPosition) => Promise<AssetHealthObservation | null>
+  /**
+   * Takes the CANDLES as well as the position, because the abandonment signal
+   * is measured from them: the newest bar with volume is when this pool was
+   * last traded. It went unmeasured for the life of the project, and the
+   * signal it feeds never fired once.
+   */
+  readonly healthFor: (position: PersistedPosition, candles: Candles) => Promise<AssetHealthObservation | null>
   /** The broker for a position — paper or live. */
   /**
    * Async, because a broker has to be rebuilt from the position's recorded
@@ -200,7 +206,7 @@ export async function runCycle(
     }
 
     const result = await tickPosition(
-      { position: recovered.position, candles, health: await deps.healthFor(recovered.position), broker: await deps.brokerFor(recovered.position) },
+      { position: recovered.position, candles, health: await deps.healthFor(recovered.position, candles), broker: await deps.brokerFor(recovered.position) },
       {
         params: config.params,
         ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
