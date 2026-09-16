@@ -13,7 +13,7 @@ const security = (over: Partial<SecurityReport> = {}): SecurityReport => ({
 const snapshot = (over: Partial<TokenSnapshot> = {}, sec: Partial<SecurityReport> = {}): TokenSnapshot => ({
   chain: 'solana', address: 'Mint1', symbol: 'TOK', pairAddress: 'Pair1', observedAt: NOW,
   priceUsd: 0.01, liquidityUsd: 250_000, fdvUsd: 5_000_000,
-  volumeUsd: { h1: 20_000, h6: 60_000, h24: 150_000 },
+  volumeUsd: { h1: 60_000, h6: 300_000, h24: 875_000 },
   priceChangePct: { h1: 1, h6: 2, h24: 3 },
   txns: { h1: { buys: 70, sells: 25 }, h24: { buys: 900, sells: 850 } },
   pairCreatedAt: NOW - 30 * 86_400_000, historyBars: 1000,

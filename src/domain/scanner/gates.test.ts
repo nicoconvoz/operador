@@ -28,7 +28,10 @@ const clean = (over: Partial<TokenSnapshot> = {}, security: Partial<SecurityRepo
   priceUsd: 0.01,
   liquidityUsd: 150_000,
   fdvUsd: 2_000_000,
-  volumeUsd: { h1: 8_000, h6: 40_000, h24: 120_000 },
+  // Turns over 3.5× a day, which is the MEDIAN of 252 live tokens. The fixture
+  // used to sit at 0.8× and pass, because nothing measured activity against
+  // the pool — a clean token should look like a live one.
+  volumeUsd: { h1: 35_000, h6: 180_000, h24: 525_000 },
   priceChangePct: { h1: 1.2, h6: -3.1, h24: 8.4 },
   txns: { h1: { buys: 40, sells: 35 }, h24: { buys: 900, sells: 850 } },
   pairCreatedAt: NOW - 30 * 24 * HOUR,
@@ -154,7 +157,9 @@ describe('gates — market thresholds', () => {
   })
 
   it('dead volume', () => {
-    expect(failedGates(clean({ volumeUsd: { h1: 0, h6: 100, h24: 500 } }))).toEqual(['volume:failed'])
+    // Both, and both are true: too few dollars, and a pool standing still.
+    // Neither is the other's restatement.
+    expect(failedGates(clean({ volumeUsd: { h1: 0, h6: 100, h24: 500 } }))).toEqual(['volume:failed', 'turnover:failed'])
   })
 
   it('thresholds are inclusive on the safe side', () => {
@@ -216,7 +221,7 @@ describe('evaluateMarketGates — free gates, run before the paid ones', () => {
     const failed = (s: TokenSnapshot) => evaluateMarketGates(s, P).failures.map((f) => f.gate)
     expect(failed(clean({ liquidityUsd: 100 }))).toEqual(['liquidity'])
     expect(failed(clean({ pairCreatedAt: NOW - HOUR }))).toEqual(['age'])
-    expect(failed(clean({ volumeUsd: { h1: 0, h6: 0, h24: 10 } }))).toEqual(['volume'])
+    expect(failed(clean({ volumeUsd: { h1: 0, h6: 0, h24: 10 } }))).toEqual(['volume', 'turnover'])
     expect(failed(clean({ fdvUsd: 900_000_000 }))).toEqual(['marketCap'])
     expect(failed(clean({ address: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', symbol: 'USDC' }))).toEqual(['denylist'])
     expect(failed(clean({ address: 'Fake', symbol: 'BONK' }))).toEqual(['impersonation'])
@@ -294,10 +299,14 @@ describe('gates — a token in freefall is not an opportunity', () => {
     expect(failedGates(clean({ priceChangePct: { h1: -18, h6: -40, h24: -45 } }))).toEqual([])
   })
 
-  it('never reads the 24h window, where a whole day of noise adds up', () => {
-    // Half a day is not "in freefall", it is a bad day, and the strategy was
-    // built for bad days.
-    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -80 } }))).toEqual([])
+  it('reads the 24h window too, but at its own threshold', () => {
+    // This test used to assert the opposite — that 24h was never read, because
+    // half a day is a bad day and the strategy was built for bad days. That
+    // held while the ladder had ten rungs to answer with. The decision changed
+    // when the ladder was cut to TWO: a shallower ladder cannot chase a
+    // day-long bleed, so it has to decline to enter one.
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -80 } }))).toEqual(['freefall:failed'])
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -55 } }))).toEqual([])
   })
 
   it('stays quiet when the provider reported nothing — silence is not a crash', () => {
@@ -306,5 +315,78 @@ describe('gates — a token in freefall is not an opportunity', () => {
 
   it('is not fooled by a rise', () => {
     expect(failedGates(clean({ priceChangePct: { h1: 220, h6: 340, h24: 900 } }))).toEqual([])
+  })
+})
+
+// ── Activity, measured against the pool rather than in dollars ──────────────
+//
+// `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell
+// $10k of volume on a $2M pool (dead) from $10k on a $25k pool (lively).
+// Measured across 252 live tokens, turnover — 24h volume over liquidity —
+// spans four orders of magnitude: p10 of 0.12, median 3.5, p90 of 116.
+//
+// Turning over its own depth once a day is a crisp definition of "there is
+// activity here", and it keeps 173 of 252: a filter, not a wall.
+
+describe('gates — a pool that does not turn over is not active', () => {
+  it('refuses a pool whose whole day of volume is a fraction of its depth', () => {
+    expect(failedGates(clean({ liquidityUsd: 1_000_000, volumeUsd: { h1: 500, h6: 3_000, h24: 200_000 } })))
+      .toEqual(['turnover:failed'])
+  })
+
+  it('accepts a small pool that trades itself over', () => {
+    // $60k of volume on a $40k pool. In dollars it is a quarter of the one
+    // above; in life it is the opposite.
+    expect(failedGates(clean({ liquidityUsd: 40_000, volumeUsd: { h1: 4_000, h6: 18_000, h24: 60_000 } })))
+      .toEqual([])
+  })
+
+  it('keeps the absolute floor too — a ratio cannot save an untradeable pool', () => {
+    // Turns over three times a day, and nobody can get $15 in or out of it.
+    const failures = failedGates(clean({ liquidityUsd: 3_000, volumeUsd: { h1: 400, h6: 2_000, h24: 9_000 } }))
+    expect(failures).toContain('liquidity:failed')
+  })
+
+  it('says the ratio it measured, not just that it failed', () => {
+    const [failure] = evaluateGates(
+      clean({ liquidityUsd: 1_000_000, volumeUsd: { h1: 500, h6: 3_000, h24: 200_000 } }),
+      DEFAULT_GATE_POLICY,
+    ).failures
+    expect(failure!.detail).toContain('0.2')
+  })
+})
+
+// ── A day-long bleed, now that the ladder has two rungs ─────────────────────
+//
+// The freefall gate reads 1h and 6h and ignores 24h on purpose: half a day is
+// not freefall, it is a bad day, and the strategy was built for bad days.
+//
+// That argument held while the ladder had ten rungs to answer with. At TWO it
+// does not: a token down 60% in a day needs a bounce the ladder can no longer
+// chase. Measured live, 58 of 252 tokens were worse than -50% over 24h and
+// every one of them passed, because nothing looked.
+//
+// The threshold is LOOSER than the short windows, and deliberately: the same
+// fall given four times as long to happen is a different event.
+
+describe('gates — a sustained bleed over a full day', () => {
+  it('refuses a token that lost most of a day', () => {
+    expect(failedGates(clean({ priceChangePct: { h1: -3, h6: -20, h24: -72 } }))).toEqual(['freefall:failed'])
+  })
+
+  it('tolerates over a day what it would refuse within the hour', () => {
+    // -55% is a collapse in one hour and a bad day across twenty-four. The
+    // ladder was built for bad days.
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -55 } }))).toEqual([])
+    expect(failedGates(clean({ priceChangePct: { h1: -55, h6: -8, h24: -55 } }))).toEqual(['freefall:failed'])
+  })
+
+  it('names the day as the window, so the reason can be checked', () => {
+    const [failure] = evaluateGates(clean({ priceChangePct: { h1: 0, h6: 0, h24: -80 } }), DEFAULT_GATE_POLICY).failures
+    expect(failure!.detail).toContain('24h')
+  })
+
+  it('still treats an unreported day as silence', () => {
+    expect(failedGates(clean({ priceChangePct: { h1: null, h6: null, h24: null } }))).toEqual([])
   })
 })

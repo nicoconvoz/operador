@@ -15,7 +15,9 @@ const token = (address: string, over: Partial<TokenSnapshot> = {}): TokenSnapsho
   pairAddress: `pair-${address}`,
   observedAt: NOW,
   priceUsd: 0.01,
-  liquidityUsd: 150_000,
+  // 4x turnover. The live median across 252 tokens is 3.5x; this fixture sat
+  // at 0.8x, which the turnover gate now reads as a pool standing still.
+  liquidityUsd: 30_000,
   fdvUsd: null,
   volumeUsd: { h1: 5_000, h6: 30_000, h24: 120_000 },
   priceChangePct: { h1: 2, h6: -4, h24: 6 },
@@ -61,8 +63,11 @@ describe('ranking — gates first, then score, then slots', () => {
   })
 
   it('drops safe-but-boring tokens below the minimum score without calling them rejected', () => {
+    // Live enough to clear the gates, dull enough to score under the minimum —
+    // which is the distinction this test exists to make. No hourly expansion,
+    // no price movement, plenty of pool turnover.
     const boring = token('boring', {
-      volumeUsd: { h1: 0, h6: 1_000, h24: 12_000 },
+      volumeUsd: { h1: 0, h6: 1_000, h24: 60_000 },
       txns: { h1: { buys: 0, sells: 0 }, h24: { buys: 50, sells: 50 } },
       priceChangePct: { h1: 0, h6: 0, h24: 0 },
     })
@@ -73,8 +78,8 @@ describe('ranking — gates first, then score, then slots', () => {
   })
 
   it('uses the previous snapshot of the same token for liquidity growth', () => {
-    const before = token('grow', { liquidityUsd: 100_000 })
-    const now = token('grow', { liquidityUsd: 160_000 })
+    const before = token('grow', { liquidityUsd: 100_000, volumeUsd: { h1: 20_000, h6: 120_000, h24: 480_000 } })
+    const now = token('grow', { liquidityUsd: 160_000, volumeUsd: { h1: 20_000, h6: 120_000, h24: 480_000 } })
     const previous = new Map([[tokenKey(before), before]])
     const { candidates } = rankUniverse([now], previous, quality, policy)
     expect(candidates[0]!.opportunity.components.liquidityGrowth).toBe(1)

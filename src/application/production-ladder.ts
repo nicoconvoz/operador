@@ -22,15 +22,29 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
 
 /**
  * DCA rungs production will fill, per token. The entry is not one of them, so
- * five means six open entries.
+ * two means three open entries.
  *
- * The user's decision, and the reasoning is the ladder's own geometry: with
- * `linInc` at 3, DCA-5 already needs a 13% fall and DCA-10 needs 28%. A token
- * down 28% is rarely an opportunity, and the capital those deep rungs reserve
- * buys more by going to another token — which is finding 2 of the capital
- * floor, arriving by a different road.
+ * The user's decision, twice, and the second time for a different reason.
+ *
+ * FIVE came from the ladder's geometry: with `linInc` at 3, DCA-5 already needs
+ * a 13% fall and DCA-10 needs 28%, and a token down 28% is rarely an
+ * opportunity.
+ *
+ * TWO came from asking how to avoid large losses. It halves the most one token
+ * can ever cost — three rungs at $15 is $45, against $90 — and doubles the
+ * book, because the same capital buys twice as many ladders. Measured on
+ * $1,500: fourteen positions at $95.09 each becomes TWENTY-NINE at $47.57, and
+ * a token that dies costs 3.4% of the book instead of 7%.
+ *
+ * It has a price, and it is paid in the gates. A two-rung ladder cannot chase
+ * a fall the way a ten-rung one could, so the entries have to be better: it is
+ * why `maxDailyFallPct` exists at all, and why the turnover gate was added
+ * alongside it. Shallower ladder, stricter door.
+ *
+ * Both are finding 2 of the capital floor arriving by different roads: scale
+ * comes from more tokens, not more size per token.
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 5
+export const DEFAULT_MAX_DCA_PER_TOKEN = 2
 
 export interface ProductionLadder {
   readonly maxUsdPerLevel: number

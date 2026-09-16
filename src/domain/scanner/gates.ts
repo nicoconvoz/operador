@@ -32,6 +32,31 @@ export interface GatePolicy {
    * freefall, it is a bad day, and the strategy was built for bad days.
    */
   readonly maxFallPct: number
+  /**
+   * Same rule over a full day, and deliberately LOOSER.
+   *
+   * The short windows catch a collapse; a day is long enough that the same
+   * fall is a different event, and the ladder was built for bad days. The
+   * reason it exists at all is the ladder's DEPTH: at ten rungs a token down
+   * 60% in a day was something the cascade could answer. At two it is not —
+   * a shallower ladder needs better entries, and this is where that is paid.
+   *
+   * Measured live: 58 of 252 tokens were worse than -50% over 24h, and every
+   * one of them passed, because nothing looked at that window.
+   */
+  readonly maxDailyFallPct: number
+  /**
+   * 24h volume over liquidity: how many times the pool trades itself in a day.
+   *
+   * `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell
+   * $10k of volume on a $2M pool — dead — from $10k on a $25k pool, which is
+   * lively. Measured across 252 live tokens, turnover spans four orders of
+   * magnitude: p10 of 0.12, median 3.5, p90 of 116.
+   *
+   * Both survive. A ratio cannot save a pool nobody can get $15 out of, and a
+   * dollar floor cannot see that a large pool has stopped moving.
+   */
+  readonly minTurnoverRatio: number
   readonly maxTransferTaxPct: number
   readonly minLpLockedPct: number
   readonly maxTopHoldersPct: number
@@ -116,6 +141,8 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   minAgeHours: 24,
   minVolume24hUsd: 10_000,
   maxFallPct: 50,
+  maxDailyFallPct: 70,
+  minTurnoverRatio: 1,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
   maxTopHoldersPct: 40,
@@ -144,6 +171,7 @@ export type GateName =
   | 'age'
   | 'volume'
   | 'freefall'
+  | 'turnover'
   | 'proxy'
   | 'denylist'
   | 'marketCap'
@@ -205,6 +233,15 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
 
   const fall = freefall(snapshot, policy)
   if (fall) failures.push(fall)
+
+  // Activity measured against the pool, not in dollars. Zero liquidity is
+  // already a liquidity failure; dividing by it here would only add noise.
+  if (snapshot.liquidityUsd > 0) {
+    const turnover = snapshot.volumeUsd.h24 / snapshot.liquidityUsd
+    if (turnover < policy.minTurnoverRatio) {
+      failures.push(fail('turnover', 'failed', `rota ${turnover.toFixed(2)}× su liquidez en 24h, menos de ${policy.minTurnoverRatio}× — el pool está quieto`))
+    }
+  }
 
   return { passed: failures.length === 0, failures }
 }
@@ -295,6 +332,15 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   const fall = freefall(snapshot, policy)
   if (fall) failures.push(fall)
 
+  // Activity measured against the pool, not in dollars. Zero liquidity is
+  // already a liquidity failure; dividing by it here would only add noise.
+  if (snapshot.liquidityUsd > 0) {
+    const turnover = snapshot.volumeUsd.h24 / snapshot.liquidityUsd
+    if (turnover < policy.minTurnoverRatio) {
+      failures.push(fail('turnover', 'failed', `rota ${turnover.toFixed(2)}× su liquidez en 24h, menos de ${policy.minTurnoverRatio}× — el pool está quieto`))
+    }
+  }
+
   return { passed: failures.length === 0, failures }
 }
 
@@ -312,13 +358,17 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
  * guard against a rug, this one against a bad entry.
  */
 function freefall(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {
-  const windows: readonly (readonly [string, number | null])[] = [
-    ['1h', snapshot.priceChangePct.h1],
-    ['6h', snapshot.priceChangePct.h6],
+  const windows: readonly (readonly [string, number | null, number])[] = [
+    ['1h', snapshot.priceChangePct.h1, policy.maxFallPct],
+    ['6h', snapshot.priceChangePct.h6, policy.maxFallPct],
+    // Looser, because the same fall given four times as long to happen is a
+    // different event — and present at all because a two-rung ladder cannot
+    // chase what a ten-rung one could.
+    ['24h', snapshot.priceChangePct.h24, policy.maxDailyFallPct],
   ]
 
-  for (const [label, change] of windows) {
-    if (change === null || change >= -policy.maxFallPct) continue
+  for (const [label, change, limit] of windows) {
+    if (change === null || change >= -limit) continue
     return fail('freefall', 'failed', `cayó ${Math.abs(change).toFixed(0)}% en ${label} — es una salida en curso, no una oportunidad`)
   }
   return null

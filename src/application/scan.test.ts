@@ -20,7 +20,10 @@ const pair = (address: string, over: Partial<DexPair> = {}): DexPair => ({
   priceUsd: '0.01',
   liquidity: { usd: 150_000, base: 1, quote: 1 },
   fdv: 1_000_000,
-  volume: { h1: 8_000, h6: 40_000, h24: 120_000 },
+  // 3.5x turnover — the live median across 252 tokens. These fixtures mean
+  // "a healthy token", and sat at 0.8x because nothing measured activity
+  // against the pool.
+  volume: { h1: 35_000, h6: 180_000, h24: 525_000 },
   priceChange: { h1: 2, h6: -3, h24: 5 },
   txns: { h1: { buys: 40, sells: 30 }, h24: { buys: 900, sells: 850 } },
   pairCreatedAt: NOW - 30 * DAY,
@@ -160,13 +163,13 @@ describe('scanOnce — a bounded budget for the expensive checks', () => {
       [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
       [`${DEXSCREENER_BASE}/tokens/v1/solana/dull,lively,quiet`]: {
         body: [
-          pair('dull', { volume: { h1: 500, h6: 3_000, h24: 20_000 }, priceChange: { h1: 0, h6: 0, h24: 0 } }),
+          pair('dull', { volume: { h1: 500, h6: 3_000, h24: 200_000 }, priceChange: { h1: 0, h6: 0, h24: 0 } }),
           pair('lively', {
             volume: { h1: 40_000, h6: 90_000, h24: 200_000 },
             priceChange: { h1: 9, h6: 4, h24: 22 },
             txns: { h1: { buys: 180, sells: 40 }, h24: { buys: 2_000, sells: 900 } },
           }),
-          pair('quiet', { volume: { h1: 900, h6: 4_000, h24: 30_000 }, priceChange: { h1: 0, h6: 0, h24: 1 } }),
+          pair('quiet', { volume: { h1: 900, h6: 4_000, h24: 300_000 }, priceChange: { h1: 0, h6: 0, h24: 1 } }),
         ],
       },
       [`${GOPLUS_BASE}/solana/token_security?contract_addresses=dull`]: { body: { code: 1, message: 'ok', result: { dull: safe } } },

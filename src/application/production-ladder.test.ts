@@ -3,8 +3,11 @@ import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL 
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to a flat $15 ladder of five DCA rungs', () => {
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6 })
+  it('defaults to a flat $15 ladder of two DCA rungs', () => {
+    // Two, not five: it halves what one token can ever cost and doubles the
+    // book. Measured on $1,500 — fourteen positions at $95.09 becomes
+    // twenty-nine at $47.57.
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -18,7 +21,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3 })
   })
 
   it('never expresses itself by editing the evidence', () => {

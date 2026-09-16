@@ -22,7 +22,7 @@ const safe: SecurityReport = {
 const token = (address: string, over: Partial<TokenSnapshot> = {}, security: Partial<SecurityReport> = {}): TokenSnapshot => ({
   chain: 'solana', address, symbol: address, pairAddress: `pair-${address}`, observedAt: NOW,
   priceUsd: 0.01, liquidityUsd: 250_000, fdvUsd: 5_000_000,
-  volumeUsd: { h1: 20_000, h6: 60_000, h24: 150_000 },
+  volumeUsd: { h1: 60_000, h6: 300_000, h24: 875_000 },
   priceChangePct: { h1: 6, h6: -4, h24: 12 },
   txns: { h1: { buys: 70, sells: 25 }, h24: { buys: 900, sells: 850 } },
   pairCreatedAt: NOW - 30 * 24 * HOUR, historyBars: 1000,
@@ -61,7 +61,9 @@ describe('buildUniverse — tiers tell the story', () => {
 
   it('a clean but quiet token is eligible, not prime', async () => {
     const quiet = token('CALM', {
-      volumeUsd: { h1: 1_000, h6: 10_000, h24: 100_000 },
+      // Live enough to clear the turnover gate, dull enough to score low:
+      // the pool moves, nothing is happening in it.
+      volumeUsd: { h1: 1_000, h6: 10_000, h24: 700_000 },
       txns: { h1: { buys: 2, sells: 2 }, h24: { buys: 100, sells: 100 } },
       priceChangePct: { h1: 0, h6: 0, h24: 0 },
     })

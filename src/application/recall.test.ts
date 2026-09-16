@@ -16,7 +16,7 @@ const safe: SecurityReport = {
 const token = (address: string, over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
   chain: 'solana', address, symbol: address, pairAddress: `pair-${address}`, observedAt: NOW - HOUR,
   priceUsd: 0.01, liquidityUsd: 250_000, fdvUsd: 5_000_000,
-  volumeUsd: { h1: 20_000, h6: 60_000, h24: 150_000 },
+  volumeUsd: { h1: 60_000, h6: 300_000, h24: 875_000 },
   priceChangePct: { h1: 6, h6: -4, h24: 12 },
   txns: { h1: { buys: 70, sells: 25 }, h24: { buys: 900, sells: 850 } },
   pairCreatedAt: NOW - 30 * 24 * HOUR, historyBars: 1000,
