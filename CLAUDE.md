@@ -914,6 +914,20 @@ The tiers separate two things a single "rejected" list would conflate:
 SAFETY gate. One is a missed chance; the other is a bullet dodged, and they
 should not look alike.
 
+**A held token that TURNS is the one case a tier cannot express.** The tier
+short-circuits to `held` for anything with a position, so a token of ours whose
+mint authority came back went on being drawn green — the engine would act, and
+the screen would never show it coming. `turnedUnsafe` says both facts at once:
+the body goes red while keeping its glow, with a ring that breathes faster than
+anything else on the screen, and the detail sheet leads with the gate that
+turned. It is not "an unsafe candidate"; it is our money in something that just
+failed, which is more urgent than either fact alone.
+
+Never true for an UNEXAMINED token. Those fail every safety gate by design — the
+gates fail closed — and reading that as "it turned" would put a red alarm on
+every position the security budget had not reached yet, which is how an alarm
+stops being read.
+
 **Position in the sky is deliberately meaningless.** It used to encode the tier
 as a ring, which sorted every token onto a lane of its own — and a held token on
 its own lane is a held token you cannot compare to anything. Bodies are now

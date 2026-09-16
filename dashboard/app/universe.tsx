@@ -318,6 +318,10 @@ export function Universe({ view }: { view: UniverseView }) {
     // One sprite per tier, made once. Sized for the largest glow we ever draw.
     const glows = new Map(TIER_ORDER.map((tier) => [tier, makeGlowSprite(TIER_STYLE[tier].halo, 80)]))
     const frozenGlow = makeGlowSprite('120,200,255', 80)
+    // Our money, in something that just failed a safety gate. It keeps the glow
+    // — there IS money in it — and loses the colour that says everything is
+    // fine. Both facts at once, which is what the tier alone cannot say.
+    const alarmGlow = makeGlowSprite('255,107,107', 80)
 
     const angles = anglesRef.current
     let raf = 0
@@ -395,11 +399,23 @@ export function Universe({ view }: { view: UniverseView }) {
         }
 
         // ── Glow: money is in it. One blit, no gradient. ────────────────────
+        const alarmed = token?.turnedUnsafe === true
         if (tier === 'held') {
-          const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * 0.05 + body.phase)
-          const reach = drawn * (5 + pulse * 2.5)
-          const sprite = token?.position?.deathStage === 'frozen' ? frozenGlow : glows.get('held')!
+          const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * (alarmed ? 0.12 : 0.05) + body.phase)
+          const reach = drawn * (5 + pulse * (alarmed ? 4 : 2.5))
+          const sprite = alarmed ? alarmGlow : token?.position?.deathStage === 'frozen' ? frozenGlow : glows.get('held')!
           ctx!.drawImage(sprite, body.x - reach, body.y - reach, reach * 2, reach * 2)
+
+          // A ring that breathes faster than anything else on the screen. The
+          // engine will act on this by itself; the point of drawing it is that
+          // the person watching should not find out afterwards.
+          if (alarmed) {
+            ctx!.beginPath()
+            ctx!.arc(body.x, body.y, drawn + 6 + pulse * 7, 0, Math.PI * 2)
+            ctx!.strokeStyle = `rgba(255,107,107,${(0.5 + pulse * 0.5).toFixed(2)})`
+            ctx!.lineWidth = 2
+            ctx!.stroke()
+          }
         }
 
         if (isSelected || isHovered) {
@@ -412,7 +428,10 @@ export function Universe({ view }: { view: UniverseView }) {
 
         // ── The body: round for Solana, diamond for BSC ─────────────────────
         ctx!.globalAlpha = tier === 'dead' ? 0.5 : tier === 'filtered' ? 0.65 : 1
-        ctx!.fillStyle = style.core
+        // Green means ours and well. Ours and NOT well is red, because that is
+        // the distinction anybody glancing at this screen is actually looking
+        // for, and the tier keeps saying 'held' either way.
+        ctx!.fillStyle = alarmed ? TIER_STYLE.unsafe.core : style.core
         ctx!.beginPath()
         if (chain === 'bsc') {
           const s = drawn
@@ -455,11 +474,11 @@ export function Universe({ view }: { view: UniverseView }) {
         // the sky zooms, and the tiers that come in dozens are collapsed into
         // clusters rather than drawn one by one.
         const NAMED: readonly TokenTier[] = ['held', 'prime', 'eligible']
-        const labelled = isHovered || isSelected || NAMED.includes(tier)
+        const labelled = isHovered || isSelected || alarmed || NAMED.includes(tier)
         if (labelled) {
           // Held keeps the brightest label: it is the only tier with money in
           // it, and at a glance that distinction has to survive the crowd.
-          ctx!.fillStyle = tier === 'held' ? 'rgba(235,235,235,0.92)' : 'rgba(210,214,222,0.62)'
+          ctx!.fillStyle = alarmed ? '#ff6b6b' : tier === 'held' ? 'rgba(235,235,235,0.92)' : 'rgba(210,214,222,0.62)'
           ctx!.font = `${(compact ? 10 : 11) * Math.min(scale, 1.6)}px ui-monospace, monospace`
           ctx!.textAlign = 'center'
           ctx!.fillText(token!.symbol.slice(0, 12), body.x, body.y + drawn + 14 * Math.min(scale, 1.6))
@@ -753,7 +772,24 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
           ✕
         </button>
       </div>
-      <div style={{ color: style.core, fontSize: 12, marginBottom: 10 }}>{style.label}</div>
+      <div style={{ color: token.turnedUnsafe ? '#ff6b6b' : style.core, fontSize: 12, marginBottom: 10 }}>
+        {token.turnedUnsafe ? 'EN POSICIÓN · SE VOLVIÓ INSEGURA' : style.label}
+      </div>
+
+      {token.turnedUnsafe && (
+        // Above everything else it knows. A position that failed a safety gate
+        // is not one more fact about the token, it is the only one that matters
+        // until it is resolved.
+        <div style={{ border: '1px solid #ff6b6b', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+          <div style={{ color: '#ff6b6b', fontSize: 13, marginBottom: 4 }}>⚠️ Falló una compuerta de seguridad con plata adentro</div>
+          <div style={{ fontSize: 12, color: '#c9d1d9' }}>
+            La vigilancia de muerte ya la está evaluando y puede salir a pérdida si lo confirma — vender un activo que
+            dejó de ser un activo no es un stop loss. Necesita {''}
+            <b>tres observaciones consecutivas</b> antes de actuar, para que una sola lectura mala no liquide una
+            posición sana.
+          </div>
+        </div>
+      )}
 
       {token.position && (
         <div style={{ marginBottom: 10 }}>

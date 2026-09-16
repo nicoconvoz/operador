@@ -289,3 +289,74 @@ describe('buildUniverse — a held token is always on the radar', () => {
     expect(view.counts.held).toBe(1)
   })
 })
+
+// ── A held token that turned unsafe ─────────────────────────────────────────
+//
+// The tier short-circuits to 'held' for anything with a position, so a token
+// of ours that now FAILS a safety gate went on being drawn green. The engine
+// would act on it — the death watch can finally see the scanner's verdict —
+// but the screen would never show it coming.
+//
+// Both facts are true at once and both matter. It is not "an unsafe candidate":
+// it is our money in something that just failed a gate, which is a different
+// and more urgent thing than either fact alone.
+
+describe('buildUniverse — a position that turned unsafe', () => {
+  const dangerous = { mintAuthorityActive: true }
+
+  it('stays held — it is still ours, and that is the point', async () => {
+    const store = await seed([token('Ours', {}, dangerous)])
+    await store.savePosition(position('Ours'))
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    expect(drawn!.tier).toBe('held')
+  })
+
+  it('but says it turned unsafe', async () => {
+    const store = await seed([token('Ours', {}, dangerous)])
+    await store.savePosition(position('Ours'))
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    expect(drawn!.turnedUnsafe).toBe(true)
+  })
+
+  it('names the gate that turned, so the alarm is answerable', async () => {
+    const store = await seed([token('Ours', {}, dangerous)])
+    await store.savePosition(position('Ours'))
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    expect(drawn!.blockers.join(' ')).toMatch(/mint/i)
+  })
+
+  it('says nothing about a healthy position', async () => {
+    const store = await seed([token('Ours')])
+    await store.savePosition(position('Ours'))
+
+    expect((await buildUniverse(store, options)).tokens[0]!.turnedUnsafe).toBe(false)
+  })
+
+  it('never cries unsafe over a token nobody examined', async () => {
+    // An unexamined token fails EVERY safety gate by design — the gates fail
+    // closed. Reading that as "it turned unsafe" would put a red alarm on every
+    // position the security budget had not reached yet, which is how an alarm
+    // stops being read.
+    const store = await seed([token('Ours', { securityChecked: false }, {})])
+    await store.savePosition(position('Ours'))
+
+    expect((await buildUniverse(store, options)).tokens[0]!.turnedUnsafe).toBe(false)
+  })
+
+  it('does not raise it on a token that is not ours', async () => {
+    // A dangerous candidate is already drawn as 'unsafe'. The flag is about the
+    // one case the tier cannot express: danger inside a position.
+    const store = await seed([token('Theirs', {}, dangerous)])
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    expect(drawn!.tier).toBe('unsafe')
+    expect(drawn!.turnedUnsafe).toBe(false)
+  })
+})

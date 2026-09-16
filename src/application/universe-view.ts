@@ -63,6 +63,24 @@ export interface UniverseToken {
   readonly frictionPct: number
   /** Gate failures, plainest first. Empty when it passed. */
   readonly blockers: readonly string[]
+  /**
+   * OUR money, in something that now fails a SAFETY gate.
+   *
+   * The tier short-circuits to 'held' for anything with a position, so a token
+   * of ours whose mint authority came back went on being drawn green. The
+   * engine acts on it — the death watch can see the scanner's verdict now —
+   * but the screen never showed it coming.
+   *
+   * Both facts are true at once and both matter. It is not "an unsafe
+   * candidate": it is a position that turned, which is more urgent than either
+   * fact alone and is the one thing the tier cannot say.
+   *
+   * Never true for an UNEXAMINED token. Those fail every safety gate by
+   * design — the gates fail closed — and reading that as "it turned" would put
+   * a red alarm on every position the security budget had not reached, which
+   * is how an alarm stops being read.
+   */
+  readonly turnedUnsafe: boolean
   /** Present only for held tokens. */
   readonly position: {
     readonly capitalUsd: number
@@ -170,6 +188,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
 
     return {
       id: key,
+      turnedUnsafe: held !== undefined && snapshot.securityChecked !== false && unsafe,
       symbol: snapshot.symbol,
       chain: snapshot.chain,
       address: snapshot.address,
@@ -247,6 +266,7 @@ function fromPositionAlone(position: PersistedPosition): UniverseToken {
     address: position.tokenAddress,
     pairAddress: position.pairAddress,
     tier: 'held',
+    turnedUnsafe: false,
     score: 0,
     components: {},
     liquidityUsd: position.quality.liquidityUsd,

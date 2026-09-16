@@ -31,6 +31,11 @@ const make = (i: number): UniverseToken => {
     address: `T${i}`,
     pairAddress: `P${i}`,
     tier,
+    // One of the three held positions has turned, so the demo shows the alarm
+    // rather than only the happy sky. A demo where nothing ever goes wrong
+    // teaches the wrong thing about a system whose job is to notice when it
+    // does.
+    turnedUnsafe: tier === 'held' && i === 1,
     score: tier === 'held' ? 70 + r(3) * 25 : tier === 'prime' ? 48 + r(3) * 40 : tier === 'eligible' ? 20 + r(3) * 25 : r(3) * 30,
     components: {
       volumeExpansion: r(4), buyPressure: r(5), liquidityGrowth: r(6),
@@ -42,7 +47,7 @@ const make = (i: number): UniverseToken => {
     change24hPct: (r(12) - 0.4) * 60,
     ageHours: 24 + r(13) * 2000,
     frictionPct: 0.6 + (1 - r(2)) * 6,
-    blockers: tier === 'unsafe'
+    blockers: (tier === 'held' && i === 1) || tier === 'unsafe'
       ? ['mint authority still active']
       : tier === 'filtered'
         ? ['liquidity $12000 < $20000']
