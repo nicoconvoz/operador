@@ -150,6 +150,20 @@ the cap — which bounds discovery, never the book — and **ahead of every
 candidate** for the security budget, unranked. A held token is not scored
 against strangers for the right to be looked at.
 
+### Activity, measured against the pool
+
+`minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell $10k
+of volume on a $2M pool — dead — from $10k on a $25k pool, which is lively.
+
+Measured across 252 live tokens, **turnover** (24h volume ÷ liquidity) spans
+four orders of magnitude: p10 of 0.12, median **3.49**, p90 of 116.
+`minTurnoverRatio` is **1**: the pool trades its own depth at least once a day.
+It keeps 173 of 252 — a filter, not a wall.
+
+Both gates survive, because they answer different questions. A ratio cannot save
+a pool nobody can get $15 out of; a dollar floor cannot see that a large pool
+has stopped moving.
+
 ### Freefall — an entry gate, and deliberately not an exit
 
 A token that has lost more than half its price in about three hours is not an
@@ -166,8 +180,15 @@ money in it goes on averaging down, which is its job.
 Three hours is not a window the providers report. They give 1h, 6h and 24h, so
 the gate reads **both short ones** rather than inventing the one it wants: a
 token can collapse inside an hour and look calm over six, or bleed over six
-without any single hour looking alarming. 24h is ignored on purpose — half a day
-is not freefall, it is a bad day, and the strategy was built for bad days.
+without any single hour looking alarming. 24h is read too, at its OWN and looser
+threshold (`maxDailyFallPct`, 70): the same fall given four times as long to
+happen is a different event.
+
+That window was ignored at first — half a day is not freefall, it is a bad day,
+and the strategy was built for bad days. **The decision reversed when the ladder
+was cut to two rungs.** A shallower ladder cannot chase a day-long bleed, so it
+has to decline to enter one. Measured live: 58 of 252 tokens were worse than
+-50% over 24h, and every one of them passed, because nothing looked.
 
 An unreported window is silence, not a crash. Unlike the SAFETY gates, which
 fail closed because unknown danger IS evidence, this one fires only on a number
@@ -587,9 +608,9 @@ over ten fills, where gas is 0.33% of each. The old $20 floor refused it
 outright; the derived floor accepts it on Solana and still refuses it if gas
 climbs to $0.20, which is the right answer in both cases.
 
-### Five DCA rungs, not nine
+### Two DCA rungs, not nine
 
-`OPERADOR_MAX_DCA` defaults to **5**, so the venue holds **six** entries open:
+`OPERADOR_MAX_DCA` defaults to **2**, so the venue holds **three** entries open:
 the entry plus its ladder. It is NOT `PYRAMIDING`, which stays 10 because that
 is what the `strategy()` header ran — the same rule as `maxUsdPerLevel`:
 evidence that can be edited to express a preference has stopped being evidence.
@@ -603,8 +624,25 @@ The user's reason is the ladder's own geometry. With `linInc` at 3:
 | DCA-10 | **28%** |
 
 A token down 28% is rarely an opportunity, and the capital those deep rungs
-reserve buys more by going to another token — which is finding 2 of the capital
-floor, arriving by a different road.
+reserve buys more by going to another token.
+
+Then five became **two**, for a different reason: how to avoid large losses.
+
+| | 5 DCA | 2 DCA |
+|---|---|---|
+| Rungs | 6 | **3** |
+| Ladder needs | $95.09 | **$47.57** |
+| Positions on $1,500 | 14 | **29** |
+| Most one token can cost | $90 | **$45** |
+| One death, as a share of the book | 7% | **3.4%** |
+
+**It has a price, and it is paid at the door.** A two-rung ladder cannot chase a
+fall the way a ten-rung one could, so the entries have to be better — which is
+why `maxDailyFallPct` exists at all and why the turnover gate arrived alongside
+it. Shallower ladder, stricter door.
+
+Both are finding 2 of the capital floor arriving by different roads: scale comes
+from more tokens, not more size per token.
 
 Both numbers live in `application/production-ladder.ts`, alone, because TWO
 things need them and neither may own them: the engine that sizes the ladder and
