@@ -185,6 +185,10 @@ export interface StatePort {
   historyBarsFor(chain: Chain, poolAddress: string): Promise<{ bars: number; measuredAt: number } | null>
   recordHistoryBars(chain: Chain, poolAddress: string, bars: number, measuredAt: number): Promise<void>
 
+  /** When this pool was last found NOT to be trading, or null. */
+  quietPoolSince(chain: Chain, poolAddress: string): Promise<number | null>
+  recordQuietPool(chain: Chain, poolAddress: string, at: number): Promise<void>
+
   /** The last security examination of a token, or null if never examined. */
   cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null>
   recordSecurity(chain: Chain, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void>

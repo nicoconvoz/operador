@@ -123,6 +123,17 @@ CREATE TABLE IF NOT EXISTS pool_history (
   PRIMARY KEY (chain, pool_address)
 );
 
+-- Pools this engine could not see trading. Only the NEGATIVE verdict is kept:
+-- caching "alive" would cache the one answer that can turn between the scan and
+-- the moment capital moves, while caching "dead" risks a missed opportunity —
+-- and the entry confirmation asks again, live, before anything is bought.
+CREATE TABLE IF NOT EXISTS pool_quiet (
+  chain        TEXT   NOT NULL,
+  pool_address TEXT   NOT NULL,
+  measured_at  BIGINT NOT NULL,
+  PRIMARY KEY (chain, pool_address)
+);
+
 -- What the expensive security pass found, so the budget can rotate.
 --
 -- Each examined token costs five throttled network calls, so a cycle can only

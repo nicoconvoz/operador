@@ -33,6 +33,7 @@ import { recallCandidates } from '../application/recall.js'
 import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
+import { CachedBarActivity } from '../application/bar-activity.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
@@ -115,6 +116,24 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // expires because new pools appear — but a pool younger than the window
   // cannot clear the history gate anyway, which wants 250 bars: 2.6 days at 15m.
   const cachedDiscovery = new CachedDiscovery(gecko, store, { now: () => Date.now() })
+
+  // And the third download nobody should pay twice: proving again that a quiet
+  // pool is still quiet. One candle request per CANDIDATE is about thirty a
+  // scan against the provider that rate-limits hardest, and most of it re-learns
+  // something that has not changed.
+  const barActivity = new CachedBarActivity(
+    {
+      barAgeHours: async (chain, pool) => {
+        try {
+          return hoursSinceLastTrade(await gecko.candles(chain, pool, config.barSize, 300), Date.now())
+        } catch {
+          return null
+        }
+      },
+    },
+    store,
+    { now: () => Date.now() },
+  )
   const history = {
     historyBars: (chain: Parameters<typeof gecko.historyBars>[0], pool: string) => cachedHistory.historyBars(chain, pool),
     discoverPools: (chain: Parameters<typeof gecko.discoverPools>[0]) => cachedDiscovery.discoverPools(chain),
@@ -389,14 +408,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // reported thirty-five on the same pool — and the engine was
               // buying on one and freezing on the other. The strategy is
               // bar-driven: no bars, no trade, ever.
-              barAgeHours: async (snapshot) => {
-                try {
-                  const candles = await gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, 300)
-                  return hoursSinceLastTrade(candles, Date.now())
-                } catch {
-                  return null
-                }
-              },
+              //
+              // Through the shelf, so a pool already found quiet is refused
+              // WITHOUT another download. Only the negative verdict is kept and
+              // `confirmEntry` still asks live at the door, so nothing is ever
+              // bought on a remembered answer.
+              barAgeHours: (snapshot) => barActivity.barAgeHours(snapshot.chain, snapshot.pairAddress),
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

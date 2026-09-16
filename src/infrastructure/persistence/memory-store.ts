@@ -68,6 +68,16 @@ export class MemoryStore implements StatePort {
 
   private readonly security = new Map<string, CachedSecurity>()
 
+  private readonly quiet = new Map<string, number>()
+
+  async quietPoolSince(chain: Chain, poolAddress: string): Promise<number | null> {
+    return this.quiet.get(`${chain}:${poolAddress}`) ?? null
+  }
+
+  async recordQuietPool(chain: Chain, poolAddress: string, at: number): Promise<void> {
+    this.quiet.set(`${chain}:${poolAddress}`, at)
+  }
+
   async cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null> {
     return this.security.get(`${chain}:${address}`) ?? null
   }

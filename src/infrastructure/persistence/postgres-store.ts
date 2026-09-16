@@ -257,6 +257,23 @@ export class PostgresStore implements StatePort {
     )
   }
 
+  async quietPoolSince(chain: Chain, poolAddress: string): Promise<number | null> {
+    const { rows } = await this.sql.query<{ measured_at: string | number }>(
+      'SELECT measured_at FROM pool_quiet WHERE chain = $1 AND pool_address = $2',
+      [chain, poolAddress],
+    )
+    const row = rows[0]
+    return row ? num(row.measured_at) : null
+  }
+
+  async recordQuietPool(chain: Chain, poolAddress: string, at: number): Promise<void> {
+    await this.sql.query(
+      `INSERT INTO pool_quiet (chain, pool_address, measured_at) VALUES ($1, $2, $3)
+       ON CONFLICT (chain, pool_address) DO UPDATE SET measured_at = EXCLUDED.measured_at`,
+      [chain, poolAddress, at],
+    )
+  }
+
   async cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null> {
     const { rows } = await this.sql.query<{ security: SecurityReport; slippage_pct: string | number | null; measured_at: string | number }>(
       'SELECT security, slippage_pct, measured_at FROM token_security WHERE chain = $1 AND address = $2',

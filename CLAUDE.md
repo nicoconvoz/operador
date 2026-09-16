@@ -215,6 +215,26 @@ One hour is the threshold, argued rather than picked: it matches
 clear room. Admitting a token whose newest bar is already two hours old is
 admitting one that freezes within the hour.
 
+**A pool already found quiet is refused without another download.** The check is
+a candle request against the provider that rate-limits hardest, and it runs once
+per CANDIDATE — about thirty a scan, a minute of wall time, most of it spent
+re-learning something that has not changed. `CachedBarActivity` and the
+`pool_quiet` table remember it for an hour.
+
+**Only the negative verdict is kept, and the asymmetry is the safety.** Caching
+"this pool is alive" would cache the one answer that can turn against us between
+the scan and the moment capital moves; caching "it is dead" risks only a missed
+opportunity — and `confirmEntry` asks again, LIVE, at the door, so nothing is
+ever bought on a remembered verdict. A null answer is remembered the same way:
+no bars at all is the strongest form of "this engine cannot watch it".
+
+A note on what was NOT done, because the obvious version is worse. Aborting a
+token's examination the moment any one check fails would spend more time, not
+less: its three provider calls run in PARALLEL, so a token costs the LONGEST
+branch (2.5s) rather than their sum (6.7s). Serialising them to allow an early
+exit saves on the minority that fail and pays triple on the majority that pass —
+42 affordable tokens go from 105 seconds to about 210.
+
 **And a frozen slot holding nothing is released at once**, window or no window.
 `idle-slots` makes a reservation wait out `idleAfterMs` so a slot chosen minutes
 ago is not judged before its setup had a chance — but a FROZEN one had no chance
