@@ -30,6 +30,7 @@ import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { recallCandidates } from '../application/recall.js'
+import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
@@ -125,6 +126,23 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // can never be spent by another — the same isolation the live wallets will
   // need to enforce for real.
   const brokers = new Map<string, PaperBroker>()
+  /**
+   * The scan a health pass reads, memoised for a minute.
+   *
+   * `healthFor` runs once per position, and eighteen positions asking the
+   * database for the same hourly scan is eighteen queries for one answer.
+   */
+  let scanMemo: { at: number; scans: Awaited<ReturnType<typeof store.latestScansByChain>> } | null = null
+  const scansForHealth = async () => {
+    const now = Date.now()
+    if (scanMemo && now - scanMemo.at < 60_000) return scanMemo.scans
+    scanMemo = { at: now, scans: await store.latestScansByChain() }
+    return scanMemo.scans
+  }
+
+  /** Which scan each position has already had folded into its evidence. */
+  const foldedScanAt = new Map<string, number>()
+
   const brokerFor = async (position: PersistedPosition) => {
     let broker = brokers.get(position.id)
     if (!broker) {
@@ -174,6 +192,29 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     },
     healthFor: async (position) => {
       try {
+        // ── The scanner's verdict, folded in ONCE ──────────────────────────
+        //
+        // Seven of the eight invalidation signals used to be hardcoded null
+        // here, so a token whose mint authority came back, whose LP was
+        // unlocked, or whose pool drained could not be SEEN. The scan measures
+        // all of it and was never asked.
+        //
+        // Once, and that is the load-bearing word. The death exit requires
+        // `exitConfirmations` CONSECUTIVE observations carrying stage-2
+        // evidence, precisely so one bad reading cannot liquidate a healthy
+        // position. Feeding the same hour-old scan every five minutes would
+        // turn one reading into twelve confirmations — the exact false
+        // positive the rule exists to prevent, wearing the rule's own clothes.
+        const scans = await scansForHealth()
+        const snapshot =
+          scans
+            .find((scan) => scan.chain === position.chain)
+            ?.snapshots.find((s) => s.address === position.tokenAddress) ?? null
+        const scannedAt = scans.find((scan) => scan.chain === position.chain)?.scannedAt ?? 0
+        const fresh = scannedAt > (foldedScanAt.get(position.id) ?? 0)
+        if (fresh) foldedScanAt.set(position.id, scannedAt)
+        const scanner = fresh ? healthFromSnapshot(snapshot, DEFAULT_GATE_POLICY.minLpLockedPct) : UNMEASURED
+
         const decimals = await decimalsFor.decimals(position.chain, position.tokenAddress)
         // Without decimals or a price there is no way to size a meaningful
         // probe, and a probe of the wrong size answers the wrong question.
@@ -192,12 +233,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         )
         return {
           observedAt: Date.now(),
-          source: 'jupiter',
+          source: scanner === UNMEASURED ? 'sell-probe' : 'sell-probe+scan',
           sellQuote: assessment.sellQuote,
-          liquidityUsd: null,
-          lpStatus: 'unknown',
-          mintAuthorityActive: null,
-          freezeAuthorityActive: null,
+          ...scanner,
+          // Still unmeasured, and saying so is the point. Mapping holder
+          // CONCENTRATION to holder MOVEMENT, or "the contract has a blacklist"
+          // to "we are on it", would manufacture evidence out of facts that do
+          // not mean what the signal needs them to mean.
           transfersBlocked: null,
           topHolderMovedPct: null,
           hoursSinceLastTrade: null,

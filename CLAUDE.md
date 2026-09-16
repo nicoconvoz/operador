@@ -331,6 +331,46 @@ Evaluated continuously for every open position, independent of price.
 | Dev or top-holder dump | 1 | Top-N holder moves a significant share of supply |
 | Abandonment | 1 → 2 | No trades for N hours; volume near zero |
 
+#### What the runtime actually observed — CORRECTED
+
+The domain above is complete and has twenty-two scenario tests. The runtime fed
+it **one fact**. `healthFor` reported the sell probe and hardcoded the rest:
+
+```ts
+liquidityUsd: null, lpStatus: 'unknown', mintAuthorityActive: null,
+freezeAuthorityActive: null, transfersBlocked: null,
+topHolderMovedPct: null, hoursSinceLastTrade: null
+```
+
+Seven of the eight invalidation signals were blind. A token whose mint
+authority came back, whose LP was unlocked, or whose pool drained could not be
+SEEN — and the scan measures every one of them, and was never asked. The same
+shape as the missing execution layer: written, tested, documented, and reached
+only by the offline path.
+
+`application/health-from-scan.ts` hands the scanner's verdict over, and it
+declines to map three of the fields on purpose:
+
+| Signal | Source | Why |
+|---|---|---|
+| `liquidityUsd` | the scan's market pass | enables liquidity collapse, stage 1 → 2 |
+| `lpStatus` | `lpLockedPct` vs the gate's own `minLpLockedPct` | one definition of "unlocked", not two that drift |
+| `mintAuthorityActive` | the security report | direct |
+| `freezeAuthorityActive` | the security report | direct |
+| `topHolderMovedPct` | **not mapped** | `topHoldersPct` is a LEVEL, not a MOVE. A token where ten wallets always held 90% has moved nothing; mapping it would fire the dev-dump signal on every concentrated token in the book, permanently |
+| `transfersBlocked` | **not mapped** | `hasBlacklist` says the contract HAS the function, not that we are on it. The sell probe answers the real question |
+| `hoursSinceLastTrade` | **not mapped** | we measure volume, not when the last trade happened. Deriving one from the other hands the abandonment signal a number it treats as measured |
+
+It is also folded in **exactly once per scan**. The death exit requires
+`exitConfirmations` (3) CONSECUTIVE observations carrying stage-2 evidence,
+precisely so one bad reading cannot liquidate a healthy position — and feeding
+the same hourly scan into every five-minute pass would turn one reading into
+twelve confirmations, the exact false positive the rule exists to prevent,
+wearing the rule's own clothes.
+
+Four honest readings beat eight where half are guesses: **confirmations built
+on invented data confirm nothing while looking exactly like proof.**
+
 #### Guardrails — non-negotiable
 
 1. **Price is never a death signal.** No price decline, drawdown depth, or DCA
