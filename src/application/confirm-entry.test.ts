@@ -26,6 +26,58 @@ describe('confirmEntry — the last look before the money moves', () => {
     expect(out.ok).toBe(true)
   })
 
+  it('refuses a token whose CANDLES we cannot see, however active the market data says it is', async () => {
+    // Measured live, the same pool asked of both providers at the same moment:
+    //
+    //            GeckoTerminal    DexScreener
+    //   DREGG     0 txns / 1h     35 txns / 1h
+    //   HEV       0 txns / 1h     96 txns / 1h
+    //
+    // The engine was caught between them — admitted by DexScreener's activity,
+    // condemned by GeckoTerminal's silence. And the strategy is bar-driven, so
+    // a pool with no bars cannot be traded AT ALL: the entry decided at a close
+    // waits forever for an open that never arrives. Six positions sat at
+    // "$0.00 dentro" with their ladder frozen and their capital stuck.
+    //
+    // Whoever is right about the market, the engine's own answer is the same:
+    // do not buy what you cannot watch.
+    const out = await confirmEntry('Mint1', async () => healthy(), DEFAULT_GATE_POLICY, {
+      barAgeHours: async () => 5,
+      maxBarAgeHours: 1,
+    })
+    expect(out).toMatchObject({ ok: false, reason: 'stale-bars' })
+  })
+
+  it('refuses when the candle feed answers nothing at all', async () => {
+    // No bars is not "fresh bars". Fail closed, like every other reading here.
+    const out = await confirmEntry('Mint1', async () => healthy(), DEFAULT_GATE_POLICY, {
+      barAgeHours: async () => null,
+      maxBarAgeHours: 1,
+    })
+    expect(out.ok).toBe(false)
+  })
+
+  it('opens when the bars are current', async () => {
+    const out = await confirmEntry('Mint1', async () => healthy(), DEFAULT_GATE_POLICY, {
+      barAgeHours: async () => 0.2,
+      maxBarAgeHours: 1,
+    })
+    expect(out.ok).toBe(true)
+  })
+
+  it('checks the gates BEFORE spending a candle request on the feed', async () => {
+    // A token that already fails its gates is not worth a download. The order
+    // matters because this runs on every position about to be opened.
+    let asked = 0
+    await confirmEntry(
+      'Mint1',
+      async () => healthy({ liquidityUsd: 1_000 }),
+      DEFAULT_GATE_POLICY,
+      { barAgeHours: async () => { asked++; return 0.1 }, maxBarAgeHours: 1 },
+    )
+    expect(asked).toBe(0)
+  })
+
   it('refuses a token whose mint authority came back since the scan', async () => {
     // The case only this check can catch. A token that became mintable an hour
     // ago still quotes a perfectly good sell, so `confirmSellable` — the only

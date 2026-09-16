@@ -284,6 +284,7 @@ export async function runCycle(
         openedAt: r.position.openedAt,
         openQty: ledgers.get(r.position.id)?.qty ?? 0,
         hasFills: ledgers.get(r.position.id)?.hasFills ?? false,
+        frozen: r.position.deathWatch.stage === 'frozen',
         score: scoreOf.get(`${r.position.chain}:${r.position.tokenAddress}`) ?? null,
       })),
       waiting.map((c) => c.opportunity.score),

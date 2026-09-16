@@ -35,6 +35,41 @@ export type EntryConfirmation =
   | { readonly ok: true; readonly snapshot: TokenSnapshot }
   | { readonly ok: false; readonly reason: 'gates'; readonly failures: readonly GateFailure[] }
   | { readonly ok: false; readonly reason: 'unreadable'; readonly detail: string }
+  | { readonly ok: false; readonly reason: 'stale-bars'; readonly detail: string }
+
+/**
+ * Whether the CANDLE feed can actually see this pool trading, right now.
+ *
+ * Measured live, the same pool asked of both providers at the same moment:
+ *
+ * |        | GeckoTerminal | DexScreener |
+ * |--------|---------------|-------------|
+ * | DREGG  | 0 txns / 1h   | 35 txns / 1h |
+ * | HEV    | 0 txns / 1h   | 96 txns / 1h |
+ *
+ * Not a lag: GeckoTerminal's own top pools were current to the minute in the
+ * same run, and its 24h volume for these pools was HALF what DexScreener
+ * reported — it is missing trades on them, not trailing behind.
+ *
+ * The engine was caught between the two. The gate admits on DexScreener's
+ * activity; the death watch condemns on GeckoTerminal's silence; and the
+ * strategy is bar-driven, so a pool with no bars cannot be traded at all — the
+ * entry decided at a close waits forever for an open that never comes. Six
+ * positions sat at "$0.00 dentro", ladders frozen, capital stuck.
+ *
+ * Whoever is right about the market, the engine's answer is the same: **do not
+ * buy what you cannot watch.**
+ *
+ * The threshold is argued, not picked. `abandonmentFreezeHours` is 3, so
+ * admitting a token whose newest bar is already two hours old is admitting one
+ * that freezes within the hour. One hour matches `minHourlyTxns`'s own window
+ * and leaves the freeze threshold clear room.
+ */
+export interface BarFreshness {
+  /** Hours since the newest bar carrying volume, or null when nothing answered. */
+  readonly barAgeHours: (snapshot: TokenSnapshot) => Promise<number | null>
+  readonly maxBarAgeHours: number
+}
 
 export interface FreshLook {
   /** The token as it is RIGHT NOW: market, security and history, all re-fetched. */
@@ -45,6 +80,7 @@ export async function confirmEntry(
   address: string,
   look: FreshLook,
   policy: GatePolicy,
+  bars?: BarFreshness,
 ): Promise<EntryConfirmation> {
   let fresh: TokenSnapshot | null
   try {
@@ -60,5 +96,29 @@ export async function confirmEntry(
   // The FULL set, not the market half. The whole reason for looking again is
   // the security answers, which are the ones the cache was holding.
   const verdict = evaluateGates(fresh, policy)
-  return verdict.passed ? { ok: true, snapshot: fresh } : { ok: false, reason: 'gates', failures: verdict.failures }
+  if (!verdict.passed) return { ok: false, reason: 'gates', failures: verdict.failures }
+
+  // AFTER the gates, never before: a token that already fails is not worth a
+  // candle download, and this runs on every position about to be opened.
+  if (bars) {
+    let age: number | null
+    try {
+      age = await bars.barAgeHours(fresh)
+    } catch (error) {
+      return { ok: false, reason: 'stale-bars', detail: `sin velas: ${String(error).slice(0, 120)}` }
+    }
+    // No bars is not fresh bars. Fail closed, like every other reading here.
+    if (age === null) {
+      return { ok: false, reason: 'stale-bars', detail: 'el proveedor de velas no devolvió ninguna operación' }
+    }
+    if (age > bars.maxBarAgeHours) {
+      return {
+        ok: false,
+        reason: 'stale-bars',
+        detail: `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más que el mercado diga que hay actividad`,
+      }
+    }
+  }
+
+  return { ok: true, snapshot: fresh }
 }

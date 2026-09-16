@@ -61,6 +61,29 @@ export interface ScanDeps {
    * while the same twenty were re-checked every fifteen minutes.
    */
   readonly securityCache?: SecurityCachePort
+  /**
+   * Hours since the newest bar CARRYING VOLUME for this token's pool, or null
+   * when the candle feed answered nothing.
+   *
+   * Optional, and asked only about tokens that already cleared every gate —
+   * one request per candidate is affordable once an hour; one per token priced
+   * would be three hundred, against the provider that rate-limits hardest.
+   *
+   * It exists because two providers disagree. Measured live, the same pool at
+   * the same moment: GeckoTerminal reported 0 trades in the last hour where
+   * DexScreener reported 35, and half the 24h volume. Not a lag — the
+   * provider's own top pools were current to the minute in the same run.
+   *
+   * The engine was caught between them: admitted on one feed's activity,
+   * condemned by the other's silence. And the strategy is BAR-DRIVEN, so a pool
+   * with no bars cannot be traded at all — the entry decided at a close waits
+   * forever for an open that never comes, the ladder freezes at three hours,
+   * and the capital is stuck behind a position that never opened.
+   *
+   * Whoever is right about the market, the engine's answer is the same: it does
+   * not shortlist what it cannot watch.
+   */
+  readonly barAgeHours?: (snapshot: TokenSnapshot) => Promise<number | null>
 }
 
 export interface CachedSecurity {
@@ -116,6 +139,8 @@ export interface ScanConfig {
    * the sell path is re-confirmed before a position is opened.
    */
   readonly securityTtlMs?: number
+  /** How stale the newest bar may be before a candidate is refused. */
+  readonly maxBarAgeHours?: number
 }
 
 /**
@@ -455,7 +480,47 @@ export async function scanOnce(
   }
 
   // ── 4. Gates → score → rank ────────────────────────────────────────────────
-  const ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
+  let ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
+
+  // ── 4b. And can we actually SEE it trade? ──────────────────────────────────
+  //
+  // Last, and only for what survived everything else, because it costs one
+  // candle request each. A candidate the engine can never act on is not a
+  // candidate: leaving it on the shortlist means choosing it, refusing it at
+  // the door, and choosing it again next cycle, forever.
+  if (deps.barAgeHours && config.maxBarAgeHours !== undefined) {
+    const maxAge = config.maxBarAgeHours
+    const kept: typeof ranked.candidates[number][] = []
+    const stale: typeof ranked.rejected[number][] = []
+    for (const candidate of ranked.candidates) {
+      let age: number | null
+      try {
+        age = await deps.barAgeHours(candidate.snapshot)
+      } catch (error) {
+        errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
+        // Unanswered is not fresh. Fail closed, like every other gate here.
+        age = null
+      }
+      if (age !== null && age <= maxAge) {
+        kept.push(candidate)
+        continue
+      }
+      stale.push({
+        ...candidate,
+        gates: {
+          passed: false,
+          failures: [{
+            gate: 'staleBars',
+            reason: age === null ? 'unknown' : 'failed',
+            detail: age === null
+              ? 'el proveedor de velas no devolvió ninguna operación — sin barras la estrategia no puede decidir'
+              : `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más actividad que reporte el mercado`,
+          }],
+        },
+      })
+    }
+    ranked = { ...ranked, candidates: kept, rejected: [...ranked.rejected, ...stale] }
+  }
 
   deps.onProgress?.({
     stage: 'done',

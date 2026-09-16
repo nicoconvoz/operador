@@ -63,6 +63,13 @@ export interface SlotHolder {
   /** Whether anything was ever bought. Different from holding something now. */
   readonly hasFills: boolean
   /**
+   * Whether the death watch has frozen this slot's ladder.
+   *
+   * A frozen slot cannot BUY — that is what freezing means — so a frozen slot
+   * holding nothing is waiting for something that cannot happen.
+   */
+  readonly frozen?: boolean
+  /**
    * What the scanner thinks of this token RIGHT NOW, or null when it is not
    * among the candidates at all.
    *
@@ -107,6 +114,20 @@ export function releasableSlots(
     // on it immediately would open a position and close it on the next scan,
     // which is churn wearing the costume of discipline. It gets the window
     // first, and only then is it judged.
+    // A FROZEN reservation is judged at once, window or no window.
+    //
+    // The window exists so a slot chosen by this same ranking minutes ago is
+    // not condemned before its setup had a chance. A frozen one had no chance
+    // and will get none: freezing blocks entries, so it cannot buy, and it
+    // holds nothing to sell. Waiting three hours buys nothing at all.
+    //
+    // Six sat like that at once, each holding a slot and the capital for a
+    // ladder that could never fire.
+    if (holder.frozen === true) {
+      decisions.push({ holder, reason: 'congelada sin haber comprado nada — no puede entrar ni tiene qué vender' })
+      continue
+    }
+
     const proven = holder.hasFills
     const waited = now - holder.openedAt >= policy.idleAfterMs
     if (!proven && !waited) continue

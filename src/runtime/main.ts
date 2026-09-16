@@ -313,7 +313,22 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           (stage: ScanError['stage'], error: unknown) => console.warn('[confirm]', stage, String(error).slice(0, 200)),
         )
         return fresh
-      }, gates),
+      }, gates, {
+        // The same measurement the death watch reads, asked BEFORE the money
+        // moves instead of three hours after. `idle-hours.ts` walks back to the
+        // newest bar carrying volume; here it answers "can this engine see this
+        // pool trade at all", which is a different question from "is this token
+        // active" and the only one that decides whether a ladder can ever fill.
+        barAgeHours: async (fresh) => {
+          const candles = await gecko.candles(fresh.chain, fresh.pairAddress, config.barSize, 300)
+          return hoursSinceLastTrade(candles, Date.now())
+        },
+        // One hour: it matches `minHourlyTxns`'s own window, and it leaves the
+        // three-hour abandonment freeze clear room. Admitting a token whose
+        // newest bar is already two hours old is admitting one that freezes
+        // within the hour.
+        maxBarAgeHours: 1,
+      }),
     // Every configured chain, each scan stored under its own chain so the
     // universe can show them together. One chain failing must not cost the
     // others their turn: a rate limit on Solana is not a reason to stop
@@ -369,6 +384,19 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // whole list over a few cycles instead of re-checking the same
               // twenty forever.
               securityCache: store,
+              // Can this engine SEE the token trade? Two providers disagreed —
+              // GeckoTerminal reporting zero trades an hour where DexScreener
+              // reported thirty-five on the same pool — and the engine was
+              // buying on one and freezing on the other. The strategy is
+              // bar-driven: no bars, no trade, ever.
+              barAgeHours: async (snapshot) => {
+                try {
+                  const candles = await gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, 300)
+                  return hoursSinceLastTrade(candles, Date.now())
+                } catch {
+                  return null
+                }
+              },
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),
@@ -381,6 +409,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
                 minScore: 0,
               },
+              // A shortlist the engine can act on. One candle request per
+              // CANDIDATE — after the gates cut ninety percent — so about
+              // thirty a scan rather than three hundred.
+              maxBarAgeHours: 1,
               // Ours first: into the universe before discovery, past the cap,
               // and ahead of every candidate for the security budget.
               held: open.filter((p) => p.chain === chain).map((p) => p.tokenAddress),

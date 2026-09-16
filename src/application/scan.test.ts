@@ -374,3 +374,70 @@ describe('scanOnce — a cap that bites says so', () => {
     expect(progress.find((p) => p.stage === 'universe')?.dropped).toBe(2)
   })
 })
+
+describe('scanOnce — a token the engine cannot watch is not a candidate', () => {
+  it('moves a token with stale bars out of the shortlist and says why', async () => {
+    // Measured live, the same pool asked of both providers at once: GeckoTerminal
+    // reported 0 trades in the last hour where DexScreener reported 35, and its
+    // 24h volume was half. The engine was admitting on one feed and condemning
+    // on the other — and since the strategy is bar-driven, a pool with no bars
+    // cannot be traded at all: the entry waits forever for an open that never
+    // comes, the ladder freezes at three hours, and the capital is stuck.
+    //
+    // The refusal belongs here as well as at the door. A candidate the engine
+    // can never act on is not a candidate; leaving it on the shortlist means
+    // choosing it, refusing it, and choosing it again every cycle.
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+    })
+
+    const out = await scanOnce({ ...deps, barAgeHours: async () => 5 }, { ...config, maxBarAgeHours: 1 })
+
+    expect(out.candidates).toEqual([])
+    expect(out.rejected.map((r) => r.gates.failures[0]!.gate)).toContain('staleBars')
+  })
+
+  it('keeps a token whose bars are current', async () => {
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+    })
+
+    const out = await scanOnce({ ...deps, barAgeHours: async () => 0.2 }, { ...config, maxBarAgeHours: 1 })
+
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
+  })
+
+  it('asks only about CANDIDATES, never about everything it priced', async () => {
+    // One candle request per candidate is affordable once an hour; one per
+    // token priced would be three hundred, against the provider that
+    // rate-limits hardest. The gates have already cut ninety percent by here.
+    const asked: string[] = []
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }, { chainId: 'solana', tokenAddress: 'bad' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good,bad`]: { body: [pair('good'), pair('bad')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=bad`]: { body: { code: 1, message: 'ok', result: { bad: minty } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=bad`]: { body: goodQuote },
+    })
+
+    await scanOnce(
+      { ...deps, barAgeHours: async (s) => { asked.push(s.address); return 0.2 } },
+      { ...config, maxBarAgeHours: 1 },
+    )
+
+    expect(asked).toEqual(['good'])
+  })
+})

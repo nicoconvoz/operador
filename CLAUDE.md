@@ -164,6 +164,63 @@ Both gates survive, because they answer different questions. A ratio cannot save
 a pool nobody can get $15 out of; a dollar floor cannot see that a large pool
 has stopped moving.
 
+### Two providers, one pool, opposite answers — MEASURED
+
+The engine bought six tokens it then could not trade. Each showed `$0.00 dentro`
+with its ladder at level 1 and frozen: the entry was decided, and the fill that
+was supposed to happen at the next bar's open never came, because **there was no
+next bar**.
+
+The same pool address, asked of both providers at the same moment (2026-09-16):
+
+| | GeckoTerminal | DexScreener |
+|---|---|---|
+| DREGG — txns 1h | **0** | **35** |
+| DREGG — vol 1h | **$0** | **$2,506** |
+| HEV — txns 1h | **0** | **96** |
+| HEV — vol 1h | **$0** | **$15,710** |
+| HEV — vol 24h | $340,260 | $698,272 |
+
+**Not a lag.** In the same run, GeckoTerminal's own top pools were current to the
+minute — SOL/USDC, USDT/USDC and PAID/SOL all had a newest bar 15 minutes old.
+And its 24h volume for these pools is roughly HALF DexScreener's, which a delay
+cannot explain: a pool that died five hours ago would show the same 24h total on
+both. It is missing trades on these pools, not trailing behind them.
+
+The engine sat between the two and took the worst of each:
+
+- the activity gate **admits** on DexScreener's `txns.h1`
+- the death watch **condemns** on GeckoTerminal's silence
+- and the strategy is **bar-driven**, so with no bars it can do neither
+
+So the position opens, never fills, freezes at three hours, and its capital is
+stuck behind a ladder that was never going to climb.
+
+**The rule that was missing: do not buy what you cannot watch.** Whoever is
+right about the market, the engine's own answer is the same — a pool it cannot
+see trading is a pool it cannot trade, and that is true regardless of who is
+counting correctly.
+
+It is enforced in two places, and both are needed:
+
+- **`scanOnce`** refuses it as a CANDIDATE (`staleBars`), so it never reaches
+  the shortlist. Asked only of tokens that cleared every other gate — about
+  thirty a scan rather than three hundred, since the gates have already cut
+  ninety percent.
+- **`confirmEntry`** asks again at the door, because the shortlist can be an
+  hour old and this is the moment capital moves.
+
+One hour is the threshold, argued rather than picked: it matches
+`minHourlyTxns`'s own window, and it leaves the three-hour abandonment freeze
+clear room. Admitting a token whose newest bar is already two hours old is
+admitting one that freezes within the hour.
+
+**And a frozen slot holding nothing is released at once**, window or no window.
+`idle-slots` makes a reservation wait out `idleAfterMs` so a slot chosen minutes
+ago is not judged before its setup had a chance — but a FROZEN one had no chance
+and will get none: freezing blocks entries, so it cannot buy, and it holds
+nothing to sell. Waiting three hours buys nothing at all.
+
 ### Is it alive NOW?
 
 The 24h figures cannot answer that. A token was reported live with **$168k of

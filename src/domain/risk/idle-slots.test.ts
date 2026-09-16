@@ -114,3 +114,35 @@ describe('releasableSlots — a fresh reservation is not judged by the ranking t
     expect(symbols(releasableSlots([proven], [99], NOW, policy))).toEqual(['IDLE'])
   })
 })
+
+describe('releasableSlots — a frozen reservation is waiting for nothing', () => {
+  it('hands back a frozen slot that holds nothing, without waiting out the window', () => {
+    // The window exists so a slot chosen by this same ranking minutes ago is
+    // not judged before its setup had a chance. A FROZEN one had no chance and
+    // will get none: freezing blocks entries, so it cannot buy, and it holds
+    // nothing to sell. Three hours of waiting buys exactly nothing.
+    //
+    // Six of them sat like that at once, each holding a slot and the capital
+    // for a ladder that could never fire.
+    const decisions = releasableSlots(
+      [holder({ openQty: 0, hasFills: false, frozen: true, openedAt: NOW - 5 * 60_000, score: 90 })],
+      [95],
+      NOW,
+      policy,
+    )
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]!.reason).toContain('congelada')
+  })
+
+  it('still refuses to touch a frozen slot that HOLDS something', () => {
+    // Frozen or not, tokens in the slot end the conversation: the slot cannot
+    // come back without selling, and selling is the strategy's decision.
+    const decisions = releasableSlots(
+      [holder({ openQty: 1_000, hasFills: true, frozen: true, openedAt: NOW - 5 * 60_000, score: 10 })],
+      [95],
+      NOW,
+      policy,
+    )
+    expect(decisions).toEqual([])
+  })
+})

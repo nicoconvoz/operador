@@ -216,6 +216,7 @@ export type GateName =
   | 'marketCap'
   | 'impersonation'
   | 'history'
+  | 'staleBars'
 
 export interface GateFailure {
   readonly gate: GateName
