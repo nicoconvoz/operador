@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Universe } from './universe.js'
 import { Operations } from './operations.js'
+import { Registry } from './registry.js'
 import type { DashboardView } from '../../src/application/dashboard.js'
 import type { UniverseView } from '../../src/application/universe-view.js'
 import type { OperationsView } from '../../src/application/operations-view.js'
@@ -47,12 +48,12 @@ const REFRESH_MS = 20_000
  */
 const TAB_KEY = 'operador:tab'
 const SCROLL_KEY = 'operador:scroll'
-type Tab = 'universe' | 'operations'
+type Tab = 'universe' | 'operations' | 'registry'
 
 const rememberedTab = (): Tab | null => {
   try {
     const saved = sessionStorage.getItem(TAB_KEY)
-    return saved === 'operations' || saved === 'universe' ? saved : null
+    return saved === 'operations' || saved === 'universe' || saved === 'registry' ? saved : null
   } catch {
     return null
   }
@@ -208,9 +209,18 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
         <Tab active={tab === 'operations'} onClick={() => showTab('operations')}>
           Operaciones {open > 0 && <Count>{open}</Count>}
         </Tab>
+        <Tab active={tab === 'registry'} onClick={() => showTab('registry')}>
+          Registro {operations.recentFills.length > 0 && <Count>{operations.recentFills.length}</Count>}
+        </Tab>
       </nav>
 
-      {tab === 'universe' ? <Universe view={universe} /> : <Operations view={operations} />}
+      {tab === 'universe' ? (
+        <Universe view={universe} />
+      ) : tab === 'operations' ? (
+        <Operations view={operations} />
+      ) : (
+        <Registry view={operations} />
+      )}
 
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
         {universe.scannedAt ? `Escaneado ${ago(universe.scannedAt)}` : 'Todavía no se registró ningún escaneo'}

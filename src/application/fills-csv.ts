@@ -20,6 +20,33 @@ import { type PersistedFill } from '../domain/persistence/store.js'
  *    set and its history must survive it. Those rows are most of the file.
  */
 
+/** A day in milliseconds — what a date picker's value is worth on the clock. */
+const DAY_MS = 86_400_000
+
+/**
+ * The fills between two dates, both ends INCLUSIVE of their whole day.
+ *
+ * A date picker hands over `2026-09-10`, which parses to midnight. Read
+ * literally, "from the 1st to the 10th" returns nothing at all from the 10th —
+ * and the operator, who picked a day they can see on the screen, gets a file
+ * that silently omits it. The most recent day is the one they most wanted.
+ *
+ * A backwards range returns NOTHING rather than everything. The two ways of
+ * being wrong are not equal: an empty file says "check the dates", a full one
+ * says "here is what you asked for" about something nobody asked for.
+ */
+export function fillsInRange(
+  fills: readonly PersistedFill[],
+  from: number | null,
+  to: number | null,
+): readonly PersistedFill[] {
+  const start = from ?? Number.NEGATIVE_INFINITY
+  // The END of the chosen day, not its beginning.
+  const end = to === null ? Number.POSITIVE_INFINITY : to + DAY_MS - 1
+  if (start > end) return []
+  return fills.filter((fill) => fill.time >= start && fill.time <= end)
+}
+
 export function fillsCsv(
   fills: readonly PersistedFill[],
   symbolFor: (positionId: string) => string | null,

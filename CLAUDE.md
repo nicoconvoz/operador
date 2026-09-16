@@ -1121,15 +1121,34 @@ detail sheet now lists the reasons under the label, newest first.
 The same shape as every other gap in this project: written, tested, documented,
 and reached by one path only.
 
-### The tape is ten rows and a file
+### Registro — the tape in a room of its own
 
 `recentFills` grows without bound and the screen does not. A page listing every
 buy and sell since the engine started is a page whose top nobody reaches — and
 on a phone it is the whole page.
 
-So the tape shows **ten**, and the rest is `/api/fills`: every fill ever
-recorded, as CSV, newest first. Capping the screen and offering nothing would be
-deleting the audit trail from the only place the operator looks at it.
+It lived under the positions in **Operaciones**, which answers *what is open*.
+What happened is a different question asked at a different moment, so it moved
+to its own tab: **thirty rows with their comment and cost**, and it is in ONE
+place rather than two, because the same list in two tabs is noise.
+
+The rest is a file. `/api/fills` returns every fill ever recorded as CSV, newest
+first, and takes `from` and `to`. The download sits at the TOP of the tab,
+before the rows — somebody who came for the file should not scroll past thirty
+lines to find it.
+
+**Both ends include their whole day.** A date input hands over `2026-09-10`,
+which parses to midnight, so "the 1st to the 10th" read literally returns
+nothing at all from the 10th — and the most recent day is the one the operator
+most wanted. A **backwards range returns nothing**, not everything: an empty
+file says "check the dates" while a full one says "here is what you asked for"
+about something nobody asked for. And a date that is present but unreadable is
+**rejected**, never ignored — quietly dropping it hands back a file believed to
+be filtered, and a wrong export is worse than a refused one when what is
+exported is the audit trail.
+
+The filename carries the range, because a folder of exports all called
+`operador-<today>.csv` is a folder nobody can tell apart a week later.
 
 Two details in `fills-csv.ts` that matter more than they look. The price is
 written at **full precision**, because these are micro-caps and 0.0016426 at two

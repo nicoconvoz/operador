@@ -33,11 +33,12 @@ export async function GET(): Promise<Response> {
         // DEFAULT_PARAMS put a $1,000 rung beside a $15 order for days.
         params: { ...DEFAULT_PARAMS, maxUsdPerLevel: ladder.maxUsdPerLevel },
         maxOpenEntries: ladder.maxOpenEntries,
-        // TEN, not forty. The tape grows without bound and the screen does not:
-        // a page listing every buy and sell since the engine started is a page
-        // nobody can read the top of. The rest is a file — /api/fills — rather
-        // than deleted from view.
-        tapeLength: 10,
+        // THIRTY, for the Registro tab. The tape grows without bound and the
+        // screen does not: a page listing every buy and sell since the engine
+        // started is a page nobody can read the top of, and on a phone that is
+        // the whole page. The rest is a file — /api/fills, with a date range —
+        // rather than deleted from view.
+        tapeLength: 30,
       }),
     ])
     return Response.json({ dashboard, universe, operations }, { headers: { 'cache-control': 'no-store' } })

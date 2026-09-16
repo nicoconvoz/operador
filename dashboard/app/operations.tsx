@@ -62,36 +62,6 @@ export function Operations({ view }: { view: OperationsView }) {
         <Position key={position.id} position={position} open={open === position.id} onToggle={() => setOpen(open === position.id ? null : position.id)} />
       ))}
 
-      {view.recentFills.length > 0 && (
-        <section style={{ ...card(), marginTop: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
-            <span style={{ color: DIM, fontSize: 12 }}>cinta · últimas {view.recentFills.length}</span>
-            {/* The rest is a FILE, not a longer page. Capping the screen and
-                offering nothing would be deleting the audit trail from the only
-                place the operator can see it. */}
-            <a
-              href="/api/fills"
-              style={{ marginLeft: 'auto', color: DIM, fontSize: 11, textDecoration: 'underline' }}
-            >
-              descargar todo (CSV)
-            </a>
-          </div>
-          {view.recentFills.map((fill) => (
-            <div
-              key={fill.idempotencyKey}
-              style={{ display: 'flex', gap: 8, fontSize: 12, padding: '3px 0', borderBottom: '1px solid #14181f' }}
-            >
-              <span style={{ color: DIM, width: 34 }}>{ago(fill.time)}</span>
-              <span style={{ color: fill.side === 'buy' ? UP : DOWN, width: 34 }}>{fill.side === 'buy' ? 'COMPRA' : 'VENTA'}</span>
-              <span style={{ width: 70 }}>{fill.symbol}</span>
-              <span style={{ color: DIM, width: 58 }}>{fill.orderId}</span>
-              <span style={{ flex: 1, textAlign: 'right' }}>{price(fill.price)}</span>
-              <span style={{ width: 74, textAlign: 'right' }}>{money(fill.price * fill.qty)}</span>
-              <span style={{ width: 62, textAlign: 'right', color: DIM }}>−{money(fill.costUsd, 3)}</span>
-            </div>
-          ))}
-        </section>
-      )}
     </>
   )
 }
