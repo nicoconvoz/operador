@@ -1,4 +1,5 @@
 import { type LpStatus } from '../domain/risk/death-exit.js'
+import { lpModelOf } from '../domain/scanner/lp-model.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 
 /**
@@ -67,13 +68,28 @@ export function healthFromSnapshot(snapshot: TokenSnapshot | null, minLpLockedPc
     return { ...UNMEASURED, liquidityUsd: snapshot.liquidityUsd }
   }
 
+  // "Is the LP locked?" only means something where LP TOKENS EXIST. On Orca
+  // whirlpools, Raydium CLMM and Meteora DLMM, positions are NFTs — there is
+  // nothing to lock, and `lpLockedPct` comes back null or zero because the
+  // question does not apply, not because the answer is bad.
+  //
+  // Reading it anyway froze a healthy position twice: PURR opened green and
+  // went to stage 1 on the evidence "LP unlocked", while the scanner's own
+  // gates passed it with no blockers. The gate consults `lpModelOf` and SKIPS
+  // the question on those venues; this did not, so the two disagreed about the
+  // same token — the exact drift the comment above claims to prevent.
+  //
+  // lp-model.ts states the rule for the gate: it does not PASS a concentrated
+  // pool by pretending a lock exists. The mirror of that is what this got
+  // wrong — it FAILED one by pretending a lock was missing.
+  const hasLpTokens = lpModelOf(snapshot.dexId, snapshot.dexLabels) === 'lp-token'
   const locked = snapshot.security.lpLockedPct
   return {
     liquidityUsd: snapshot.liquidityUsd,
     // 'burned' is not distinguishable from 'locked' in what the providers
     // report, and 'removed' would need a withdrawal event nobody watches for.
     // Claiming either would be claiming a measurement we do not have.
-    lpStatus: locked === null ? 'unknown' : locked >= minLpLockedPct ? 'locked' : 'unlocked',
+    lpStatus: !hasLpTokens || locked === null ? 'unknown' : locked >= minLpLockedPct ? 'locked' : 'unlocked',
     mintAuthorityActive: snapshot.security.mintAuthorityActive,
     freezeAuthorityActive: snapshot.security.freezeAuthorityActive,
   }

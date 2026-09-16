@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { healthFromSnapshot, UNMEASURED } from './health-from-scan.js'
 import { type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
+import { DEFAULT_GATE_POLICY, evaluateGates } from '../domain/scanner/gates.js'
 
 const NOW = 1_800_000_000_000
 
@@ -88,5 +89,53 @@ describe('healthFromSnapshot — what it refuses to map', () => {
     // the other hands the abandonment signal a number it treats as measured.
     const health = healthFromSnapshot(snapshot({ volumeUsd: { h1: 0, h6: 0, h24: 0 } }), 80)
     expect(health).not.toHaveProperty('hoursSinceLastTrade')
+  })
+})
+
+// ── Concentrated pools have no LP to lock ───────────────────────────────────
+//
+// Reported live: PURR opened green and froze, twice across two relaunches, on
+// the evidence "LP unlocked" — while the scanner's own gates passed it with no
+// blockers at all. The screen and the death watch disagreed about the same
+// token, which is exactly what this file's own comment claims to prevent.
+//
+// The gate only reads lpLockedPct when `lpModelOf` says the venue HAS LP
+// tokens. On Orca Whirlpools, Raydium CLMM and Meteora DLMM, positions are
+// NFTs — there is nothing to lock, so the gate skips the question rather than
+// answering it. lp-model.ts puts it plainly: it does not PASS a concentrated
+// pool by pretending a lock exists.
+//
+// This mapping read the field on every pool, and so made the mirror-image
+// mistake: it FAILED one by pretending a lock was missing.
+
+describe('healthFromSnapshot — a venue with no LP token', () => {
+  const concentrated = (dexId: string, dexLabels: string[] = []) =>
+    healthFromSnapshot(snapshot({ dexId, dexLabels }, { lpLockedPct: 0 }), 80).lpStatus
+
+  it('says unknown on an Orca whirlpool, not unlocked', () => {
+    expect(concentrated('orca')).toBe('unknown')
+  })
+
+  it('says unknown on Raydium CLMM', () => {
+    expect(concentrated('raydium', ['CLMM'])).toBe('unknown')
+  })
+
+  it('says unknown on Meteora DLMM', () => {
+    expect(concentrated('meteora', ['DLMM'])).toBe('unknown')
+  })
+
+  it('still reads the lock where LP tokens actually exist', () => {
+    // Raydium's classic AMM does have them, and there the number means what it
+    // says. Skipping it everywhere would be the opposite error.
+    expect(healthFromSnapshot(snapshot({ dexId: 'raydium' }, { lpLockedPct: 0 }), 80).lpStatus).toBe('unlocked')
+    expect(healthFromSnapshot(snapshot({ dexId: 'pancakeswap' }, { lpLockedPct: 100 }), 80).lpStatus).toBe('locked')
+  })
+
+  it('agrees with the gate on the same token, which is the whole point', () => {
+    // A position frozen for a reason the scanner does not consider a problem is
+    // a system arguing with itself, and the reader has to pick a side.
+    const whirlpool = snapshot({ dexId: 'orca' }, { lpLockedPct: 0 })
+    expect(evaluateGates(whirlpool, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('lpLocked')
+    expect(healthFromSnapshot(whirlpool, 80).lpStatus).not.toBe('unlocked')
   })
 })
