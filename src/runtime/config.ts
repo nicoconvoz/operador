@@ -204,7 +204,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
     scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 60 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
-    maxCycles: number(env, 'OPERADOR_MAX_CYCLES', 0),
+    // Zero means "never — the daemon", and `number()` rejects zero. The
+    // behaviour therefore existed only while the variable was UNSET: writing
+    // its own documented value into it threw at boot. The same sentinel trap
+    // as maxPositions, left in the one place it was not fixed.
+    maxCycles: numberOrZero(env, 'OPERADOR_MAX_CYCLES', 0),
     maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),

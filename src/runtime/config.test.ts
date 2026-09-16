@@ -23,6 +23,28 @@ describe('loadConfig — fails at boot, never mid-ladder', () => {
   })
 
   it('treats blank as missing — an empty secret is not a secret', () => {
+    // This test had a name and an empty body for weeks: it asserted the
+    // behaviour existed by describing it, which is the one thing a test
+    // cannot do. Found by reading the documentation against the source.
+    expect(() => loadConfig({ ...valid, DATABASE_URL: '   ' })).toThrow(ConfigError)
+    // A blank OPTIONAL var falls back rather than throwing — a CI expression
+    // that evaluated to nothing must not be read as a configured value.
+    expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '' }).totalCapitalUsd).toBe(1_000)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_POSITIONS: '  ' }).maxPositions).toBe(0)
+  })
+
+  it('accepts an explicit zero where zero has a meaning', () => {
+    // `OPERADOR_MAX_CYCLES` documents zero as "never — the daemon", and the
+    // fallback is zero, so the behaviour existed only while the variable was
+    // UNSET. Writing the documented value into it threw at boot:
+    // "OPERADOR_MAX_CYCLES must be a positive number, got \"0\"". The same
+    // sentinel trap as maxPositions, left in the one place it was not fixed.
+    expect(loadConfig({ ...valid, OPERADOR_MAX_CYCLES: '0' }).maxCycles).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_POSITIONS: '0' }).maxPositions).toBe(0)
+  })
+
+  it('still refuses a negative, where no reading of it is meaningful', () => {
+    expect(() => loadConfig({ ...valid, OPERADOR_MAX_CYCLES: '-1' })).toThrow(ConfigError)
   })
 
   it('rejects a number that is not one, rather than silently using a default', () => {

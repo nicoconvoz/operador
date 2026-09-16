@@ -19,9 +19,19 @@ GeckoTerminal, PancakeSwap) son HTTP, y todo el estado —posiciones, escalera,
 vigilancia de muerte, órdenes en vuelo— vive en Postgres.
 
 Un ciclo lee la base, decide, escribe y termina. No hay nada que un proceso
-permanente pueda sostener entre ciclos, porque no hay nada en memoria. Por eso
-`OPERADOR_MAX_CYCLES=1` es honesto: hace exactamente lo mismo que haría el
-demonio, una vez.
+permanente pueda sostener entre ciclos, porque no hay nada en memoria.
+
+Eso es lo que permite lo que vino después: **una corrida sostiene el bucle
+durante horas y se marca su propio ritmo**. El cron de GitHub resultó ser de
+mejor esfuerzo en serio — medido, tres disparos programados en doce horas
+contra un `*/15` — así que pedirle puntualidad era pedirle lo que no da. El
+workflow pone `OPERADOR_MAX_CYCLES: 120` contra un tope de 350 minutos, y el
+cron solo tiene que acertar una vez en ese rato.
+
+Dentro de esa corrida hay **dos cadencias**: un paso de *vigilancia* cada cinco
+minutos, que avanza las barras de las posiciones abiertas, y un *escaneo* cada
+hora, que es lo caro. Un token que tenés puede rugear en diez minutos; una
+oportunidad perdida por una hora es solo una oportunidad perdida.
 
 Dos límites que tenés que conocer **antes** de confiar en esto:
 
@@ -78,10 +88,10 @@ git push -u origin master
 
 **Público o privado — esto importa para el costo:**
 
-| | Minutos de Actions | Ciclo cada 15 min |
+| | Minutos de Actions | Corridas largas de ~6h |
 |---|---|---|
 | Público | ilimitados | entra cómodo |
-| Privado | 2.000/mes gratis | **no entra** (~2.900) |
+| Privado | 2.000/mes gratis | **no entra, ni cerca** |
 
 Si lo dejás privado, cambiá el cron a `*/30 * * * *` en
 `.github/workflows/engine.yml` y queda alrededor de 1.700 minutos. El `.env`
@@ -101,7 +111,13 @@ En la pestaña **Variables** (al lado de Secrets), opcionales:
 | Nombre | Para qué | Por defecto |
 |---|---|---|
 | `OPERADOR_CAPITAL_USD` | capital total del experimento | `1000` |
-| `OPERADOR_MAX_POSITIONS` | cuántas posiciones a la vez | `5` |
+| `OPERADOR_MAX_POSITIONS` | tope duro de posiciones; **`0` = sin tope, decide el capital** | `0` |
+| `OPERADOR_MAX_DCA` | peldaños de DCA por token (la entrada no cuenta) | `5` |
+| `OPERADOR_MAX_USD_PER_LEVEL` | tope de USD por peldaño | `15` |
+| `OPERADOR_SCAN_MS` | cada cuánto un paso ADEMÁS escanea | `3600000` (1h) |
+| `OPERADOR_CYCLE_MS` | cada cuánto ocurre un paso | `300000` (5 min) |
+| `OPERADOR_IDLE_HOURS` | horas que una reserva sin operar conserva su ranura | `3` |
+| `OPERADOR_MIN_SCORE_EDGE` | puntos que un candidato necesita para quedarse con una ranura vacía | `10` |
 | `OPERADOR_GAS_USD` | gas por swap, define el piso mínimo | `0.05` |
 | `OPERADOR_MAX_SECURITY_CHECKS` | tokens por cadena con revisión completa por ciclo | `20` |
 
@@ -114,9 +130,19 @@ Antes de dejarlo solo, mirálo funcionar una vez.
 Abrí el log. Lo que tiene que aparecer:
 
 ```
-[boot] {"mode":"paper","chains":"solana,bsc",...}
-[exit] "max-cycles" 1 cycles
+[boot]  {"mode":"paper","chains":"solana,bsc","capitalUsd":1500,"maxPositions":0,...}
+[watch] {"positions":5,"bars":1,"opened":9,"released":0,"halted":0,"seconds":41}
+[full]  {"positions":14,"bars":1,"opened":0,"released":1,"halted":0,"seconds":187}
 ```
+
+La línea `[boot]` es la que conviene leer con atención: dice con qué
+configuración arrancó de verdad. Si ahí ves un número que no esperabas,
+**mirá las Variables del repositorio** — una variable pisa el valor por
+defecto del workflow, y ese es el lugar donde más veces se esconde la
+diferencia entre lo que creés que configuraste y lo que está corriendo.
+
+Después de `[boot]` no esperes silencio: **cada paso se anuncia**. Si pasan
+más de diez minutos sin una línea nueva, ahí sí hay algo trabado.
 
 Si falla en `[boot]`, es la configuración — el motor se niega a arrancar mal a
 propósito, porque descubrir un secreto faltante tres horas después, a mitad de
