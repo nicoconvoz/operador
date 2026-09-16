@@ -998,6 +998,19 @@ It runs on a phone, which forced four decisions:
   when the image never changes.
 - **The body count is capped by screen size** (60 on a phone, 200 otherwise).
   Tokens arrive brightest-first, so the cap drops noise rather than signal.
+- **Everything scales with the crowd.** A two-rung ladder doubles the book, and
+  dots sized for fourteen positions are one green smear at twenty-nine. Bodies,
+  cluster markers and labels shrink on the **square root** of the body count —
+  area is what crowds a canvas, not radius — floored so a dot stays tappable.
+
+  The HALO is what actually floods, not the dot: at radius × 7.5 each, four
+  glowing positions already touch. Held tokens are drawn tighter the more of
+  them there are (×7.5 at six, ×3.4 at twenty-nine) — except an alarmed one,
+  which keeps its full reach, because the position that turned must not shrink
+  into the crowd it is in.
+
+  Labels shrink too and grow back as you zoom, rather than being dropped. The
+  shortlist keeps its names; the zoom is what makes them readable.
 - **Rendering stops when the tab is hidden.** A background tab painting at
   60fps is a battery leak nobody ever sees.
 - **`prefers-reduced-motion` renders one still frame.**

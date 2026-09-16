@@ -245,6 +245,11 @@ export function Universe({ view }: { view: UniverseView }) {
     // reachable by a fingertip.
     const seen = new Map<TokenTier, number>()
 
+    // One at a dozen bodies, shrinking on the square root of the count beyond
+    // it — area is what crowds a canvas, not radius, so the radius has to move
+    // as the root. Floored, because a dot nobody can tap is not a dot.
+    const crowd = Math.max(0.55, Math.sqrt(12 / Math.max(visible.length + clusters.length, 12)))
+
     const tokenBodies: Body[] = visible.map((token, index) => {
         const seed = hash(token.id)
         const style = TIER_STYLE[token.tier]
@@ -272,7 +277,12 @@ export function Universe({ view }: { view: UniverseView }) {
           angle: anglesRef.current.get(token.id) ?? spread,
           // Lively tokens orbit faster; held ones barely drift, so they anchor.
           speed: (token.tier === 'held' ? 0.04 : 0.11) * (0.35 + Math.min(volatility, 40) / 40) * (seed > 0.5 ? 1 : -1),
-          radius: (compact ? 3 : 4) + size * (compact ? 2.4 : 3.4),
+          // Smaller, and smaller again as the sky fills. A two-rung ladder
+          // doubles the book — twenty-nine positions on $1,500 instead of
+          // fourteen — and dots sized for fourteen become one green smear at
+          // twenty-nine. The crowd factor is the honest response: the
+          // overlap is a function of COUNT, so the answer has to be too.
+          radius: ((compact ? 2.5 : 3) + size * (compact ? 1.7 : 2.4)) * crowd,
           phase: seed * Math.PI * 2,
           strength,
           ripples: token.tier === 'dead' || token.tier === 'unsafe' ? 0 : Math.floor(strength * (compact ? 2.2 : 3.4)),
@@ -296,7 +306,7 @@ export function Universe({ view }: { view: UniverseView }) {
         orbit: 0.82 + hash(key) * 0.14,
         angle: anglesRef.current.get(key) ?? (index / Math.max(clusters.length, 1)) * Math.PI * 2 + 0.6,
         speed: 0.03,
-        radius: (compact ? 9 : 12) + Math.log10(Math.max(cluster.count, 1)) * (compact ? 4 : 6),
+        radius: ((compact ? 7 : 9) + Math.log10(Math.max(cluster.count, 1)) * (compact ? 3 : 4.5)) * crowd,
         phase: index,
         ripples: 0,
         strength: 0.3,
@@ -322,6 +332,15 @@ export function Universe({ view }: { view: UniverseView }) {
     // — there IS money in it — and loses the colour that says everything is
     // fine. Both facts at once, which is what the tier alone cannot say.
     const alarmGlow = makeGlowSprite('255,107,107', 80)
+
+    // Four glowing positions already touch at full reach; twenty-nine are a
+    // single smear. Tightened on the root of the count, for the same reason
+    // the bodies are.
+    const heldCount = bodies.filter((b) => (b.token?.tier ?? b.cluster?.tier) === 'held').length
+    const heldSpread = Math.max(0.42, Math.sqrt(6 / Math.max(heldCount, 6)))
+    // The same crowd factor the bodies were sized with, recomputed here
+    // because the draw loop is a different closure from the layout memo.
+    const crowd = Math.max(0.55, Math.sqrt(12 / Math.max(bodies.length, 12)))
 
     const angles = anglesRef.current
     let raf = 0
@@ -402,7 +421,11 @@ export function Universe({ view }: { view: UniverseView }) {
         const alarmed = token?.turnedUnsafe === true
         if (tier === 'held') {
           const pulse = still ? 0.5 : 0.5 + 0.5 * Math.sin(t * (alarmed ? 0.12 : 0.05) + body.phase)
-          const reach = drawn * (5 + pulse * (alarmed ? 4 : 2.5))
+          // The halo is what floods, not the dot: at radius × 7.5 each, four
+          // green positions already touch. Held tokens are drawn TIGHTER the
+          // more of them there are — the alarm keeps its full reach, because
+          // the one that turned must not shrink into the crowd it is in.
+          const reach = drawn * (alarmed ? 5 + pulse * 4 : (5 + pulse * 2.5) * heldSpread)
           const sprite = alarmed ? alarmGlow : token?.position?.deathStage === 'frozen' ? frozenGlow : glows.get('held')!
           ctx!.drawImage(sprite, body.x - reach, body.y - reach, reach * 2, reach * 2)
 
@@ -479,9 +502,13 @@ export function Universe({ view }: { view: UniverseView }) {
           // Held keeps the brightest label: it is the only tier with money in
           // it, and at a glance that distinction has to survive the crowd.
           ctx!.fillStyle = alarmed ? '#ff6b6b' : tier === 'held' ? 'rgba(235,235,235,0.92)' : 'rgba(210,214,222,0.62)'
-          ctx!.font = `${(compact ? 10 : 11) * Math.min(scale, 1.6)}px ui-monospace, monospace`
+          // Thirty names at one size collide. They shrink with the crowd and
+          // grow back as you zoom in, which is what the zoom is FOR — rather
+          // than dropping the names, which was the request before last.
+          const type = Math.max(7, (compact ? 10 : 11) * crowd * Math.min(scale, 2))
+          ctx!.font = `${type}px ui-monospace, monospace`
           ctx!.textAlign = 'center'
-          ctx!.fillText(token!.symbol.slice(0, 12), body.x, body.y + drawn + 14 * Math.min(scale, 1.6))
+          ctx!.fillText(token!.symbol.slice(0, 12), body.x, body.y + drawn + type + 3)
         }
       }
 
