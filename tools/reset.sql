@@ -21,7 +21,7 @@
 
 -- ── Everything. A genuine fresh start. ──────────────────────────────────────
 TRUNCATE TABLE positions, fills, checkpoint, blacklist, alerts;
-TRUNCATE TABLE scans, pool_discovery, pool_history, token_security;
+TRUNCATE TABLE scans, pool_discovery, pool_history, token_security, pool_quiet;
 
 -- ── Or: start the book over, KEEP what was learned ──────────────────────────
 --
@@ -30,6 +30,12 @@ TRUNCATE TABLE scans, pool_discovery, pool_history, token_security;
 -- actually means: a fresh book, not an engine with amnesia.
 --
 -- TRUNCATE TABLE positions, checkpoint;
+--
+-- This is the right one after a run that filled the book with tokens the engine
+-- could not watch. The damage is in `positions`; the caches are what make the
+-- next scan fast, and the fills are the profit. Throwing all three away to fix
+-- one of them costs a fifteen-minute cold sweep and the realised P&L for
+-- nothing.
 
 -- ── Or: only forget the measurements ────────────────────────────────────────
 --
@@ -37,4 +43,4 @@ TRUNCATE TABLE scans, pool_discovery, pool_history, token_security;
 -- reached under rules that no longer apply. Costs one slow cycle and nothing
 -- else — every row here is rebuilt from the providers.
 --
--- TRUNCATE TABLE scans, pool_discovery, pool_history, token_security;
+-- TRUNCATE TABLE scans, pool_discovery, pool_history, token_security, pool_quiet;
