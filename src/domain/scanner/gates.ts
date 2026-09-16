@@ -173,6 +173,28 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   maxReferenceImpactPct: 10,
 }
 
+/**
+ * The age a pool must have before it could POSSIBLY hold `bars` of history.
+ *
+ * Pure arithmetic, and it replaces a network call. `minHistoryBars` is 250,
+ * which at 15m is 62.5 hours — but `minAgeHours` stood at 24, so a pool thirty
+ * hours old passed the free gate and then cost a **thousand-row candle
+ * download** to learn it had about a hundred bars and failed anyway. The
+ * heaviest call in the whole cycle, made to produce one integer that a
+ * subtraction already knew.
+ *
+ * It matters more since discovery started asking for `new_pools`, where nearly
+ * every result is younger than this. Those are now refused at the door for
+ * free, instead of each one paying for a download it was always going to fail.
+ *
+ * It cannot CONFIRM anything: an old pool with no trades has no candles either,
+ * which is the abandonment case. So it only ever rejects, and the real count is
+ * still measured for what survives.
+ */
+export function minAgeForHistory(minHistoryBars: number, barMinutes: number): number {
+  return (minHistoryBars * barMinutes) / 60
+}
+
 export type GateName =
   | 'honeypot'
   | 'impact'
@@ -346,7 +368,7 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   // Only fires on a measured count: a scanner pass that has not fetched
   // candles yet says nothing, and the executor checks again before trading.
   if (snapshot.historyBars !== null && snapshot.historyBars !== undefined && snapshot.historyBars < policy.minHistoryBars) {
-    failures.push(fail('history', 'failed', `${snapshot.historyBars} bars of 1H history < ${policy.minHistoryBars} — EMA-200 cannot exist`))
+    failures.push(fail('history', 'failed', `${snapshot.historyBars} barras de historial < ${policy.minHistoryBars} — EMA-200 no puede existir`))
   }
 
   if (snapshot.volumeUsd.h24 < policy.minVolume24hUsd) {

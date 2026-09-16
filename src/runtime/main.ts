@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 import { AlertThrottle } from '../domain/notifications/alerts.js'
-import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { DEFAULT_GATE_POLICY, minAgeForHistory, type GatePolicy } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
@@ -15,7 +15,7 @@ import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
-import { GeckoTerminal } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { GeckoTerminal, barMinutes } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { CachedHistory } from '../infrastructure/adapters/geckoterminal/cached-history.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
@@ -82,10 +82,34 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // Counting a pool's bars is the heaviest GeckoTerminal call in a cycle and
   // it was 80% of the wall time in rate-limit backoff — measured, not guessed.
   // A pool cannot lose candles, so the answer is worth keeping.
-  const cachedHistory = new CachedHistory(gecko, store, {
-    now: () => Date.now(),
-    minBars: DEFAULT_GATE_POLICY.minHistoryBars,
-  })
+  // Two economies, both of them arithmetic rather than cleverness.
+  //
+  // THE BAR SIZE THE STRATEGY ACTUALLY TRADES. This counted 1H bars — the
+  // adapter's default — while production runs 15m, so "250 bars" demanded 10.4
+  // days of pool age instead of the 2.6 CLAUDE.md has claimed since the
+  // timeframe moved. A decision documented and never implemented, the same
+  // shape as the $15 ladder that ran at $1,000 for weeks.
+  //
+  // ONLY AS MANY ROWS AS THE THRESHOLD NEEDS. It asked for a thousand candles
+  // to produce one integer, once per examined token, against the provider that
+  // rate-limits hardest. The gate asks "at least 250?", so the request does too.
+  const cachedHistory = new CachedHistory(
+    { historyBars: (chain, pool) => gecko.historyBars(chain, pool, config.barSize, DEFAULT_GATE_POLICY.minHistoryBars) },
+    store,
+    { now: () => Date.now(), minBars: DEFAULT_GATE_POLICY.minHistoryBars },
+  )
+
+  // And the cheapest rejection of all: one that needs no request. A pool younger
+  // than `minHistoryBars` bars CANNOT hold them, so it is refused by
+  // subtraction instead of by a candle download it was always going to fail.
+  // Never lowers the standing 24h floor — that answers a different question.
+  const gates: GatePolicy = {
+    ...DEFAULT_GATE_POLICY,
+    minAgeHours: Math.max(
+      DEFAULT_GATE_POLICY.minAgeHours,
+      minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, barMinutes(config.barSize)),
+    ),
+  }
   // And once the candle downloads were cached, DISCOVERY became most of what a
   // scan costs: ten throttled calls per chain, about half an hour, during which
   // the engine is not watching the positions that already hold money. It
@@ -290,7 +314,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           (stage: ScanError['stage'], error: unknown) => console.warn('[confirm]', stage, String(error).slice(0, 200)),
         )
         return fresh
-      }, DEFAULT_GATE_POLICY),
+      }, gates),
     // Every configured chain, each scan stored under its own chain so the
     // universe can show them together. One chain failing must not cost the
     // others their turn: a rate limit on Solana is not a reason to stop
@@ -303,7 +327,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       recallCandidates(store, {
         now: () => Date.now(),
         ranking: {
-          gates: DEFAULT_GATE_POLICY,
+          gates,
           opportunity: DEFAULT_OPPORTUNITY_POLICY,
           watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
           minScore: 0,
@@ -361,7 +385,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             {
               chain,
               ranking: {
-                gates: DEFAULT_GATE_POLICY,
+                gates,
                 opportunity: DEFAULT_OPPORTUNITY_POLICY,
                 watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
                 minScore: 0,

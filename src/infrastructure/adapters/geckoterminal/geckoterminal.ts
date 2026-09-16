@@ -40,6 +40,10 @@ export interface BarSize {
 export const ONE_HOUR: BarSize = { timeframe: 'hour' }
 export const FIFTEEN_MINUTES: BarSize = { timeframe: 'minute', aggregate: 15 }
 
+/** How many minutes one bar covers. Lets a caller turn a bar count into an age. */
+export const barMinutes = (size: BarSize): number =>
+  size.timeframe === 'hour' ? 60 * (size.aggregate ?? 1) : size.timeframe === 'day' ? 1440 * (size.aggregate ?? 1) : (size.aggregate ?? 1)
+
 export const barSizeMs = (size: BarSize): number =>
   ({ minute: 60_000, hour: 3_600_000, day: 86_400_000 })[size.timeframe] * (size.aggregate ?? 1)
 
@@ -173,13 +177,21 @@ export class GeckoTerminal {
   /**
    * How many 1H candles this pool has, capped at one page (1000).
    *
-   * The scanner only needs to know whether there is ENOUGH — a few hundred
-   * bars — not the exact depth of history, so one request answers it and the
-   * result doubles as the candles the executor will run on.
+   * The gate asks a THRESHOLD — "at least `enough`?" — not a depth, so the
+   * request asks for exactly that many. It used to ask for a thousand rows and
+   * return `.time.length`, which is four times the payload for a boolean, once
+   * per examined token, against the provider that rate-limits hardest.
+   *
+   * A saturated count is therefore "enough or more", and that is all any caller
+   * can use. A SHORT count is still exact, which is what `CachedHistory` needs:
+   * it expires a short count after six hours because a young pool grows, and
+   * keeps a settled one forever because a pool cannot lose candles.
+   *
+   * The default stays 1000 so nothing that did not ask changes behaviour.
    */
-  async historyBars(chain: Chain, poolAddress: string, size: BarSize = ONE_HOUR): Promise<number | null> {
+  async historyBars(chain: Chain, poolAddress: string, size: BarSize = ONE_HOUR, enough = 1000): Promise<number | null> {
     try {
-      return (await this.candles(chain, poolAddress, size, 1000)).time.length
+      return (await this.candles(chain, poolAddress, size, enough)).time.length
     } catch {
       return null
     }

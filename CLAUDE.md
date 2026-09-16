@@ -487,8 +487,14 @@ Four findings, in order of how much they change the plan (1 and 3 and 4 are
    will take is part of how good the opportunity is.
 4. **Most small caps lack the history the strategy needs.** Two of five
    candidates had 38 and 105 bars; EMA-200 cannot exist there. **Fixed**: a
-   `history` gate rejects under 250 1H bars, fed by the candle adapter. An
+   `history` gate rejects under 250 bars, fed by the candle adapter. An
    unmeasured count stays silent — the gate fires on evidence, not on absence.
+
+   It counted **1H** bars for months after production moved to 15m, because the
+   adapter's default was never overridden — so "250 bars" quietly demanded 10.4
+   days of pool age instead of the 2.6 the table below has claimed since. A
+   decision documented and not implemented, the same shape as the $15 ladder
+   that ran at $1,000. The runtime now passes `config.barSize`.
 
 ### What the fixes changed, on the same recorded market
 
@@ -1417,6 +1423,37 @@ Same two failure rules as the history cache, learned the same way: a failure is
 never cached, because an empty list would turn one rate limit into a chain that
 does not exist for six hours — and a failure falls back to the STALE list,
 because an old universe beats no universe.
+
+#### Downloading less, rather than downloading faster
+
+Three economies, and none of them is a cleverer request — each is a request
+that stops being made.
+
+**A pool too young to hold the bars is refused by subtraction.** `minAgeHours`
+was 24 while `minHistoryBars` is 250, which at 15m is **62.5 hours**. So a pool
+thirty hours old passed the free gate and then cost a **thousand-row candle
+download** to learn it had about a hundred bars and failed anyway — the heaviest
+call in the cycle, made to produce one integer a subtraction already knew.
+`minAgeForHistory(bars, barMinutes)` raises the floor to exactly what history
+requires, never below the standing 24h.
+
+It matters most for `new_pools`, added to discovery in the same week: nearly
+every result there is younger than this. They are now refused at the door for
+free, instead of each paying for a download it was always going to fail.
+
+It only ever REJECTS. An old pool nobody trades has no candles either — the
+abandonment case — so the real count is still measured for whatever survives.
+
+**And that measurement asks for 250 rows, not 1,000.** The gate asks a
+THRESHOLD, not a depth: "at least 250?" A saturated count means "enough or
+more", which is all any caller can use, and a SHORT count is still exact —
+which is what `CachedHistory` needs, since it expires a short count after six
+hours because a young pool grows, and keeps a settled one forever because a pool
+cannot lose candles.
+
+**Counting the bars the strategy actually trades.** See finding 4 above: it
+counted 1H bars while production runs 15m, so the gate was four times stricter
+than documented.
 
 #### A cold shelf is swept to the bottom
 

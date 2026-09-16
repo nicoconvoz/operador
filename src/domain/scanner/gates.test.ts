@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
+import { minAgeForHistory, DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
 const HOUR = 3_600_000
@@ -438,5 +438,27 @@ describe('gates — an hour with no trades in it', () => {
     ).failures
     expect(failure!.detail).toContain('1')
     expect(failure!.detail).toContain('4')
+  })
+})
+
+describe('minAgeForHistory — the cheapest rejection is the one that needs no request', () => {
+  it('refuses to let a pool through that is arithmetically too young for the bars', () => {
+    // 250 bars of 15m is 62.5 hours. A pool 30 hours old CANNOT have them, and
+    // learning that used to cost a thousand-row candle download per token — the
+    // single heaviest call in a cycle, made to produce one integer.
+    expect(minAgeForHistory(250, 15)).toBe(62.5)
+  })
+
+  it('scales with the bar, because the same 250 bars are a different age', () => {
+    // At 1H the same requirement is ten and a half days. Hardcoding an hour
+    // count would be right for one timeframe and silently wrong for the other.
+    expect(minAgeForHistory(250, 60)).toBe(250)
+  })
+
+  it('never lowers a floor that was set higher on purpose', () => {
+    // 24h is the standing minimum and answers a different question — a pool
+    // that has existed for a day. This raises it to what history needs; it must
+    // not lower it if someone deliberately demands more.
+    expect(Math.max(DEFAULT_GATE_POLICY.minAgeHours, minAgeForHistory(250, 15))).toBe(62.5)
   })
 })

@@ -183,3 +183,33 @@ describe('GeckoTerminal — bar sizes', () => {
     expect((250 * barSizeMs(FIFTEEN_MINUTES)) / 86_400_000).toBeCloseTo(2.6, 1)
   })
 })
+
+describe('GeckoTerminal — historyBars asks for what the gate needs, not for a thousand rows', () => {
+  it('requests only `enough` candles, because the answer is a threshold not a depth', async () => {
+    // It downloaded a THOUSAND rows to produce one integer, and the gate only
+    // ever asks "at least 250?". Four times the payload for a boolean, once per
+    // examined token, against the provider that rate-limits hardest.
+    const seen: string[] = []
+    const gt = new GeckoTerminal(async (url) => {
+      seen.push(url)
+      return { status: 200, json: async () => ({ data: { attributes: { ohlcv_list: [] } } }) }
+    })
+    await gt.historyBars('solana', 'Pool1', ONE_HOUR, 250)
+    expect(seen[0]).toContain('limit=250')
+    expect(seen[0]).not.toContain('limit=1000')
+  })
+
+  it('saturates at what was asked for, which is all the gate can use', async () => {
+    // "250 or more" is the only answer the threshold needs. Reporting the exact
+    // depth would mean downloading it, which is the cost being removed.
+    const rows = Array.from({ length: 250 }, (_, i) => [1_700_000_000 + i * 3600, 1, 2, 0.5, 1.5, 100])
+    const gt = new GeckoTerminal(async () => ({ status: 200, json: async () => ({ data: { attributes: { ohlcv_list: rows } } }) }))
+    expect(await gt.historyBars('solana', 'Pool1', ONE_HOUR, 250)).toBe(250)
+  })
+
+  it('still reports a SHORT count exactly, because that is what expires', async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => [1_700_000_000 + i * 3600, 1, 2, 0.5, 1.5, 100])
+    const gt = new GeckoTerminal(async () => ({ status: 200, json: async () => ({ data: { attributes: { ohlcv_list: rows } } }) }))
+    expect(await gt.historyBars('solana', 'Pool1', ONE_HOUR, 250)).toBe(40)
+  })
+})
