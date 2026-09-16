@@ -362,3 +362,28 @@ describe('buildUniverse — a position that turned unsafe', () => {
     expect(drawn!.turnedUnsafe).toBe(false)
   })
 })
+
+describe('buildUniverse — a freeze that will not say why is a freeze nobody can act on', () => {
+  it('carries the evidence that froze the position, newest first', async () => {
+    // Six positions showed "❄️ congelada" and not one of them said what for.
+    // The evidence chain is recorded, persisted, and extracted by
+    // `buildDashboard` — and rendered by nobody, so diagnosing a freeze meant
+    // reading the database. The operator is the one who decides whether the
+    // token really died or the engine is wrong about it, and that decision is
+    // impossible from a snowflake.
+    const frozen: DeathWatchState = {
+      ...startDeathWatch(250_000, NOW),
+      stage: 'frozen',
+      evidence: [
+        { observedAt: NOW - 1, source: 'probe', stageAfter: 'frozen', verdict: 'freeze', signals: [{ kind: 'abandonment', stage: 1, detail: 'older' }] },
+        { observedAt: NOW, source: 'probe', stageAfter: 'frozen', verdict: 'freeze', signals: [{ kind: 'sellPathBroken', stage: 2, detail: 'sell quote failed' }] },
+      ],
+    }
+    const store = await seed([token('ICE')])
+    await store.savePosition(position('ICE', { deathWatch: frozen }))
+
+    const [t] = (await buildUniverse(store, options)).tokens
+
+    expect(t!.position!.deathSignals[0]).toBe('sell quote failed')
+  })
+})

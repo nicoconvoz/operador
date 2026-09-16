@@ -214,6 +214,25 @@ class MainActivity : AppCompatActivity() {
             builtInZoomControls = false
             cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         }
+        // A WebView ignores downloads unless told otherwise — the link does
+        // nothing at all, with no error and no hint that anything was meant to
+        // happen. The tape is capped at ten rows on screen and the rest lives
+        // behind that link, so silently dropping it would put the audit trail
+        // out of reach of the device the operator actually watches this on.
+        //
+        // Handed to the SYSTEM browser rather than downloaded here: it already
+        // knows how to save a file, ask for permission, and show it in the
+        // notification shade, and none of that is worth reimplementing for one
+        // CSV.
+        view.setDownloadListener { url, _, _, _, _ ->
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            } catch (_: Exception) {
+                // No browser to take it. Saying so beats a button that does
+                // nothing twice.
+                Toast.makeText(this, "No hay navegador para abrir la descarga", Toast.LENGTH_SHORT).show()
+            }
+        }
         view.webViewClient = object : WebViewClient() {
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 // Only the main document: a failed favicon must not paint an

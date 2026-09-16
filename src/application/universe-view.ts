@@ -86,6 +86,17 @@ export interface UniverseToken {
     readonly capitalUsd: number
     readonly filledDcas: number
     readonly deathStage: 'healthy' | 'frozen' | 'dead'
+    /**
+     * Why it is not healthy, newest first.
+     *
+     * A snowflake with no reason is a state the operator cannot act on: only
+     * they can decide whether the token really died or the engine is wrong
+     * about it, and "❄️ congelada" answers neither. Six positions were frozen
+     * at once with the evidence recorded, persisted, extracted by
+     * `buildDashboard` — and rendered by nobody, so diagnosing one meant
+     * reading the database.
+     */
+    readonly deathSignals: readonly string[]
   } | null
 }
 
@@ -111,6 +122,13 @@ const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 
 const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation'])
 
 const PRIME_SCORE = 45
+
+/** The most recent verdict's reasons, newest observation first. */
+const latestSignals = (position: PersistedPosition): readonly string[] =>
+  [...position.deathWatch.evidence]
+    .reverse()
+    .flatMap((record) => record.signals.map((signal) => signal.detail))
+    .slice(0, 3)
 
 export async function buildUniverse(store: StatePort, options: UniverseOptions): Promise<UniverseView> {
   const generatedAt = options.now()
@@ -208,6 +226,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
             capitalUsd: held.capitalUsd,
             filledDcas: held.cascade.level > 0 ? held.cascade.level - 1 : 0,
             deathStage: held.deathWatch.stage,
+            deathSignals: latestSignals(held),
           }
         : null,
     }
@@ -280,6 +299,7 @@ function fromPositionAlone(position: PersistedPosition): UniverseToken {
       capitalUsd: position.capitalUsd,
       filledDcas: position.cascade.level > 0 ? position.cascade.level - 1 : 0,
       deathStage: position.deathWatch.stage,
+      deathSignals: latestSignals(position),
     },
   }
 }

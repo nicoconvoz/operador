@@ -64,7 +64,18 @@ export function Operations({ view }: { view: OperationsView }) {
 
       {view.recentFills.length > 0 && (
         <section style={{ ...card(), marginTop: 12 }}>
-          <div style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>cinta</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+            <span style={{ color: DIM, fontSize: 12 }}>cinta · últimas {view.recentFills.length}</span>
+            {/* The rest is a FILE, not a longer page. Capping the screen and
+                offering nothing would be deleting the audit trail from the only
+                place the operator can see it. */}
+            <a
+              href="/api/fills"
+              style={{ marginLeft: 'auto', color: DIM, fontSize: 11, textDecoration: 'underline' }}
+            >
+              descargar todo (CSV)
+            </a>
+          </div>
           {view.recentFills.map((fill) => (
             <div
               key={fill.idempotencyKey}

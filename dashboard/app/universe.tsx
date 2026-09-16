@@ -822,6 +822,18 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
         <div style={{ marginBottom: 10 }}>
           ${token.position.capitalUsd.toFixed(0)} · {token.position.filledDcas} DCA
           {token.position.deathStage !== 'healthy' && <span> · {token.position.deathStage === 'frozen' ? '❄️ congelada' : '☠️ muerta'}</span>}
+          {/* WHY. A snowflake with no reason is a state nobody can act on: only
+              the operator can decide whether the token really died or the
+              engine is wrong about it, and the label answers neither. The
+              evidence was recorded, persisted and extracted all along, and
+              rendered nowhere. */}
+          {token.position.deathSignals.length > 0 && (
+            <div style={{ marginTop: 4, fontSize: 11, opacity: 0.75, lineHeight: 1.5 }}>
+              {token.position.deathSignals.map((signal, i) => (
+                <div key={i}>· {signal}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

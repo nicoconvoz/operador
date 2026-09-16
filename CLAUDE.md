@@ -1107,6 +1107,43 @@ It runs on a phone, which forced four decisions:
 `/demo` renders the same view from synthetic data, labelled as such — a demo
 that passes for live is how people end up trusting a screenshot.
 
+### A freeze that will not say why
+
+Six positions showed `❄️ congelada` and not one of them said what for. The
+evidence chain is recorded by `assessAssetHealth`, persisted with the position,
+and extracted by `buildDashboard` as `deathSignals` — and rendered by **nobody**,
+so diagnosing a freeze meant reading the database.
+
+That is the wrong person to make do that. Only the operator can decide whether a
+token really died or the engine is wrong about it, and `❄️` answers neither. The
+detail sheet now lists the reasons under the label, newest first.
+
+The same shape as every other gap in this project: written, tested, documented,
+and reached by one path only.
+
+### The tape is ten rows and a file
+
+`recentFills` grows without bound and the screen does not. A page listing every
+buy and sell since the engine started is a page whose top nobody reaches — and
+on a phone it is the whole page.
+
+So the tape shows **ten**, and the rest is `/api/fills`: every fill ever
+recorded, as CSV, newest first. Capping the screen and offering nothing would be
+deleting the audit trail from the only place the operator looks at it.
+
+Two details in `fills-csv.ts` that matter more than they look. The price is
+written at **full precision**, because these are micro-caps and 0.0016426 at two
+decimals is 0.00 — a tape of identical zeroes is worse than no file. And a fill
+whose position is gone is **named by its id, not blanked**: `fills` deliberately
+has no foreign key to `positions`, so a closed position's history outlives it,
+and those rows are most of the file.
+
+The Android shell needed a `setDownloadListener` for any of it to work. A
+WebView ignores downloads silently — no error, no hint that anything was meant
+to happen — so the link would have done nothing on the device the operator
+actually watches this on. It hands the URL to the system browser, which already
+knows how to save a file, ask for permission, and show it in the shade.
+
 It renders **warnings, not a green badge**: kill switch engaged, orders in
 flight unconfirmed, frozen positions, and — the one that matters most — a
 position nobody has updated in hours. That last case is the shape of a silently
