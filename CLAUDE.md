@@ -1612,12 +1612,20 @@ three times the truth.
 section claimed before the economies. Also worth noting: `dropped: 0` — the
 700-token cap never bit at 480 and 452, so it is a ceiling and not a cut.
 
-One caveat that survives measurement. These timings come from a home
-connection, and **GeckoTerminal limits by IP while a CI runner shares its
-address with thousands of unrelated jobs** — the same cold scan from a runner
-measured 50 rejections and 304 seconds of backoff. Discovery is 60 calls and the
-history counts another 98, so expect the runner to be two or three times worse:
-**twenty to thirty-five minutes.** It must still be allowed to finish. Everything is written as it goes
+**On the runner it took 15 minutes**, against an estimate of twenty to
+thirty-five. The shared-IP penalty is real but far smaller than the older
+figures implied — 11 minutes at home became 15, a factor of 1.36 rather than the
+two or three assumed from a cold scan measured before discovery and history were
+cached. Recorded because the estimate was wrong in the safe direction, and the
+next person reasoning about GeckoTerminal's limits should use this number and
+not the 304-second one.
+
+**The hourly scan is cheaper than that cold one, and by construction.** The cold
+run paid for DEEP discovery — 30 calls per chain — while an hourly scan finds it
+cached for six hours, and refreshes at five pages rather than ten. And an
+examination stands for `securityTtlMs` (2 hours), so a scan only re-examines
+what has aged past it plus whatever is new. Steady state is the paid stage
+alone: **about four minutes**, not fifteen. Everything is written as it goes
 (`recordSecurity` per token, `saveScan` per chain), so a killed job loses no
 work — but the run after it is no longer the beginning of anything and drops
 back to 20 per scan. To redo a bootstrap that was cut short, clear
