@@ -88,11 +88,10 @@ jobs:
           # leaves capital idle. $1,500 at a $95 ladder is about fourteen.
           OPERADOR_MAX_POSITIONS: ${{ vars.OPERADOR_MAX_POSITIONS || '0' }}
           OPERADOR_GAS_USD: ${{ vars.OPERADOR_GAS_USD || '0.05' }}
-          # Tokens per chain given the expensive checks. Each costs ~9
-          # throttled seconds on Solana and ~6 on BSC, so 20 keeps a two-chain
-          # cycle near five minutes. The rest are shown as unchecked, and the
-          # next cycle is now genuinely fifteen minutes away.
-          OPERADOR_MAX_SECURITY_CHECKS: ${{ vars.OPERADOR_MAX_SECURITY_CHECKS || '20' }}
+          # Empty means UNBOUNDED: every token that cleared the free gates is
+          # examined, every scan. Set the repository variable to a number only
+          # to impose a cap on a day the providers are unhappy.
+          OPERADOR_MAX_SECURITY_CHECKS: ${{ vars.OPERADOR_MAX_SECURITY_CHECKS }}
           # ── Two cadences, not one ──────────────────────────────────────
           #
           # Most passes are WATCH passes: recover, advance every open position,

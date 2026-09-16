@@ -115,3 +115,27 @@ describe('loadConfig — the production ladder is not the reference ladder', () 
     expect(DEFAULT_PARAMS.maxUsdPerLevel).toBe(5_000)
   })
 })
+
+describe('loadConfig — the security budget is a cap you ASK for, not one you get', () => {
+  it('examines every token that cleared the free gates, by default', () => {
+    // The user's decision: run the FULL scanner every hour. The budget of 20
+    // was set when a cold scan cost 384 seconds and every examination was a
+    // thousand-row download — and both of those are measurements that have
+    // since been superseded. 98 tokens clear the free gates across both chains,
+    // at 2.5s each: four minutes, once an hour.
+    expect(loadConfig(valid).maxSecurityChecks).toBeNull()
+  })
+
+  it('still accepts an explicit cap, for a day the providers are unhappy', () => {
+    expect(loadConfig({ ...valid, OPERADOR_MAX_SECURITY_CHECKS: '20' }).maxSecurityChecks).toBe(20)
+  })
+
+  it('refuses zero rather than reading it as "no limit"', () => {
+    // NOT a sentinel. `maxPositions: 0` meant "no ceiling" in one file and
+    // "zero slots" in the one next door, and with an empty book the engine
+    // opened nothing, ever. A value that means one thing here and its opposite
+    // there is not a sentinel, it is a trap. Absent means unbounded; a number
+    // means that number.
+    expect(() => loadConfig({ ...valid, OPERADOR_MAX_SECURITY_CHECKS: '0' })).toThrow()
+  })
+})

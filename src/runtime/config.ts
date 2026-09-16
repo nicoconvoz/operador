@@ -71,7 +71,7 @@ export interface RuntimeConfig {
    * a cycle has to finish well inside one 15-minute bar. 20 keeps two chains
    * around five minutes. The rest are reported as unchecked, not dropped.
    */
-  readonly maxSecurityChecks: number
+  readonly maxSecurityChecks: number | null
   /**
    * USD cap per ladder level, in production.
    *
@@ -209,7 +209,23 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // its own documented value into it threw at boot. The same sentinel trap
     // as maxPositions, left in the one place it was not fixed.
     maxCycles: numberOrZero(env, 'OPERADOR_MAX_CYCLES', 0),
-    maxSecurityChecks: number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 20),
+    // NULL BY DEFAULT — every token that cleared the free gates is examined.
+    //
+    // The cap of 20 answered a question that has since been re-measured. It was
+    // set when a scan cost 384 seconds and each examination was a thousand-row
+    // candle download, so a cycle could not finish inside a bar without one. The
+    // free gates now reject about ninety percent (57 of 480 on Solana, 41 of 452
+    // on BSC, measured), the history count asks for 250 rows instead of 1,000,
+    // and a scan runs once an HOUR while watch passes every five minutes look
+    // after the money. Ninety-eight examinations at 2.5s is four minutes.
+    //
+    // A cap is now something you ASK for — on a day the providers are unhappy —
+    // rather than something you get. Absent means unbounded; zero is REFUSED
+    // rather than read as "no limit", because `maxPositions: 0` meaning "no
+    // ceiling" in one file and "zero slots" in the next one cost this engine
+    // every position it could have opened. A value that means one thing here and
+    // its opposite there is not a sentinel, it is a trap.
+    maxSecurityChecks: env.OPERADOR_MAX_SECURITY_CHECKS?.trim() ? number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 0) : null,
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),

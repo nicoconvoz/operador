@@ -1500,6 +1500,41 @@ ahead of the tick for the case where positions DO exist would leave open money
 unwatched for half an hour, which is the trade the watch pass was built to
 avoid: an opportunity missed by an hour is only missed.
 
+#### Every scan is the full scan
+
+`OPERADOR_MAX_SECURITY_CHECKS` capped the expensive stage at **20 tokens per
+chain**, and that cap answered a question which has since been re-measured out
+of existence. It was set when a scan cost 384 seconds and every examination was
+a thousand-row candle download — a cycle could not finish inside a bar with more.
+
+Four things changed underneath it:
+
+| | Then | Now |
+|---|---|---|
+| Tokens reaching the paid stage | everything discovered | **~10%** — 57 of 480, 41 of 452, measured |
+| Rows per history count | 1,000 | **250** |
+| A scan happens | every cycle | **once an hour**, watch passes in between |
+| Ninety-eight examinations cost | — | **4 minutes** at the measured 2.5s each |
+
+So the default is **null — unbounded**. Every token that cleared the free gates
+is examined, on every scan. A cap is now something you ASK for, on a day the
+providers are unhappy, rather than something you get.
+
+**Zero is refused, not read as "no limit".** `maxPositions: 0` meant "no
+ceiling" in `planPortfolio` and "zero slots" in the orchestrator's subtraction,
+and with an empty book the engine opened nothing, ever. A value that means one
+thing in one file and its opposite next door is not a sentinel, it is a trap.
+Absent means unbounded; a number means that number.
+
+This also retired `bootstrap.ts` and the `examinedCount` port it needed. They
+existed to lift the budget for the first pass alone; with no budget to lift,
+keeping them would have been a mechanism with nothing left to do.
+
+The cost is named rather than hidden: the scan runs AFTER the tick, so once an
+hour the next tick waits for it — about one 15m bar of extra latency on the
+positions, bought in exchange for the whole universe being examined hourly
+instead of a twentieth of it.
+
 #### The beginning of everything is not a cycle
 
 Sweeping discovery deeper achieved nothing on its own, and the reason is the
@@ -1526,20 +1561,11 @@ allocator's. The book would be filled on day one, from the first twenty tokens
 that happened to clear the free gates, while the other six hundred and eighty
 arrived over the rest of the week to find no room.
 
-So on that one pass the budget is **lifted** (`application/bootstrap.ts`). Every
-argument for it is absent at the beginning of everything: no position is open,
-so no money goes unwatched; no bar has to be kept up with, because there is
-nothing to advance; and nothing downstream is waiting, since the allocation it
-feeds is the first one — better late than made on a sample.
-
-**It is self-terminating, which is what makes it safe to leave in.** The
-condition is "no token of this chain has ever been examined", so one recorded
-examination ends it. There is no flag to forget to clear, and no way for neglect
-to turn it into a permanently unbounded scan.
-
-Per chain, deliberately: Solana having been swept says nothing about BSC, so a
-chain added months later gets the same cold sweep the first one got rather than
-inheriting its neighbour's warmth.
+This was first fixed for the first pass ALONE, with a self-terminating
+`bootstrap.ts` that lifted the budget while nothing had ever been examined. The
+section above superseded it: the budget is gone from every scan, so there is
+nothing left to lift and the mechanism was removed rather than left in place
+with nothing to do.
 
 **How long the cold run takes — measured per token, extrapolated**
 
