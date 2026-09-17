@@ -220,6 +220,45 @@ the cap — which bounds discovery, never the book — and **ahead of every
 candidate** for the security budget, unranked. A held token is not scored
 against strangers for the right to be looked at.
 
+### The two pillars: how much room is left, and whether anyone is trading it
+
+The score has two terms that between them outweigh everything else, and both
+are the operator's decisions taken for stated reasons.
+
+**`headroom`** — how much of the rise is still ahead. *Eating a 70% fall is
+ruinous; taking a 25% gain and moving on is fine.* Those are not symmetric, so
+the score is not either.
+
+**`activity`** — trades in the last hour. *A pool nobody is trading is one
+nobody will buy from us either* — which is the death watch's whole subject, met
+at the door instead of three hours into a position.
+
+It was `txns / 60`, flat and capped, so a pool with sixty trades an hour and one
+with five hundred scored **identically**. Every difference above the cap was
+invisible to the ranking, which is the opposite of what the component is for.
+
+Logarithmic now, the same shape as `headroom` and for the same reason: the
+distinction worth paying for is between DEAD and ALIVE, not between very busy
+and slightly busier.
+
+| Trades / hour | Activity | Score |
+|---|---|---|
+| 4 — the gate's own minimum | 0.078 | **51.16** |
+| 25 | 0.322 | 60.08 |
+| 100 | 0.669 | 71.34 |
+| 200 | 0.875 | 78.01 |
+| 300 | 1.000 | **82.08** |
+
+**The two pillars balance rather than one winning.** A dead pool that has not
+moved scores 56.05; a live one that has already risen 60% scores 63.27. Neither
+property alone carries a token, and that is the point — the shortlist wants both.
+
+The cost of the second pillar, stated: it changed the SCALE of everything. A
+token that has not moved but that nobody trades no longer scores in the
+eighties. What survives from the first pillar's design is the SPREAD — running
+all the way still costs most of the score — and the test pins that rather than
+an absolute number, because the absolute now depends on the other pillar.
+
 ### Activity, measured against the pool
 
 `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell $10k

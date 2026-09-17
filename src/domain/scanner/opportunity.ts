@@ -37,7 +37,18 @@ export interface OpportunityPolicy {
   readonly weights: OpportunityWeights
   /** Hourly volume run-rate over the 24h average that counts as fully "expanding". */
   readonly fullExpansionRatio: number
-  /** Trades per hour that count as fully active. */
+  /**
+   * The activity curve: where it bends, and where it counts as fully alive.
+   *
+   * It used to be a flat `txns / 60`, so a pool with sixty trades an hour and
+   * one with five hundred scored IDENTICALLY — every difference above the cap
+   * was invisible to the ranking, which is the opposite of "more activity is
+   * worth more".
+   *
+   * Logarithmic now, like `headroom`: more is always worth more, with
+   * diminishing returns, and no ceiling where the distinction simply stops.
+   */
+  readonly activityKneeTxnsPerHour: number
   readonly fullActivityTxnsPerHour: number
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
@@ -69,9 +80,15 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // than replaces: volatility says the token is MOVING, momentum says which
   // way. Rewarding the first alone made a token down 40% on the day and one up
   // 40% look identical to the shortlist.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.05, momentum: 0.14, headroom: 1.14, costEfficiency: 0.2 },
+  // TWO PILLARS. `headroom` asks how much of the move is already spent and
+  // `activity` asks whether anyone is trading it at all — and between them they
+  // are most of the score, deliberately. The operator's thesis: a 70% fall is
+  // ruinous while a 25% gain is simply cashed, and a pool nobody trades is one
+  // nobody will buy from us either.
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 1.0, volatility: 0.05, momentum: 0.14, headroom: 1.14, costEfficiency: 0.2 },
   fullExpansionRatio: 3,
-  fullActivityTxnsPerHour: 60,
+  activityKneeTxnsPerHour: 15,
+  fullActivityTxnsPerHour: 300,
   fullVolatilityPct: 20,
   headroomKneePct: 30,
   headroomFullyRunPct: 200,
@@ -142,7 +159,14 @@ export function scoreOpportunity(
   const growthRatio = previous && previous.liquidityUsd > 0 ? snapshot.liquidityUsd / previous.liquidityUsd : 1
   const liquidityGrowth = clamp01((growthRatio - 0.5) / 1)
 
-  const activity = clamp01(trades1h / policy.fullActivityTxnsPerHour)
+  // The OTHER pillar, beside `headroom`, and for the operator's own reason: a
+  // pool nobody is trading is one nobody will buy from us either. More is
+  // always worth more here — the curve has diminishing returns but no ceiling
+  // at which two pools stop being distinguishable.
+  const activity = clamp01(
+    Math.log(1 + trades1h / policy.activityKneeTxnsPerHour) /
+      Math.log(1 + policy.fullActivityTxnsPerHour / policy.activityKneeTxnsPerHour),
+  )
 
   const move = Math.abs(priceChangePct.h1 ?? 0) + Math.abs(priceChangePct.h6 ?? 0) / 2
   const volatility = clamp01(move / policy.fullVolatilityPct)

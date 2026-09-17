@@ -210,13 +210,18 @@ describe('opportunity — how much room is left above it', () => {
     expect(early).toBeGreaterThan(late * 3)
   })
 
-  it('a token that has run 200% scores about thirty', () => {
-    // The operator's number, and it is what sets the WEIGHT rather than the
-    // curve: the range a component can move the score is bounded by its share
-    // of the weights, so reaching thirty from eighty-two makes headroom the
-    // largest term in the score. Deliberately — see the note on the weight.
-    expect(scoreOpportunity(rising(200), P, null, cheap).score).toBeLessThan(35)
-    expect(scoreOpportunity(rising(0), P, null, cheap).score).toBeGreaterThan(75)
+  it('costs a token most of the score to have run all the way', () => {
+    // The operator asked for +200% to land near thirty, and that is what set
+    // the WEIGHT rather than the curve: a component moves the score only within
+    // its share of the weights.
+    //
+    // The ABSOLUTE number is not pinned here, and cannot be, because `activity`
+    // became a pillar of the same size afterwards — a token that has not moved
+    // but that nobody trades no longer scores in the eighties. You need both.
+    // What survives is the SPREAD, which is what the operator was buying.
+    const fresh = scoreOpportunity(rising(0), P, null, cheap).score
+    const spent = scoreOpportunity(rising(P.headroomFullyRunPct), P, null, cheap).score
+    expect(fresh - spent).toBeGreaterThan(30)
   })
 
   it('does NOT reward a token for being low while falling', () => {
@@ -231,5 +236,38 @@ describe('opportunity — how much room is left above it', () => {
   it('is neutral when the recent window says nothing', () => {
     const silent = base({ priceChangePct: { h1: null, h6: null, h24: null } })
     expect(scoreOpportunity(silent, P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
+  })
+})
+
+describe('opportunity — activity is the other pillar', () => {
+  const traded = (perHour: number) =>
+    base({ txns: { h1: { buys: Math.round(perHour * 0.6), sells: Math.round(perHour * 0.4) }, h24: { buys: 800, sells: 700 } } })
+
+  it('keeps paying for more trades well past the old ceiling', () => {
+    // It was `txns / 60` flat, so a pool with sixty trades an hour and one with
+    // five hundred scored IDENTICALLY — every difference above the cap was
+    // invisible to the ranking, which is the opposite of "more activity is
+    // worth more".
+    expect(scoreOpportunity(traded(100), P, null, cheap).score)
+      .toBeGreaterThan(scoreOpportunity(traded(60), P, null, cheap).score)
+    expect(scoreOpportunity(traded(200), P, null, cheap).score)
+      .toBeGreaterThan(scoreOpportunity(traded(100), P, null, cheap).score)
+  })
+
+  it('has diminishing returns, so the first trades matter most', () => {
+    // The same shape as `headroom` and for the same reason: the distinction
+    // worth paying for is between DEAD and ALIVE, not between very busy and
+    // slightly busier.
+    const at = (n: number) => scoreOpportunity(traded(n), P, null, cheap).components.activity
+    expect(at(25) - at(4)).toBeGreaterThan(at(200) - at(100))
+  })
+
+  it('separates a dead pool from a live one by enough to decide a ranking', () => {
+    // The operator's rule. A pool nobody is trading is one nobody will buy from
+    // us either — which is the death watch's whole subject, met here at the
+    // door instead of three hours into a position.
+    const dead = scoreOpportunity(traded(4), P, null, cheap).score
+    const alive = scoreOpportunity(traded(300), P, null, cheap).score
+    expect(alive - dead).toBeGreaterThan(25)
   })
 })
