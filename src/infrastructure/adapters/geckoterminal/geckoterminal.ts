@@ -63,12 +63,15 @@ export interface GeckoTerminalOptions {
   readonly maxRetries?: number
   readonly backoffMs?: number
   readonly sleep?: (ms: number) => Promise<void>
+  /** Injected so "has this bar closed yet?" is testable without the wall clock. */
+  readonly now?: () => number
 }
 
 export class GeckoTerminal {
   private readonly maxRetries: number
   private readonly backoffMs: number
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly now: () => number
 
   constructor(
     private readonly http: HttpGet,
@@ -79,6 +82,7 @@ export class GeckoTerminal {
     this.maxRetries = options.maxRetries ?? 3
     this.backoffMs = options.backoffMs ?? 4_000
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.now = options.now ?? (() => Date.now())
   }
 
   /** Time lost to 429s, and how many. See the note on GoPlus.rateLimit. */
@@ -86,6 +90,30 @@ export class GeckoTerminal {
 
   /**
    * Candles for a pool, OLDEST FIRST, timestamps in milliseconds.
+   *
+   * **The bar still being BUILT is not returned.** GeckoTerminal's newest row
+   * is the current interval, and its close is simply wherever the price sits
+   * at the instant of the request — ask again a minute later and the same bar
+   * answers differently. It is a quote wearing a candle's clothes.
+   *
+   * Handing it to the engine breaks the project's seventh constraint at its
+   * source, and it did: `tickPosition` takes the last row as the newest CLOSED
+   * bar, decides on it, and stamps `lastBarTime`, so the bar is never looked
+   * at again once it really closes. Every decision the engine has ever made
+   * was taken on partial data, and no offline test could see it — the parity
+   * harness replays a fixed series, where a forming bar does not exist.
+   *
+   * What it cost, measured: BinanceTown's entry was sized against 0.0013161
+   * while its 15m bar was mid-pump; the bar ENDED at 0.00100069 and the fill
+   * (the next bar's open) landed there. A $15 order bought $11.44 — 23.7%
+   * less token than the ladder asked for, at a price no close ever showed.
+   * Across the whole open book the same gap ran from -5.1% to +2.8%, which is
+   * exactly the shape of "how far does a 15m micro-cap move between mid-bar
+   * and the bell".
+   *
+   * It costs one bar of latency and that is the correct price: a decision on a
+   * bar that has closed is late by construction, and the alternative is not
+   * being early, it is being wrong.
    *
    * @param beforeSeconds page further back: returns candles before this time.
    */
@@ -97,6 +125,11 @@ export class GeckoTerminal {
 
     const body = (await this.getWithBackoff(url)) as OhlcvResponse
     const rows = body.data?.attributes?.ohlcv_list ?? []
+
+    // A bar opening at `t` is closed once `now` has passed t + its own width.
+    // Measured against the size that was ASKED for: the same timestamp is a
+    // settled 15-minute bar and an hour-long one that has barely started.
+    const closedBy = this.now() - barSizeMs(size)
 
     const time: number[] = []
     const open: number[] = []
@@ -113,6 +146,7 @@ export class GeckoTerminal {
       // A candle with no price is not a candle; dropping it beats poisoning
       // every windowed indicator downstream.
       if (!(o > 0 && h > 0 && l > 0 && c > 0)) continue
+      if (seconds * 1000 > closedBy) continue
       time.push(seconds * 1000)
       open.push(o)
       high.push(h)

@@ -1852,6 +1852,65 @@ been. Bounded at `MAX_CATCH_UP_BARS` (96, a day at 15m): past that the engine
 was not late, it was down, and replaying a week would fill a ladder from a
 market that is gone.
 
+### The bar it decided on had not finished
+
+Constraint 7 says signals evaluate on CLOSED bars only, and for the life of
+this project not one of them did.
+
+GeckoTerminal's newest row is the interval **currently being built**. Its close
+is wherever the price happens to sit at the instant of the request — ask again
+sixty seconds later and the same bar answers differently. Verified live: the
+17:30 bar came back closing at 0.000966353, then at 0.000963356 a minute after.
+Nothing dropped it, and `tickPosition` reads `candles.time.length - 1` as the
+newest closed bar.
+
+So the engine decided on a running quote, stamped `lastBarTime`, and **never
+looked at that bar again once it really closed**. Every decision it has ever
+made was taken on a candle that did not exist yet.
+
+The operator found it from the tape: *BinanceTown bought only 11 dollars.*
+
+| | |
+|---|---|
+| Price the order was sized at (bar mid-flight) | **0.0013161** |
+| Where that bar actually CLOSED | **0.00100069** |
+| Fill, at the next bar's open | 0.0010038 |
+| A $15 rung bought | **$11.44** |
+
+The 16:30 bar ran from 0.000418 to a high of 0.00146521 and settled at
+0.00100069 — a 213% intrabar pump. The engine looked in while it was vertical.
+
+Measured across the whole open book, `fillUsd / nominalUsd` on the entry rung:
+
+| | Gap |
+|---|---|
+| p10 | **−5.1%** |
+| median | +0.2% |
+| p90 | **+2.8%** |
+| BinanceTown | **−23.7%** |
+
+The median says the mechanism is ordinary and the tails say what it costs. This
+is not a distribution of execution slippage — it is *how far a 15m micro-cap
+travels between mid-bar and the bell*, which is a number the engine should
+never have been exposed to at all.
+
+**It could not be caught offline, and that is the pattern.** The parity harness
+replays a fixed OHLCV series where a forming bar does not exist, so the port
+stayed faithful to `DCA.pine` while production read something `DCA.pine` never
+sees. The same shape as the missing execution layer and the ladder the engine
+did not size: correct on the offline path, broken on the live one.
+
+The fix is in the ADAPTER, not the engine, because the adapter is what knows
+the bar size — it built the request. One line, and everything downstream
+inherits it: the strategy's indicators, `staleBars`, `priceMismatch`,
+`idle-hours`. Two implementations of "has this bar closed" would drift.
+
+**It costs one bar of latency and that is the correct price.** Deciding on a
+closed bar is late by construction; the alternative was not being early, it was
+being wrong. What it also costs, stated: the newest candle is now up to 30
+minutes old rather than 15, which `maxPriceRatio` (5) absorbs without noticing
+and `maxBarAgeHours` (1) still clears.
+
 ### Never exit at a loss — enforced where it actually leaks
 
 The rule was enforced at DECISION time, where price is above average cost by

@@ -23,6 +23,36 @@ describe('GeckoTerminal — candles', () => {
     expect(candles.volume).toEqual([9000, 12000, 18655.63])
   })
 
+  it('drops the bar that is still being BUILT, because a signal may not read one', async () => {
+    // GeckoTerminal's newest row is the CURRENT bar, still accumulating. It is
+    // not a candle yet: its close is wherever the price happens to be at the
+    // moment of the request, and it will be something else fifteen minutes
+    // later. Reading it as closed is what constraint 7 forbids.
+    //
+    // Measured in production: the engine sized BinanceTown's entry against
+    // 0.0013161 while that bar was mid-pump, and the bar ENDED at 0.00100069.
+    // A $15 order bought $11.44 — the order was decided at a price that never
+    // existed at any close.
+    const nowMs = 1789347600_000 + 40 * 60_000 // 40 minutes into the 1H bar
+    const gt = new GeckoTerminal(stubHttp({ [url]: { body: live } }), undefined, undefined, { now: () => nowMs })
+    const candles = await gt.candles('solana', POOL)
+    expect(candles.time).toEqual([1789340400_000, 1789344000_000])
+  })
+
+  it('keeps the newest bar once its window has ENDED', async () => {
+    const nowMs = 1789347600_000 + 60 * 60_000
+    const gt = new GeckoTerminal(stubHttp({ [url]: { body: live } }), undefined, undefined, { now: () => nowMs })
+    expect((await gt.candles('solana', POOL)).time).toHaveLength(3)
+  })
+
+  it('measures the window against the bar size it ASKED for, not a default', async () => {
+    // The same timestamp is a closed 15m bar and an open 1H one.
+    const fifteenUrl = `${GECKOTERMINAL_BASE}/networks/solana/pools/${POOL}/ohlcv/minute`
+    const nowMs = 1789347600_000 + 20 * 60_000
+    const gt = new GeckoTerminal(stubHttp({ [fifteenUrl]: { body: live } }), undefined, undefined, { now: () => nowMs })
+    expect((await gt.candles('solana', POOL, FIFTEEN_MINUTES)).time).toHaveLength(3)
+  })
+
   it('drops candles with no price rather than poisoning every indicator', async () => {
     const broken = body([[1789347600, 1, 1, 1, 1, 5], [1789344000, 0, 0, 0, 0, 0], [1789340400, 2, 2, 2, 2, 5]])
     const gt = new GeckoTerminal(stubHttp({ [url]: { body: broken } }))
