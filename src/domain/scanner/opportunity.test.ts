@@ -193,11 +193,21 @@ describe('opportunity — how much room is left above it', () => {
 
   it('has no hard threshold — it decays smoothly and never reaches zero', () => {
     // A cut-off would be the same invented number this component was written to
-    // avoid. A doubling halves the room left; that is a stated rule, not a
-    // fitted one, and it keeps the preference monotone at every size.
+    // avoid. `headroomHalvingPct` sets how fast it separates two risers, and
+    // the curve stays monotone at every size.
     expect(scoreOpportunity(rising(0), P, null, cheap).components.headroom).toBeCloseTo(1, 6)
-    expect(scoreOpportunity(rising(100), P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
-    expect(scoreOpportunity(rising(300), P, null, cheap).components.headroom).toBeCloseTo(0.25, 6)
+    expect(scoreOpportunity(rising(P.headroomHalvingPct), P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
+    expect(scoreOpportunity(rising(3 * P.headroomHalvingPct), P, null, cheap).components.headroom).toBeCloseTo(0.25, 6)
+  })
+
+  it('separates two risers by enough to matter, not merely enough to break a tie', () => {
+    // Measured: at the first settings a token up 10% and one up 60% were 1.27
+    // points apart, which loses to any other component that disagrees. The
+    // operator asked for more, so the curve got steeper and the weight larger —
+    // five points now, which survives a difference of opinion elsewhere.
+    const early = scoreOpportunity(rising(10), P, null, cheap).score
+    const extended = scoreOpportunity(rising(60), P, null, cheap).score
+    expect(early - extended).toBeGreaterThan(4)
   })
 
   it('does NOT reward a token for being low while falling', () => {

@@ -80,9 +80,24 @@ price signal looks.
   that has. The operator's rule.
 
   No threshold, deliberately: a cut-off would be the same invented number
-  `momentum` was rewritten to remove. **A doubling halves the room left** — a
-  stated rule rather than a fitted one, monotone at every size, and it never
-  reaches zero because a token that has run is worth LESS, not worthless.
+  `momentum` was rewritten to remove. The curve is smooth, monotone at every
+  size, and never reaches zero — a token that has run is worth LESS, not
+  worthless. `headroomHalvingPct` (30) is the rise that halves the room left,
+  and it is what sets how far apart two risers land:
+
+  | Rise in 24h | Headroom | Score |
+  |---|---|---|
+  | 0% | 1.000 | 66.66 |
+  | +10% | 0.750 | 64.39 |
+  | +30% | 0.500 | 61.24 |
+  | +60% | 0.333 | 59.14 |
+  | +200% | 0.130 | 56.58 |
+
+  It started at a halving of 100% and a weight of 0.05, which put a token up 10%
+  and one up 60% **1.27 points apart** — enough to break a tie and nothing more,
+  so any other component that disagreed simply overruled it. The operator asked
+  for more, and both knobs moved: the curve to 30% and the weight to 0.15.
+  **Five points now**, which survives a difference of opinion elsewhere.
 
   Only while rising. *Low* and *cheap* are not the same claim: a token down 40%
   and still sinking has enormous room above it and is exactly the knife

@@ -42,6 +42,16 @@ export interface OpportunityPolicy {
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
   /**
+   * The rise that HALVES the room left above a token.
+   *
+   * Not a threshold — the curve is smooth and never reaches zero — but it is
+   * what sets how fast the preference separates two risers. At 100 a token up
+   * 10% and one up 60% were 1.27 points apart, which desempata a tie and
+   * nothing more. Lower is steeper, and the gap widens the further either has
+   * run, which is what "more difference as it ascends" asks for.
+   */
+  readonly headroomHalvingPct: number
+  /**
    * Round-trip cost, in percent, at which cost efficiency scores zero. A full
    * cycle pays the fill cost on the way in and the exit cost on the way out;
    * past this the toll plausibly exceeds what a DCA cycle can produce.
@@ -54,10 +64,11 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // than replaces: volatility says the token is MOVING, momentum says which
   // way. Rewarding the first alone made a token down 40% on the day and one up
   // 40% look identical to the shortlist.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.08, momentum: 0.14, headroom: 0.05, costEfficiency: 0.2 },
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.05, momentum: 0.14, headroom: 0.15, costEfficiency: 0.2 },
   fullExpansionRatio: 3,
   fullActivityTxnsPerHour: 60,
   fullVolatilityPct: 20,
+  headroomHalvingPct: 30,
   worstRoundTripPct: 6,
 }
 
@@ -151,9 +162,10 @@ export function scoreOpportunity(
   // worth more than the one that has. The operator's rule.
   //
   // No threshold, and deliberately: a cut-off would be the same invented number
-  // `momentum` was rewritten to remove. A DOUBLING HALVES THE ROOM LEFT — a
-  // stated rule rather than a fitted one, monotone at every size, and it never
-  // reaches zero because a token that has run is worth less, not worthless.
+  // `momentum` was rewritten to remove. The curve is smooth, monotone at every
+  // size, and never reaches zero — a token that has run is worth LESS, not
+  // worthless. `headroomHalvingPct` is how fast it separates two risers, and
+  // the gap widens the further either has run, which is the point.
   //
   // Only while RISING. "Low" and "cheap" are not the same claim: a token down
   // 40% and still sinking has enormous room above it and is exactly the knife
@@ -162,7 +174,7 @@ export function scoreOpportunity(
   const headroom =
     priceChangePct.h1 === null || priceChangePct.h1 === undefined || priceChangePct.h1 <= 0
       ? 0.5
-      : 1 / (1 + Math.max(0, day ?? 0) / 100)
+      : 1 / (1 + Math.max(0, day ?? 0) / policy.headroomHalvingPct)
 
   // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
   // so a token is never rewarded for a toll nobody checked.
