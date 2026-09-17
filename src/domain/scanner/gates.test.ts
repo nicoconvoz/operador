@@ -563,3 +563,39 @@ describe('minHistoryBars — enough to ENTER, not enough for every door', () => 
     expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(25)
   })
 })
+
+describe('priceMismatch — two providers that disagree about the price cannot both be right', () => {
+  it('refuses a token whose candle price is nothing like its market price', () => {
+    // ZCAT, live: DexScreener quoted $0.1318 and GeckoTerminal's candles for
+    // the SAME pool quoted $1,429.49 — a factor of 10,846. The engine sizes an
+    // order from one and fills it at the other, so it bought 0.0105 tokens for
+    // $15.11 when that money was fifteen dollars of a token worth a tenth of a
+    // dollar. It read on screen as a 100% collapse minutes after buying.
+    //
+    // It is not a rug and it is not a crash. It is a unit nobody agreed on, and
+    // the only safe answer is the same as for stale bars: if the engine cannot
+    // price a token consistently, it cannot trade it.
+    const verdict = evaluateGates(clean({ priceUsd: 0.1318, lastCandlePriceUsd: 1_429.49 }), DEFAULT_GATE_POLICY)
+    expect(verdict.failures.map((f) => f.gate)).toContain('priceMismatch')
+  })
+
+  it('tolerates the ordinary gap between a bar close and a live quote', () => {
+    // The last CLOSED bar is up to fifteen minutes old and these tokens move.
+    // A band that fired on that would reject the whole universe, so it is
+    // generous by design: it exists to catch a mismatched UNIT, not a price
+    // that moved.
+    expect(evaluateGates(clean({ priceUsd: 0.01, lastCandlePriceUsd: 0.013 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateGates(clean({ priceUsd: 0.01, lastCandlePriceUsd: 0.007 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('catches the mismatch in EITHER direction', () => {
+    const inverted = evaluateGates(clean({ priceUsd: 1_429.49, lastCandlePriceUsd: 0.1318 }), DEFAULT_GATE_POLICY)
+    expect(inverted.failures.map((f) => f.gate)).toContain('priceMismatch')
+  })
+
+  it('stays silent when nobody measured the candle price', () => {
+    // Fires on evidence, never on absence — the same rule as `history` and
+    // `staleBars`. A scan that has not fetched candles says nothing.
+    expect(evaluateGates(clean({}), DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+})

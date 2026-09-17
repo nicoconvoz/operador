@@ -84,6 +84,16 @@ export interface ScanDeps {
    * not shortlist what it cannot watch.
    */
   readonly barAgeHours?: (snapshot: TokenSnapshot) => Promise<number | null>
+  /**
+   * The newest candle's close, from the CANDLE provider, for the same token.
+   *
+   * Measured in the SAME fetch as `barAgeHours` — no extra request — and
+   * compared against the market price by the `priceMismatch` gate. Two
+   * providers that disagree by four orders of magnitude about what a token
+   * costs cannot both be right, and the engine sizes from one while filling at
+   * the other.
+   */
+  readonly lastCandlePriceUsd?: (snapshot: TokenSnapshot) => Promise<number | null>
 }
 
 export interface CachedSecurity {
@@ -505,18 +515,28 @@ export async function scanOnce(
   // Solana tokens were in that state.
   if (deps.barAgeHours && config.maxBarAgeHours !== undefined) {
     const measured = new Map<string, number | null>()
+    const priced = new Map<string, number | null>()
     for (const candidate of ranked.candidates) {
+      const key = tokenKey(candidate.snapshot)
       try {
-        measured.set(tokenKey(candidate.snapshot), await deps.barAgeHours(candidate.snapshot))
+        measured.set(key, await deps.barAgeHours(candidate.snapshot))
+        // The same fetch, so this costs nothing beyond what was already paid.
+        if (deps.lastCandlePriceUsd) priced.set(key, await deps.lastCandlePriceUsd(candidate.snapshot))
       } catch (error) {
         errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
         // Unanswered is not fresh. Fail closed, like every other gate here.
-        measured.set(tokenKey(candidate.snapshot), null)
+        measured.set(key, null)
       }
     }
     if (measured.size > 0) {
       const withAge = snapshots.map((s) =>
-        measured.has(tokenKey(s)) ? { ...s, lastTradeAgoHours: measured.get(tokenKey(s))! } : s,
+        measured.has(tokenKey(s))
+          ? {
+              ...s,
+              lastTradeAgoHours: measured.get(tokenKey(s))!,
+              ...(priced.has(tokenKey(s)) ? { lastCandlePriceUsd: priced.get(tokenKey(s))! } : {}),
+            }
+          : s,
       )
       snapshots.length = 0
       snapshots.push(...withAge)

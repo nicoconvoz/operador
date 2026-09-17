@@ -391,6 +391,40 @@ ago is not judged before its setup had a chance — but a FROZEN one had no chan
 and will get none: freezing blocks entries, so it cannot buy, and it holds
 nothing to sell. Waiting three hours buys nothing at all.
 
+### Two providers that disagree about the PRICE — MEASURED
+
+A position read as a 100% collapse minutes after it was bought. It was neither a
+rug nor a crash.
+
+| | ZCAT, same pool, same moment |
+|---|---|
+| DexScreener | **$0.1318** |
+| GeckoTerminal candles | **$1,429.49** |
+| Ratio | **10,846×** |
+
+The engine **sizes an order from the market price and fills it at the candle
+price**, so $15.11 bought 0.0105 tokens — when that money was fifteen dollars of
+a token worth a tenth of a dollar. Every gate passed: $1.9M of liquidity, $1.9M
+of daily volume, seventeen days old, no blockers, up 37% on the day.
+
+It was invisible until today. Before the screen valued positions at the LIVE
+market price, everything was drawn at the candle price and the whole system
+agreed with itself — consistently, and about a number that did not exist.
+
+`priceMismatch` is the answer, and it is the sibling of `staleBars`: **a token
+the engine cannot price consistently is a token it cannot trade.** Measured in
+the same candle fetch the bar-freshness check already makes, so it costs
+nothing, and enforced in both places — the scan, so it never reaches the
+shortlist, and `confirmEntry`, because that is the moment capital moves.
+
+The band is `maxPriceRatio` (5) and it is generous on purpose. The last CLOSED
+bar is up to fifteen minutes old and these tokens move, so a tight band would
+reject the whole universe. It exists to catch a mismatched UNIT, not a price
+that moved.
+
+It counts as a SAFETY gate on the screen — red, not grey. Buying one is not a
+mediocre trade: it is capital converted into the wrong quantity of a token.
+
 ### Is it alive NOW?
 
 The 24h figures cannot answer that. A token was reported live with **$168k of

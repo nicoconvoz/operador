@@ -313,7 +313,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         const pairs = await dex.tokens(snapshot.chain, [address])
         const market = dex.toMarketSnapshots(snapshot.chain, pairs)[0]
         if (!market) return null
-        const { snapshot: fresh } = await examineToken(
+        const { snapshot: examined } = await examineToken(
           {
             dex,
             goplus,
@@ -331,7 +331,17 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // an unreadable provider, and a gate that failed 'unknown' does too.
           (stage: ScanError['stage'], error: unknown) => console.warn('[confirm]', stage, String(error).slice(0, 200)),
         )
-        return fresh
+        // The candle price beside the market price, so `priceMismatch` decides
+        // here too. `examineToken` does not fetch candles for the price — only
+        // for the history count — so this is the one place it has to be asked.
+        let lastCandlePriceUsd: number | null = null
+        try {
+          const candles = await gecko.candles(examined.chain, examined.pairAddress, config.barSize, 2)
+          lastCandlePriceUsd = candles.close.at(-1) ?? null
+        } catch {
+          lastCandlePriceUsd = null
+        }
+        return { ...examined, lastCandlePriceUsd }
       }, gates, {
         // The same measurement the death watch reads, asked BEFORE the money
         // moves instead of three hours after. `idle-hours.ts` walks back to the
@@ -415,6 +425,17 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // `confirmEntry` still asks live at the door, so nothing is ever
               // bought on a remembered answer.
               barAgeHours: (snapshot) => barActivity.barAgeHours(snapshot.chain, snapshot.pairAddress),
+              // What the CANDLE provider thinks this token costs, against what
+              // the MARKET provider says. They disagreed by 10,846× on ZCAT,
+              // and the engine sizes from one while filling at the other.
+              lastCandlePriceUsd: async (snapshot) => {
+                try {
+                  const candles = await gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, 2)
+                  return candles.close.at(-1) ?? null
+                } catch {
+                  return null
+                }
+              },
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

@@ -91,6 +91,17 @@ export interface TokenSnapshot {
    * cannot see trading is one it cannot trade.
    */
   readonly lastTradeAgoHours?: number | null
+
+  /**
+   * The newest candle's close, from the CANDLE provider.
+   *
+   * It exists to be compared against `priceUsd`, which comes from the MARKET
+   * provider. They should agree within the gap a bar's age explains — and when
+   * they do not, neither can be trusted.
+   *
+   * Absent means nobody measured it; the gate then stays silent.
+   */
+  readonly lastCandlePriceUsd?: number | null
   /**
    * Price impact of a real reference sell, MEASURED by quoting it. Null when
    * no quote was taken.

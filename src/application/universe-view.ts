@@ -127,7 +127,7 @@ const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 
 // mediocre trade, it is capital that gets STUCK: the entry decided at a close
 // waits forever for an open that never comes, the ladder freezes, and the
 // position can neither buy nor sell. Six of them proved it in production.
-const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation', 'staleBars'])
+const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation', 'staleBars', 'priceMismatch'])
 
 const PRIME_SCORE = 45
 

@@ -105,6 +105,15 @@ export interface GatePolicy {
    */
   readonly maxBarAgeHours: number
   /**
+   * How far the candle price and the market price may diverge before neither is
+   * trusted, as a ratio either way.
+   *
+   * Generous on purpose. The last CLOSED bar is up to fifteen minutes old and
+   * these tokens move, so a tight band would reject the whole universe. This
+   * exists to catch a mismatched UNIT, not a price that moved.
+   */
+  readonly maxPriceRatio: number
+  /**
    * Price impact of a reference sell, above which the token is not a trade.
    *
    * The score already penalises cost — `costEfficiency` reaches zero at a 6%
@@ -212,6 +221,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // `minAgeForHistory` only ever existed to serve this.
   minHistoryBars: 100,
   maxBarAgeHours: 1,
+  maxPriceRatio: 5,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
   // Ten percent is already far beyond anything the 1%-per-fill and 3%-exit
   // budgets could rescue; past it there is nothing to size down to.
@@ -262,6 +272,7 @@ export type GateName =
   | 'impersonation'
   | 'history'
   | 'staleBars'
+  | 'priceMismatch'
 
 export interface GateFailure {
   readonly gate: GateName
@@ -324,6 +335,27 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
       failures.push(fail('staleBars', 'unknown', 'el proveedor de velas no devolvió ninguna operación — sin barras la estrategia no puede decidir'))
     } else if (age > policy.maxBarAgeHours) {
       failures.push(fail('staleBars', 'failed', `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más actividad que reporte el mercado`))
+    }
+  }
+
+  // Do the two providers even agree what this token COSTS?
+  //
+  // Measured live: DexScreener quoted ZCAT at $0.1318 while GeckoTerminal's
+  // candles for the SAME pool quoted $1,429.49 — a factor of 10,846. The engine
+  // sizes an order from the market price and fills it at the candle price, so
+  // it bought 0.0105 tokens for $15.11 when that money was fifteen dollars of a
+  // token worth a tenth of a dollar. On screen it read as a 100% collapse
+  // minutes after buying.
+  //
+  // Not a rug and not a crash: a unit nobody agreed on. The only safe answer is
+  // the same as for stale bars — a token the engine cannot price consistently
+  // is a token it cannot trade.
+  const candlePrice = snapshot.lastCandlePriceUsd
+  if (candlePrice !== undefined && candlePrice !== null && candlePrice > 0 && snapshot.priceUsd > 0) {
+    const ratio = Math.max(candlePrice / snapshot.priceUsd, snapshot.priceUsd / candlePrice)
+    if (ratio > policy.maxPriceRatio) {
+      failures.push(fail('priceMismatch', 'failed',
+        `el mercado dice $${snapshot.priceUsd} y las velas dicen $${candlePrice} — ${ratio.toFixed(0)}× de diferencia, no se puede operar lo que no se puede precificar`))
     }
   }
 
@@ -479,6 +511,27 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
       failures.push(fail('staleBars', 'unknown', 'el proveedor de velas no devolvió ninguna operación — sin barras la estrategia no puede decidir'))
     } else if (age > policy.maxBarAgeHours) {
       failures.push(fail('staleBars', 'failed', `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más actividad que reporte el mercado`))
+    }
+  }
+
+  // Do the two providers even agree what this token COSTS?
+  //
+  // Measured live: DexScreener quoted ZCAT at $0.1318 while GeckoTerminal's
+  // candles for the SAME pool quoted $1,429.49 — a factor of 10,846. The engine
+  // sizes an order from the market price and fills it at the candle price, so
+  // it bought 0.0105 tokens for $15.11 when that money was fifteen dollars of a
+  // token worth a tenth of a dollar. On screen it read as a 100% collapse
+  // minutes after buying.
+  //
+  // Not a rug and not a crash: a unit nobody agreed on. The only safe answer is
+  // the same as for stale bars — a token the engine cannot price consistently
+  // is a token it cannot trade.
+  const candlePrice = snapshot.lastCandlePriceUsd
+  if (candlePrice !== undefined && candlePrice !== null && candlePrice > 0 && snapshot.priceUsd > 0) {
+    const ratio = Math.max(candlePrice / snapshot.priceUsd, snapshot.priceUsd / candlePrice)
+    if (ratio > policy.maxPriceRatio) {
+      failures.push(fail('priceMismatch', 'failed',
+        `el mercado dice $${snapshot.priceUsd} y las velas dicen $${candlePrice} — ${ratio.toFixed(0)}× de diferencia, no se puede operar lo que no se puede precificar`))
     }
   }
 
