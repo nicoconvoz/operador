@@ -200,7 +200,16 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
             display: 'inline-block',
           }}
         >
-          {signed(netUsd)} {pulse === 'up' ? '▲' : pulse === 'down' ? '▼' : ''}
+          {signed(netUsd)}{' '}
+          {/* The arrow is coloured by DIRECTION, the number by its SIGN — and
+              they are different questions. Inheriting the number's colour put a
+              GREEN ▼ on a profit that was falling, which says the opposite of
+              what just happened. A figure can be positive and getting worse. */}
+          {pulse !== null && (
+            <span style={{ color: pulse === 'up' ? '#63e6a5' : '#ff6b6b' }}>
+              {pulse === 'up' ? '▲' : '▼'}
+            </span>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
           <span style={{ color: realisedUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>{signed(realisedUsd)} cobrada</span>

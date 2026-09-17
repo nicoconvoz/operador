@@ -1404,6 +1404,12 @@ a figure that is negative and rising still reads as negative, and it fades on
 its own rather than leaving the screen coloured by something that happened a
 minute ago.
 
+**The arrow is coloured by DIRECTION and the number by its SIGN**, because they
+answer different questions. The arrow first inherited the number's colour, which
+put a GREEN ▼ on a profit that was falling — a figure can be positive and
+getting worse, and the mark that exists to say "it just moved, and which way"
+was saying the opposite.
+
 ### A freeze that will not say why
 
 Six positions showed `❄️ congelada` and not one of them said what for. The
