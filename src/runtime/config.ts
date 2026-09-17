@@ -112,6 +112,9 @@ export interface RuntimeConfig {
    * never does.
    */
   readonly dropInitPct: number
+  /** Gains at which the exit stops waiting for the impulse to die. */
+  readonly impatientProfitPct: number
+  readonly urgentProfitPct: number
   /**
    * Hours a reserved slot may sit without a single fill before it goes back to
    * the pool.
@@ -264,6 +267,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     exitOnFreeze: onUnless(env, 'OPERADOR_EXIT_ON_FREEZE'),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     dropInitPct: productionLadder(env).dropInitPct,
+    impatientProfitPct: productionLadder(env).impatientProfitPct,
+    urgentProfitPct: productionLadder(env).urgentProfitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),

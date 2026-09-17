@@ -907,6 +907,46 @@ And zero is a REAL value here, so it cannot be parsed as "unset". `maxPositions:
 meaning one thing in one file and its opposite next door cost this engine every
 position it could have opened.
 
+### The bigger the gain, the less it waits
+
+The exit is *"it stalled at the top, take the money"*, and stalling is measured
+as `decayBarsRequired` (2) consecutive falling VWM bars. On an ordinary winner
+that patience is right: it lets the move finish instead of selling the first red
+candle.
+
+On a violent one it is expensive. Measured on a live position:
+
+| Bar | Gain | VWM |
+|---|---|---|
+| 12:00 | **+84%** | 176 |
+| 12:30 | +64.9% | 199 |
+| 12:45 | +46.0% | 164 ↓ |
+| 13:00 | +30.5% | 116 ↓ |
+
+`priceless` ran to +84% in half an hour. The rule waited its two falling bars
+and sold at +30% — **two thirds of the gain spent on patience the size of the
+move did not justify.**
+
+So patience now falls as the gain rises, which is the operator's rule and the
+right shape: the more there is to lose by waiting, the less waiting is worth.
+
+| Gain | Falling bars the exit waits for |
+|---|---|
+| under 10% | **2** — the reference |
+| 10–25% | **1** |
+| over 25% | **0** |
+
+Monotone by construction, so a bigger gain can only ever SHORTEN the wait. On
+the table above, 25% is the bar showing **+46%** — it would have sold near the
+$7 the operator watched decay to $4.94.
+
+A small winner still gets the full two bars, and that is what stops the engine
+selling every first red candle.
+
+Both thresholds are `null` in `DEFAULT_PARAMS`, which is the reference exactly —
+impatience is composed in production beside the ladder cap and the entry drop,
+because the parity harness asserts those params are the backtest's own inputs.
+
 ### Two DCA rungs, not nine
 
 `OPERADOR_MAX_DCA` defaults to **2**, so the venue holds **three** entries open:

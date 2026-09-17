@@ -496,7 +496,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // DEFAULT_PARAMS — the parity harness asserts those are the backtest's
       // own inputs, and evidence that can be edited to express a preference has
       // stopped being evidence.
-      params: { ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel, dropInitPct: config.dropInitPct },
+      params: {
+        ...DEFAULT_PARAMS,
+        maxUsdPerLevel: config.maxUsdPerLevel,
+        dropInitPct: config.dropInitPct,
+        impatientProfitPct: config.impatientProfitPct,
+        urgentProfitPct: config.urgentProfitPct,
+      },
       // The same numbers the broker charges, so the ladder is sized against
       // the costs it will actually pay rather than against a guess.
       gasUsdPerSwap: config.gasUsdPerSwap,

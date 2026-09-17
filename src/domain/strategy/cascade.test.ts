@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { stepCascade } from './cascade.js'
+import { stepCascade, decayBarsFor } from './cascade.js'
 import { DEFAULT_PARAMS, type CascadeParams } from './params.js'
 import { usdForLevel } from './ladder.js'
 import {
@@ -354,5 +354,42 @@ describe('cascade — rescue mode breakeven', () => {
       armed, R, bar(103, 103, 103, 103), ctx({ stBearFlip: true }), long(100, 0),
     )
     expect(orders).toEqual([{ kind: 'closeAll', comment: '🏁 Exit' }])
+  })
+})
+
+describe('decayBarsFor — the more there is to lose, the less it waits', () => {
+  it('keeps the reference patience on an ordinary gain', () => {
+    // The exit wants the impulse DEAD, which is `decayBarsRequired` consecutive
+    // falling VWM bars. On a normal winner that is the right trade: it lets the
+    // move finish instead of selling the first red candle.
+    expect(decayBarsFor(3, DEFAULT_PARAMS)).toBe(DEFAULT_PARAMS.decayBarsRequired)
+  })
+
+  it('waits one bar less once the gain is worth protecting', () => {
+    expect(decayBarsFor(12, { ...DEFAULT_PARAMS, impatientProfitPct: 10, urgentProfitPct: 25 })).toBe(1)
+  })
+
+  it('does not wait at all on a gain large enough to lose', () => {
+    // Measured on a live position: priceless ran to +84% in half an hour and
+    // the rule waited two falling bars before selling — by which time it was
+    // +30%. Two thirds of the gain spent on patience the size of the move did
+    // not justify.
+    expect(decayBarsFor(46, { ...DEFAULT_PARAMS, impatientProfitPct: 10, urgentProfitPct: 25 })).toBe(0)
+  })
+
+  it('is the reference exactly when neither threshold is set', () => {
+    // DEFAULT_PARAMS is what TradingView ran and the parity harness asserts it.
+    // Impatience is a PRODUCTION choice composed on top, never a new default.
+    expect(DEFAULT_PARAMS.impatientProfitPct).toBeNull()
+    expect(DEFAULT_PARAMS.urgentProfitPct).toBeNull()
+    expect(decayBarsFor(500, DEFAULT_PARAMS)).toBe(DEFAULT_PARAMS.decayBarsRequired)
+  })
+
+  it('never asks for MORE patience than the reference', () => {
+    // Monotone by construction: a bigger gain can only ever shorten the wait.
+    const impatient = { ...DEFAULT_PARAMS, impatientProfitPct: 10, urgentProfitPct: 25 }
+    for (const pct of [0, 5, 9.9, 10, 24.9, 25, 100]) {
+      expect(decayBarsFor(pct, impatient)).toBeLessThanOrEqual(DEFAULT_PARAMS.decayBarsRequired)
+    }
   })
 })

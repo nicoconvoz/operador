@@ -64,6 +64,30 @@ export interface CascadeParams {
   readonly rocSmooth: number
   readonly volumeLength: number
   readonly decayBarsRequired: number
+  /**
+   * Gain above which the exit waits ONE bar less for the impulse to die, and
+   * gain above which it waits none at all. Null on both is the reference.
+   *
+   * The exit rule is "it stalled at the top, take the money", and stalling is
+   * measured as `decayBarsRequired` consecutive falling VWM bars. On an ordinary
+   * winner that patience is right: it lets the move finish instead of selling
+   * the first red candle.
+   *
+   * On a violent one it is expensive. Measured on a live position: `priceless`
+   * ran to **+84% in half an hour**, the rule waited its two falling bars, and
+   * it sold at +30%. Two thirds of the gain spent on patience the size of the
+   * move did not justify.
+   *
+   * So patience falls as the gain rises — the operator's rule, and the right
+   * shape: the more there is to lose by waiting, the less it waits. Monotone by
+   * construction, so a bigger gain can only ever SHORTEN the wait.
+   *
+   * Null by default because `DEFAULT_PARAMS` is what TradingView ran and the
+   * parity harness asserts it. Impatience is composed in production, like the
+   * ladder cap and the entry drop.
+   */
+  readonly impatientProfitPct: number | null
+  readonly urgentProfitPct: number | null
   readonly useSupertrendExit: boolean
   readonly supertrendAtrLength: number
   readonly supertrendFactor: number
@@ -118,6 +142,8 @@ export const DEFAULT_PARAMS: CascadeParams = {
   rocSmooth: 5,
   volumeLength: 10,
   decayBarsRequired: 2,
+  impatientProfitPct: null,
+  urgentProfitPct: null,
   useSupertrendExit: true,
   supertrendAtrLength: 10,
   supertrendFactor: 3.0,

@@ -71,12 +71,34 @@ export const DEFAULT_MAX_DCA_PER_TOKEN = 2
  */
 export const DEFAULT_DROP_INIT_PCT = 0
 
+/**
+ * Gains at which the exit stops waiting for the impulse to die.
+ *
+ * The reference waits `decayBarsRequired` (2) falling VWM bars always. Measured
+ * on a live position: `priceless` ran to **+84% in half an hour**, the rule
+ * waited its two bars, and it sold at +30%. Two thirds of the gain spent on
+ * patience the size of the move did not justify.
+ *
+ * At 25%, the bar that would have sold it was the one showing **+46%**.
+ *
+ * TEN and TWENTY-FIVE, and the shape matters more than the numbers: patience
+ * falls as the gain rises, because the more there is to lose by waiting, the
+ * less waiting is worth. A small winner still gets the full two bars, which is
+ * what stops the engine from selling every first red candle.
+ */
+export const DEFAULT_IMPATIENT_PROFIT_PCT = 10
+export const DEFAULT_URGENT_PROFIT_PCT = 25
+
 export interface ProductionLadder {
   readonly maxUsdPerLevel: number
   /** Entries the venue holds open at once: the entry plus its DCA rungs. */
   readonly maxOpenEntries: number
   /** Drop from the swing high the classic entry demands, in percent. */
   readonly dropInitPct: number
+  /** Gain above which the exit waits one falling bar instead of the full count. */
+  readonly impatientProfitPct: number
+  /** Gain above which it waits none at all. */
+  readonly urgentProfitPct: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -98,5 +120,7 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, DEFAULT_MAX_USD_PER_LEVEL),
     maxOpenEntries: positive(env.OPERADOR_MAX_DCA, DEFAULT_MAX_DCA_PER_TOKEN) + 1,
     dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
+    impatientProfitPct: positive(env.OPERADOR_IMPATIENT_PROFIT_PCT, DEFAULT_IMPATIENT_PROFIT_PCT),
+    urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),
   }
 }

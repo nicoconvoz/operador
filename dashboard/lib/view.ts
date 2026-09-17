@@ -43,7 +43,13 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       now,
       // The ladder the ENGINE runs, not the reference's. Drawing DEFAULT_PARAMS
       // put a $1,000 rung beside a $15 order for days.
-      params: { ...DEFAULT_PARAMS, maxUsdPerLevel: ladder.maxUsdPerLevel, dropInitPct: ladder.dropInitPct },
+      params: {
+        ...DEFAULT_PARAMS,
+        maxUsdPerLevel: ladder.maxUsdPerLevel,
+        dropInitPct: ladder.dropInitPct,
+        impatientProfitPct: ladder.impatientProfitPct,
+        urgentProfitPct: ladder.urgentProfitPct,
+      },
       maxOpenEntries: ladder.maxOpenEntries,
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.

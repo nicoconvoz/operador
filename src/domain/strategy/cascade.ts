@@ -21,6 +21,27 @@ import {
  * Pure: returns a new state and the orders to submit. It never reads a series
  * and never touches the broker — `position` is what the broker last reported.
  */
+/**
+ * Falling VWM bars the exit waits for, given how much the position is up.
+ *
+ * The reference waits `decayBarsRequired` always. That is right on an ordinary
+ * winner — it lets the move finish rather than selling the first red candle —
+ * and expensive on a violent one: `priceless` ran to +84% in half an hour and
+ * the two-bar wait handed back two thirds of it before the sale.
+ *
+ * The operator's rule, and the right shape: **the more there is to lose by
+ * waiting, the less it waits.** Monotone by construction, so a bigger gain can
+ * only ever shorten the wait and never lengthen it.
+ *
+ * Both thresholds null is the reference exactly, which is what keeps the parity
+ * harness meaningful.
+ */
+export function decayBarsFor(profitPct: number, params: CascadeParams): number {
+  if (params.urgentProfitPct !== null && profitPct >= params.urgentProfitPct) return 0
+  if (params.impatientProfitPct !== null && profitPct >= params.impatientProfitPct) return 1
+  return params.decayBarsRequired
+}
+
 export function stepCascade(
   state: CascadeState,
   params: CascadeParams,
@@ -37,8 +58,13 @@ export function stepCascade(
   // against na is false, so any na resets the count.
   const vwmFalling = ctx.vwm !== null && ctx.vwmPrev !== null && ctx.vwm < ctx.vwmPrev
   s.decayCount = vwmFalling ? s.decayCount + 1 : 0
+  // How long to wait depends on how much there is to lose. See `decayBarsFor`.
+  const profitPct =
+    position.avgPrice !== null && position.avgPrice > 0
+      ? ((bar.close - position.avgPrice) / position.avgPrice) * 100
+      : 0
   const impulseDead =
-    s.decayCount >= params.decayBarsRequired &&
+    s.decayCount >= decayBarsFor(profitPct, params) &&
     ctx.vwmLagged !== null &&
     ctx.vwmLagged > params.impulseThreshold
 

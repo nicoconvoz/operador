@@ -7,7 +7,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     // Two, not five: it halves what one token can ever cost and doubles the
     // book. Measured on $1,500 — fourteen positions at $95.09 becomes
     // twenty-nine at $47.57.
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0 })
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -16,12 +16,12 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('takes an override for either', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: '50', OPERADOR_MAX_DCA: '2' }))
-      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0 })
+      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('never expresses itself by editing the evidence', () => {
