@@ -40,6 +40,55 @@ export const EMPTY_LEDGER: PositionLedger = {
   qty: 0, deployedUsd: 0, avgCostUsd: null, realisedUsd: 0, costsUsd: 0, hasFills: false,
 }
 
+/**
+ * What each individual SALE made, keyed by the fill's idempotency key.
+ *
+ * The tape showed a sale with its price and its size and nothing about whether
+ * it was a win — which is the one thing a reader wants from a line that says
+ * VENTA. The walk that answers it already existed: `positionLedger` computes
+ * exactly this for the position as a whole and simply threw the per-sale
+ * figure away.
+ *
+ * Grouped per position, because realised profit is defined against a cost basis
+ * and a basis only means anything inside one position's own history. A sale in
+ * one token priced against another's average cost is not a smaller error than
+ * no number at all; it is a confident wrong one.
+ *
+ * Costs are NOT subtracted here. The tape already shows what the chain took as
+ * its own column, and taking it off twice would make every line disagree with
+ * the total beside it.
+ */
+export function realisedBySell(fills: readonly PersistedFill[]): ReadonlyMap<string, number> {
+  const byPosition = new Map<string, PersistedFill[]>()
+  for (const fill of fills) {
+    const existing = byPosition.get(fill.positionId)
+    if (existing) existing.push(fill)
+    else byPosition.set(fill.positionId, [fill])
+  }
+
+  const made = new Map<string, number>()
+  for (const positionFills of byPosition.values()) {
+    let qty = 0
+    let basisUsd = 0
+    for (const fill of [...positionFills].sort((a, b) => a.time - b.time)) {
+      if (fill.side === 'buy') {
+        qty += fill.qty
+        basisUsd += fill.price * fill.qty
+        continue
+      }
+      // The same cap as the ledger: a sale is the moment to be careful rather
+      // than clever, so a bad fill cannot invent profit out of thin air.
+      const sold = Math.min(fill.qty, qty)
+      if (sold <= 0) continue
+      const avg = basisUsd / qty
+      made.set(fill.idempotencyKey, sold * (fill.price - avg))
+      basisUsd -= sold * avg
+      qty -= sold
+    }
+  }
+  return made
+}
+
 export function positionLedger(fills: readonly PersistedFill[]): PositionLedger {
   if (fills.length === 0) return EMPTY_LEDGER
 

@@ -24,6 +24,27 @@ const money = (n: number, digits = 2) =>
 // Five significant figures, not two decimals: these are micro-caps, and
 // 0.0016426 shown as "0.00" makes every row of the tape the same number.
 const price = (n: number) => n.toPrecision(5)
+/**
+ * The order comments, in the interface's language.
+ *
+ * Translated HERE and never in the domain: `CloseAllOrder['comment']` is a
+ * typed union the parity harness compares against TradingView's own trade
+ * list, so `🏁 Exit` is EVIDENCE. The project's rule is that code and
+ * identifiers stay English while the interface is Spanish, and this is exactly
+ * the seam between them.
+ */
+const SPANISH: Record<string, string> = {
+  '🟢 Entry': '🟢 Entrada',
+  '🏁 Exit': '🏁 Salida',
+  '⚖️ BE Exit': '⚖️ Salida a la par',
+  '☠️ Death Exit': '☠️ Salida por muerte',
+  '❄️ Salida por congelamiento': '❄️ Salida por congelamiento',
+}
+// A DCA rung arrives as "➕ DCA-2" and needs no translating; anything unknown is
+// shown as it came rather than blanked, because an unrecognised comment is
+// still the truth about what the engine did.
+const spanish = (comment: string) => SPANISH[comment] ?? comment
+
 const stamp = (ms: number) =>
   new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
@@ -123,12 +144,25 @@ export function Registry({ view }: { view: OperationsView }) {
               </span>
               <span style={{ width: 70 }}>{fill.symbol}</span>
               <span style={{ color: DIM, width: 58 }}>{fill.orderId}</span>
-              <span style={{ color: DIM, flex: 1, minWidth: 90 }}>{fill.comment}</span>
+              <span style={{ color: DIM, flex: 1, minWidth: 90 }}>{spanish(fill.comment)}</span>
               <span style={{ width: 90, textAlign: 'right', color: DIM }}>{price(fill.price)}</span>
               <span style={{ width: 82, textAlign: 'right' }}>{money(fill.price * fill.qty)}</span>
               {/* Every number with what it cost. A P&L that hides its fees is
                   the friendliest possible lie. */}
               <span style={{ width: 62, textAlign: 'right', color: DOWN }}>−{money(fill.costUsd, 3)}</span>
+              {/* What the SALE made. A line that says VENTA and does not say
+                  whether it was a win is the one line on this screen that
+                  answers nothing. A buy gets a dash: it has made nothing yet,
+                  and a zero there would read as a trade that broke even. */}
+              <span
+                style={{
+                  width: 74,
+                  textAlign: 'right',
+                  color: fill.realisedUsd === null ? DIM : fill.realisedUsd >= 0 ? UP : DOWN,
+                }}
+              >
+                {fill.realisedUsd === null ? '—' : `${fill.realisedUsd >= 0 ? '+' : ''}${money(fill.realisedUsd)}`}
+              </span>
             </div>
           ))
         )}

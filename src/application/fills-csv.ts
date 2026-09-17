@@ -1,3 +1,4 @@
+import { realisedBySell } from './ledger.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 /**
@@ -56,6 +57,11 @@ export function fillsCsv(
     return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
   }
 
+  // What each SALE made, walked from the same fills. A tape of trades that
+  // hides the result is half a record — and the walk is the ledger's own, so
+  // the file cannot disagree with the screen about a number they both show.
+  const made = realisedBySell(fills)
+
   const rows = [...fills]
     .sort((a, b) => b.time - a.time)
     .map((fill) =>
@@ -69,9 +75,12 @@ export function fillsCsv(
         (fill.price * fill.qty).toFixed(4),
         fill.costUsd,
         cell(fill.comment ?? ''),
+        // BLANK on a buy, never zero: a zero reads as a trade that broke even,
+        // and a purchase has made nothing YET. Those are different statements.
+        made.has(fill.idempotencyKey) ? made.get(fill.idempotencyKey)!.toFixed(4) : '',
         cell(fill.positionId),
       ].join(','),
     )
 
-  return ['time,symbol,side,order,price,qty,usd,cost_usd,comment,position_id', ...rows].join('\n')
+  return ['time,symbol,side,order,price,qty,usd,cost_usd,comment,realised_usd,position_id', ...rows].join('\n')
 }

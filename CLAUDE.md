@@ -1447,6 +1447,24 @@ exported is the audit trail.
 The filename carries the range, because a folder of exports all called
 `operador-<today>.csv` is a folder nobody can tell apart a week later.
 
+**A sale says what it MADE.** The tape showed a line marked VENTA with its
+price and its size and nothing about whether it was a win — the one thing a
+reader wants from that line. `realisedBySell` keeps the per-sale figure the
+ledger was already computing and throwing away: same walk, same basis, so the
+tape cannot disagree with the total above it. A BUY shows a dash, never a zero,
+because a purchase has made nothing YET and a zero reads as a trade that broke
+even. Costs are not subtracted, since the tape already shows what the chain took
+in its own column and taking it off twice would make every line disagree with
+the header.
+
+**And the order comments are Spanish on the screen and English in the code.**
+`🏁 Exit` is a typed member of `CloseAllOrder['comment']` that the parity harness
+compares against TradingView's own trade list — it is EVIDENCE, not a label. So
+the translation lives in `registry.tsx`, which is exactly the seam the project's
+own rule describes: the interface is Spanish, and code, identifiers and comments
+stay English. An unrecognised comment is shown as it came rather than blanked,
+because it is still the truth about what the engine did.
+
 Two details in `fills-csv.ts` that matter more than they look. The price is
 written at **full precision**, because these are micro-caps and 0.0016426 at two
 decimals is 0.00 — a tape of identical zeroes is worse than no file. And a fill

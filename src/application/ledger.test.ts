@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { commonFund, positionLedger } from './ledger.js'
+import { realisedBySell, commonFund, positionLedger } from './ledger.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
@@ -75,5 +75,53 @@ describe('commonFund — what the system has made and can spend', () => {
       fill('p', 'sell', 1.01, 10, NOW - 100, 0.5),
     ])
     expect(fund.netUsd).toBeLessThan(0)
+  })
+})
+
+describe('realisedBySell — what a single sale actually made', () => {
+  it('reports the gain of each sale against the basis it sold out of', () => {
+    // The tape showed a sale with its price and its size and nothing about
+    // whether it was a WIN. That is the one thing a reader wants from a line
+    // that says VENTA, and the ledger already walks every fill to compute it
+    // for the position as a whole — it simply never kept the per-sale figure.
+    const made = realisedBySell([
+      fill('p1', 'buy', 0.010, 1_000, 1),
+      fill('p1', 'buy', 0.008, 1_000, 2),
+      fill('p1', 'sell', 0.012, 2_000, 3),
+    ])
+    // Average cost is 0.009, sold 2,000 at 0.012 → +$6.
+    expect(made.get('p1:sell:3')).toBeCloseTo(6, 6)
+  })
+
+  it('prices a PARTIAL sale against the average, not against the last buy', () => {
+    const made = realisedBySell([
+      fill('p1', 'buy', 0.010, 1_000, 1),
+      fill('p1', 'buy', 0.008, 1_000, 2),
+      fill('p1', 'sell', 0.012, 1_000, 3),
+    ])
+    expect(made.get('p1:sell:3')).toBeCloseTo(3, 6)
+  })
+
+  it('says nothing about a BUY, because a purchase has made nothing yet', () => {
+    const made = realisedBySell([fill('p1', 'buy', 0.01, 1_000, 1)])
+    expect(made.has('p1:buy:1')).toBe(false)
+  })
+
+  it('reports a loss as a loss', () => {
+    const made = realisedBySell([
+      fill('p1', 'buy', 0.010, 1_000, 1),
+      fill('p1', 'sell', 0.004, 1_000, 2),
+    ])
+    expect(made.get('p1:sell:2')).toBeCloseTo(-6, 6)
+  })
+
+  it('keeps each position on its own basis', () => {
+    // A sale in one token cannot be priced against another's average cost.
+    const made = realisedBySell([
+      fill('p1', 'buy', 0.010, 1_000, 1),
+      fill('p2', 'buy', 0.100, 1_000, 2),
+      fill('p1', 'sell', 0.012, 1_000, 3),
+    ])
+    expect(made.get('p1:sell:3')).toBeCloseTo(2, 6)
   })
 })

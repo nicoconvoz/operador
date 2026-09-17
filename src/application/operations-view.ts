@@ -1,7 +1,7 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
-import { commonFund, positionLedger } from './ledger.js'
+import { realisedBySell, commonFund, positionLedger } from './ledger.js'
 import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -97,7 +97,18 @@ export interface OperationsView {
   readonly generatedAt: number
   readonly positions: readonly PositionOperations[]
   /** Newest first, across every position. The tape. */
-  readonly recentFills: readonly (PersistedFill & { readonly symbol: string })[]
+  readonly recentFills: readonly (PersistedFill & {
+    readonly symbol: string
+    /**
+     * What this SALE made, against the basis it sold out of. Null on a buy,
+     * which has made nothing yet.
+     *
+     * Costs are not subtracted: the tape shows what the chain took in its own
+     * column, and taking it off twice would make every line disagree with the
+     * total beside it.
+     */
+    readonly realisedUsd: number | null
+  })[]
   readonly totals: {
     readonly deployedUsd: number
     readonly marketValueUsd: number
@@ -167,7 +178,9 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   const symbolOf = new Map(positions.map((p) => [p.id, p.symbol]))
 
   const built: PositionOperations[] = []
-  const tape: (PersistedFill & { symbol: string })[] = allFills.map((fill) => ({
+  const made = realisedBySell(allFills)
+  const tape: (PersistedFill & { symbol: string; realisedUsd: number | null })[] = allFills.map((fill) => ({
+    realisedUsd: made.get(fill.idempotencyKey) ?? null,
     ...fill,
     // A departed position left no symbol behind. Its id is `chain:address:at`,
     // and the address is more use than a blank.

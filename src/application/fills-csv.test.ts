@@ -3,6 +3,7 @@ import { fillsCsv, fillsInRange } from './fills-csv.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
+const chr10 = () => String.fromCharCode(10)
 
 const fill = (over: Partial<PersistedFill> = {}): PersistedFill => ({
   positionId: 'p1', orderId: 'Entry', side: 'buy', time: NOW, price: 0.0016426,
@@ -29,6 +30,26 @@ describe('fillsCsv — the tape that does not fit on a phone', () => {
     // 0.0016426 is a real price from the book. Rendered as "0.00" the file is
     // worse than no file: every row of a micro-cap tape becomes the same number.
     expect(fillsCsv([fill()], () => 'DREGG')).toContain('0.0016426')
+  })
+
+  it('carries what each SALE made, because a tape of trades that hides the result is half a record', () => {
+    const csv = fillsCsv(
+      [fill({ side: 'buy', price: 0.01, qty: 1_000, time: NOW - 1000, idempotencyKey: 'b' }),
+       fill({ side: 'sell', price: 0.012, qty: 1_000, time: NOW, idempotencyKey: 's' })],
+      () => 'D',
+    )
+    expect(csv.split(chr10())[0]).toContain('realised_usd')
+    // Bought 1,000 at 0.01 and sold them at 0.012 → +$2.
+    expect(csv).toContain('2.0000')
+  })
+
+  it('leaves the result blank on a BUY rather than writing a zero', () => {
+    // A zero reads as a trade that broke even. A purchase has made nothing yet,
+    // which is a different statement and the file has to keep them apart.
+    const csv = fillsCsv([fill({ side: 'buy', idempotencyKey: 'b' })], () => 'D')
+    const [header, row] = csv.split(chr10())
+    const column = header!.split(',').indexOf('realised_usd')
+    expect(row!.split(',')[column]).toBe('')
   })
 
   it('quotes a comment that contains a comma instead of inventing a column', () => {
