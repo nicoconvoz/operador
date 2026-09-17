@@ -500,6 +500,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // So a pass can tell whether a position has a new bar to look at before
       // paying a throttled request to find out.
       barMs: config.barSize.timeframe === 'hour' ? 60 * 60 * 1000 : (config.barSize.aggregate ?? 1) * 60_000,
+      // Recover the funds instead of holding a position that can neither buy
+      // nor sell. The token is not blacklisted: it goes back to the filtered
+      // pile and may be bought again the day it recovers.
+      exitOnFreeze: config.exitOnFreeze,
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
       idleSlots: {

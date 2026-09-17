@@ -262,6 +262,39 @@ const record = (
 export const DEATH_EXIT_COMMENT = '☠️ Death Exit' as const
 
 /**
+ * Leaving on a FREEZE, not on a death.
+ *
+ * Its own comment because the audit log has to name the true reason, and the
+ * two are not the same event. A death exit is terminal and blacklists the token
+ * forever; this one does neither — the token goes back to being merely
+ * FILTERED, and may be bought again the day it recovers.
+ */
+export const FROZEN_EXIT_COMMENT = '❄️ Salida por congelamiento' as const
+
+export interface DeathVerdictOptions {
+  /**
+   * Sell the whole position the moment the ladder freezes, instead of holding
+   * it while the signals are confirmed or cleared.
+   *
+   * **The operator's decision, taken knowing what it costs.** It collapses the
+   * graded response the two stages exist for: a freeze fires on ONE reading,
+   * with no confirmation, so a provider that blinks liquidates a healthy
+   * position at a loss — which is precisely the false positive
+   * `exitConfirmations` was written to prevent. And a freeze is reversible by
+   * design, while a sale is not.
+   *
+   * What it buys is the thing that went wrong in production: six positions sat
+   * frozen with their capital unreachable, unable to buy because frozen and
+   * unable to sell because the strategy's own exit needs a profit it will never
+   * reach. Recovering the funds beats holding them for a recovery nobody can
+   * promise.
+   *
+   * Off by default. Turning it on is a policy decision, never a drift.
+   */
+  readonly exitOnFreeze?: boolean
+}
+
+/**
  * What the executor does with the strategy's orders given the watch stage.
  *
  *  healthy → orders pass through untouched
@@ -274,11 +307,18 @@ export function applyDeathVerdict(
   orders: readonly Order[],
   stage: DeathStage,
   inPosition: boolean,
+  options: DeathVerdictOptions = {},
 ): readonly Order[] {
   switch (stage) {
     case 'healthy':
       return orders
     case 'frozen':
+      // Nothing held is nothing to sell: a frozen RESERVATION is handed back by
+      // the allocator, and a closeAll against an empty broker is an order
+      // nobody can fill.
+      if (options.exitOnFreeze === true) {
+        return inPosition ? [{ kind: 'closeAll', comment: FROZEN_EXIT_COMMENT }] : []
+      }
       return orders.filter((o) => o.kind !== 'entry')
     case 'dead':
       return inPosition ? [{ kind: 'closeAll', comment: DEATH_EXIT_COMMENT }] : []

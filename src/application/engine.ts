@@ -1,5 +1,5 @@
 import { type AlertPort, AlertThrottle, alert } from '../domain/notifications/alerts.js'
-import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_EXIT_COMMENT, type AssetHealthObservation, type DeathExitPolicy } from '../domain/risk/death-exit.js'
+import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT, type AssetHealthObservation, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { idempotencyKeyFor, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { stepCascade } from '../domain/strategy/cascade.js'
 import { computeSignals, type Signals } from '../domain/strategy/signals.js'
@@ -40,6 +40,20 @@ export interface TickInput {
 export interface EngineConfig {
   readonly params: CascadeParams
   readonly deathPolicy?: DeathExitPolicy
+  /**
+   * Sell the whole position the moment its ladder freezes.
+   *
+   * The operator's decision: recover the funds and put them into another token
+   * rather than hold a position that cannot buy — frozen blocks entries — and
+   * cannot sell, because the strategy's own exit wants a profit it will never
+   * reach. Six positions sat exactly like that.
+   *
+   * The cost is real and is written down in `DeathVerdictOptions`: it collapses
+   * the graded response into one stage, so a single bad reading liquidates
+   * instead of pausing. The token is NOT blacklisted — it goes back to being
+   * merely filtered and may be bought again.
+   */
+  readonly exitOnFreeze?: boolean
   readonly sizing?: SizingPolicy
   /** Needed to reserve gas out of the position's capital before sizing. */
   readonly gasUsdPerSwap?: number
@@ -327,7 +341,9 @@ async function advanceOneBar(
 
   // ── 3. The death watch gets the last word ──────────────────────────────────
   const inPosition = beforeStrategy.size > 0
-  const afterDeath = applyDeathVerdict(stepped.orders, deathWatch.stage, inPosition)
+  const afterDeath = applyDeathVerdict(stepped.orders, deathWatch.stage, inPosition, {
+    ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
+  })
   // A pool too thin to size against must not trap the money already in it:
   // entries stop, exits never do.
   const orders = walk.tradeable ? afterDeath : afterDeath.filter((o) => o.kind !== 'entry')
@@ -384,7 +400,11 @@ async function advanceOneBar(
  */
 function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: number): boolean {
   if (order.kind !== 'closeAll') return false
-  if (order.comment === DEATH_EXIT_COMMENT) return false
+  // Neither exit may be blocked by the no-loss rule, and for the same reason:
+  // both leave because the ASSET stopped working, not because the price fell.
+  // A guard that held them would hold exactly the positions that most need to
+  // get out.
+  if (order.comment === DEATH_EXIT_COMMENT || order.comment === FROZEN_EXIT_COMMENT) return false
   // Nothing held, so no cost basis and no loss to make.
   if (avgPrice === null) return false
   return fillPrice < avgPrice

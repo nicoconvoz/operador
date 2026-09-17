@@ -73,6 +73,20 @@ export interface RuntimeConfig {
    */
   readonly maxSecurityChecks: number | null
   /**
+   * Sell a position the moment its ladder freezes, instead of holding it.
+   *
+   * The operator's decision, and it is a real departure from the reference: a
+   * freeze fires on ONE reading, so this liquidates where the two-stage design
+   * would have paused and asked for confirmation. What it buys is the failure
+   * that actually happened — six positions frozen with their capital
+   * unreachable, unable to buy because frozen and unable to sell because the
+   * strategy's own exit wants a profit it will never reach.
+   *
+   * The token is NOT blacklisted: only a death verdict does that. It goes back
+   * to being merely filtered and may be bought again the day it recovers.
+   */
+  readonly exitOnFreeze: boolean
+  /**
    * USD cap per ladder level, in production.
    *
    * NOT `DEFAULT_PARAMS.maxUsdPerLevel`, which is 5,000 because that is what
@@ -157,6 +171,18 @@ const numberOrZero = (env: Env, key: string, fallback: number): number => {
   return value
 }
 
+/**
+ * A switch that is ON unless it is explicitly turned off.
+ *
+ * Only '0', 'false' and 'no' turn it off. A typo leaves it ON, which is the
+ * safe direction for a switch whose job is to recover capital: the failure it
+ * guards against is money stuck in a position nobody can trade.
+ */
+const onUnless = (env: Env, key: string): boolean => {
+  const raw = env[key]?.trim().toLowerCase()
+  return !(raw === '0' || raw === 'false' || raw === 'no')
+}
+
 const number = (env: Env, key: string, fallback: number): number => {
   const raw = env[key]?.trim()
   if (!raw) return fallback
@@ -226,6 +252,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // every position it could have opened. A value that means one thing here and
     // its opposite there is not a sentinel, it is a trap.
     maxSecurityChecks: env.OPERADOR_MAX_SECURITY_CHECKS?.trim() ? number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 0) : null,
+    exitOnFreeze: onUnless(env, 'OPERADOR_EXIT_ON_FREEZE'),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),

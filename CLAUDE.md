@@ -515,6 +515,42 @@ wearing the rule's own clothes.
 Four honest readings beat eight where half are guesses: **confirmations built
 on invented data confirm nothing while looking exactly like proof.**
 
+#### Leaving on a freeze — the operator's decision, and what it costs
+
+`OPERADOR_EXIT_ON_FREEZE` (**on by default**) sells the whole position the
+moment its ladder freezes, instead of holding it while the signals confirm or
+clear.
+
+**It is a real departure from the reference and the cost is stated, not
+hidden.** A freeze fires on ONE reading with no confirmation, so this liquidates
+where the two-stage design would have paused and asked — the exact false
+positive `exitConfirmations: 3` was written to prevent. And a freeze is
+reversible by design; a sale is not.
+
+What it buys is the failure that actually happened. Six positions sat frozen
+with their capital unreachable: **unable to buy, because frozen blocks entries,
+and unable to sell, because the strategy's own exit wants a profit the token was
+never going to reach.** Recovering the funds beats holding them for a recovery
+nobody can promise.
+
+Three things keep it from being a stop loss in disguise:
+
+- **Price still cannot cause it.** The freeze comes from `AssetHealthObservation`,
+  which is typed so no price-shaped field can exist on it. What sells the
+  position is liquidity, an authority, an LP, a broken sell path or silence —
+  never a number on a chart.
+- **The token is NOT blacklisted.** Only a death verdict does that. It goes back
+  to being merely FILTERED and may be bought again the day it recovers, which is
+  the operator's own framing: *"esa moneda pasa a las filtradas"*.
+- **It carries its own comment**, `❄️ Salida por congelamiento`, typed into
+  `CloseAllOrder` beside the death exit rather than passed as a string. The
+  no-loss guard tells the four exits apart in the TYPE system: the two strategy
+  exits may not fill below average cost, and the risk layer's two must.
+
+The slot follows on its own. Once sold, the position holds nothing and is still
+frozen — which `idle-slots` releases at once, so the capital is back in the
+allocator's hands in the same cycle.
+
 #### Guardrails — non-negotiable
 
 1. **Price is never a death signal.** No price decline, drawdown depth, or DCA

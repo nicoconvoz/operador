@@ -91,6 +91,8 @@ export interface CycleConfig {
   readonly params: CascadeParams
   readonly portfolio: PortfolioPolicy
   readonly deathPolicy?: DeathExitPolicy
+  /** Sell a position the moment its ladder freezes, instead of holding it. */
+  readonly exitOnFreeze?: boolean
   /** Passed to the tick, which sizes each position's ladder against them. */
   readonly gasUsdPerSwap?: number
   readonly maxOpenEntries?: number
@@ -216,6 +218,7 @@ export async function runCycle(
       {
         params: config.params,
         ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
+        ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
         ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
         ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
         ...(config.sizing ? { sizing: config.sizing } : {}),

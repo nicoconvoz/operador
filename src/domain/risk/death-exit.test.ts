@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
+  DEATH_EXIT_COMMENT,
   DEFAULT_DEATH_EXIT_POLICY as P,
+  FROZEN_EXIT_COMMENT,
   applyDeathVerdict,
   assessAssetHealth,
   evaluateSignals,
@@ -231,5 +233,43 @@ describe('death exit — policy sanity', () => {
     const gateHours = 1
     expect(P.abandonmentFreezeHours).toBeLessThanOrEqual(gateHours * 4)
     expect(P.abandonmentExitHours).toBeLessThan(24)
+  })
+})
+
+describe('applyDeathVerdict — a freeze that leaves instead of waiting', () => {
+  it('sells the whole position the moment the ladder freezes, when told to', () => {
+    // The operator's decision, made knowing the cost: a freeze now RECOVERS the
+    // funds instead of holding them. It collapses the graded response the two
+    // stages were built for — a single bad reading liquidates rather than
+    // pausing — and that is the trade they chose after six positions sat frozen
+    // with their capital unreachable.
+    const orders = applyDeathVerdict([{ kind: 'entry', id: 'DCA-1', level: 1, usd: 15, qty: 100, comment: 'x' }], 'frozen', true, { exitOnFreeze: true })
+    expect(orders).toEqual([{ kind: 'closeAll', comment: FROZEN_EXIT_COMMENT }])
+  })
+
+  it('does NOT carry the death exit’s comment, because it is not a death', () => {
+    // The audit log has to name the true reason. A death exit is terminal and
+    // blacklists the token forever; this one does neither — the token goes back
+    // to being merely filtered, and may be bought again the day it recovers.
+    const orders = applyDeathVerdict([], 'frozen', true, { exitOnFreeze: true })
+    expect(orders[0]!.comment).not.toBe(DEATH_EXIT_COMMENT)
+  })
+
+  it('has nothing to sell when the position holds nothing', () => {
+    // A frozen RESERVATION is handed back by the allocator, not sold. Emitting
+    // a closeAll against an empty broker would be an order nobody can fill.
+    expect(applyDeathVerdict([], 'frozen', false, { exitOnFreeze: true })).toEqual([])
+  })
+
+  it('still only pauses when the option is off', () => {
+    // The default stays the reference behaviour: freezing stops new capital and
+    // lets the strategy's own exits through. Turning this on is a policy
+    // decision, never a drift.
+    const strategyExit: Order = { kind: 'closeAll', comment: '🏁 Exit' }
+    expect(applyDeathVerdict([strategyExit], 'frozen', true)).toEqual([strategyExit])
+  })
+
+  it('a death still wins over a freeze exit', () => {
+    expect(applyDeathVerdict([], 'dead', true, { exitOnFreeze: true })[0]!.comment).toBe(DEATH_EXIT_COMMENT)
   })
 })

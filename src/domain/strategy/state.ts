@@ -113,8 +113,14 @@ export type EntryOrder = {
 
 export type CloseAllOrder = {
   readonly kind: 'closeAll'
-  /** The two strategy exits, plus the risk layer's death exit (see domain/risk). */
-  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit'
+  /**
+   * The two strategy exits, plus the risk layer's two (see domain/risk).
+   *
+   * A union rather than a string, so the no-loss guard can tell them apart in
+   * the TYPE system: a strategy exit may not fill below average cost, and the
+   * risk layer's two must, because they leave for a reason that is not price.
+   */
+  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit' | '❄️ Salida por congelamiento'
 }
 
 export type Order = EntryOrder | CloseAllOrder
