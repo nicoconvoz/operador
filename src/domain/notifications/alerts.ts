@@ -25,6 +25,7 @@ export type AlertKind =
   | 'heartbeat'
   | 'scan-empty'
   | 'provider-degraded'
+  | 'entry-refused'
 
 export interface Alert {
   readonly kind: AlertKind
@@ -62,6 +63,13 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   heartbeat: 'info',
   'scan-empty': 'warn',
   'provider-degraded': 'warn',
+  // INFO, and the level is the point. A refused entry is an opportunity not
+  // taken: nothing was bought, no money is at stake, and nothing needs doing
+  // tonight. It arrived as a `warn` per token, so a cycle that declined a
+  // dozen candidates buzzed a dozen times — and a phone that buzzes for
+  // opportunities is a phone whose notifications get turned off, after which
+  // the death exit does not arrive either.
+  'entry-refused': 'info',
 }
 
 export const alert = (kind: AlertKind, title: string, body: string, at: number, data?: Record<string, unknown>): Alert => ({

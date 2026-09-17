@@ -293,6 +293,41 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
   return { passed: failures.length === 0, failures }
 }
 
+/**
+ * What must STILL hold at the moment capital moves — and nothing else.
+ *
+ * `evaluateGates` answers two different questions at once, and re-asking both
+ * before a buy was a mistake that cost the book most of its positions.
+ *
+ *  - **Is this token dangerous?** honeypot, authorities, LP, holders, tax,
+ *    proxy, denylist, impersonation — and whether there is a way OUT, which is
+ *    liquidity and measured impact. These turn between the scan and the buy,
+ *    each one costs real money, and every one of them is re-asked here.
+ *
+ *  - **Is this token WORTH buying?** freefall, turnover, hourly trades, volume,
+ *    FDV, age, history. The scanner already answered that, against a universe
+ *    of nine hundred, minutes ago.
+ *
+ * Re-arguing the second question at the door refuses entries for the ordinary
+ * motion the strategy exists to harvest. On a DEX the price moves WHILE the
+ * order is placed — somebody else's buy moves it, and ours moves it too — so a
+ * token that slipped past the freefall threshold between being chosen and being
+ * bought has not become dangerous. **It has become cheaper, which is the entire
+ * premise of a DCA ladder.** Reported live: an alert log full of
+ * "cambió antes de comprar" while eight positions traded and hundreds of
+ * candidates waited outside.
+ *
+ * The safety half keeps failing CLOSED, exactly as before. An unknown honeypot
+ * answer or an unreadable authority is still a refusal — a token nobody can
+ * vouch for at the moment of purchase is not bought.
+ */
+export function evaluateSafetyGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
+  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history'])
+  const { failures } = evaluateGates(snapshot, policy)
+  const kept = failures.filter((failure) => !opportunityOnly.has(failure.gate))
+  return { passed: kept.length === 0, failures: kept }
+}
+
 export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
   const s = snapshot.security
   const failures: GateFailure[] = []

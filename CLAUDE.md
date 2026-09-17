@@ -210,6 +210,38 @@ It is enforced in two places, and both are needed:
 - **`confirmEntry`** asks again at the door, because the shortlist can be an
   hour old and this is the moment capital moves.
 
+### Safety is re-asked at the door; the OPPORTUNITY is not
+
+`confirmEntry` first ran the whole gate set, and that conflated two different
+questions:
+
+| | Question | Re-asked before buying? |
+|---|---|---|
+| honeypot, authorities, LP, holders, tax, proxy, denylist, impersonation, liquidity, impact, staleBars | **Is this dangerous?** | **Yes.** These turn between the scan and the buy, and every one costs real money. |
+| freefall, turnover, hourly trades, volume, FDV, age, history | **Is this worth buying?** | **No.** The scanner answered it against a universe of nine hundred, minutes ago. |
+
+Re-arguing the second one at the door refuses entries for **the ordinary motion
+the strategy exists to harvest**. On a DEX the price moves WHILE the order is
+placed — somebody else's buy moves it, and ours moves it too — so a token that
+slipped past the freefall threshold between being chosen and being bought has
+not become dangerous. It has become cheaper, which is the premise of a DCA
+ladder.
+
+Reported live, and it is what the mistake looked like from outside: an alert log
+full of *"cambió antes de comprar"* while **eight positions traded and hundreds
+of candidates waited outside**.
+
+`evaluateSafetyGates` is the half that still runs, and it still fails CLOSED: an
+unknown honeypot answer or an unreadable authority is a refusal, because a token
+nobody can vouch for at the moment of purchase is not bought.
+
+**And the refusals are ONE `info` line per cycle, not a warning each.** A
+refused entry is an opportunity not taken: nothing was bought, no money is at
+stake, and nothing needs doing tonight. As a per-token `warn` a cycle that
+declined a dozen candidates buzzed a dozen times — and a phone that buzzes for
+opportunities is a phone whose notifications get turned off, after which the
+death exit does not arrive either.
+
 One hour is the threshold, argued rather than picked: it matches
 `minHourlyTxns`'s own window, and it leaves the three-hour abandonment freeze
 clear room. Admitting a token whose newest bar is already two hours old is

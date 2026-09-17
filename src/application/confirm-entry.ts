@@ -1,4 +1,4 @@
-import { evaluateGates, type GateFailure, type GatePolicy } from '../domain/scanner/gates.js'
+import { evaluateSafetyGates, type GateFailure, type GatePolicy } from '../domain/scanner/gates.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 
 /**
@@ -93,9 +93,21 @@ export async function confirmEntry(
   // we buy it is one we cannot size a ladder against either.
   if (!fresh) return { ok: false, reason: 'unreadable', detail: 'no market data' }
 
-  // The FULL set, not the market half. The whole reason for looking again is
-  // the security answers, which are the ones the cache was holding.
-  const verdict = evaluateGates(fresh, policy)
+  // The SAFETY half, and deliberately not the whole set.
+  //
+  // The reason to look again is "did this become dangerous" — an authority
+  // back, an LP unlocked, a pool drained, a sell path closed. It is not "is
+  // this still the most attractive entry": the scanner answered that against a
+  // universe of nine hundred, minutes ago.
+  //
+  // Re-arguing the opportunity here refused entries for the ordinary motion the
+  // ladder exists to harvest. On a DEX the price moves WHILE the order is
+  // placed — somebody else's buy moves it, ours moves it too — so a token that
+  // slipped past the freefall threshold since being chosen has not become
+  // dangerous, it has become cheaper. Reported live: an alert log full of
+  // "cambió antes de comprar" while eight positions traded and hundreds of
+  // candidates waited outside.
+  const verdict = evaluateSafetyGates(fresh, policy)
   if (!verdict.passed) return { ok: false, reason: 'gates', failures: verdict.failures }
 
   // AFTER the gates, never before: a token that already fails is not worth a

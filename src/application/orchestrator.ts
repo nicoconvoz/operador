@@ -230,6 +230,8 @@ export async function runCycle(
   // ── 3. Open new positions with what is genuinely free ──────────────────────
   const opened: PersistedPosition[] = []
   const releasedIds: string[] = []
+  /** Entries the last look declined, summarised ONCE at the end of the cycle. */
+  const refused: { symbol: string; why: string }[] = []
   if (!recovery.killSwitchEngaged) {
     // A watch pass does not RUN a scan. It reads the last one off the shelf and
     // re-ranks it, which costs nothing: the expensive half of a scan is
@@ -435,25 +437,18 @@ export async function runCycle(
         if (deps.confirmEntry) {
           const confirmation = await deps.confirmEntry(allocation.snapshot)
           if (!confirmation.ok) {
-            // WHY it was refused, because the two reasons ask for different
-            // things from whoever reads it. A gate that turned is the system
-            // working — the token changed between the scan and the buy, which
-            // is exactly what this check exists to catch. A provider that could
-            // not answer is the system blind, and if it keeps happening the
-            // book stops growing for a reason nobody would guess from "no se
-            // abre la posición".
-            const why =
-              confirmation.reason === 'gates'
-                ? confirmation.failures.map((f) => f.detail).slice(0, 2).join(' · ')
-                : `No se pudo verificar: ${confirmation.detail}`
-            const refused = alert(
-              'provider-degraded',
-              `⚠️ ${allocation.snapshot.symbol} cambió antes de comprar`,
-              `${why}. No se abre la posición.`,
-              at,
-              { token: allocation.snapshot.address, reason: confirmation.reason },
-            )
-            if (throttle.shouldSend(refused, `unconfirmed:${allocation.snapshot.address}`)) await deps.alerts.send(refused)
+            // Collected, not announced. One refusal per token meant a cycle
+            // that declined a dozen candidates sent a dozen warnings — and a
+            // phone that buzzes for opportunities NOT taken is a phone whose
+            // notifications get turned off, after which the death exit does not
+            // arrive either.
+            refused.push({
+              symbol: allocation.snapshot.symbol,
+              why:
+                confirmation.reason === 'gates'
+                  ? confirmation.failures.map((f) => f.detail).slice(0, 1).join('')
+                  : confirmation.detail,
+            })
             continue
           }
         }
@@ -486,6 +481,24 @@ export async function runCycle(
         opened.push(position)
       }
     }
+  }
+
+  // ONE line for everything the last look declined, not one alert each.
+  //
+  // A refused entry is an opportunity not taken: nothing was bought and no
+  // money is at stake, so it is `info` and it never becomes a notification. It
+  // used to be a per-token WARNING, so a cycle that declined a dozen candidates
+  // buzzed a dozen times — and a phone that buzzes for opportunities is a phone
+  // whose notifications get turned off, after which the death exit does not
+  // arrive either.
+  if (refused.length > 0) {
+    await deps.alerts.send(alert(
+      'entry-refused',
+      `🔍 ${refused.length} entrada(s) descartada(s) en el último chequeo`,
+      refused.slice(0, 8).map((r) => `${r.symbol}: ${r.why}`).join('\n'),
+      at,
+      { refused: refused.length },
+    ))
   }
 
   // ── 4. Checkpoint, then say you are alive ──────────────────────────────────

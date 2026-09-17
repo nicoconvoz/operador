@@ -225,7 +225,13 @@ describe('runCycle — the chosen token is re-examined before money moves', () =
     // at the moment capital is committed.
     expect(asked.length).toBeGreaterThan(0)
     expect(await deps.store.loadPositions()).toEqual([])
-    expect(alerts.sent.some((a) => a.kind === 'provider-degraded')).toBe(true)
+    // INFO and once, not a warning per token. A refused entry is an
+    // opportunity not taken: nothing was bought and no money is at stake, so a
+    // phone must not buzz for it — and a cycle that declines a dozen candidates
+    // must not buzz twelve times.
+    const refusals = alerts.sent.filter((a) => a.kind === 'entry-refused')
+    expect(refusals).toHaveLength(1)
+    expect(refusals[0]!.level).toBe('info')
   })
 
   it('says WHICH gate turned, not just that something did', async () => {

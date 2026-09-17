@@ -98,14 +98,29 @@ describe('confirmEntry — the last look before the money moves', () => {
     expect(out.ok).toBe(false)
   })
 
-  it('refuses a token that stopped trading since the scan', async () => {
-    // The user's rule at the door as well as at the exit: activity is the point.
+  it('does NOT refuse a token whose price moved since the scan', async () => {
+    // The operator's point, and it is right. On a DEX the price moves WHILE the
+    // order is placed. A token that slipped past the freefall threshold between
+    // being chosen and being bought has not become dangerous — it has become
+    // cheaper, which is the premise of the ladder.
+    const out = await confirmEntry(
+      'Mint1',
+      async () => healthy({ priceChangePct: { h1: -60, h6: -55, h24: -65 } }),
+      DEFAULT_GATE_POLICY,
+    )
+    expect(out.ok).toBe(true)
+  })
+
+  it('does NOT refuse a token that got quieter since the scan', async () => {
+    // Activity is the scanner's selection call, made against a universe. At the
+    // door there is no universe to compare against — and the bar-freshness
+    // check below is the one that answers "can we still trade it at all".
     const out = await confirmEntry(
       'Mint1',
       async () => healthy({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } }),
       DEFAULT_GATE_POLICY,
     )
-    expect(out.ok).toBe(false)
+    expect(out.ok).toBe(true)
   })
 
   it('refuses rather than guesses when the provider throws', async () => {

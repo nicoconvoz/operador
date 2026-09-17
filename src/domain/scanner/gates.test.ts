@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { minAgeForHistory, DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
+import { minAgeForHistory, evaluateSafetyGates, DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
 const HOUR = 3_600_000
@@ -460,5 +460,57 @@ describe('minAgeForHistory — the cheapest rejection is the one that needs no r
     // that has existed for a day. This raises it to what history needs; it must
     // not lower it if someone deliberately demands more.
     expect(Math.max(DEFAULT_GATE_POLICY.minAgeHours, minAgeForHistory(250, 15))).toBe(62.5)
+  })
+})
+
+describe('evaluateSafetyGates — what must still hold at the moment capital moves', () => {
+  it('still refuses a token that became unsafe', () => {
+    // The whole reason to look again. A mint authority that came back, an LP
+    // that unlocked, a pool that drained, a sell path that closed — these are
+    // the answers that turn between the scan and the buy, and every one of them
+    // costs real money.
+    const verdict = evaluateSafetyGates(clean({}, { mintAuthorityActive: true }), DEFAULT_GATE_POLICY)
+    expect(verdict.passed).toBe(false)
+    expect(verdict.failures.map((f) => f.gate)).toContain('mintAuthority')
+  })
+
+  it('does NOT re-argue the opportunity: a price that moved is not a reason to walk away', () => {
+    // The operator's point, and it is right. On a DEX the price moves WHILE we
+    // buy — somebody else's order moves it, and ours moves it too. A token that
+    // dipped past the freefall threshold between being chosen and being bought
+    // has not become dangerous; it has become cheaper, which is the entire
+    // premise of a DCA ladder.
+    //
+    // The scanner already decided this token was worth trading. Asking that
+    // question again at the door means refusing entries for the ordinary
+    // motion the strategy exists to harvest — and it filled the alert log
+    // while the book sat at eight positions.
+    const crashed = clean({ priceChangePct: { h1: -60, h6: -55, h24: -65 } })
+    expect(evaluateGates(crashed, DEFAULT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(crashed, DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('does not re-argue activity either', () => {
+    // Turnover, hourly trades and volume are the scanner's selection call, made
+    // on a full universe. At the door there is no universe to compare against —
+    // only this token, and whether it is safe.
+    const quiet = clean({ volumeUsd: { h1: 10, h6: 60, h24: 240 }, txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 10, sells: 8 } } })
+    expect(evaluateGates(quiet, DEFAULT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(quiet, DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('keeps refusing what is not a trade at all', () => {
+    // A denylisted or impersonating token is not an opportunity judgement, and
+    // it does not stop being true because we already decided to buy.
+    const fake = clean({ symbol: 'BTC', address: 'NotTheRealOne' })
+    expect(evaluateSafetyGates(fake, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('impersonation')
+  })
+
+  it('still refuses a pool nobody can get out of', () => {
+    // Liquidity and impact are not about attractiveness. They answer "can this
+    // position be left", which is the one question a ladder cannot survive
+    // getting wrong.
+    expect(evaluateSafetyGates(clean({ liquidityUsd: 900 }), DEFAULT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(clean({ measuredImpactPct: 40 }), DEFAULT_GATE_POLICY).passed).toBe(false)
   })
 })
