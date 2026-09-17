@@ -47,6 +47,25 @@
 -- next scan fast, and the fills are the profit. Throwing all three away to fix
 -- one of them costs a fifteen-minute cold sweep and the realised P&L for
 -- nothing.
+--
+-- BUT IT IS NOT FREE, and the cost was found the hard way. Profit on screen is
+-- `cobrada + sin cobrar − costos`:
+--
+--   COBRADA survives. It is derived by walking the whole `fills` table, which
+--   this leaves alone.
+--
+--   SIN COBRAR does not. Unrealised gain exists only while the position it sits
+--   on does, so deleting the positions deletes it — a dollar vanished exactly
+--   that way, and it looked like a bug.
+--
+--   And the deleted positions' fills STAY, with buys and no matching sells. The
+--   capital inside them is then orphaned: neither realised nor unrealised, just
+--   absent. The paper tokens are still "held" by a position that no longer
+--   exists.
+--
+-- So: cheap when the book is mostly reservations that never bought, and
+-- genuinely lossy when it is not. Download the Registro first if the history
+-- matters.
 
 -- ── Or: only forget the measurements ────────────────────────────────────────
 --
