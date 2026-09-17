@@ -175,7 +175,27 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   maxFdvUsd: 50_000_000,
   denylist: SOLANA_DENYLIST,
   canonicalSymbols: SOLANA_CANONICAL_SYMBOLS,
-  minHistoryBars: 250,
+  // ENOUGH TO ENTER, not enough for every door.
+  //
+  // 250 was calibrated for the whole indicator set, EMA-200 included, and it
+  // was the single biggest thing standing between the engine and a usable
+  // universe. Measured live on 97 priced Solana tokens: 15 cleared the free
+  // gates, and AGE ALONE blocked another 16 — age being derived from exactly
+  // this number.
+  //
+  // The EMA-200 feeds ONE thing: `trendBullish`, which arms the TREND
+  // RE-ENTRY. That is the second door, and it opens only after a sell. Every
+  // new position comes through the CLASSIC door — a 20-bar swing high inside a
+  // lateral zone — whose longest lookback is the 50-bar Bollinger basis.
+  //
+  // So 100 bars, twice what the classic entry needs. A young pool trades
+  // through the door it can reach, and the other one opens when it matures:
+  // an unconverged EMA is `na`, `trendBullish` is false, and the re-entry
+  // simply does not fire. Safe by construction rather than by luck.
+  //
+  // It carries the age gate down with it — 25 hours instead of 62.5 — because
+  // `minAgeForHistory` only ever existed to serve this.
+  minHistoryBars: 100,
   maxBarAgeHours: 1,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
   // Ten percent is already far beyond anything the 1%-per-fill and 3%-exit

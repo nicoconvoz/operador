@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { DEFAULT_PARAMS } from '../strategy/params.js'
 import { minAgeForHistory, evaluateSafetyGates, DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
@@ -143,10 +144,19 @@ describe('gates — market thresholds', () => {
     expect(failedGates(clean({ pairCreatedAt: NOW - 3 * HOUR }))).toEqual(['age:failed'])
   })
 
-  it('too little history for the indicators to exist', () => {
-    // The first capital-floor run found candidates with 38 and 105 bars.
+  it('too little history for the ENTRY indicators to exist', () => {
+    // The first capital-floor run found candidates with 38 and 105 bars, and
+    // both were refused while the threshold was 250.
+    //
+    // 105 is admitted now, deliberately. The classic entry — the only door a
+    // NEW position comes through — needs a 20-bar swing high inside a lateral
+    // zone, and its longest lookback is the 50-bar Bollinger basis. Only the
+    // trend RE-ENTRY needs EMA-200, and that door opens after a sell, by which
+    // time the pool has had time to grow into it.
+    //
+    // 38 is still refused: it cannot compute the lateral zone at all.
     expect(failedGates(clean({ historyBars: 38 }))).toEqual(['history:failed'])
-    expect(failedGates(clean({ historyBars: 105 }))).toEqual(['history:failed'])
+    expect(failedGates(clean({ historyBars: 105 }))).toEqual([])
     expect(failedGates(clean({ historyBars: 250 }))).toEqual([])
     expect(failedGates(clean({ historyBars: 1000 }))).toEqual([])
   })
@@ -512,5 +522,33 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
     // getting wrong.
     expect(evaluateSafetyGates(clean({ liquidityUsd: 900 }), DEFAULT_GATE_POLICY).passed).toBe(false)
     expect(evaluateSafetyGates(clean({ measuredImpactPct: 40 }), DEFAULT_GATE_POLICY).passed).toBe(false)
+  })
+})
+
+describe('minHistoryBars — enough to ENTER, not enough for every door', () => {
+  it('asks for what the classic entry needs, not for what the second door needs', () => {
+    // Measured on a live universe: of 97 priced Solana tokens, 15 passed the
+    // free gates and AGE ALONE blocked another 16 — the single biggest cut, and
+    // it exists only to serve this number.
+    //
+    // 250 was calibrated for the whole indicator set, EMA-200 included. But the
+    // EMA feeds exactly one thing — `trendBullish`, which arms the TREND
+    // RE-ENTRY, the second door and one that only opens after a sell. Every new
+    // position comes through the CLASSIC door, and that needs the 20-bar swing
+    // high and the lateral zone, whose longest lookback is the 50-bar
+    // Bollinger basis.
+    //
+    // A young pool is therefore tradeable long before it can use both doors,
+    // and an unconverged EMA is null, so the second door simply does not open
+    // until the pool has matured. Safe by construction rather than by luck.
+    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeGreaterThanOrEqual(DEFAULT_PARAMS.bbLength * 2)
+    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeLessThan(DEFAULT_PARAMS.trendEmaLength)
+  })
+
+  it('and the age gate follows it down, because it only ever existed to serve it', () => {
+    // 100 bars of 15m is 25 hours, against 62.5 for 250. The gate stays at its
+    // own 24h floor, which answers a different question — a pool that has
+    // existed for at least a day.
+    expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(25)
   })
 })

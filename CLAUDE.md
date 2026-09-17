@@ -651,8 +651,28 @@ Four findings, in order of how much they change the plan (1 and 3 and 4 are
    will take is part of how good the opportunity is.
 4. **Most small caps lack the history the strategy needs.** Two of five
    candidates had 38 and 105 bars; EMA-200 cannot exist there. **Fixed**: a
-   `history` gate rejects under 250 bars, fed by the candle adapter. An
+   `history` gate rejects under 100 bars, fed by the candle adapter. An
    unmeasured count stays silent — the gate fires on evidence, not on absence.
+
+   **It asked for 250 until it was measured against a live universe**, and it
+   was the single biggest thing standing between the engine and a usable
+   shortlist. Of 97 priced Solana tokens, 15 cleared the free gates and AGE
+   ALONE blocked another 16 — age being derived from exactly this number.
+
+   250 was calibrated for the whole indicator set, EMA-200 included. But the
+   EMA feeds ONE thing: `trendBullish`, which arms the TREND RE-ENTRY — the
+   second door, and one that only opens after a sell. Every new position comes
+   through the CLASSIC door, a 20-bar swing high inside a lateral zone, whose
+   longest lookback is the 50-bar Bollinger basis.
+
+   So a young pool is tradeable long before it can use both doors, and the
+   second one opens by itself as the pool matures: an unconverged EMA is `na`,
+   `trendBullish` is false, and the re-entry cannot fire. Safe by construction
+   rather than by luck.
+
+   Measured again after the change, same gates, live: **15 of 97 became 21 of
+   91** — 15% to 23% — and age-alone fell from 16 to 8. What remains is genuinely
+   too young to compute a lateral zone at all.
 
    It counted **1H** bars for months after production moved to 15m, because the
    adapter's default was never overridden — so "250 bars" quietly demanded 10.4
