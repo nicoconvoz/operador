@@ -68,9 +68,15 @@ export interface OpportunityPolicy {
   readonly headroomKneePct: number
   readonly headroomFullyRunPct: number
   /**
-   * Round-trip cost, in percent, at which cost efficiency scores zero. A full
-   * cycle pays the fill cost on the way in and the exit cost on the way out;
-   * past this the toll plausibly exceeds what a DCA cycle can produce.
+   * Round-trip cost, in percent, at which cost efficiency scores zero.
+   *
+   * DERIVED from the strategy's own exit, not picked: the normal exit sells at
+   * `avg_cost * (1 + minProfitPct)`, and `minProfitPct` is 2. A token whose
+   * round trip costs TWO of those targets has to double its own exit before it
+   * breaks even, and no entry gate can promise that.
+   *
+   * It read 6 — three targets — where a toll that had already made the cycle
+   * unprofitable still scored two thirds.
    */
   readonly worstRoundTripPct: number
 }
@@ -85,14 +91,14 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // are most of the score, deliberately. The operator's thesis: a 70% fall is
   // ruinous while a 25% gain is simply cashed, and a pool nobody trades is one
   // nobody will buy from us either.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 1.0, volatility: 0.05, momentum: 0.14, headroom: 1.14, costEfficiency: 0.2 },
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 1.0, volatility: 0.05, momentum: 0.14, headroom: 1.14, costEfficiency: 0.9 },
   fullExpansionRatio: 3,
   activityKneeTxnsPerHour: 15,
   fullActivityTxnsPerHour: 300,
   fullVolatilityPct: 20,
   headroomKneePct: 30,
   headroomFullyRunPct: 200,
-  worstRoundTripPct: 6,
+  worstRoundTripPct: 4,
 }
 
 export interface OpportunityComponents {
@@ -238,8 +244,19 @@ export function scoreOpportunity(
         ? 0
         : logHeadroom(Math.max(0, day ?? 0), policy)
 
-  // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
-  // so a token is never rewarded for a toll nobody checked.
+  // Round trip = pay to get in, pay to get out.
+  //
+  // LINEAR, deliberately, where `headroom` and `activity` are logarithmic.
+  // Those two encode a judgement — a fall hurts more than a rise helps, dead
+  // differs from alive more than busy differs from busier. This one encodes
+  // arithmetic: every basis point of toll is a basis point off the result,
+  // with no asymmetry to bend the curve around. Making it log because the
+  // last two were would be a shape borrowed rather than argued.
+  //
+  // 0.5 (neutral) when unmeasured, so a token is never rewarded for a toll
+  // nobody checked — and never condemned for one either. Silence is not
+  // evidence, and the safety gates already refuse to trade an unexamined
+  // token, so the neutral only ever affects where it sits on the screen.
   const costEfficiency = quality === null ? 0.5 : clamp01(1 - (2 * (quality.spreadPct + quality.slippagePct)) / policy.worstRoundTripPct)
 
   const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility, momentum, headroom, costEfficiency }

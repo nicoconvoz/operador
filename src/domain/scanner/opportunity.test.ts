@@ -215,13 +215,19 @@ describe('opportunity — how much room is left above it', () => {
     // the WEIGHT rather than the curve: a component moves the score only within
     // its share of the weights.
     //
-    // The ABSOLUTE number is not pinned here, and cannot be, because `activity`
-    // became a pillar of the same size afterwards — a token that has not moved
-    // but that nobody trades no longer scores in the eighties. You need both.
-    // What survives is the SPREAD, which is what the operator was buying.
+    // The ABSOLUTE number is not pinned here, and cannot be, because two more
+    // pillars arrived afterwards — `activity`, then the toll. A score is a
+    // weighted AVERAGE, so every pillar added takes share from the ones already
+    // there: headroom went 37.0% → 30.2% of the weights, and its reach fell
+    // with it. That is arithmetic, not a change of mind.
+    //
+    // What the operator actually decided survives and is asserted below: of
+    // the eight components, headroom is still the LARGEST. What survives here
+    // is the SPREAD — running all the way is still the biggest single thing
+    // that can happen to a score.
     const fresh = scoreOpportunity(rising(0), P, null, cheap).score
     const spent = scoreOpportunity(rising(P.headroomFullyRunPct), P, null, cheap).score
-    expect(fresh - spent).toBeGreaterThan(30)
+    expect(fresh - spent).toBeGreaterThan(28)
   })
 
   it('gives a FALLING token no headroom at all, not a neutral half', () => {
@@ -242,7 +248,7 @@ describe('opportunity — how much room is left above it', () => {
     const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -64 } })
     const climbing = base({ priceChangePct: { h1: 2, h6: 5, h24: 10 } })
     expect(scoreOpportunity(climbing, P, null, cheap).score - scoreOpportunity(knife, P, null, cheap).score)
-      .toBeGreaterThan(30)
+      .toBeGreaterThan(28)
   })
 
   it('is neutral when the recent window says NOTHING, which is not the same as falling', () => {
@@ -283,5 +289,55 @@ describe('opportunity — activity is the other pillar', () => {
     const dead = scoreOpportunity(traded(4), P, null, cheap).score
     const alive = scoreOpportunity(traded(300), P, null, cheap).score
     expect(alive - dead).toBeGreaterThan(25)
+  })
+})
+
+describe('opportunity — the toll a token charges is the third pillar', () => {
+  it('scores zero once the round trip eats two of the profits the exit asks for', () => {
+    // `minProfitPct` is 2: the normal exit sells at avg_cost + 2%. The zero
+    // point is DERIVED from that, not picked — a token whose round trip costs
+    // two full targets has to double its own exit just to break even, and no
+    // entry gate can promise that. It was 6%, three targets, where a toll that
+    // already made the cycle unprofitable still scored two thirds.
+    const twoTargets: MarketQuality = { ...cheap, spreadPct: 1.0, slippagePct: 1.0 }
+    expect(scoreOpportunity(base(), P, null, twoTargets).components.costEfficiency).toBe(0)
+  })
+
+  it('weighs more than volume, buy pressure, liquidity growth and volatility COMBINED', () => {
+    // At 0.2 of 3.08 the toll was 6.5% of the score: measurable, never
+    // decisive. The operator's rule — heavily penalise the ones that charge a
+    // lot, or we take losses we never had to take.
+    const w = P.weights
+    expect(w.costEfficiency).toBeGreaterThan(w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.volatility)
+  })
+
+  it('separates a cheap token from its expensive twin by more than those four can ever move', () => {
+    // Pins the INTENT rather than a number: whatever the weights become, the
+    // toll must be able to outvote everything except the two pillars.
+    const weights = Object.values(P.weights) as number[]
+    const total = weights.reduce((sum, x) => sum + x, 0)
+    const four = P.weights.volumeExpansion + P.weights.buyPressure + P.weights.liquidityGrowth + P.weights.volatility
+    const gap = scoreOpportunity(base(), P, null, cheap).score - scoreOpportunity(base(), P, null, dear).score
+    expect(gap).toBeGreaterThan((four / total) * 100)
+  })
+
+  it('ranks the three pillars in the order the operator decided them', () => {
+    // headroom ("es mas importante que todo"), then activity ("la otra pata"),
+    // then the toll ("penaliza con poco puntaje los que cobren tanto"). This is
+    // the durable statement: the absolute scale moves every time a pillar is
+    // added, the ORDER is the decision.
+    const w = P.weights
+    expect(w.headroom).toBeGreaterThan(w.activity)
+    expect(w.activity).toBeGreaterThan(w.costEfficiency)
+    for (const other of [w.volumeExpansion, w.buyPressure, w.liquidityGrowth, w.volatility, w.momentum]) {
+      expect(w.costEfficiency).toBeGreaterThan(other)
+    }
+  })
+
+  it('still does not punish a toll NOBODY measured', () => {
+    // Silence is not evidence — the rule the whole scanner runs on. Unlike a
+    // falling token, whose headroom is genuinely zero, an unmeasured toll is
+    // an absent answer and the safety gates already refuse to trade on one.
+    expect(scoreOpportunity(base(), P).components.costEfficiency).toBe(0.5)
   })
 })

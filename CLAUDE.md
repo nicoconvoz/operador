@@ -277,6 +277,62 @@ eighties. What survives from the first pillar's design is the SPREAD — running
 all the way still costs most of the score — and the test pins that rather than
 an absolute number, because the absolute now depends on the other pillar.
 
+### The third pillar: what the token charges to trade it
+
+The operator's rule, and it is arithmetic rather than taste: *penalise heavily
+the ones that charge a lot, or we take losses we never had to take.*
+
+The normal exit sells at `avg_cost * (1 + minProfitPct)`, and `minProfitPct` is
+**2**. So a round trip of 2% hands back the entire target before the trade has
+done anything, and one of 4% needs the token to double its own exit just to
+break even. `worstRoundTripPct` is **4** — two targets — and it is DERIVED from
+the strategy's own exit, like the gas floor, not picked.
+
+It read **6**, three targets, where a toll that had already made the cycle
+unprofitable still scored two thirds. And it carried a weight of 0.2 out of
+3.08: **6.5% of the score.** Measurable, never decisive.
+
+| Round trip | Efficiency | A fresh, active token then scores |
+|---|---|---|
+| 0% | 1.000 | **75.21** |
+| 0.95% — DREGG, the cheapest measured | 0.762 | 69.56 |
+| 1.59% — TROLL | 0.603 | 65.75 |
+| 3.18% — Leafy | 0.205 | 56.28 |
+| 11.62% — HEV | 0.000 | **51.40** |
+
+**LINEAR, deliberately, where the other two pillars are logarithmic.** Those
+encode a judgement — a fall hurts more than a rise helps; dead differs from
+alive more than busy differs from busier. This one encodes arithmetic: every
+basis point of toll is a basis point off the result, with no asymmetry to bend
+a curve around. Borrowing the log shape because the last two used it would be a
+shape copied rather than argued.
+
+An UNMEASURED toll stays neutral at 0.5. Silence is not evidence, and the
+safety gates already refuse to trade an unexamined token — so the neutral only
+decides where it sits on the screen, never whether money moves.
+
+### What a third pillar costs the first two
+
+A score is a weighted AVERAGE, so weight added anywhere is share taken
+everywhere. Stated rather than discovered later:
+
+| | Before | After |
+|---|---|---|
+| headroom | 1.14 — **37.0%** | 1.14 — **30.2%** |
+| activity | 1.00 — 32.5% | 1.00 — 26.5% |
+| costEfficiency | 0.20 — 6.5% | **0.90 — 23.8%** |
+| the other five | 0.74 — 24.0% | 0.74 — 19.6% |
+
+The operator's *"+200% should land at 30"* was measured against a 37% headroom
+share and cannot survive a third pillar arithmetically — the full run's spread
+fell from 37 points to just under 30. Two tests caught it, which is why they
+exist.
+
+**So the tests now pin the ORDER, which is the decision, rather than a number,
+which is a consequence.** `headroom > activity > costEfficiency > everything
+else` is exactly the sequence the operator argued for, one pillar at a time,
+and it is the statement that survives the next one.
+
 ### Activity, measured against the pool
 
 `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell $10k
