@@ -893,9 +893,7 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
         </span>
         <span style={{ color: '#8b949e', fontSize: 15 }}>/ 100</span>
         <span style={{ flex: 1 }} />
-        <span style={{ color: '#8b949e', fontSize: 11, textAlign: 'right', maxWidth: 120, lineHeight: 1.3 }}>
-          puntaje del último ciclo
-        </span>
+        <span style={{ color: '#8b949e', fontSize: 12 }}>Puntaje</span>
       </div>
 
       <div style={{ marginTop: 12, marginBottom: 6, color: '#8b949e', fontSize: 12 }}>por qué este puntaje</div>
