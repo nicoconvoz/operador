@@ -314,20 +314,32 @@ describe('gates — a token in freefall is not an opportunity', () => {
     expect(failure!.detail).toContain('6h')
   })
 
-  it('leaves a hard but survivable drop alone — that is what the ladder is for', () => {
-    // Down 40% is exactly the shape the cascade exists to buy into. A gate that
-    // rejected it would be a stop loss applied before the position opens.
-    expect(failedGates(clean({ priceChangePct: { h1: -18, h6: -40, h24: -45 } }))).toEqual([])
+  it('still lets a drop through while the DAY is intact — the ladder is for that', () => {
+    // The distinction the gate turns on. A drop inside the hour with the day
+    // still holding is the shape the cascade exists to buy into; the same drop
+    // carried across the whole day is an exit in progress that we would simply
+    // be joining.
+    //
+    // Nothing here touches an OPEN position: a ladder with money in it goes on
+    // averaging down, which is its job. This decides only what to enter.
+    expect(failedGates(clean({ priceChangePct: { h1: -18, h6: -40, h24: -10 } }))).toEqual([])
   })
 
-  it('reads the 24h window too, but at its own threshold', () => {
-    // This test used to assert the opposite — that 24h was never read, because
-    // half a day is a bad day and the strategy was built for bad days. That
-    // held while the ladder had ten rungs to answer with. The decision changed
-    // when the ladder was cut to TWO: a shallower ladder cannot chase a
-    // day-long bleed, so it has to decline to enter one.
-    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -80 } }))).toEqual(['freefall:failed'])
-    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -55 } }))).toEqual([])
+  it('reads the 24h window at the TIGHTEST threshold of the three', () => {
+    // This assertion has now moved twice, and both moves are the record of a
+    // decision rather than a tweak.
+    //
+    // It first said 24h was never read at all: half a day is a bad day and the
+    // strategy was built for bad days. That held while the ladder had ten rungs
+    // to answer with. Cutting it to TWO changed it — a shallow ladder cannot
+    // chase a day-long bleed — and the window was read at a LOOSE 70%.
+    //
+    // Then a token was bought at −64% on the day and the position sat flat: the
+    // collapse had happened entirely before we arrived, and we had joined it
+    // for nothing. The operator set it to 15, which makes the day the strictest
+    // window of the three and reverses the original reasoning outright.
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -55 } }))).toEqual(['freefall:failed'])
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -12 } }))).toEqual([])
   })
 
   it('stays quiet when the provider reported nothing — silence is not a crash', () => {
@@ -395,10 +407,13 @@ describe('gates — a sustained bleed over a full day', () => {
     expect(failedGates(clean({ priceChangePct: { h1: -3, h6: -20, h24: -72 } }))).toEqual(['freefall:failed'])
   })
 
-  it('tolerates over a day what it would refuse within the hour', () => {
-    // -55% is a collapse in one hour and a bad day across twenty-four. The
-    // ladder was built for bad days.
-    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -55 } }))).toEqual([])
+  it('refuses a day-long bleed the ladder would once have bought into', () => {
+    // The reversal, stated as a test. −55% across a day used to pass on the
+    // argument that a slow fall is a bad day rather than a collapse. It is
+    // refused now: what the operator saw was that a token already down that far
+    // does not recover on our schedule, it simply stops falling with our money
+    // in it.
+    expect(failedGates(clean({ priceChangePct: { h1: -2, h6: -8, h24: -55 } }))).toEqual(['freefall:failed'])
     expect(failedGates(clean({ priceChangePct: { h1: -55, h6: -8, h24: -55 } }))).toEqual(['freefall:failed'])
   })
 
@@ -597,5 +612,29 @@ describe('priceMismatch — two providers that disagree about the price cannot b
     // Fires on evidence, never on absence — the same rule as `history` and
     // `staleBars`. A scan that has not fetched candles says nothing.
     expect(evaluateGates(clean({}), DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+})
+
+describe('freefall — fifteen percent on the day, and only downward', () => {
+  it('refuses a token down more than 15% over the day', () => {
+    // The operator's number. It let −64% through at 70, and a token down that
+    // far had already spent its fall before we ever saw it: measured live,
+    // RICHDEBT was bought at −64% on the day and the position sat flat, so the
+    // collapse was entirely somebody else's and we simply joined it.
+    expect(failedGates(clean({ priceChangePct: { h1: -1, h6: -5, h24: -20 } }))).toEqual(['freefall:failed'])
+    expect(failedGates(clean({ priceChangePct: { h1: -1, h6: -5, h24: -14 } }))).toEqual([])
+  })
+
+  it('never fires on a RISE, however violent', () => {
+    // Only downward, explicitly. A token up 300% on the day is a question for
+    // `headroom`, which scores it low — not for a gate, which would refuse it
+    // outright. Those are different verdicts and they must not be confused.
+    expect(failedGates(clean({ priceChangePct: { h1: 40, h6: 120, h24: 300 } }))).toEqual([])
+  })
+
+  it('still catches a pump that is dumping inside the day', () => {
+    // The short windows earn their place here: up on the day, collapsing in the
+    // hour. The daily gate cannot see it because the day is still green.
+    expect(failedGates(clean({ priceChangePct: { h1: -55, h6: 10, h24: 40 } }))).toEqual(['freefall:failed'])
   })
 })

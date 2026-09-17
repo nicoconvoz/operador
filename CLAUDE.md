@@ -502,15 +502,28 @@ money in it goes on averaging down, which is its job.
 Three hours is not a window the providers report. They give 1h, 6h and 24h, so
 the gate reads **both short ones** rather than inventing the one it wants: a
 token can collapse inside an hour and look calm over six, or bleed over six
-without any single hour looking alarming. 24h is read too, at its OWN and looser
-threshold (`maxDailyFallPct`, 70): the same fall given four times as long to
-happen is a different event.
+without any single hour looking alarming.
 
-That window was ignored at first — half a day is not freefall, it is a bad day,
-and the strategy was built for bad days. **The decision reversed when the ladder
-was cut to two rungs.** A shallower ladder cannot chase a day-long bleed, so it
-has to decline to enter one. Measured live: 58 of 252 tokens were worse than
--50% over 24h, and every one of them passed, because nothing looked.
+**The 24h threshold has moved twice, and both moves are decisions rather than
+tweaks.** It was ignored at first — half a day is not freefall, it is a bad day,
+and the strategy was built for bad days. That reversed when the ladder was cut
+to two rungs, because a shallow ladder cannot chase a day-long bleed, and it was
+read at a loose **70%**.
+
+Then a token was bought at **−64% on the day and the position sat flat**: the
+collapse had happened entirely before the engine arrived, and it had joined it
+for nothing. `maxDailyFallPct` is **15** now — the STRICTEST of the three
+windows, which reverses the original reasoning outright. A token already down
+that far does not recover on our schedule; it stops falling with our money in it.
+
+At fifteen, the short windows keep the one job the daily one cannot do: catch a
+pump that is **dumping inside the day**, where the day is still green and only
+the hour shows the exit in progress.
+
+**Only downward, and never on a rise.** A token up 300% on the day is a question
+for `headroom`, which scores it near the bottom — not for a gate, which would
+refuse it outright. Those are different verdicts and the code keeps them apart:
+the check is `change >= -limit`, so a rise cannot trip it however violent.
 
 An unreported window is silence, not a crash. Unlike the SAFETY gates, which
 fail closed because unknown danger IS evidence, this one fires only on a number

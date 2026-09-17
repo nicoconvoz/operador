@@ -174,7 +174,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   minAgeHours: 24,
   minVolume24hUsd: 10_000,
   maxFallPct: 50,
-  maxDailyFallPct: 70,
+  maxDailyFallPct: 15,
   minTurnoverRatio: 1,
   minHourlyTxns: 4,
   maxTransferTaxPct: 5,
@@ -578,9 +578,15 @@ function freefall(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | nu
   const windows: readonly (readonly [string, number | null, number])[] = [
     ['1h', snapshot.priceChangePct.h1, policy.maxFallPct],
     ['6h', snapshot.priceChangePct.h6, policy.maxFallPct],
-    // Looser, because the same fall given four times as long to happen is a
-    // different event — and present at all because a two-rung ladder cannot
-    // chase what a ten-rung one could.
+    // TIGHTER than the short windows now, which reverses the reasoning it was
+    // written with. It was looser on the argument that the same fall given four
+    // times as long is a different event — and then a token bought at −64% on
+    // the day sat flat while we held it, because the collapse was entirely
+    // somebody else's and we had simply joined it.
+    //
+    // At fifteen the short windows keep one job the daily one cannot do: catch
+    // a pump that is DUMPING inside the day, where the day is still green and
+    // only the hour shows the exit in progress.
     ['24h', snapshot.priceChangePct.h24, policy.maxDailyFallPct],
   ]
 
