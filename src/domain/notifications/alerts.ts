@@ -27,6 +27,7 @@ export type AlertKind =
   | 'provider-degraded'
   | 'entry-refused'
   | 'order-refused'
+  | 'resynced'
 
 export interface Alert {
   readonly kind: AlertKind
@@ -64,6 +65,10 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   heartbeat: 'info',
   'scan-empty': 'warn',
   'provider-degraded': 'warn',
+  // INFO. A repair is not an incident: the engine found a ladder anchored to a
+  // price its position never paid, re-derived it from the fills, and carried
+  // on. Worth reading in the morning, never worth a buzz at three.
+  resynced: 'info',
   // INFO, and the level is the point. A refused entry is an opportunity not
   // taken: nothing was bought, no money is at stake, and nothing needs doing
   // tonight. It arrived as a `warn` per token, so a cycle that declined a

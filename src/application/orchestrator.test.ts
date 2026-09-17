@@ -361,6 +361,47 @@ describe('runCycle — a reservation nobody used gives up its slot', () => {
     expect((await store.loadPositions()).map((p) => p.id)).toContain('idle-1')
   })
 
+  it('re-anchors a ladder measured from a price the position never paid', async () => {
+    // A rule change must not mean a wipe. The book carries anchors from the
+    // days the engine decided on unfinished bars, and those are wrong — but the
+    // FILLS are real, and they are the only real data this system has. So the
+    // cycle re-derives from them instead of the operator deleting everything.
+    const { deps, store, alerts, throttle } = rig()
+    await store.savePosition(position({
+      id: 'skew', tokenAddress: 'Skew', symbol: 'SKEW',
+      cascade: { ...initialState(), level: 1, ep1: 0.0013161 },
+    }))
+    await store.recordFill({
+      positionId: 'skew', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 0.0010038, qty: 10, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'sk1',
+    })
+
+    await runCycle(deps, config, throttle)
+
+    const said = alerts.sent.find((a) => a.kind === 'resynced')
+    expect(said?.body).toContain('0.001004')
+    expect(said?.level).toBe('info')
+  })
+
+  it('leaves the reference own close-to-open gap alone', async () => {
+    // Pine sets `ep1 := close` and fills at the next OPEN. A small gap is the
+    // execution model, not corruption, and repairing it would be a silent
+    // deviation from the strategy this engine is a port of.
+    const { deps, store, alerts, throttle } = rig()
+    await store.savePosition(position({
+      id: 'near', tokenAddress: 'Near', symbol: 'NEAR',
+      cascade: { ...initialState(), level: 1, ep1: 0.0102 },
+    }))
+    await store.recordFill({
+      positionId: 'near', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 0.01, qty: 10, costUsd: 0.05, comment: 'Entry', idempotencyKey: 'nr1',
+    })
+
+    await runCycle(deps, config, throttle)
+
+    expect(alerts.sent.some((a) => a.kind === 'resynced')).toBe(false)
+  })
+
   it('is never taken by a token that is only there because nothing better was free', async () => {
     // A reservation is handed on when something BETTER is waiting for it. A
     // fallback is not better — it is what the allocator reaches for once the

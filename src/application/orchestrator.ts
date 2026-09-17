@@ -14,7 +14,8 @@ import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { type SizingPolicy } from '../domain/economics/sizing.js'
-import { planRecovery, type OrderProbe, type RecoveryPlan } from './recovery.js'
+import { planRecovery, type OrderProbe, type RecoveredPosition, type RecoveryPlan } from './recovery.js'
+import { resyncCascade, RESYNC_TOLERANCE_PCT } from './resync.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
 /**
@@ -164,7 +165,53 @@ export async function runCycle(
   const at = deps.now()
 
   // ── 1. Reconcile the past before touching the present ──────────────────────
-  const recovery = await planRecovery(deps.store, deps.probe)
+  const reconciled = await planRecovery(deps.store, deps.probe)
+
+  // ── 1b. And reconcile the LADDERS against what was actually paid ───────────
+  //
+  // A rule change used to mean a wipe: the book had been chosen and anchored by
+  // rules that no longer existed, so keeping it meant judging new work on an old
+  // one. That reasoning was right about the SCORES, which are re-derived every
+  // scan anyway, and wrong about the FILLS — which are the only real data this
+  // system has, and which a truncate throws away with everything else.
+  //
+  // So the cycle repairs instead. `ep1` is the price the ladder measures every
+  // rung from, and the engine spent its life setting it from bars that had not
+  // finished: BinanceTown was anchored at 0.0013161 and bought at 0.0010038.
+  // The fills know better, and they are right here.
+  //
+  // Before the tick, deliberately. A position ticked on a bad anchor decides
+  // its rungs on it, and then the repair is one bar late.
+  const resyncNotes: string[] = []
+  const positions: RecoveredPosition[] = []
+  for (const recovered of reconciled.positions) {
+    const fixed = resyncCascade(
+      recovered.position.cascade,
+      await deps.store.fillsFor(recovered.position.id),
+      RESYNC_TOLERANCE_PCT,
+    )
+    if (fixed === null) {
+      positions.push(recovered)
+      continue
+    }
+    const position = { ...recovered.position, cascade: fixed.cascade, updatedAt: at }
+    await deps.store.savePosition(position)
+    positions.push({ ...recovered, position })
+    resyncNotes.push(`${position.symbol}: ${fixed.reasons.join('; ')}`)
+  }
+  const recovery = { ...reconciled, positions }
+
+  if (resyncNotes.length > 0) {
+    // ONE line for the cycle, like the refusals. A repair is not an incident:
+    // nothing was bought, nothing was sold, and the engine carried on with a
+    // number closer to the truth than the one it had.
+    await deps.alerts.send(alert(
+      'resynced',
+      `🧭 ${resyncNotes.length} escalera(s) re-ancladas a lo que de verdad se pagó`,
+      resyncNotes.join('\n'),
+      at,
+    ))
+  }
 
   for (const halted of recovery.halted) {
     await deps.alerts.send(alert(

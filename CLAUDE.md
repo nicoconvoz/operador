@@ -2040,6 +2040,41 @@ being wrong. What it also costs, stated: the newest candle is now up to 30
 minutes old rather than 15, which `maxPriceRatio` (5) absorbs without noticing
 and `maxBarAgeHours` (1) still clears.
 
+### A rule change is not a reason to wipe
+
+Every time the selection rules moved, the recommendation was the same: truncate
+and start over, because the book had been chosen by rules that no longer
+existed. That was right about the SCORES and wrong about the FILLS.
+
+The scores are re-derived from the stored snapshots on every scan and every
+dashboard build — they heal by themselves and always did. The fills are the
+only real data this system has, and a truncate throws them away with everything
+else: what was bought, at what price, what it cost, what it made.
+
+What genuinely went stale is one number. `ep1` is the price every rung, every
+separation lock and every rebound is measured from, and the engine set it from
+bars that had not finished. BinanceTown was anchored at **0.0013161** and bought
+at **0.0010038** — a ladder hung off a price no close ever showed.
+
+`resyncCascade` re-derives it, before the tick, from the position's own buys:
+
+| | Taken from |
+|---|---|
+| `ep1` | the **first** buy — the anchor is a fixed point, and an average would move every time a rung fills, so the rungs would chase the thing they hang off |
+| `lastFill` | the **last** buy, because that is what `minGapPct` measures down from |
+| everything else | **nothing.** `level`, `totalInv`, `decayCount`, `awaitReentry` are a record of what happened, and rewriting a counter is how a ladder fills the same rung twice |
+
+**A repair, not a rule.** Inside `RESYNC_TOLERANCE_PCT` (10) nothing happens, so
+Pine's own close-to-open gap survives and the parity harness is untouched — it
+replays a fixed series where the two agree. Past it the fills win, because the
+fills are the facts. Ten is argued: the legitimate gap is now nil (a bar's open
+IS the previous bar's close on these pools), and the worst anchor measured was
+23.7% out.
+
+It reports as ONE `info` line per cycle, like the refusals. Nothing was bought
+and nothing was sold; the engine simply carried on from a number closer to the
+truth than the one it had.
+
 ### Never exit at a loss — enforced where it actually leaks
 
 The rule was enforced at DECISION time, where price is above average cost by
