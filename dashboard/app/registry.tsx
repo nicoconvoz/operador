@@ -45,6 +45,21 @@ const SPANISH: Record<string, string> = {
 // still the truth about what the engine did.
 const spanish = (comment: string) => SPANISH[comment] ?? comment
 
+/**
+ * The rung of the ladder, as a rung.
+ *
+ * `orderId` is `Entry` or `DCA-3`, and it appeared raw beside a line that
+ * already said VENTA — so a sale read as "Entry", which is both English and
+ * backwards. It is neither: it names WHICH RUNG the fill belongs to, and a
+ * close-all produces one line per open rung, which is exactly why it earns a
+ * column at all.
+ */
+const rung = (orderId: string): string => {
+  if (orderId === 'Entry') return 'peldaño 0'
+  const dca = /^DCA-(\d+)$/.exec(orderId)
+  return dca ? `peldaño ${dca[1]}` : orderId
+}
+
 const stamp = (ms: number) =>
   new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 
@@ -143,13 +158,16 @@ export function Registry({ view }: { view: OperationsView }) {
                 {fill.side === 'buy' ? 'COMPRA' : 'VENTA'}
               </span>
               <span style={{ width: 70 }}>{fill.symbol}</span>
-              <span style={{ color: DIM, width: 58 }}>{fill.orderId}</span>
+              <span style={{ color: DIM, width: 72 }}>{rung(fill.orderId)}</span>
               <span style={{ color: DIM, flex: 1, minWidth: 90 }}>{spanish(fill.comment)}</span>
               <span style={{ width: 90, textAlign: 'right', color: DIM }}>{price(fill.price)}</span>
               <span style={{ width: 82, textAlign: 'right' }}>{money(fill.price * fill.qty)}</span>
-              {/* Every number with what it cost. A P&L that hides its fees is
-                  the friendliest possible lie. */}
-              <span style={{ width: 62, textAlign: 'right', color: DOWN }}>−{money(fill.costUsd, 3)}</span>
+              {/* The per-fill COST is not here on purpose. It is a real number
+                  and it stays in the CSV and in the header's total, where it is
+                  subtracted once and visibly. Repeated on thirty rows at three
+                  decimals it was thirty red figures shouting about tenths of a
+                  cent, and it crowded out the one column a reader comes to this
+                  screen for. */}
               {/* What the SALE made. A line that says VENTA and does not say
                   whether it was a win is the one line on this screen that
                   answers nothing. A buy gets a dash: it has made nothing yet,
