@@ -202,3 +202,46 @@ describe('planPortfolio — sized to the ladder, counted by the capital', () => 
     expect(plan.allocations[0]!.capitalUsd).toBeCloseTo((1_425 * 30) / 100, 6)
   })
 })
+
+describe('planPortfolio — the concentration cap is a share of the BOOK, not of the leftovers', () => {
+  it('still funds a full ladder when little capital is left', () => {
+    // Reported live: 40 positions where the capital funds 31. Twenty-four had a
+    // full $47.57 ladder, and the tail sat at $15.99 — the gas floor — because
+    // the cap is applied to whatever is FREE.
+    //
+    // With $50 left, 30% of it is $15, so the cap dropped BELOW the ladder and
+    // dragged the slot size down to the floor. A limit meant to stop one token
+    // being too much of the book ended up forcing positions too small to
+    // cascade at all: a $16 slot fills one rung and can never average down,
+    // which is the entire premise of the ladder.
+    const plan = planPortfolio(
+      [candidate('A', 90), candidate('B', 80), candidate('C', 70)],
+      DEFAULT_PARAMS,
+      { ...P, reservePct: 0, totalCapitalUsd: 50, concentrationBasisUsd: 1_500, targetPositionUsd: 47.57, minPositionUsd: 16, maxPositionPct: 30 },
+    )
+
+    expect(plan.allocations).toHaveLength(1)
+    expect(plan.allocations[0]!.capitalUsd).toBeCloseTo(47.57, 2)
+  })
+
+  it('without a basis it still caps against what it was given', () => {
+    // The old behaviour exactly, for any caller that does not know the book.
+    const plan = planPortfolio(
+      [candidate('A', 90)],
+      DEFAULT_PARAMS,
+      { ...P, reservePct: 0, totalCapitalUsd: 50, targetPositionUsd: 47.57, minPositionUsd: 16, maxPositionPct: 30 },
+    )
+    expect(plan.allocations[0]!.capitalUsd).toBeLessThan(47.57)
+  })
+
+  it('the cap still BINDS when a single token would be too much of the book', () => {
+    // It must keep doing its real job: 30% of a $100 book is $30, so a ladder
+    // wanting $47.57 is clipped. That is the case the limit exists for.
+    const plan = planPortfolio(
+      [candidate('A', 90)],
+      DEFAULT_PARAMS,
+      { ...P, reservePct: 0, totalCapitalUsd: 100, concentrationBasisUsd: 100, targetPositionUsd: 47.57, minPositionUsd: 16, maxPositionPct: 30 },
+    )
+    expect(plan.allocations[0]!.capitalUsd).toBeCloseTo(30, 2)
+  })
+})

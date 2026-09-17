@@ -1153,6 +1153,36 @@ One thing to watch: fourteen positions is fourteen candle requests per watch
 pass. The providers are rate-limited by IP on a shared runner, and this is the
 first change that makes the WATCH side, rather than the scan, the heavier user.
 
+### The concentration cap is a share of the BOOK, not of the leftovers
+
+Reported live: **40 positions where the capital funds 31.** The distribution
+told the story:
+
+| Capital allocated | Positions |
+|---|---|
+| $47.57 — a full ladder | 24 |
+| $30–47 | 5 |
+| **$1–30, several at exactly $15.99** | 9 |
+| ~$0 | 2 |
+
+$15.99 is `slotFloorUsd` — the gas floor. So once the book was mostly full, the
+allocator went on opening positions AT THE FLOOR instead of stopping.
+
+The cause is one line. `maxPositionPct` (30) exists to stop one token being too
+much of the book, and it was computed against the capital the caller handed
+over — which is what is **FREE**, and shrinks with every position opened. With
+$50 left, 30% of it is $15: the cap fell BELOW what a ladder costs and dragged
+the slot size down to the floor.
+
+**A limit meant to prevent positions that are too BIG had started forcing
+positions too SMALL** — and a $16 slot fills one rung and can never average
+down, which is the entire premise of a DCA ladder.
+
+`concentrationBasisUsd` is what it is a share of: the whole book, passed in by
+the orchestrator. Absent, it falls back to the capital given, which is the old
+behaviour exactly — so a caller that does not know the book is not silently
+given a different rule.
+
 ### The common fund
 
 What the system has MADE is capital too, and it was ignored: the book was sized

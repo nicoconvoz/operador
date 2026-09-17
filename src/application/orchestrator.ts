@@ -403,6 +403,12 @@ export async function runCycle(
         {
           ...config.portfolio,
           totalCapitalUsd: free,
+          // The concentration cap is a share of the WHOLE book, never of what
+          // is left of it. Computed against `free` it tightened with every
+          // position opened, and past a point it fell below what a ladder costs
+          // and dragged the slot size to the gas floor: 40 positions where the
+          // capital funds 31, the tail of them too small to hold a second rung.
+          concentrationBasisUsd: config.portfolio.totalCapitalUsd + fund.netUsd,
           // Back into planPortfolio's own convention on the way out.
           maxPositions: uncapped ? 0 : slotsLeft,
           // The floor is DERIVED, never remembered. `minPositionUsd` was 200

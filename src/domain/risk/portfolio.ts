@@ -39,6 +39,24 @@ export interface PortfolioPolicy {
    */
   readonly maxPositionPct: number
   /**
+   * What `maxPositionPct` is a share OF.
+   *
+   * The cap exists to stop one token being too much of the BOOK. It was
+   * computed against whatever capital the caller handed over — and the caller
+   * hands over what is FREE, which shrinks as the book fills. So the limit
+   * tightened with every position opened, and past a certain point it fell
+   * below what a ladder costs and dragged the slot size down to the gas floor.
+   *
+   * Measured live: 40 positions where the capital funds 31. Twenty-four had a
+   * full $47.57 ladder and the tail sat at $15.99 — slots too small to hold a
+   * second rung, which is the entire premise of a DCA ladder. A limit meant to
+   * prevent positions that are too BIG had started forcing positions too SMALL.
+   *
+   * Absent, it falls back to the capital given, which is the old behaviour
+   * exactly.
+   */
+  readonly concentrationBasisUsd?: number
+  /**
    * Capital below which a slot is not worth opening: under it the ladder cannot
    * clear the gas floor and the position places no orders at all.
    *
@@ -157,7 +175,8 @@ export function planPortfolio(
   // that much, whatever its ladder would like. Clamping here is what keeps an
   // unscaled reference ladder — nominally tens of thousands — from making the
   // book look unaffordable, when in practice `scaledParams` shrinks it to fit.
-  const concentrationCapUsd = (deployableUsd * policy.maxPositionPct) / 100
+  // Against the BOOK, not against what is left of it.
+  const concentrationCapUsd = ((policy.concentrationBasisUsd ?? deployableUsd) * policy.maxPositionPct) / 100
   const slotSize = Math.max(
     Math.min(policy.targetPositionUsd ?? policy.minPositionUsd, concentrationCapUsd),
     policy.minPositionUsd,
