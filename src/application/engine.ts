@@ -240,6 +240,7 @@ async function advanceOneBar(
   // fills at. Writing the filling bar instead would leave recovery unable to
   // find its own fills and it would halt every position it had just traded.
   let exitRefused = false
+  const rejectedBefore = broker.rejections.length
   for (const order of position.pendingOrders) {
     const key = idempotencyKeyFor(position.id, position.lastBarTime, orderKeyPart(order))
     // Guarded here as well as in SQL: the store would reject the duplicate
@@ -278,6 +279,26 @@ async function advanceOneBar(
   // to the exit being signalled. A sale that does not happen leaves the broker
   // holding, so the machine simply never resets and the ladder survives on its
   // own. The fills are the facts, once again.
+  // WHY an order did not fill, because the broker knew and nobody was asking.
+  //
+  // Thirty positions carried a pending order for over an hour with zero fills,
+  // and the only record of the refusal was `broker.rejections` — written on
+  // every rejection since the simulator was built, read by the parity harness
+  // and by nothing else. From outside it looked like an engine deciding orders
+  // into a void, which is precisely what it was.
+  const refusals = broker.rejections.slice(rejectedBefore)
+  if (refusals.length > 0) {
+    const why = refusals.map((r) => `${r.order.comment}: ${r.reason}`).join('\n')
+    const refused = alert(
+      'order-refused',
+      `🚫 ${position.symbol} — el bróker rechazó ${refusals.length} orden(es)`,
+      why,
+      barTime,
+      { position: position.id, reasons: refusals.map((r) => r.reason).join(',') },
+    )
+    if (throttle.shouldSend(refused, `refused:${position.id}`)) await alerts.send(refused)
+  }
+
   if (exitRefused) {
     const kept = alert(
       'ladder-frozen',

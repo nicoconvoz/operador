@@ -758,3 +758,48 @@ describe('tickPosition — health is assessed even with no new bar', () => {
     expect(result.position).toBe(before)
   })
 })
+
+describe('tickPosition — an order the venue refused is never silent', () => {
+  it('alerts when the broker rejects a fill, naming the reason', async () => {
+    // Reported live: 31 positions, 30 carrying a pending order, ZERO fills,
+    // eighty-one minutes and five closed bars after they opened. The broker was
+    // refusing every one of them and saying so ONLY into `rejections`, which
+    // nothing in the engine reads — so the order vanished between the bar that
+    // decided it and the bar that was meant to fill it, leaving a clock icon
+    // and no explanation anywhere.
+    //
+    // It is the same shape as every other failure this project has paid for:
+    // written, recorded, and reached by nobody. A refused order is the one
+    // event that explains an engine that looks busy and is completely still.
+    const { store, alerts, throttle } = rig()
+    const candles = flat(300)
+    const at = candles.time[298]!
+    const current = position({
+      lastBarTime: at,
+      pendingOrders: [{ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 1_000, comment: '🟢 Entry' }],
+    })
+    // A broker with no cash refuses, exactly as production's did.
+    const broke = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 0, maxOpenEntries: 3, quality: () => quality })
+
+    await tickPosition({ position: current, candles, health: null, broker: broke }, config, store, alerts, throttle)
+
+    const refused = alerts.sent.find((a) => a.kind === 'order-refused')
+    expect(refused).toBeDefined()
+    expect(refused!.body).toContain('capital')
+  })
+
+  it('says nothing when everything filled', async () => {
+    // An alert that fires on the happy path is an alert nobody reads.
+    const { store, alerts, throttle, broker } = rig()
+    const candles = flat(300)
+    const at = candles.time[298]!
+    const current = position({
+      lastBarTime: at,
+      pendingOrders: [{ kind: 'entry', id: 'Entry', level: 0, usd: 15, qty: 100, comment: '🟢 Entry' }],
+    })
+
+    await tickPosition({ position: current, candles, health: null, broker }, config, store, alerts, throttle)
+
+    expect(alerts.sent.some((a) => a.kind === 'order-refused')).toBe(false)
+  })
+})

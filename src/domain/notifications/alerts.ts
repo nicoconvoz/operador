@@ -26,6 +26,7 @@ export type AlertKind =
   | 'scan-empty'
   | 'provider-degraded'
   | 'entry-refused'
+  | 'order-refused'
 
 export interface Alert {
   readonly kind: AlertKind
@@ -70,6 +71,13 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   // opportunities is a phone whose notifications get turned off, after which
   // the death exit does not arrive either.
   'entry-refused': 'info',
+  // WARN, not info. This one is the engine trying to trade and being turned
+  // away — a decision that was made, written down, and then did not happen.
+  // Thirty positions carried a pending order for over an hour with zero fills
+  // and nothing anywhere said why: the broker recorded the reason and nobody
+  // read it. An engine that looks busy and is completely still is the failure
+  // this project keeps paying for.
+  'order-refused': 'warn',
 }
 
 export const alert = (kind: AlertKind, title: string, body: string, at: number, data?: Record<string, unknown>): Alert => ({

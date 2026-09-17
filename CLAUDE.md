@@ -1620,6 +1620,24 @@ happen leaves the broker holding, so the machine never resets and the ladder
 survives on its own. The obvious design here is a remembered pre-exit snapshot;
 it is unnecessary, and it would have needed a column the store does not have.
 
+### An order the venue refused is never silent
+
+`PaperBroker` records every rejection — `pyramiding`, `capital`, `flat` — into
+`rejections`, and it has done since the simulator was written. **The parity
+harness reads it. The engine never did.** So an order decided at one close and
+turned away at the next open vanished between the two, leaving a clock icon on
+the screen and no explanation anywhere.
+
+It was found while diagnosing something else, and the diagnosis was WRONG: the
+thirty positions carrying pending orders with zero fills were simply waiting for
+the next bar, and they filled on their own minutes later. The gap is real all
+the same — an engine that decides orders into a void looks exactly like an
+engine that is working, and that is the failure this project has paid for more
+than any other.
+
+`warn`, not `info`: this one is a decision that was made, written down, and then
+did not happen.
+
 Two guards worth naming:
 
 - **`lastBarTime` prevents deciding twice.** A crash after saving but before
