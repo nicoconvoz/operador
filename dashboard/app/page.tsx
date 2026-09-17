@@ -1,8 +1,4 @@
-import { buildDashboard } from '../../src/application/dashboard.js'
-import { buildUniverse } from '../../src/application/universe-view.js'
-import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
-import { productionLadder } from '../../src/application/production-ladder.js'
-import { buildOperations } from '../../src/application/operations-view.js'
+import { buildView } from '../lib/view.js'
 import { openStore } from '../lib/store.js'
 import { Console, type ConsoleData } from './console.js'
 
@@ -15,21 +11,11 @@ export const revalidate = 0
 
 async function load(): Promise<ConsoleData | { error: string }> {
   try {
-    const store = openStore()
-    const now = () => Date.now()
-    const ladder = productionLadder(process.env)
-    const [dashboard, universe, operations] = await Promise.all([
-      buildDashboard(store, { now }),
-      buildUniverse(store, { now }),
-      buildOperations(store, {
-        now,
-        // The ladder the ENGINE runs, not the reference's. Drawing
-        // DEFAULT_PARAMS put a $1,000 rung beside a $15 order for days.
-        params: { ...DEFAULT_PARAMS, maxUsdPerLevel: ladder.maxUsdPerLevel },
-        maxOpenEntries: ladder.maxOpenEntries,
-      }),
-    ])
-    return { dashboard, universe, operations }
+    // The SAME builder the poll uses. They were two call sites with their own
+    // arguments and they drifted within an hour: the page valued the book at
+    // the last bar close while the poll valued it live, so opening the app
+    // showed one number and replaced it with a different one seconds later.
+    return await buildView(openStore())
   } catch (error) {
     return { error: String(error).slice(0, 200) }
   }

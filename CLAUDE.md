@@ -1282,6 +1282,19 @@ implementations of "how much are we up" will eventually disagree, and the one
 on the screen is the one you will believe. The page imports `buildDashboard`
 directly; it writes no queries of its own.
 
+**And there is ONE builder, not two.** The server renders the first frame and
+the console polls `/api/view` for every frame after it — two call sites with
+their own arguments, which drifted within an hour of the second gaining a
+feature. The page valued the book at the last BAR CLOSE while the poll valued it
+LIVE, so opening the app showed one number and replaced it with a different one
+seconds later: *"me sale 1.78 positivo y después se pasa a 2 negativo, como si al
+principio se hubiera congelado en un monto que nunca fue"*.
+
+Both numbers were real. They were answers to different questions, asked by two
+copies of the same view — the exact failure this section describes, one layer
+further out than it was written for. `dashboard/lib/view.ts` is the one place
+now, and both call it.
+
 **There is no write path in the app at all.** No order can be placed from it,
 no position closed, no switch thrown. A dashboard that could trade would be a
 second attack surface on the money, guarded by a URL people paste into chats —
