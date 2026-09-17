@@ -452,3 +452,65 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.tier).toBe('filtered')
   })
 })
+
+describe('universe — what we HOLD is priced now, not an hour ago', () => {
+  // The scan runs hourly, so a token holding money carried numbers up to an
+  // hour old — and its score with them. The live market data was already being
+  // fetched for the unrealised figure and every field but the price thrown
+  // away, so this costs no request at all.
+  const stale = token('OURS', { liquidityUsd: 200_000, volumeUsd: { h1: 20_000, h6: 120_000, h24: 600_000 }, priceChangePct: { h1: 1, h6: 2, h24: 4 } })
+
+  const withPosition = async (snapshots: TokenSnapshot[]) => {
+    const store = await seed(snapshots)
+    await store.savePosition(position('OURS'))
+    return store
+  }
+
+  it('re-scores a held token from the market as it is right now', async () => {
+    const store = await withPosition([stale])
+    const before = (await buildUniverse(store, options)).tokens[0]!.score
+    const after = (
+      await buildUniverse(store, {
+        ...options,
+        liveMarkets: async () =>
+          new Map([['solana:OURS', { ...stale, liquidityUsd: 60_000, priceChangePct: { h1: 9, h6: 14, h24: 22 } }]]),
+      })
+    ).tokens[0]!
+
+    expect(after.liquidityUsd).toBe(60_000)
+    expect(after.score).not.toBeCloseTo(before, 6)
+  })
+
+  it('keeps everything the scan PAID for, because the market feed cannot answer it', async () => {
+    // Security, the history count and the bar-freshness measurement come from
+    // the expensive half of a scan. Overlaying a market response on top of them
+    // would blank the evidence every gate here fires on.
+    const store = await withPosition([{ ...stale, securityChecked: true, historyBars: 1_000, lastTradeAgoHours: 0.2 }])
+    const view = await buildUniverse(store, {
+      ...options,
+      liveMarkets: async () => new Map([['solana:OURS', { ...stale, liquidityUsd: 60_000 }]]),
+    })
+    expect(view.tokens[0]!.tier).toBe('held')
+    expect(view.tokens[0]!.blockers).toEqual([])
+  })
+
+  it('leaves a token we do NOT hold exactly as the scan left it', async () => {
+    const store = await seed([stale])
+    const view = await buildUniverse(store, {
+      ...options,
+      liveMarkets: async () => new Map([['solana:OURS', { ...stale, liquidityUsd: 60_000 }]]),
+    })
+    expect(view.tokens[0]!.liquidityUsd).toBe(200_000)
+  })
+
+  it('falls back to the stored numbers when the feed has a bad minute', async () => {
+    // Stale and drawn is better than absent. A provider hiccup must not empty
+    // the screen of the one thing on it that holds money.
+    const store = await withPosition([stale])
+    const view = await buildUniverse(store, {
+      ...options,
+      liveMarkets: async () => { throw new Error('502') },
+    })
+    expect(view.tokens[0]!.liquidityUsd).toBe(200_000)
+  })
+})

@@ -3,7 +3,7 @@ import { buildUniverse } from '../../src/application/universe-view.js'
 import { buildOperations } from '../../src/application/operations-view.js'
 import { productionLadder } from '../../src/application/production-ladder.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
-import { DexScreener } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
+import { DexScreener, type MarketSnapshot } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
 import { makeHttpGet } from '../../src/infrastructure/http.js'
 import { type StatePort } from '../../src/domain/persistence/store.js'
 
@@ -36,9 +36,18 @@ export async function buildView(store: StatePort): Promise<ViewData> {
   const now = () => Date.now()
   const ladder = productionLadder(process.env)
 
+  // ONE request for both readers.
+  //
+  // The universe wants the whole market to re-score what we hold; the
+  // operations view wants the price to value it. Fetching twice would double a
+  // bill that is already paid, and — worse — let the two views disagree about
+  // the same token in the same frame, which is the exact failure this single
+  // builder exists to prevent.
+  const markets = liveMarkets(store)
+
   const [dashboard, universe, operations] = await Promise.all([
     buildDashboard(store, { now }),
-    buildUniverse(store, { now }),
+    buildUniverse(store, { now, liveMarkets: () => markets }),
     buildOperations(store, {
       now,
       // The ladder the ENGINE runs, not the reference's. Drawing DEFAULT_PARAMS
@@ -54,7 +63,11 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.
       tapeLength: 30,
-      livePrices: () => livePrices(store),
+      livePrices: async () => {
+        const prices = new Map<string, number>()
+        for (const [key, market] of await markets) prices.set(key, market.priceUsd)
+        return prices
+      },
     }),
   ])
 
@@ -62,17 +75,22 @@ export async function buildView(store: StatePort): Promise<ViewData> {
 }
 
 /**
- * The live market price for what is HELD, so the unrealised figure moves
- * between bars instead of standing still for fifteen minutes.
+ * The live MARKET for what is HELD — price, liquidity, volume, the price
+ * changes and the transaction counts.
  *
- * One batched request per chain — DexScreener takes thirty addresses at a time
- * and allows three hundred a minute, against a page that polls every ten
- * seconds. One chain failing must not cost the others their prices, and a
- * failure falls back to the bar close with the screen saying which.
+ * It used to keep the price and throw the rest away, so the unrealised figure
+ * moved between bars while every number explaining it sat at whatever the
+ * hourly scan last saw. The response already carried all of it: widening this
+ * costs not one extra request.
+ *
+ * One batched call per chain — DexScreener takes thirty addresses at a time and
+ * allows three hundred a minute, against a page that polls every ten seconds.
+ * One chain failing must not cost the others theirs, and a failure falls back
+ * to the stored numbers with the screen saying which.
  */
-async function livePrices(store: StatePort): Promise<ReadonlyMap<string, number>> {
+async function liveMarkets(store: StatePort): Promise<ReadonlyMap<string, MarketSnapshot>> {
   const held = await store.loadPositions()
-  const prices = new Map<string, number>()
+  const markets = new Map<string, MarketSnapshot>()
   const byChain = new Map<string, string[]>()
   for (const p of held) byChain.set(p.chain, [...(byChain.get(p.chain) ?? []), p.tokenAddress])
 
@@ -82,12 +100,14 @@ async function livePrices(store: StatePort): Promise<ReadonlyMap<string, number>
       try {
         const pairs = await dex.tokens(chain as 'solana' | 'bsc', addresses.slice(i, i + 30))
         for (const m of dex.toMarketSnapshots(chain as 'solana' | 'bsc', pairs)) {
-          if (m.priceUsd > 0) prices.set(`${chain}:${m.address}`, m.priceUsd)
+          // A zero price is not a price. Letting it through would value the
+          // book at nothing and score the token as if its pool had vanished.
+          if (m.priceUsd > 0) markets.set(`${chain}:${m.address}`, m)
         }
       } catch {
-        // Falls back to the bar close, and the screen says which.
+        // Falls back to the stored numbers, and the screen says which.
       }
     }
   }
-  return prices
+  return markets
 }

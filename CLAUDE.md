@@ -1766,6 +1766,35 @@ put a GREEN ▼ on a profit that was falling — a figure can be positive and
 getting worse, and the mark that exists to say "it just moved, and which way"
 was saying the opposite.
 
+### What we HOLD is priced now, not an hour ago
+
+The unrealised figure already moved live. Everything EXPLAINING it did not: the
+liquidity, the volume, the 24h change, the transaction counts and the score
+computed from them all sat at whatever the hourly scan last saw. So the one
+screen the operator watches showed a number moving on top of an hour-old reason.
+
+The fix costs **not one extra request**. The same batched DexScreener response
+that feeds the live price already carries the whole market half of a snapshot,
+and every field but the price was being discarded. `buildUniverse` now takes
+`liveMarkets` and re-scores the held tokens from it.
+
+Three rules, and they are the same three the live price already followed:
+
+- **Only what the feed can actually answer.** Security, the history count, the
+  bar-freshness measurement and the candle price come from the expensive stage
+  of a scan; a market response knows none of them. Overlaying it whole would
+  blank the evidence these gates fire on — and they fail closed, so a position
+  would turn red for the crime of being refreshed.
+- **Held only.** Refreshing the other five hundred would be a real bill. The
+  argument for these is that they are few and that they are ours.
+- **Never fatal.** A provider having a bad minute falls back to the stored
+  numbers rather than emptying the screen of the one thing on it holding money.
+
+And ONE fetch serves both readers. The universe wants the market to re-score;
+the operations view wants the price to value. Fetching twice would double a bill
+already paid and let two views disagree about the same token in the same frame —
+which is the exact failure the single builder exists to prevent.
+
 ### A freeze that will not say why
 
 Six positions showed `❄️ congelada` and not one of them said what for. The

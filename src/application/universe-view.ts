@@ -124,6 +124,21 @@ export interface UniverseOptions {
   readonly opportunity?: OpportunityPolicy
   /** Assumed venue fee when nothing was measured, in percent. */
   readonly spreadPct?: number
+  /**
+   * The market, right now, for the tokens that HOLD money — keyed `chain:address`.
+   *
+   * The scan runs hourly, so a position's numbers, and the score computed from
+   * them, could be an hour old on the one screen the operator watches. The
+   * unrealised figure already moved live; everything explaining it did not.
+   *
+   * It costs NOTHING: the same DexScreener response that feeds the live price
+   * already carries liquidity, volume, the price changes and the transaction
+   * counts, and every field but the price was being discarded.
+   *
+   * Held only. Refreshing the other five hundred would be a real bill, and the
+   * argument for these is that they are few and that they are ours.
+   */
+  readonly liveMarkets?: () => Promise<ReadonlyMap<string, Omit<TokenSnapshot, 'security'>>>
 }
 
 const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'reserve', 'pending', 'filtered', 'unsafe', 'dead']
@@ -182,7 +197,40 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     const current = deepest.get(key)
     if (!current || snapshot.liquidityUsd > current.liquidityUsd) deepest.set(key, snapshot)
   }
-  const snapshots: readonly TokenSnapshot[] = [...deepest.values()]
+  // What the scan PAID for is kept and only the market half is replaced.
+  //
+  // Security, the history count, the bar-freshness measurement and the candle
+  // price come from the expensive stage and from the candle feed; a market
+  // response cannot answer any of them. Overlaying it whole would blank the
+  // evidence every gate on this screen fires on, and the gates fail closed —
+  // so a position would turn red for the crime of being refreshed.
+  let live: ReadonlyMap<string, Omit<TokenSnapshot, 'security'>> = new Map()
+  if (options.liveMarkets) {
+    // Never fatal. Stale and drawn beats absent: a provider hiccup must not
+    // empty the screen of the one thing on it holding money.
+    try {
+      live = await options.liveMarkets()
+    } catch {
+      live = new Map()
+    }
+  }
+
+  const snapshots: readonly TokenSnapshot[] = [...deepest.values()].map((snapshot) => {
+    const key = `${snapshot.chain}:${snapshot.address}`
+    const now = heldBy.has(key) ? live.get(key) : undefined
+    return now === undefined
+      ? snapshot
+      : {
+          ...snapshot,
+          priceUsd: now.priceUsd,
+          liquidityUsd: now.liquidityUsd,
+          fdvUsd: now.fdvUsd,
+          volumeUsd: now.volumeUsd,
+          priceChangePct: now.priceChangePct,
+          txns: now.txns,
+          observedAt: now.observedAt,
+        }
+  })
 
   const tokens: UniverseToken[] = snapshots.map((snapshot) => {
     const key = `${snapshot.chain}:${snapshot.address}`
