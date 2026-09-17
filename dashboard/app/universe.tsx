@@ -680,9 +680,23 @@ export function Universe({ view }: { view: UniverseView }) {
           borderRadius: 12,
           background: '#070910',
           cursor: hovered ? 'pointer' : 'default',
-          // The canvas owns every gesture: pinch to zoom, drag to pan. Letting
-          // the browser keep them would scroll the page instead.
-          touchAction: 'none',
+          // Who owns a one-finger drag depends on whether there is anything to
+          // pan, and that turns out to settle the conflict completely.
+          //
+          // It was always 'none', so the canvas swallowed every gesture — and
+          // on a phone it is 62% of the screen, which means the page could not
+          // be scrolled past it at all. Worse, at rest the swallowed gesture
+          // did NOTHING: `onTouchMove` refuses to pan at MIN_ZOOM because the
+          // sky is centred and clamped there. A finger dragged up and the
+          // screen just sat still.
+          //
+          // So at rest the browser gets vertical scrolling back, and nothing is
+          // lost because there was nothing to pan. Zoomed IN, the canvas takes
+          // the gesture again, because then a drag means "look over there".
+          //
+          // A tap is unaffected either way, and 'pan-y' still denies the
+          // browser pinch-zoom, so two fingers keep reaching our own handler.
+          touchAction: zoomLabel > MIN_ZOOM ? 'none' : 'pan-y',
         }}
       />
 
