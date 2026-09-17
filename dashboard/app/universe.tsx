@@ -85,6 +85,20 @@ const COMPONENT_LABEL: Record<string, string> = {
 const RIPPLE_FLOOR = 25
 const RIPPLE_CEIL = 85
 
+/**
+ * Above this the rings go WHITE, and brighter.
+ *
+ * Every other mark on the canvas is a gradient — bigger, faster, brighter —
+ * which is right for a measurement and wrong for "look at this one". Colour is
+ * the only channel the eye reads as a CATEGORY rather than as more-of-the-same,
+ * so the top of the scale gets its own instead of one more notch of the tier's.
+ *
+ * The operator's number. It sits above the best score measured on a live sky
+ * (88.5, ALLINU), so it stays rare by construction — and a mark that appears
+ * often is a mark that stops being read.
+ */
+const ELITE_SCORE = 88
+
 const BODY_CAP = 400
 const BODY_CAP_COMPACT = 120
 
@@ -122,6 +136,8 @@ interface Body {
   readonly phase: number
   readonly ripples: number
   readonly strength: number
+  /** Top of the scale: its rings go white instead of taking the tier's colour. */
+  readonly elite: boolean
   x: number
   y: number
 }
@@ -324,6 +340,10 @@ export function Universe({ view }: { view: UniverseView }) {
           // At least one for anything alive, so the weakest still breathes and
           // the difference is read as INTENSITY rather than as presence.
           ripples: token.tier === 'dead' || token.tier === 'unsafe' ? 0 : 1 + Math.round(vigour * (compact ? 2 : 3)),
+          // Never for one that failed a safety gate or died: a white halo on a
+          // rug would be the loudest thing on the screen saying the best thing
+          // the screen can say.
+          elite: token.score >= ELITE_SCORE && token.tier !== 'dead' && token.tier !== 'unsafe',
           x: 0,
           y: 0,
         }
@@ -347,6 +367,7 @@ export function Universe({ view }: { view: UniverseView }) {
         radius: ((compact ? 7 : 9) + Math.log10(Math.max(cluster.count, 1)) * (compact ? 3 : 4.5)) * crowd,
         phase: index,
         ripples: 0,
+        elite: false,
         strength: 0.3,
         x: 0,
         y: 0,
@@ -456,8 +477,9 @@ export function Universe({ view }: { view: UniverseView }) {
           ctx!.arc(body.x, body.y, drawn + progress * (12 + body.strength * 46) * scale, 0, Math.PI * 2)
           // A floor under the opacity so a poor token is faint, never invisible:
           // absent reads as "not scanned", which is a different claim.
-          ctx!.strokeStyle = `rgba(${style.halo},${((0.12 + 0.46 * body.strength) * (1 - progress)).toFixed(3)})`
-          ctx!.lineWidth = 1 + body.strength * 1.1
+          const alpha = (body.elite ? 0.28 + 0.52 * body.strength : 0.12 + 0.46 * body.strength) * (1 - progress)
+          ctx!.strokeStyle = `rgba(${body.elite ? '255,255,255' : style.halo},${alpha.toFixed(3)})`
+          ctx!.lineWidth = (body.elite ? 1.4 : 1) + body.strength * 1.1
           ctx!.stroke()
         }
 
