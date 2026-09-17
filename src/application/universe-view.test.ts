@@ -387,3 +387,39 @@ describe('buildUniverse — a freeze that will not say why is a freeze nobody ca
     expect(t!.position!.deathSignals[0]).toBe('sell quote failed')
   })
 })
+
+describe('buildUniverse — one token is one body, however many times it was scanned', () => {
+  it('does not count the same token twice', async () => {
+    // Reported live: the chips said "operando 18" beside a header saying 15
+    // positions, and counting the green dots gave 15. The dots were right.
+    //
+    // A duplicate hides perfectly, which is why it took a hand count to find:
+    // a body's place in the sky comes from a HASH of its address, so the twin
+    // lands exactly on top of the original and the two read as one.
+    //
+    // The merge was `scans.flatMap(scan => scan.snapshots)` with nothing
+    // guarding it, and the scan's own dedupe runs per batch of thirty rather
+    // than across them.
+    const store = await seed([token('TWICE')])
+    const [scan] = await store.latestScansByChain()
+    await store.saveScan({ scannedAt: scan!.scannedAt, chain: 'solana', snapshots: [...scan!.snapshots, ...scan!.snapshots] })
+
+    const view = await buildUniverse(store, options)
+
+    expect(view.tokens.filter((t) => t.address === 'TWICE')).toHaveLength(1)
+  })
+
+  it('keeps the richer of two copies, never the emptier one', async () => {
+    // If one copy carries a measurement the other does not, dropping the wrong
+    // one throws away evidence — and the gates fire on evidence.
+    const store = await seed([token('RICH')])
+    const [scan] = await store.latestScansByChain()
+    const thin = { ...scan!.snapshots[0]!, liquidityUsd: 1_000 }
+    const deep = { ...scan!.snapshots[0]!, liquidityUsd: 900_000 }
+    await store.saveScan({ scannedAt: scan!.scannedAt, chain: 'solana', snapshots: [thin, deep] })
+
+    const view = await buildUniverse(store, options)
+
+    expect(view.tokens.find((t) => t.address === 'RICH')!.liquidityUsd).toBe(900_000)
+  })
+})

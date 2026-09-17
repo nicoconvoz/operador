@@ -350,16 +350,28 @@ export async function scanOnce(
   })
 
   // ── 2. Market, in batches of 30 ────────────────────────────────────────────
-  const markets = []
+  // Deduplicated ACROSS batches, not only within one.
+  //
+  // `toMarketSnapshots` keeps the deepest pair per token, but it only sees one
+  // request's worth. A token can come back in two different batches — the
+  // endpoint returns every pair for the addresses asked, and a pair's base
+  // token is not always the one requested — and the same token then entered
+  // the universe twice, was examined twice, and was counted twice on screen.
+  const bestByAddress = new Map<string, (typeof markets)[number]>()
+  const markets: ReturnType<typeof deps.dex.toMarketSnapshots> = []
   for (let i = 0; i < addresses.length; i += 30) {
     const batch = addresses.slice(i, i + 30)
     try {
       const pairs = await deps.dex.tokens(config.chain, batch)
-      markets.push(...deps.dex.toMarketSnapshots(config.chain, pairs))
+      for (const market of deps.dex.toMarketSnapshots(config.chain, pairs)) {
+        const current = bestByAddress.get(market.address)
+        if (!current || market.liquidityUsd > current.liquidityUsd) bestByAddress.set(market.address, market)
+      }
     } catch (error) {
       for (const address of batch) errors.push({ address, stage: 'market', error: String(error) })
     }
   }
+  markets.push(...bestByAddress.values())
 
   deps.onProgress?.({ stage: 'market', chain: config.chain, priced: markets.length })
 

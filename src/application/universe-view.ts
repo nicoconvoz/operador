@@ -154,7 +154,25 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
   // Every chain's newest scan, together. The universe is not one chain, and a
   // screen that shows whichever ran last makes the other one look like it
   // stopped existing.
-  const snapshots: readonly TokenSnapshot[] = scans.flatMap((scan) => scan.snapshots)
+  // ONE body per token, however many times it was scanned.
+  //
+  // Reported live: the chips said "operando 18" beside a header saying 15
+  // positions, and a hand count of the green dots gave 15. The dots were right.
+  //
+  // A duplicate hides perfectly, which is why it took counting by hand to find:
+  // a body's place in the sky comes from a HASH of its address, so the twin
+  // lands exactly on top of the original and the two read as one.
+  //
+  // The DEEPEST copy wins, not the first. If one carries a measurement the
+  // other does not, dropping the wrong one throws away evidence — and every
+  // gate here fires on evidence.
+  const deepest = new Map<string, TokenSnapshot>()
+  for (const snapshot of scans.flatMap((scan) => scan.snapshots)) {
+    const key = `${snapshot.chain}:${snapshot.address}`
+    const current = deepest.get(key)
+    if (!current || snapshot.liquidityUsd > current.liquidityUsd) deepest.set(key, snapshot)
+  }
+  const snapshots: readonly TokenSnapshot[] = [...deepest.values()]
 
   const tokens: UniverseToken[] = snapshots.map((snapshot) => {
     const key = `${snapshot.chain}:${snapshot.address}`
