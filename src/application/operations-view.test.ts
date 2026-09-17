@@ -424,3 +424,52 @@ describe('buildOperations — a closed position keeps its profit on the screen',
     expect(totals.realisedUsd).toBeCloseTo(52, 6) // $2 open-book, $50 departed
   })
 })
+
+describe('buildOperations — the unrealised figure at the LIVE price', () => {
+  const held = async () => seed([fill('Entry', 0.01, 1_000, NOW - 30 * MIN)])
+
+  it('values the position at the market price now, not at the last bar close', async () => {
+    // The screen sat still because it valued everything at `lastPriceUsd` — the
+    // price of the last CLOSED bar, which on 15-minute candles changes four
+    // times an hour. The engine is right to decide on closed bars; the screen is
+    // not showing a decision, it is showing what the position is WORTH, and
+    // that moves continuously.
+    const view = await buildOperations(await held(), {
+      ...options,
+      livePrices: async () => new Map([['solana:Mint1', 0.02]]),
+    })
+    const p = view.positions[0]!
+    expect(p.lastPriceUsd).toBe(0.02)
+    expect(p.priceIsLive).toBe(true)
+    // And the unrealised figure follows it: 1,000 bought at 0.01, worth 0.02.
+    expect(p.unrealisedUsd).toBeCloseTo(10, 5)
+  })
+
+  it('falls back to the bar close when the price feed says nothing about it', async () => {
+    // A provider having a bad minute must never blank the one number the system
+    // exists to produce. Stale and LABELLED beats absent.
+    const view = await buildOperations(await held(), { ...options, livePrices: async () => new Map() })
+    expect(view.positions[0]!.lastPriceUsd).toBe(0.011)
+    expect(view.positions[0]!.priceIsLive).toBe(false)
+  })
+
+  it('never lets a broken price feed break the page', async () => {
+    const view = await buildOperations(await held(), {
+      ...options,
+      livePrices: async () => { throw new Error('502') },
+    })
+    expect(view.positions[0]!.lastPriceUsd).toBe(0.011)
+    expect(view.positions[0]!.priceIsLive).toBe(false)
+  })
+
+  it('leaves the LADDER on the price the engine acted on, not the live one', async () => {
+    // The rungs are what the strategy decided, at the closes it decided them
+    // on. Redrawing them against a price the engine has not acted on yet would
+    // make the screen disagree with the machine about where the ladder is.
+    const view = await buildOperations(await held(), {
+      ...options,
+      livePrices: async () => new Map([['solana:Mint1', 0.02]]),
+    })
+    expect(view.positions[0]!.ladder[0]!.fillPrice).toBe(0.01)
+  })
+})

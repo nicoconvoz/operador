@@ -27,7 +27,14 @@ export interface ConsoleData {
   readonly operations: OperationsView
 }
 
-const REFRESH_MS = 20_000
+// Ten seconds, not twenty. The profit figure follows the live market price
+// now, so the poll rate IS how often the number can move — and a page that
+// updates three times a minute does not feel like it is watching anything.
+//
+// Affordable because of what one poll costs: a single read of the database and
+// one batched DexScreener request per chain, thirty addresses at a time,
+// against a limit of three hundred a minute.
+const REFRESH_MS = 10_000
 
 /**
  * Where the viewer was, kept across a page load.
@@ -145,6 +152,23 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
   const open = operations.positions.length
   const { realisedUsd, unrealisedUsd, netUsd, costsUsd } = operations.totals
 
+  // Which way it last moved, so the figure can be SEEN changing.
+  //
+  // The number now follows the live market price instead of the last closed
+  // bar, so it breathes on every poll — but a digit quietly replacing another
+  // digit is a change nobody notices. The tint says "that just moved, and in
+  // which direction"; it fades on its own so the screen does not end up
+  // permanently coloured by something that happened a minute ago.
+  const [pulse, setPulse] = useState<'up' | 'down' | null>(null)
+  const lastNet = useRef(netUsd)
+  useEffect(() => {
+    if (netUsd === lastNet.current) return
+    setPulse(netUsd > lastNet.current ? 'up' : 'down')
+    lastNet.current = netUsd
+    const clear = setTimeout(() => setPulse(null), 900)
+    return () => clearTimeout(clear)
+  }, [netUsd])
+
   return (
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -160,8 +184,23 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
           tab was open, invisible. */}
       <section style={{ border: '1px solid #1f2630', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
         <div style={{ color: '#8b949e', fontSize: 12 }}>ganancia — cobrada + sin cobrar − costos</div>
-        <div style={{ fontSize: 34, lineHeight: 1.1, marginTop: 2, color: netUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>
-          {signed(netUsd)}
+        <div
+          style={{
+            fontSize: 34,
+            lineHeight: 1.1,
+            marginTop: 2,
+            color: netUsd >= 0 ? '#63e6a5' : '#ff6b6b',
+            // The SIGN keeps the colour; the pulse is a background, so a figure
+            // that is negative and rising still reads as negative.
+            background: pulse === null ? 'transparent' : pulse === 'up' ? 'rgba(99,230,165,0.16)' : 'rgba(255,107,107,0.16)',
+            borderRadius: 6,
+            padding: '0 6px',
+            marginLeft: -6,
+            transition: 'background 700ms ease-out',
+            display: 'inline-block',
+          }}
+        >
+          {signed(netUsd)} {pulse === 'up' ? '▲' : pulse === 'down' ? '▼' : ''}
         </div>
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
           <span style={{ color: realisedUsd >= 0 ? '#63e6a5' : '#ff6b6b' }}>{signed(realisedUsd)} cobrada</span>

@@ -83,6 +83,14 @@ export interface PositionOperations {
   readonly openedAt: number
   readonly updatedAt: number
   readonly hasPendingOrders: boolean
+  /**
+   * Whether `lastPriceUsd` is the market price NOW or the last closed bar's.
+   *
+   * The distinction is shown rather than hidden: a figure computed from a stale
+   * price while the provider is down is still the best number available, and a
+   * reader deserves to know which one they are looking at.
+   */
+  readonly priceIsLive: boolean
 }
 
 export interface OperationsView {
@@ -105,6 +113,23 @@ export interface OperationsView {
 
 export interface OperationsOptions {
   readonly now: () => number
+  /**
+   * Current market prices, keyed `chain:tokenAddress`.
+   *
+   * The screen used to value everything at `lastPriceUsd` — the close of the
+   * last processed bar, which on 15-minute candles moves four times an hour, so
+   * the one number the system exists to produce sat still between bars.
+   *
+   * The engine is right to DECIDE on closed bars. The screen is not showing a
+   * decision, it is showing what the position is worth, and that moves
+   * continuously. Only the valuation uses it; the LADDER stays on the prices
+   * the engine actually acted on, or the screen would disagree with the machine
+   * about where the rungs are.
+   *
+   * Optional and never fatal: a provider having a bad minute falls back to the
+   * bar close and says so.
+   */
+  readonly livePrices?: () => Promise<ReadonlyMap<string, number>>
   readonly params?: CascadeParams
   readonly tapeLength?: number
   /**
@@ -129,6 +154,16 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   // this money through `commonFund`, so the screen and the allocator were
   // giving different answers to "how much have we made".
   const allFills = await store.allFills()
+  // Never fatal. The one number the system exists to produce must not blank
+  // because a price provider had a bad minute.
+  let livePrices: ReadonlyMap<string, number> = new Map()
+  if (options.livePrices) {
+    try {
+      livePrices = await options.livePrices()
+    } catch {
+      livePrices = new Map()
+    }
+  }
   const symbolOf = new Map(positions.map((p) => [p.id, p.symbol]))
 
   const built: PositionOperations[] = []
@@ -146,7 +181,9 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const costsUsd = fills.reduce((sum, f) => sum + f.costUsd, 0)
     const { qty, deployedUsd, avgCostUsd, realisedUsd } = positionLedger(fills)
 
-    const price = position.lastPriceUsd
+    const live = livePrices.get(`${position.chain}:${position.tokenAddress}`)
+    const priceIsLive = live !== undefined && live > 0
+    const price = priceIsLive ? live : position.lastPriceUsd
     const marketValueUsd = price !== null && qty > 0 ? qty * price : null
     const unrealisedUsd = marketValueUsd !== null && avgCostUsd !== null ? (price! - avgCostUsd) * qty : null
 
@@ -203,6 +240,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       openedAt: position.openedAt,
       updatedAt: position.updatedAt,
       hasPendingOrders: position.pendingOrders.length > 0,
+      priceIsLive,
     })
   }
 

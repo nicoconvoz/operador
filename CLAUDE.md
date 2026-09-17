@@ -1310,6 +1310,36 @@ It runs on a phone, which forced four decisions:
 `/demo` renders the same view from synthetic data, labelled as such — a demo
 that passes for live is how people end up trusting a screenshot.
 
+### The profit moves, because it is valued at the live price
+
+The one number the system exists to produce sat still for fifteen minutes at a
+time, and the reason was structural rather than cosmetic: every position was
+valued at `lastPriceUsd`, the close of the last bar the ENGINE processed. On
+15-minute candles that changes four times an hour.
+
+The engine is right to decide on closed bars — that is the execution model the
+parity harness pinned. But the screen is not showing a decision. It is showing
+what the position is WORTH, and that moves continuously.
+
+So `buildOperations` takes `livePrices` and values the book at the market price
+now. Three rules keep it from becoming a second source of truth:
+
+- **Only the VALUATION uses it.** The ladder stays on the prices the engine
+  actually acted on, or the screen would disagree with the machine about where
+  the rungs are.
+- **It is never fatal.** A provider having a bad minute falls back to the bar
+  close, and `priceIsLive` says which the reader is looking at. Stale and
+  labelled beats absent.
+- **One batched request per chain**, thirty addresses at a time, against a limit
+  of three hundred a minute.
+
+The poll went to **ten seconds**, because the poll rate now IS how often the
+number can move. And the figure PULSES green or red on change — a digit quietly
+replacing another digit is a change nobody notices. The tint is a background, so
+a figure that is negative and rising still reads as negative, and it fades on
+its own rather than leaving the screen coloured by something that happened a
+minute ago.
+
 ### A freeze that will not say why
 
 Six positions showed `❄️ congelada` and not one of them said what for. The
