@@ -125,13 +125,24 @@ describe('gates — not a trade at all', () => {
     expect(failedGates(clean({ address: '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh', symbol: 'BTC' }))).toEqual([])
   })
 
-  it('a large cap is not what the strategy was tuned for', () => {
-    expect(failedGates(clean({ fdvUsd: 240_000_000 }))).toEqual(['marketCap:failed'])
+  it('the cap admits large tokens now; the RANKING is what keeps them last', () => {
+    // $50M excluded every established token outright, and measured on ten days
+    // of 15m candles that was wrong about the thing that matters: SOL/USDC hits
+    // the classic entry — a 10% drop from the five-hour high — on 4.1% of bars.
+    // Tradeable, just rarer. A stablecoin pair hits it on 0%, which is the
+    // denylist's job, not this gate's.
+    //
+    // Small caps remain the thesis. `smallCapFdvUsd` in the ranking puts them
+    // ahead of every large one whatever the scores say, so the big names only
+    // ever take a slot nothing smaller wanted.
+    expect(failedGates(clean({ fdvUsd: 240_000_000 }))).toEqual([])
     expect(failedGates(clean({ fdvUsd: 49_000_000 }))).toEqual([])
+    // A genuine mega cap is still not a small-cap trade.
+    expect(failedGates(clean({ fdvUsd: 3_800_000_000 }))).toEqual(['marketCap:failed'])
     // Unknown FDV is tolerated: liquidity and volume gates still apply.
     expect(failedGates(clean({ fdvUsd: null }))).toEqual([])
     // And the cap can be switched off.
-    expect(evaluateGates(clean({ fdvUsd: 240_000_000 }), { ...P, maxFdvUsd: null }).passed).toBe(true)
+    expect(evaluateGates(clean({ fdvUsd: 3_800_000_000 }), { ...P, maxFdvUsd: null }).passed).toBe(true)
   })
 })
 

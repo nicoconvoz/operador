@@ -172,7 +172,22 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   minLpLockedPct: 80,
   maxTopHoldersPct: 40,
   maxCreatorPct: 10,
-  maxFdvUsd: 50_000_000,
+  // The CEILING, not the preference. $50M for months, which excluded every
+  // established token outright — and measured on ten days of 15m candles, that
+  // was wrong about the thing that matters: SOL/USDC hits the classic entry
+  // (a 10% drop from the five-hour high) on 4.1% of bars, once every six hours.
+  // Tradeable, just rarer. USDT/USDC hits it on 0%, which is what the denylist
+  // is for.
+  //
+  // They earn their place for a second reason that only appeared this week:
+  // deep pools are the ones the candle provider indexes properly, so they do
+  // not carry the `staleBars` failure that is currently the largest cut of all.
+  //
+  // Small caps are still the thesis. `smallCapFdvUsd` in the RANKING keeps them
+  // ahead of every large one regardless of score, so the big names only ever
+  // take a slot nothing smaller wanted. The ceiling admits them; the order
+  // decides they come last.
+  maxFdvUsd: 500_000_000,
   denylist: SOLANA_DENYLIST,
   canonicalSymbols: SOLANA_CANONICAL_SYMBOLS,
   // ENOUGH TO ENTER, not enough for every door.

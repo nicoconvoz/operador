@@ -98,3 +98,49 @@ describe('ranking — gates first, then score, then slots', () => {
     expect(candidates.map((c) => c.snapshot.address)).toEqual(['a', 'b'])
   })
 })
+
+describe('rankUniverse — the small ones fill the book, the big ones complete it', () => {
+  // Same shape, different size: the BIG one is also the livelier, so it scores
+  // higher. Without the rule it would take the slot.
+  const lively = { volumeUsd: { h1: 20_000, h6: 60_000, h24: 120_000 }, txns: { h1: { buys: 70, sells: 20 }, h24: { buys: 900, sells: 850 } } }
+  const quiet = { volumeUsd: { h1: 1_000, h6: 10_000, h24: 120_000 } }
+
+  it('puts a small cap ahead of a bigger one that scores higher', () => {
+    // The operator's rule, and it keeps the project's thesis while fixing what
+    // was actually broken. Small caps are what the ladder is FOR: they move
+    // enough for a 10% drop from a five-hour high to happen daily. Large caps
+    // were excluded outright at $50M — and measured on ten days of 15m candles,
+    // SOL/USDC triggers that same entry on 4.1% of bars, once every six hours.
+    // Tradeable, just rarer.
+    //
+    // So they are not competitors, they are the FALLBACK: admitted now, and
+    // ranked behind every small cap regardless of score, so they only ever take
+    // a slot nothing smaller wanted.
+    const universe = [
+      token('BIG', { ...lively, fdvUsd: 400_000_000 }),
+      token('SMALL', { ...quiet, fdvUsd: 5_000_000 }),
+    ]
+    const { candidates } = rankUniverse(universe, new Map(), quality, { ...policy, smallCapFdvUsd: 50_000_000 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['SMALL', 'BIG'])
+  })
+
+  it('still ranks by score WITHIN each size', () => {
+    const universe = [
+      token('WEAK', { ...quiet, fdvUsd: 5_000_000 }),
+      token('STRONG', { ...lively, fdvUsd: 5_000_000 }),
+    ]
+    const { candidates } = rankUniverse(universe, new Map(), quality, { ...policy, smallCapFdvUsd: 50_000_000 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['STRONG', 'WEAK'])
+  })
+
+  it('treats an unknown FDV as small, because that is what the book is mostly made of', () => {
+    // An unreported FDV is the normal case on a young pool. Sorting it last
+    // would quietly demote exactly the tokens this system exists to trade.
+    const universe = [
+      token('BIG', { ...lively, fdvUsd: 400_000_000 }),
+      token('UNK', { ...quiet, fdvUsd: null }),
+    ]
+    const { candidates } = rankUniverse(universe, new Map(), quality, { ...policy, smallCapFdvUsd: 50_000_000 })
+    expect(candidates[0]!.snapshot.address).toBe('UNK')
+  })
+})

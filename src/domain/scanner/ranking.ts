@@ -31,6 +31,17 @@ export interface RankingPolicy {
   readonly watchSlots: number
   /** Below this score a token is safe but not interesting. */
   readonly minScore: number
+  /**
+   * The line between "fill the book with these" and "complete it with those".
+   *
+   * A token under it is ranked ahead of EVERY token above it, whatever the
+   * scores say. Small caps are what the ladder is for — they move enough for a
+   * 10% drop from a five-hour high to happen daily — and large ones are the
+   * fallback that keeps capital working when there are not enough.
+   *
+   * Absent means no preference: everything competes on score alone.
+   */
+  readonly smallCapFdvUsd?: number
 }
 
 /**
@@ -67,7 +78,17 @@ export function rankUniverse(
     candidates.push({ snapshot, opportunity, marketQuality })
   }
 
-  candidates.sort((a, b) => b.opportunity.score - a.opportunity.score || a.snapshot.address.localeCompare(b.snapshot.address))
+  // SIZE first, then score. An unknown FDV counts as small: it is the normal
+  // case on a young pool, and sorting it last would quietly demote exactly the
+  // tokens this system exists to trade.
+  const big = (s: TokenSnapshot) =>
+    policy.smallCapFdvUsd !== undefined && s.fdvUsd !== null && s.fdvUsd > policy.smallCapFdvUsd ? 1 : 0
+  candidates.sort(
+    (a, b) =>
+      big(a.snapshot) - big(b.snapshot) ||
+      b.opportunity.score - a.opportunity.score ||
+      a.snapshot.address.localeCompare(b.snapshot.address),
+  )
 
   return { candidates: candidates.slice(0, policy.watchSlots), rejected }
 }

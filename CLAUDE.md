@@ -296,6 +296,35 @@ candle. That is exactly how a position ends up frozen with nothing new to act
 on, so the gate refuses it at the door instead of the dashboard reporting it
 afterwards.
 
+### Fill with the small ones, complete with the big ones
+
+`maxFdvUsd` was **$50M** for months, so every established token was excluded
+outright as "not a small cap". Measured on ten days of 15-minute candles, that
+was wrong about the only thing that matters — whether the strategy's own door
+ever opens:
+
+| Pool | FDV | Bars hitting the classic entry |
+|---|---|---|
+| USDT / USDC | $3.8B | **0%** |
+| SOL / USDC | $1.27B | **4.1%** — 40 of 980 |
+
+The classic entry is a 10% drop from the five-hour swing high. SOL hits it once
+every six hours: tradeable, just rarer than a small cap. The stablecoin pair
+hits it never, which is what the DENYLIST is for and not this gate.
+
+They earn their place for a second reason that only appeared this week: **deep
+pools are the ones the candle provider indexes properly**, so they do not carry
+the `staleBars` failure that is currently the largest cut of all.
+
+**Small caps remain the thesis, and the ORDER is what protects it.** The gate
+now admits up to $500M, and `smallCapFdvUsd` (50M) in the ranking puts every
+small cap ahead of every large one *whatever the scores say* — so a big name
+only ever takes a slot nothing smaller wanted. Size first, then score.
+
+An unknown FDV counts as SMALL. It is the normal case on a young pool, and
+sorting it last would quietly demote exactly the tokens this system exists to
+trade.
+
 ### Freefall — an entry gate, and deliberately not an exit
 
 A token that has lost more than half its price in about three hours is not an

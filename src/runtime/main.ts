@@ -362,6 +362,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         ranking: {
           gates,
           opportunity: DEFAULT_OPPORTUNITY_POLICY,
+          smallCapFdvUsd: 50_000_000,
           watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
           minScore: 0,
         },
@@ -423,6 +424,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               ranking: {
                 gates,
                 opportunity: DEFAULT_OPPORTUNITY_POLICY,
+                // Fill with the small ones, complete with the big ones. The
+                // gate admits up to $500M now; this is what keeps every small
+                // cap ahead of every large one whatever the scores say, so a
+                // big name only ever takes a slot nothing smaller wanted.
+                smallCapFdvUsd: 50_000_000,
                 watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
                 minScore: 0,
               },
