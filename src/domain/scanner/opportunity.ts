@@ -22,6 +22,8 @@ export interface OpportunityWeights {
   readonly volatility: number
   /** Which WAY it has been going lately. `volatility` says only that it moved. */
   readonly momentum: number
+  /** How much of the rise is still ahead. The higher it is, the further it can fall. */
+  readonly headroom: number
   /**
    * How little of the move the chain will take. The first capital-floor run
    * measured 10% of gross on one token and 72% on another, same strategy and
@@ -52,7 +54,7 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // than replaces: volatility says the token is MOVING, momentum says which
   // way. Rewarding the first alone made a token down 40% on the day and one up
   // 40% look identical to the shortlist.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.08, momentum: 0.17, costEfficiency: 0.2 },
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.08, momentum: 0.14, headroom: 0.05, costEfficiency: 0.2 },
   fullExpansionRatio: 3,
   fullActivityTxnsPerHour: 60,
   fullVolatilityPct: 20,
@@ -66,6 +68,7 @@ export interface OpportunityComponents {
   readonly activity: number
   readonly volatility: number
   readonly momentum: number
+  readonly headroom: number
   readonly costEfficiency: number
 }
 
@@ -141,14 +144,34 @@ export function scoreOpportunity(
     0.25 * rising(priceChangePct.h6) +
     0.15 * rising(priceChangePct.h24)
 
+  // HOW MUCH ROOM IS LEFT above it.
+  //
+  // Direction is not the whole question: the higher a token already is, the
+  // further it can fall, so between two risers the one that has not run yet is
+  // worth more than the one that has. The operator's rule.
+  //
+  // No threshold, and deliberately: a cut-off would be the same invented number
+  // `momentum` was rewritten to remove. A DOUBLING HALVES THE ROOM LEFT — a
+  // stated rule rather than a fitted one, monotone at every size, and it never
+  // reaches zero because a token that has run is worth less, not worthless.
+  //
+  // Only while RISING. "Low" and "cheap" are not the same claim: a token down
+  // 40% and still sinking has enormous room above it and is exactly the knife
+  // `momentum` exists to avoid, so it gets neither the bonus nor the penalty.
+  const day = priceChangePct.h24
+  const headroom =
+    priceChangePct.h1 === null || priceChangePct.h1 === undefined || priceChangePct.h1 <= 0
+      ? 0.5
+      : 1 / (1 + Math.max(0, day ?? 0) / 100)
+
   // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
   // so a token is never rewarded for a toll nobody checked.
   const costEfficiency = quality === null ? 0.5 : clamp01(1 - (2 * (quality.spreadPct + quality.slippagePct)) / policy.worstRoundTripPct)
 
-  const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility, momentum, costEfficiency }
+  const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility, momentum, headroom, costEfficiency }
   const w = policy.weights
   const weightSum =
-    w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.activity + w.volatility + w.momentum + w.costEfficiency
+    w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.activity + w.volatility + w.momentum + w.headroom + w.costEfficiency
   const weighted =
     w.volumeExpansion * volumeExpansion +
     w.buyPressure * buyPressure +
@@ -156,6 +179,7 @@ export function scoreOpportunity(
     w.activity * activity +
     w.volatility * volatility +
     w.momentum * momentum +
+    w.headroom * headroom +
     w.costEfficiency * costEfficiency
 
   return { score: (100 * weighted) / weightSum, components }

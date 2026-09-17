@@ -74,9 +74,23 @@ price signal looks.
   gates run on. Scoring either as a FALL would push the book toward whatever
   moved most in any direction, which is the bias this exists to remove.
 
-  Its weight comes out of `volatility` (0.15 → 0.08 + 0.17), because the two
-  complement rather than replace each other: one says the token is moving, the
-  other says where to.
+  **`headroom` asks how much of the rise is still ahead.** Direction is not the
+  whole question — the higher a token already is, the further it can fall, so
+  between two risers the one that has not run yet is worth more than the one
+  that has. The operator's rule.
+
+  No threshold, deliberately: a cut-off would be the same invented number
+  `momentum` was rewritten to remove. **A doubling halves the room left** — a
+  stated rule rather than a fitted one, monotone at every size, and it never
+  reaches zero because a token that has run is worth LESS, not worthless.
+
+  Only while rising. *Low* and *cheap* are not the same claim: a token down 40%
+  and still sinking has enormous room above it and is exactly the knife
+  `momentum` exists to avoid, so it gets neither the bonus nor the penalty.
+
+  The weights came out of `volatility` (0.15 → 0.08 + 0.14 + 0.05), because
+  these complement rather than replace it: one says the token is moving, the
+  second says where to, the third says how much of that is already spent.
 - `ranking.ts` — gates → score → sort → cut to watch slots; every candidate
   carries the `MarketQuality` the executor re-validates.
 

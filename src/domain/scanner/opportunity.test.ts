@@ -106,7 +106,7 @@ describe('opportunity — the signal moves the right way', () => {
   })
 
   it('weights are honoured: a policy that only values volume ignores everything else', () => {
-    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, costEfficiency: 0 } }
+    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, headroom: 0, costEfficiency: 0 } }
     const burst = base({ volumeUsd: { h1: 3_000, h6: 8_000, h24: 24_000 }, priceChangePct: { h1: 50, h6: 50, h24: 50 } })
     expect(scoreOpportunity(burst, volumeOnly).score).toBeCloseTo(100, 9)
   })
@@ -175,5 +175,42 @@ describe('opportunity — direction, not only motion', () => {
     expect(insane.components.momentum).toBeLessThanOrEqual(1)
     const ruined = scoreOpportunity(base({ priceChangePct: { h1: -99, h6: -99, h24: -99 } }), P, null, cheap)
     expect(ruined.components.momentum).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('opportunity — how much room is left above it', () => {
+  const rising = (h24: number) => base({ priceChangePct: { h1: 2, h6: 5, h24 } })
+
+  it('prefers a riser that has not run far over one that already has', () => {
+    // The operator's rule: the higher it already is, the more room there is to
+    // fall. Both are going UP — the question is only how much of the move is
+    // already behind us.
+    const early = scoreOpportunity(rising(5), P, null, cheap)
+    const extended = scoreOpportunity(rising(120), P, null, cheap)
+    expect(early.components.headroom).toBeGreaterThan(extended.components.headroom)
+    expect(early.score).toBeGreaterThan(extended.score)
+  })
+
+  it('has no hard threshold — it decays smoothly and never reaches zero', () => {
+    // A cut-off would be the same invented number this component was written to
+    // avoid. A doubling halves the room left; that is a stated rule, not a
+    // fitted one, and it keeps the preference monotone at every size.
+    expect(scoreOpportunity(rising(0), P, null, cheap).components.headroom).toBeCloseTo(1, 6)
+    expect(scoreOpportunity(rising(100), P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
+    expect(scoreOpportunity(rising(300), P, null, cheap).components.headroom).toBeCloseTo(0.25, 6)
+  })
+
+  it('does NOT reward a token for being low while falling', () => {
+    // "Low" and "cheap" are not the same claim. A token down 40% and still
+    // sinking has plenty of room above it and is precisely the knife the
+    // momentum component exists to avoid — so this stays neutral rather than
+    // handing it the bonus for being far from its high.
+    const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -40 } })
+    expect(scoreOpportunity(knife, P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
+  })
+
+  it('is neutral when the recent window says nothing', () => {
+    const silent = base({ priceChangePct: { h1: null, h6: null, h24: null } })
+    expect(scoreOpportunity(silent, P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
   })
 })

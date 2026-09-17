@@ -60,6 +60,7 @@ const COMPONENT_LABEL: Record<string, string> = {
   // Not the same question as volatility, and the pair has to be readable
   // together: one says how much it MOVED, the other says which way.
   momentum: 'tendencia reciente',
+  headroom: 'recorrido por delante',
   costEfficiency: 'eficiencia de costo',
 }
 
