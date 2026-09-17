@@ -1,6 +1,6 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
-import { evaluateMarketGates } from '../domain/scanner/gates.js'
+import { evaluateMarketGates, forgivableFailures } from '../domain/scanner/gates.js'
 import { scoreOpportunity } from '../domain/scanner/opportunity.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { mergeSecurity } from '../domain/scanner/security-merge.js'
@@ -401,7 +401,19 @@ export async function scanOnce(
     // closed and nothing recorded that nobody had looked.
     const provisional: TokenSnapshot = { ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false }
     const cheap = evaluateMarketGates(provisional, config.ranking.gates)
-    if (cheap.passed) affordable.push(market)
+    // The FALLBACK has to be paid for too, or it can never exist.
+    //
+    // A token the free gates reject is never examined, so it carries an
+    // all-null security report — which fails every safety gate closed, which
+    // means `forgivableFailures` can never clear it and the reserve stays
+    // empty by construction. Measured after the relaunch that shipped it: ONE
+    // token held, ZERO in reserve, and 108 filtered by `turnover` alone.
+    //
+    // The cost is bounded by what is forgivable, and that set was chosen for
+    // this reason as much as any other: `age` is the single largest rejection
+    // here — most of what the deep sweep returns — and forgiving it would buy
+    // a throttled request per newborn pool that no indicator could ever use.
+    if (cheap.passed || forgivableFailures(cheap) !== null) affordable.push(market)
     else snapshots.push(provisional)
   }
 

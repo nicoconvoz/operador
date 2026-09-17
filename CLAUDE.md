@@ -580,6 +580,23 @@ whole design. Three of the opportunity gates are not preferences at all:
 
 Result: **3 tradeable becomes 105.**
 
+**It shipped broken, and the reason is worth more than the feature.** The free
+gates run BEFORE the paid ones, so a token they reject is never examined — no
+security report, `securityChecked: false`, and an all-null report fails every
+safety gate closed. `forgivableFailures` could therefore never clear it, and
+the reserve was empty by construction. Measured on the first relaunch that
+carried it: **1 token held, 0 in reserve, 484 filtered, 108 of them by
+`turnover` alone.** The band existed; nothing could ever enter it.
+
+So `scanOnce` forgives the same three gates at the door to the PAID stage. The
+fallback has to be paid for before it can be a fallback.
+
+That is also the second argument for the forgivable set being small. `age` is
+the largest single rejection at that door — most of what the deep sweep returns
+is a pool born this morning — and forgiving it would spend a throttled request
+on each one so that no indicator could use it. Measured, the three that ARE
+forgiven cost **129 extra examinations, about 5.4 minutes** on an hourly scan.
+
 Three rules keep it from being a back door:
 
 - **It goes behind every qualified token, whatever the scores say**, and is cut

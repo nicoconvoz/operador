@@ -466,3 +466,45 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
     expect(asked).toEqual(['good'])
   })
 })
+
+describe('scanOnce — the reserve has to be EXAMINED before it can be reserve', () => {
+  // The free gates run before the paid ones, so a token they reject is never
+  // examined: no security report, `securityChecked: false`, and an all-null
+  // report fails every safety gate closed. That put the whole reserve behind a
+  // door it could never open — measured live after the first relaunch, ONE
+  // token held, zero in reserve, and 108 filtered by turnover alone.
+  const deepAndQuiet = pair('slow', { liquidity: { usd: 5_000_000, base: 1, quote: 1 }, volume: { h1: 4_000, h6: 24_000, h24: 96_000 } })
+
+  it('examines a token held back only by a preference, and keeps it as a fallback', async () => {
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'slow' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/slow`]: { body: [deepAndQuiet] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=slow`]: { body: { code: 1, message: 'ok', result: { slow: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=slow`]: { body: goodQuote },
+    })
+    const out = await scanOnce(deps, config)
+
+    expect(out.snapshots[0]?.securityChecked).toBe(true)
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['slow'])
+    expect(out.candidates[0]?.forgiven?.map((f) => f.gate)).toEqual(['turnover'])
+  })
+
+  it('does not spend a security check on one the strategy could never run', async () => {
+    // Too young for any indicator. Forgiving it at the door would buy nothing
+    // and cost a throttled request per token, on the tier the deep sweep
+    // returns most of.
+    const newborn = pair('newborn', { pairCreatedAt: NOW - 3_600_000 })
+    const { deps, http } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'newborn' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/newborn`]: { body: [newborn] },
+    })
+    const out = await scanOnce(deps, config)
+
+    expect(out.candidates).toEqual([])
+    expect(http.calls.some((u) => u.includes('token_security'))).toBe(false)
+  })
+})
