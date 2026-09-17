@@ -858,12 +858,45 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
         </div>
       )}
 
-      <Row label="puntaje" value={token.score.toFixed(1)} />
       <Row label="liquidez" value={money(token.liquidityUsd)} />
       <Row label="volumen 24h" value={money(token.volume24hUsd)} />
       <Row label="cambio 24h" value={token.change24hPct === null ? '—' : `${token.change24hPct.toFixed(1)}%`} />
       <Row label="antigüedad" value={token.ageHours === null ? '—' : `${(token.ageHours / 24).toFixed(1)}d`} />
       <Row label="ida y vuelta" value={`${token.frictionPct.toFixed(2)}%`} />
+
+      {/*
+        The one number the whole sheet is about, at the size it deserves.
+
+        It was a 13px row between "liquidez" and "antigüedad", which said it
+        weighed the same as them — and it does not: the score is the verdict,
+        and everything above it is the evidence. A reader scanning the sheet
+        for "is this any good" had to find it by reading labels.
+
+        Placed here on purpose, between the facts and the bars: the facts feed
+        it and the bars break it down, so the number sits exactly where the
+        eye passes from one to the other.
+      */}
+      <div
+        style={{
+          marginTop: 14,
+          padding: '12px 14px',
+          borderRadius: 10,
+          background: '#0f1420',
+          border: `1px solid ${style.core}33`,
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 8,
+        }}
+      >
+        <span style={{ color: style.core, fontSize: 46, fontWeight: 700, lineHeight: 1, letterSpacing: -1 }}>
+          {token.score.toFixed(1)}
+        </span>
+        <span style={{ color: '#8b949e', fontSize: 15 }}>/ 100</span>
+        <span style={{ flex: 1 }} />
+        <span style={{ color: '#8b949e', fontSize: 11, textAlign: 'right', maxWidth: 120, lineHeight: 1.3 }}>
+          puntaje del último ciclo
+        </span>
+      </div>
 
       <div style={{ marginTop: 12, marginBottom: 6, color: '#8b949e', fontSize: 12 }}>por qué este puntaje</div>
       {Object.entries(token.components).map(([name, value]) => (
