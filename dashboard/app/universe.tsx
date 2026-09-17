@@ -74,6 +74,17 @@ const COMPONENT_LABEL: Record<string, string> = {
  * rendering budget and not an opinion about how many tokens matter. Anything
  * past it is counted and reported rather than quietly discarded.
  */
+/**
+ * The window the ripple strength is measured across.
+ *
+ * The score is 0..100 by construction and roughly 25..88 in the wild — a token
+ * down 64% scores 26.1, a fresh riser with real activity reaches the high
+ * eighties. Spreading the drawing over the theoretical range wastes two thirds
+ * of it on values nothing ever takes.
+ */
+const RIPPLE_FLOOR = 25
+const RIPPLE_CEIL = 85
+
 const BODY_CAP = 400
 const BODY_CAP_COMPACT = 120
 
@@ -271,7 +282,25 @@ export function Universe({ view }: { view: UniverseView }) {
         // $5M pool on the same screen without one becoming a dot.
         const size = Math.log10(Math.max(token.liquidityUsd, 1_000)) - 3
         const volatility = Math.abs(token.change24hPct ?? 0)
-        const strength = token.tier === 'held' ? 1 : token.score / 100
+        // How hard this one ripples. The operator's rule: better score, stronger
+        // waves — and it was there in name only.
+        //
+        // `score / 100` reads a number that spans 0..100 in theory and about
+        // **25 to 88** in practice, so two thirds of the visual range was spent
+        // on values that never occur. Then the ring COUNT floored it: on a
+        // phone an 88 drew ONE ring and a 50 drew one as well, while a 30 drew
+        // none at all. A continuous measurement flattened into 0 or 1.
+        //
+        // Normalised against the range that actually happens, so the whole
+        // spread is used. A fixed window rather than the min and max on screen:
+        // a sky of mediocre tokens must not make its best one look spectacular,
+        // and two refreshes have to be comparable.
+        const vigour = Math.max(0, Math.min(1, (token.score - RIPPLE_FLOOR) / (RIPPLE_CEIL - RIPPLE_FLOOR)))
+        // Score drives it for EVERY token, held ones included. A position on a
+        // token that has stopped being attractive should say so — and "money is
+        // in it" is already said by the glow, so letting `held` also mean
+        // "maximum ripple" spent two marks on one fact and lost the other.
+        const strength = vigour
         return {
           token,
           cluster: null,
@@ -292,7 +321,9 @@ export function Universe({ view }: { view: UniverseView }) {
           radius: ((compact ? 2.5 : 3) + size * (compact ? 1.7 : 2.4)) * crowd,
           phase: seed * Math.PI * 2,
           strength,
-          ripples: token.tier === 'dead' || token.tier === 'unsafe' ? 0 : Math.floor(strength * (compact ? 2.2 : 3.4)),
+          // At least one for anything alive, so the weakest still breathes and
+          // the difference is read as INTENSITY rather than as presence.
+          ripples: token.tier === 'dead' || token.tier === 'unsafe' ? 0 : 1 + Math.round(vigour * (compact ? 2 : 3)),
           x: 0,
           y: 0,
         }
@@ -416,11 +447,17 @@ export function Universe({ view }: { view: UniverseView }) {
 
         // ── Ripples: how good the opportunity is, made visible ──────────────
         for (let i = 0; i < body.ripples; i++) {
-          const progress = (t * (0.5 + body.strength) * 0.012 + body.phase + i / body.ripples) % 1
+          // Three channels, all widened, because one alone is not read as a
+          // difference: how FAST the rings leave, how FAR they reach, and how
+          // BRIGHT they are. Between the weakest and the strongest that is now
+          // about four times on each, against well under two before.
+          const progress = (t * (0.35 + body.strength * 1.4) * 0.012 + body.phase + i / body.ripples) % 1
           ctx!.beginPath()
-          ctx!.arc(body.x, body.y, drawn + progress * (18 + body.strength * 30) * scale, 0, Math.PI * 2)
-          ctx!.strokeStyle = `rgba(${style.halo},${(0.34 * (1 - progress) * body.strength).toFixed(3)})`
-          ctx!.lineWidth = 1.4
+          ctx!.arc(body.x, body.y, drawn + progress * (12 + body.strength * 46) * scale, 0, Math.PI * 2)
+          // A floor under the opacity so a poor token is faint, never invisible:
+          // absent reads as "not scanned", which is a different claim.
+          ctx!.strokeStyle = `rgba(${style.halo},${((0.12 + 0.46 * body.strength) * (1 - progress)).toFixed(3)})`
+          ctx!.lineWidth = 1 + body.strength * 1.1
           ctx!.stroke()
         }
 
