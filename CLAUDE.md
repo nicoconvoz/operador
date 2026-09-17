@@ -56,12 +56,18 @@ price signal looks.
   down 40% on the day and one up 40% scored identically — the shortlist was as
   happy to buy the falling knife as the climb.
 
-  Each window is normalised against its OWN scale (±8% in an hour, ±20% in six,
-  ±40% in a day), because that is the same amount of news in each, and one scale
-  for all three would let the day drown out the recent hour. Then it is weighted
-  toward the RECENT: up on the day but falling this hour is a top rolling over,
-  down on the day but rising this hour is a bottom turning, and only the near
-  window separates them.
+  **It asks only WHETHER each window is up, never by how much.** The first
+  version normalised against a per-window span — ±8% in an hour, ±40% in a day —
+  and the operator was right to refuse it: there is no percentage at which a
+  rise becomes "a rise", so a threshold there is a guess wearing the clothes of
+  a measurement. `volatility` already carries the magnitude. Together the two
+  say *moving, and upward*, which is the whole reason for having both.
+
+  Weighted toward the RECENT, and the near hour can outvote the other two
+  between them. Up on the day but falling this hour is a top rolling over; down
+  on the day but rising this hour is a bottom turning. The second is the one
+  worth buying, and only a weighting that lets the near window win can tell them
+  apart.
 
   A flat token scores 0.5 and so does an unreported window. Zero movement is the
   absence of a reason either way, and silence is not evidence — the same rule the

@@ -40,17 +40,6 @@ export interface OpportunityPolicy {
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
   /**
-   * The move that counts as a FULL lean in each window, up or down.
-   *
-   * One scale per window, because ±8% inside an hour and ±40% across a day are
-   * the same amount of news — normalising all three against one number would
-   * make the day dominate and the recent hour invisible, which is the opposite
-   * of what "lately" means.
-   */
-  readonly momentumSpan1hPct: number
-  readonly momentumSpan6hPct: number
-  readonly momentumSpan24hPct: number
-  /**
    * Round-trip cost, in percent, at which cost efficiency scores zero. A full
    * cycle pays the fill cost on the way in and the exit cost on the way out;
    * past this the toll plausibly exceeds what a DCA cycle can produce.
@@ -67,9 +56,6 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   fullExpansionRatio: 3,
   fullActivityTxnsPerHour: 60,
   fullVolatilityPct: 20,
-  momentumSpan1hPct: 8,
-  momentumSpan6hPct: 20,
-  momentumSpan24hPct: 40,
   worstRoundTripPct: 6,
 }
 
@@ -130,22 +116,30 @@ export function scoreOpportunity(
   // a token down 40% on the day scored exactly like one up 40% — and the
   // shortlist was as happy to buy the falling knife as the climb.
   //
-  // Each window is normalised against its OWN scale, because ±8% in an hour and
-  // ±40% in a day are the same amount of news, and then weighted toward the
-  // RECENT: up on the day but falling this hour is a top rolling over, while
-  // down on the day but rising this hour is a bottom turning, and only the
-  // recent window separates them.
+  // It asks only WHETHER each window is up, never by how much.
+  //
+  // A size threshold here would be an invented number pretending to be a
+  // measurement: there is no percentage at which a rise becomes "a rise". What
+  // the score needs from this component is the sign, and `volatility` above
+  // already carries the magnitude — together they say "moving, and upward",
+  // which is the whole point of having both.
+  //
+  // Weighted toward the RECENT, and the recent hour can outvote the other two
+  // between them. Up on the day but falling this hour is a top rolling over;
+  // down on the day but rising this hour is a bottom turning. The second is the
+  // one worth buying, and only a weighting that lets the near window win can
+  // tell them apart.
   //
   // A flat token scores 0.5, and so does an unreported window. Zero movement is
   // the absence of a reason either way, and silence is not evidence — the same
   // rule the gates run on. Scoring either as a FALL would push the book toward
   // whatever moved most in any direction, which is the bias this removes.
-  const lean = (pct: number | null, spanPct: number) =>
-    pct === null || pct === undefined ? 0.5 : clamp01(0.5 + pct / (2 * spanPct))
+  const rising = (pct: number | null | undefined) =>
+    pct === null || pct === undefined || pct === 0 ? 0.5 : pct > 0 ? 1 : 0
   const momentum =
-    0.5 * lean(priceChangePct.h1, policy.momentumSpan1hPct) +
-    0.3 * lean(priceChangePct.h6, policy.momentumSpan6hPct) +
-    0.2 * lean(priceChangePct.h24, policy.momentumSpan24hPct)
+    0.6 * rising(priceChangePct.h1) +
+    0.25 * rising(priceChangePct.h6) +
+    0.15 * rising(priceChangePct.h24)
 
   // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
   // so a token is never rewarded for a toll nobody checked.

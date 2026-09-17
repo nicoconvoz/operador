@@ -150,6 +150,26 @@ describe('opportunity — direction, not only motion', () => {
     expect(silent.components.momentum).toBeCloseTo(0.5, 6)
   })
 
+  it('asks only WHETHER it rose, never by how much', () => {
+    // The operator's correction, and it removes three invented numbers. There
+    // is no percentage at which a rise becomes "a rise" — a threshold there
+    // would be a guess wearing the clothes of a measurement. `volatility`
+    // already carries the magnitude; together they say "moving, and upward".
+    const gentle = scoreOpportunity(base({ priceChangePct: { h1: 0.4, h6: 0.4, h24: 0.4 } }), P, null, cheap)
+    const violent = scoreOpportunity(base({ priceChangePct: { h1: 90, h6: 90, h24: 90 } }), P, null, cheap)
+    expect(gentle.components.momentum).toBe(violent.components.momentum)
+    expect(gentle.components.momentum).toBe(1)
+  })
+
+  it('lets the recent hour outvote the two longer windows together', () => {
+    // Otherwise "lately" is decided by yesterday. A bottom turning up in the
+    // last hour must beat a top that is still green on the day.
+    const turning = base({ priceChangePct: { h1: 1, h6: -1, h24: -1 } })
+    const rollingOver = base({ priceChangePct: { h1: -1, h6: 1, h24: 1 } })
+    expect(scoreOpportunity(turning, P, null, cheap).components.momentum)
+      .toBeGreaterThan(scoreOpportunity(rollingOver, P, null, cheap).components.momentum)
+  })
+
   it('never exceeds its bounds, however violent the move', () => {
     const insane = scoreOpportunity(base({ priceChangePct: { h1: 900, h6: 900, h24: 900 } }), P, null, cheap)
     expect(insane.components.momentum).toBeLessThanOrEqual(1)
