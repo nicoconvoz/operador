@@ -119,7 +119,15 @@ export interface UniverseOptions {
 const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 'unsafe', 'dead']
 
 /** Gates that mean "this could hurt you", as opposed to "not interesting". */
-const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation'])
+// `staleBars` belongs here, and the reason is worth stating because the tier
+// split exists to keep these two apart. FILTERED means uninteresting — a missed
+// chance. UNSAFE means a bullet dodged.
+//
+// A token this engine cannot see trading is the second. Buying one is not a
+// mediocre trade, it is capital that gets STUCK: the entry decided at a close
+// waits forever for an open that never comes, the ladder freezes, and the
+// position can neither buy nor sell. Six of them proved it in production.
+const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation', 'staleBars'])
 
 const PRIME_SCORE = 45
 
