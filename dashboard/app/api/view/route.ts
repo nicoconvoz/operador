@@ -33,7 +33,7 @@ export async function GET(): Promise<Response> {
         now,
         // The ladder the ENGINE runs, not the reference's. Drawing
         // DEFAULT_PARAMS put a $1,000 rung beside a $15 order for days.
-        params: { ...DEFAULT_PARAMS, maxUsdPerLevel: ladder.maxUsdPerLevel },
+        params: { ...DEFAULT_PARAMS, maxUsdPerLevel: ladder.maxUsdPerLevel, dropInitPct: ladder.dropInitPct },
         maxOpenEntries: ladder.maxOpenEntries,
         // THIRTY, for the Registro tab. The tape grows without bound and the
         // screen does not: a page listing every buy and sell since the engine

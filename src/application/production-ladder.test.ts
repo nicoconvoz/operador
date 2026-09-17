@@ -7,7 +7,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     // Two, not five: it halves what one token can ever cost and doubles the
     // book. Measured on $1,500 — fourteen positions at $95.09 becomes
     // twenty-nine at $47.57.
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3 })
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -16,12 +16,12 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('takes an override for either', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: '50', OPERADOR_MAX_DCA: '2' }))
-      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3 })
+      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0 })
   })
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -32,5 +32,35 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     expect(PYRAMIDING).toBe(10)
     expect(DEFAULT_MAX_USD_PER_LEVEL).not.toBe(DEFAULT_PARAMS.maxUsdPerLevel)
     expect(DEFAULT_MAX_DCA_PER_TOKEN + 1).not.toBe(PYRAMIDING)
+  })
+})
+
+describe('productionLadder — buying where the price IS', () => {
+  it('defaults to no required drop, so a reserved slot does not wait for a dip', () => {
+    // The operator's decision, taken against my objection and for a better
+    // reason than mine. The 10% drop is what made the first rung a good price;
+    // without it the ladder enters as often near a high as near a low.
+    //
+    // But 22 of 40 positions had never bought, some after three hours. A slot
+    // holding capital and waiting is capital earning nothing, and an entry that
+    // is merely AVERAGE but happens beats a good one that never does — the exit
+    // only wants avg_cost + 2%, and the ladder still averages down if it falls.
+    expect(productionLadder({}).dropInitPct).toBe(0)
+  })
+
+  it('takes an override, so the dip can be asked for again', () => {
+    expect(productionLadder({ OPERADOR_DROP_INIT_PCT: '10' }).dropInitPct).toBe(10)
+  })
+
+  it('accepts zero as a REAL value, not as "unset"', () => {
+    // Zero is the whole point here, so it cannot be a sentinel for absent —
+    // `maxPositions: 0` meaning two different things in two files cost this
+    // engine every position it could have opened.
+    expect(productionLadder({ OPERADOR_DROP_INIT_PCT: '0' }).dropInitPct).toBe(0)
+  })
+
+  it('never expresses itself by editing the backtest inputs', () => {
+    // DEFAULT_PARAMS is what TradingView ran and the parity harness asserts it.
+    expect(DEFAULT_PARAMS.dropInitPct).toBe(10)
   })
 })

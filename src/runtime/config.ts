@@ -1,5 +1,5 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
-import { DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
+import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -103,6 +103,15 @@ export interface RuntimeConfig {
    * Raise it as the capital grows. That was always the plan.
    */
   readonly maxUsdPerLevel: number
+  /**
+   * Drop from the 20-bar swing high the classic entry demands, in percent.
+   *
+   * ZERO in production, against the reference's 10. See the note in
+   * `application/production-ladder.ts`: twenty-two of forty positions had never
+   * bought anything, and an average entry that happens beats a good one that
+   * never does.
+   */
+  readonly dropInitPct: number
   /**
    * Hours a reserved slot may sit without a single fill before it goes back to
    * the pool.
@@ -254,6 +263,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxSecurityChecks: env.OPERADOR_MAX_SECURITY_CHECKS?.trim() ? number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 0) : null,
     exitOnFreeze: onUnless(env, 'OPERADOR_EXIT_ON_FREEZE'),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
+    dropInitPct: productionLadder(env).dropInitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),

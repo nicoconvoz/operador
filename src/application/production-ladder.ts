@@ -46,10 +46,37 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
  */
 export const DEFAULT_MAX_DCA_PER_TOKEN = 2
 
+/**
+ * The drop from the 20-bar swing high the classic entry demands, in percent.
+ *
+ * ZERO in production, and it is the operator's decision taken against my
+ * objection. The reference asks for 10%, which is what made the ladder's first
+ * rung a good price: without it the entry lands as often near a high as near a
+ * low, and the ladder works from a worse basis.
+ *
+ * What overrode that is a measurement. Twenty-two of forty positions had never
+ * bought anything, some after three hours — a slot holding capital and waiting
+ * is capital earning nothing, and **an average entry that happens beats a good
+ * one that never does.** The exit only wants `avg_cost + 2%`, and the ladder
+ * still averages down if the price falls.
+ *
+ * At zero the condition becomes `close <= swingHigh`, which is not a tautology:
+ * it still refuses a bar making a NEW twenty-bar high. So the engine declines
+ * to buy a vertical breakout and takes everything else, which is a reasonable
+ * reading of "buy it wherever it is".
+ *
+ * `is_lateral` still gates it. That answers a different question — whether the
+ * market is in a regime the ladder handles — and was not what the decision was
+ * about.
+ */
+export const DEFAULT_DROP_INIT_PCT = 0
+
 export interface ProductionLadder {
   readonly maxUsdPerLevel: number
   /** Entries the venue holds open at once: the entry plus its DCA rungs. */
   readonly maxOpenEntries: number
+  /** Drop from the swing high the classic entry demands, in percent. */
+  readonly dropInitPct: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -59,8 +86,17 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     return Number.isFinite(value) && value > 0 ? value : fallback
   }
 
+  // Zero is a REAL value here, not "unset", so this cannot use `positive`.
+  // `maxPositions: 0` meaning one thing in one file and its opposite next door
+  // cost this engine every position it could have opened.
+  const percent = (raw: string | undefined, fallback: number) => {
+    const value = Number(raw?.trim())
+    return raw?.trim() && Number.isFinite(value) && value >= 0 && value < 100 ? value : fallback
+  }
+
   return {
     maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, DEFAULT_MAX_USD_PER_LEVEL),
     maxOpenEntries: positive(env.OPERADOR_MAX_DCA, DEFAULT_MAX_DCA_PER_TOKEN) + 1,
+    dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
   }
 }

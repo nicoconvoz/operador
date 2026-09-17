@@ -873,6 +873,40 @@ over ten fills, where gas is 0.33% of each. The old $20 floor refused it
 outright; the derived floor accepts it on Solana and still refuses it if gas
 climbs to $0.20, which is the right answer in both cases.
 
+### Buying where the price IS
+
+`dropInitPct` is **0 in production**, against the reference's 10, and it is the
+operator's decision taken against my objection.
+
+The objection stands and is worth keeping written down: the 10% drop from the
+20-bar swing high is what made the ladder's first rung a GOOD price. Without it
+the entry lands as often near a high as near a low, and the ladder works from a
+worse basis.
+
+What overrode it is a measurement, not a preference. **Twenty-two of forty
+positions had never bought anything**, some after three hours. A slot holding
+capital and waiting is capital earning nothing, and an entry that is merely
+average but HAPPENS beats a good one that never does — the exit only wants
+`avg_cost + 2%`, and the ladder still averages down if the price falls.
+
+There is a reason the threshold aged badly that is nobody's preference:
+**20 bars meant 20 HOURS in the reference and means 5 at 15m.** A 10% fall
+inside twenty hours is ordinary; inside five it is not. The same class of
+silent change as `confirmBars` becoming eleven hours — a parameter counted in
+BARS stops meaning what it meant when the bar changes.
+
+At zero the condition is `close <= swingHigh`, which is not a tautology: it
+still refuses a bar making a NEW twenty-bar high. The engine declines to buy a
+vertical breakout and takes everything else.
+
+`is_lateral` still gates it — that answers whether the market is in a regime the
+ladder handles, which is a different question and was not what the decision was
+about. `OPERADOR_DROP_INIT_PCT` asks for the dip back.
+
+And zero is a REAL value here, so it cannot be parsed as "unset". `maxPositions: 0`
+meaning one thing in one file and its opposite next door cost this engine every
+position it could have opened.
+
 ### Two DCA rungs, not nine
 
 `OPERADOR_MAX_DCA` defaults to **2**, so the venue holds **three** entries open:
