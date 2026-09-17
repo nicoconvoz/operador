@@ -106,8 +106,54 @@ describe('opportunity — the signal moves the right way', () => {
   })
 
   it('weights are honoured: a policy that only values volume ignores everything else', () => {
-    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, costEfficiency: 0 } }
+    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, costEfficiency: 0 } }
     const burst = base({ volumeUsd: { h1: 3_000, h6: 8_000, h24: 24_000 }, priceChangePct: { h1: 50, h6: 50, h24: 50 } })
     expect(scoreOpportunity(burst, volumeOnly).score).toBeCloseTo(100, 9)
+  })
+})
+
+describe('opportunity — direction, not only motion', () => {
+  const rising = { h1: 8, h6: 20, h24: 40 }
+  const falling = { h1: -8, h6: -20, h24: -40 }
+
+  it('scores a token that is going UP above one that is going down', () => {
+    // The score measured volatility — how much it MOVED — and never which way.
+    // A token down 40% on the day and one up 40% looked identical to it, so the
+    // shortlist was as happy to buy the knife as the climb.
+    const up = scoreOpportunity(base({ priceChangePct: rising }), P, null, cheap)
+    const down = scoreOpportunity(base({ priceChangePct: falling }), P, null, cheap)
+    expect(up.score).toBeGreaterThan(down.score)
+  })
+
+  it('weights the RECENT hour above the day, because "lately" is the question', () => {
+    // Up today but falling this hour is a top rolling over; down today but
+    // rising this hour is a bottom turning. The second is the one worth buying,
+    // and only a windowed weighting can tell them apart.
+    const rollingOver = base({ priceChangePct: { h1: -8, h6: 5, h24: 40 } })
+    const turning = base({ priceChangePct: { h1: 8, h6: -5, h24: -40 } })
+    expect(scoreOpportunity(turning, P, null, cheap).components.momentum)
+      .toBeGreaterThan(scoreOpportunity(rollingOver, P, null, cheap).components.momentum)
+  })
+
+  it('treats a flat token as neutral, not as bad', () => {
+    // Zero movement is the absence of a reason either way. Scoring it as a
+    // failure would push the book toward whatever moved most in any direction,
+    // which is the bias this component exists to remove.
+    const flat = scoreOpportunity(base({ priceChangePct: { h1: 0, h6: 0, h24: 0 } }), P, null, cheap)
+    expect(flat.components.momentum).toBeCloseTo(0.5, 6)
+  })
+
+  it('treats an unreported window as neutral rather than as a fall', () => {
+    // The same rule the whole scanner runs on: silence is not evidence. A
+    // provider that omitted a window must not cost the token points.
+    const silent = scoreOpportunity(base({ priceChangePct: { h1: null, h6: null, h24: null } }), P, null, cheap)
+    expect(silent.components.momentum).toBeCloseTo(0.5, 6)
+  })
+
+  it('never exceeds its bounds, however violent the move', () => {
+    const insane = scoreOpportunity(base({ priceChangePct: { h1: 900, h6: 900, h24: 900 } }), P, null, cheap)
+    expect(insane.components.momentum).toBeLessThanOrEqual(1)
+    const ruined = scoreOpportunity(base({ priceChangePct: { h1: -99, h6: -99, h24: -99 } }), P, null, cheap)
+    expect(ruined.components.momentum).toBeGreaterThanOrEqual(0)
   })
 })

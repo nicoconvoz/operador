@@ -57,6 +57,9 @@ const COMPONENT_LABEL: Record<string, string> = {
   liquidityGrowth: 'crecimiento de liquidez',
   activity: 'actividad',
   volatility: 'volatilidad',
+  // Not the same question as volatility, and the pair has to be readable
+  // together: one says how much it MOVED, the other says which way.
+  momentum: 'tendencia reciente',
   costEfficiency: 'eficiencia de costo',
 }
 

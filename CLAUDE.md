@@ -46,10 +46,31 @@ price signal looks.
 - `gates.ts` — the blockers. **Fail closed**: an unknown honeypot result,
   authority, blacklist, tax, LP lock or holder concentration is a failure,
   not a pass. Tested against the shapes of real rugs.
-- `opportunity.ts` — the "breathing" score, 0..100, five explainable
-  components (volume expansion, buy pressure, liquidity growth, activity,
-  volatility). A v1 heuristic with policy weights — to be tuned against
-  recorded outcomes, not a claim of alpha.
+- `opportunity.ts` — the "breathing" score, 0..100, explainable components
+  (volume expansion, buy pressure, liquidity growth, activity, volatility,
+  **momentum**, cost efficiency). A v1 heuristic with policy weights — to be
+  tuned against recorded outcomes, not a claim of alpha.
+
+  **`momentum` answers which WAY it has been going**, and it was missing.
+  `volatility` measures how much a token moved and is blind to direction, so one
+  down 40% on the day and one up 40% scored identically — the shortlist was as
+  happy to buy the falling knife as the climb.
+
+  Each window is normalised against its OWN scale (±8% in an hour, ±20% in six,
+  ±40% in a day), because that is the same amount of news in each, and one scale
+  for all three would let the day drown out the recent hour. Then it is weighted
+  toward the RECENT: up on the day but falling this hour is a top rolling over,
+  down on the day but rising this hour is a bottom turning, and only the near
+  window separates them.
+
+  A flat token scores 0.5 and so does an unreported window. Zero movement is the
+  absence of a reason either way, and silence is not evidence — the same rule the
+  gates run on. Scoring either as a FALL would push the book toward whatever
+  moved most in any direction, which is the bias this exists to remove.
+
+  Its weight comes out of `volatility` (0.15 → 0.08 + 0.17), because the two
+  complement rather than replace each other: one says the token is moving, the
+  other says where to.
 - `ranking.ts` — gates → score → sort → cut to watch slots; every candidate
   carries the `MarketQuality` the executor re-validates.
 
