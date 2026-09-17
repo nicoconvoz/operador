@@ -55,13 +55,16 @@ const spanish = (comment: string) => SPANISH[comment] ?? comment
  * column at all.
  */
 const rung = (orderId: string): string => {
-  if (orderId === 'Entry') return 'peldaño 0'
+  if (orderId === 'Entry') return 'paso 0'
   const dca = /^DCA-(\d+)$/.exec(orderId)
-  return dca ? `peldaño ${dca[1]}` : orderId
+  return dca ? `paso ${dca[1]}` : orderId
 }
 
+// 24h and no "a. m.": the twelve-hour form spent four characters saying
+// something the number already says, and on a phone those four characters were
+// what pushed the row onto a third line.
 const stamp = (ms: number) =>
-  new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  new Date(ms).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 
 const UP = '#63e6a5'
 const DOWN = '#ff6b6b'
@@ -142,45 +145,47 @@ export function Registry({ view }: { view: OperationsView }) {
           </div>
         ) : (
           view.recentFills.map((fill) => (
+            /*
+             * TWO LINES, not one row of fixed columns.
+             *
+             * The columns were sized for a desktop and wrapped on a phone, so a
+             * single fill spilled across three or four ragged lines and the
+             * screen read as noise. Nine values do not fit across 380 pixels at
+             * any font size worth reading — so they stop competing for one row.
+             *
+             * What a reader comes here for goes on top, big enough to scan:
+             * WHEN, which side, which token, and what it MADE. Everything else
+             * is the detail line underneath, dimmer and smaller, where it can
+             * wrap without breaking the rhythm of the list.
+             */
             <div
               key={fill.idempotencyKey}
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 8,
-                fontSize: 12,
-                padding: '6px 0',
-                borderBottom: '1px solid #14181f',
-              }}
+              style={{ padding: '7px 0', borderBottom: '1px solid #14181f' }}
             >
-              <span style={{ color: DIM, width: 84 }}>{stamp(fill.time)}</span>
-              <span style={{ color: fill.side === 'buy' ? UP : DOWN, width: 52 }}>
-                {fill.side === 'buy' ? 'COMPRA' : 'VENTA'}
-              </span>
-              <span style={{ width: 70 }}>{fill.symbol}</span>
-              <span style={{ color: DIM, width: 72 }}>{rung(fill.orderId)}</span>
-              <span style={{ color: DIM, flex: 1, minWidth: 90 }}>{spanish(fill.comment)}</span>
-              <span style={{ width: 90, textAlign: 'right', color: DIM }}>{price(fill.price)}</span>
-              <span style={{ width: 82, textAlign: 'right' }}>{money(fill.price * fill.qty)}</span>
-              {/* The per-fill COST is not here on purpose. It is a real number
-                  and it stays in the CSV and in the header's total, where it is
-                  subtracted once and visibly. Repeated on thirty rows at three
-                  decimals it was thirty red figures shouting about tenths of a
-                  cent, and it crowded out the one column a reader comes to this
-                  screen for. */}
-              {/* What the SALE made. A line that says VENTA and does not say
-                  whether it was a win is the one line on this screen that
-                  answers nothing. A buy gets a dash: it has made nothing yet,
-                  and a zero there would read as a trade that broke even. */}
-              <span
-                style={{
-                  width: 74,
-                  textAlign: 'right',
-                  color: fill.realisedUsd === null ? DIM : fill.realisedUsd >= 0 ? UP : DOWN,
-                }}
-              >
-                {fill.realisedUsd === null ? '—' : `${fill.realisedUsd >= 0 ? '+' : ''}${money(fill.realisedUsd)}`}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12 }}>
+                <span style={{ color: DIM, whiteSpace: 'nowrap' }}>{stamp(fill.time)}</span>
+                <span style={{ color: fill.side === 'buy' ? UP : DOWN, whiteSpace: 'nowrap' }}>
+                  {fill.side === 'buy' ? 'COMPRA' : 'VENTA'}
+                </span>
+                {/* Truncated rather than wrapped: a long name must not be what
+                    pushes the result off the line. */}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {fill.symbol}
+                </span>
+                <span
+                  style={{
+                    marginLeft: 'auto',
+                    whiteSpace: 'nowrap',
+                    color: fill.realisedUsd === null ? DIM : fill.realisedUsd >= 0 ? UP : DOWN,
+                  }}
+                >
+                  {fill.realisedUsd === null ? money(fill.price * fill.qty) : `${fill.realisedUsd >= 0 ? '+' : ''}${money(fill.realisedUsd)}`}
+                </span>
+              </div>
+              <div style={{ color: DIM, fontSize: 11, marginTop: 2 }}>
+                {spanish(fill.comment)} · {rung(fill.orderId)} · {price(fill.price)}
+                {fill.realisedUsd !== null && ` · ${money(fill.price * fill.qty)}`}
+              </div>
             </div>
           ))
         )}
