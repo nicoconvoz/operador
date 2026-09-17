@@ -19,9 +19,20 @@
 --   `blacklist` holds the death-exit verdicts. Emptying it lets the scanner
 --   offer you a token that was already proven to be a rug.
 
+-- NOTHING IN THIS FILE RUNS AS IT STANDS. Uncomment the ONE block you mean.
+--
+-- It did not used to be that way, and it cost real money: the destructive
+-- variant was the only uncommented statement, so pasting the file into Neon's
+-- editor wiped `fills` — and `fills` is not a log, it is where the realised
+-- profit and the common fund are DERIVED from. A dollar of profit disappeared
+-- that way, from someone who had been told to run the other one.
+--
+-- A destructive script whose default is the worst option is a trap, however
+-- well it is commented above the line.
+
 -- ── Everything. A genuine fresh start. ──────────────────────────────────────
-TRUNCATE TABLE positions, fills, checkpoint, blacklist, alerts;
-TRUNCATE TABLE scans, pool_discovery, pool_history, token_security, pool_quiet;
+-- TRUNCATE TABLE positions, fills, checkpoint, blacklist, alerts;
+-- TRUNCATE TABLE scans, pool_discovery, pool_history, token_security, pool_quiet;
 
 -- ── Or: start the book over, KEEP what was learned ──────────────────────────
 --
