@@ -214,14 +214,29 @@ export function scoreOpportunity(
   // worthless. `headroomHalvingPct` is how fast it separates two risers, and
   // the gap widens the further either has run, which is the point.
   //
-  // Only while RISING. "Low" and "cheap" are not the same claim: a token down
-  // 40% and still sinking has enormous room above it and is exactly the knife
-  // `momentum` exists to avoid, so it gets neither the bonus nor the penalty.
+  // A FALLING token has no headroom at all — not a neutral half.
+  //
+  // It was 0.5 so as not to reward a knife for being far from its high, and
+  // that was right while the weight was small. It became wrong the moment this
+  // was the largest term: measured live, a token down 64% on the day with
+  // momentum at zero still scored 52.5, because neutral on the biggest
+  // component is a GIFT rather than an abstention.
+  //
+  // The question is "how much of the upside is left". A token going the wrong
+  // way has none of it. That is not punishing the fall twice; it is the honest
+  // answer to the question asked.
+  //
+  // An UNREPORTED window is still neutral, because silence is not evidence —
+  // the rule the whole scanner runs on — and reading it as a crash would
+  // condemn every token a provider was quiet about.
+  const recent = priceChangePct.h1
   const day = priceChangePct.h24
   const headroom =
-    priceChangePct.h1 === null || priceChangePct.h1 === undefined || priceChangePct.h1 <= 0
+    recent === null || recent === undefined
       ? 0.5
-      : logHeadroom(Math.max(0, day ?? 0), policy)
+      : recent <= 0
+        ? 0
+        : logHeadroom(Math.max(0, day ?? 0), policy)
 
   // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
   // so a token is never rewarded for a toll nobody checked.

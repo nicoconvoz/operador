@@ -113,9 +113,27 @@ price signal looks.
   30. `minScore` is 0 in production, so nothing gates on it — but any threshold
   read against the old scale is now wrong.
 
-  Only while rising. *Low* and *cheap* are not the same claim: a token down 40%
-  and still sinking has enormous room above it and is exactly the knife
-  `momentum` exists to avoid, so it gets neither the bonus nor the penalty.
+  **A falling token gets ZERO headroom, not a neutral half.** It was 0.5 so as
+  not to reward a knife for being far from its high, and that was right while
+  the weight was small. It became wrong the moment this was the largest term:
+  measured live, RICHDEBT was **down 64% on the day with momentum at zero and
+  still scored 52.5**, because neutral on the biggest component is a GIFT rather
+  than an abstention.
+
+  The question is *how much of the upside is left*. A token going the wrong way
+  has none of it — that is not punishing the fall twice, it is the honest answer
+  to the question asked. Measured after the change:
+
+  | | Score | Headroom | Momentum |
+  |---|---|---|---|
+  | falling −64% | **26.1** | 0.000 | 0.00 |
+  | ran +152%, now falling | 27.2 | 0.000 | 0.40 |
+  | ran +124%, still rising | 37.5 | 0.197 | 1.00 |
+  | rising +10%, fresh | **61.8** | 0.859 | 1.00 |
+
+  An UNREPORTED window is still neutral. Silence is not evidence — the rule the
+  whole scanner runs on — and reading it as a crash would condemn every token a
+  provider happened to be quiet about.
 
   The weights came out of `volatility` (0.15 → 0.08 + 0.14 + 0.05), because
   these complement rather than replace it: one says the token is moving, the

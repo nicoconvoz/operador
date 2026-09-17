@@ -224,16 +224,30 @@ describe('opportunity — how much room is left above it', () => {
     expect(fresh - spent).toBeGreaterThan(30)
   })
 
-  it('does NOT reward a token for being low while falling', () => {
-    // "Low" and "cheap" are not the same claim. A token down 40% and still
-    // sinking has plenty of room above it and is precisely the knife the
-    // momentum component exists to avoid — so this stays neutral rather than
-    // handing it the bonus for being far from its high.
+  it('gives a FALLING token no headroom at all, not a neutral half', () => {
+    // It was 0.5 — neutral — so as not to reward a knife for being far from its
+    // high. That was right while the weight was small and wrong once headroom
+    // became the largest term: measured live, RICHDEBT was down 64% on the day
+    // with momentum at zero and still scored 52.5, because neutral on the
+    // biggest component is a gift rather than an abstention.
+    //
+    // The question this asks is "how much of the upside is left". A token going
+    // the wrong way has NONE of it — that is not punishing the fall twice, it is
+    // the honest answer to the question.
     const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -40 } })
-    expect(scoreOpportunity(knife, P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
+    expect(scoreOpportunity(knife, P, null, cheap).components.headroom).toBe(0)
   })
 
-  it('is neutral when the recent window says nothing', () => {
+  it('drops a crashed token far below a rising one', () => {
+    const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -64 } })
+    const climbing = base({ priceChangePct: { h1: 2, h6: 5, h24: 10 } })
+    expect(scoreOpportunity(climbing, P, null, cheap).score - scoreOpportunity(knife, P, null, cheap).score)
+      .toBeGreaterThan(30)
+  })
+
+  it('is neutral when the recent window says NOTHING, which is not the same as falling', () => {
+    // Silence is not evidence — the rule the whole scanner runs on. An
+    // unreported window must not be read as a crash.
     const silent = base({ priceChangePct: { h1: null, h6: null, h24: null } })
     expect(scoreOpportunity(silent, P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
   })
