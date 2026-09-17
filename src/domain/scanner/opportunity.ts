@@ -42,15 +42,20 @@ export interface OpportunityPolicy {
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
   /**
-   * The rise that HALVES the room left above a token.
+   * The shape of the room left above a token: LOGARITHMIC.
    *
-   * Not a threshold — the curve is smooth and never reaches zero — but it is
-   * what sets how fast the preference separates two risers. At 100 a token up
-   * 10% and one up 60% were 1.27 points apart, which desempata a tie and
-   * nothing more. Lower is steeper, and the gap widens the further either has
-   * run, which is what "more difference as it ascends" asks for.
+   * `headroomKneePct` is where the curve bends, and `headroomFullyRunPct` is
+   * the rise at which nothing is left. A log curve spends its steepness early:
+   * the first thirty percent of a run costs far more room than the last thirty,
+   * which is the operator's reading — the higher a token already is, the less
+   * one more percent tells you, while the difference between *barely moved* and
+   * *already ran* is the one worth paying attention to.
+   *
+   * It began as `1 / (1 + run/100)` with a weight of 0.05, where a token up 10%
+   * and one up 60% landed 1.27 points apart. That broke a tie and nothing more.
    */
-  readonly headroomHalvingPct: number
+  readonly headroomKneePct: number
+  readonly headroomFullyRunPct: number
   /**
    * Round-trip cost, in percent, at which cost efficiency scores zero. A full
    * cycle pays the fill cost on the way in and the exit cost on the way out;
@@ -64,11 +69,12 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // than replaces: volatility says the token is MOVING, momentum says which
   // way. Rewarding the first alone made a token down 40% on the day and one up
   // 40% look identical to the shortlist.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.05, momentum: 0.14, headroom: 0.15, costEfficiency: 0.2 },
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 0.1, volatility: 0.05, momentum: 0.14, headroom: 1.14, costEfficiency: 0.2 },
   fullExpansionRatio: 3,
   fullActivityTxnsPerHour: 60,
   fullVolatilityPct: 20,
-  headroomHalvingPct: 30,
+  headroomKneePct: 30,
+  headroomFullyRunPct: 200,
   worstRoundTripPct: 6,
 }
 
@@ -97,6 +103,23 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
  * @param quality the token's measured spread and impact; without it, cost
  *        efficiency is neutral rather than assumed good.
  */
+/**
+ * Room left above a token that has risen `runPct`, on a log curve.
+ *
+ * 1 when it has not moved, 0 once it has run `headroomFullyRunPct`, and never
+ * negative past that — fully spent is fully spent, and a token up 400% is not
+ * worse than one up 200% in any way this component can measure.
+ *
+ * Logarithmic on purpose. The steepness lands EARLY: the gap between a token
+ * that barely moved and one that already ran is the distinction worth paying
+ * for, while up near the top one more percent says very little.
+ */
+export function logHeadroom(runPct: number, policy: OpportunityPolicy): number {
+  const knee = policy.headroomKneePct
+  const spent = Math.log(1 + runPct / knee) / Math.log(1 + policy.headroomFullyRunPct / knee)
+  return clamp01(1 - spent)
+}
+
 export function scoreOpportunity(
   snapshot: TokenSnapshot,
   policy: OpportunityPolicy,
@@ -174,7 +197,7 @@ export function scoreOpportunity(
   const headroom =
     priceChangePct.h1 === null || priceChangePct.h1 === undefined || priceChangePct.h1 <= 0
       ? 0.5
-      : 1 / (1 + Math.max(0, day ?? 0) / policy.headroomHalvingPct)
+      : logHeadroom(Math.max(0, day ?? 0), policy)
 
   // Round trip = pay to get in, pay to get out. 0.5 (neutral) when unmeasured,
   // so a token is never rewarded for a toll nobody checked.

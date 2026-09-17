@@ -191,23 +191,32 @@ describe('opportunity — how much room is left above it', () => {
     expect(early.score).toBeGreaterThan(extended.score)
   })
 
-  it('has no hard threshold — it decays smoothly and never reaches zero', () => {
-    // A cut-off would be the same invented number this component was written to
-    // avoid. `headroomHalvingPct` sets how fast it separates two risers, and
-    // the curve stays monotone at every size.
+  it('runs from full to empty, and stays empty past the end', () => {
     expect(scoreOpportunity(rising(0), P, null, cheap).components.headroom).toBeCloseTo(1, 6)
-    expect(scoreOpportunity(rising(P.headroomHalvingPct), P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
-    expect(scoreOpportunity(rising(3 * P.headroomHalvingPct), P, null, cheap).components.headroom).toBeCloseTo(0.25, 6)
+    expect(scoreOpportunity(rising(P.headroomFullyRunPct), P, null, cheap).components.headroom).toBeCloseTo(0, 6)
+    // Fully spent is fully spent: a token up 400% is not worse than one up 200%
+    // in any way this component can measure, and a negative would be a claim.
+    expect(scoreOpportunity(rising(2 * P.headroomFullyRunPct), P, null, cheap).components.headroom).toBeCloseTo(0, 6)
   })
 
-  it('separates two risers by enough to matter, not merely enough to break a tie', () => {
-    // Measured: at the first settings a token up 10% and one up 60% were 1.27
-    // points apart, which loses to any other component that disagrees. The
-    // operator asked for more, so the curve got steeper and the weight larger —
-    // five points now, which survives a difference of opinion elsewhere.
-    const early = scoreOpportunity(rising(10), P, null, cheap).score
-    const extended = scoreOpportunity(rising(60), P, null, cheap).score
-    expect(early - extended).toBeGreaterThan(4)
+  it('is LOGARITHMIC: the first percent of a run costs more than the last', () => {
+    // The operator's shape, and the reason is asymmetry. Eating a 70% fall is
+    // ruinous; taking a 25% gain and moving on is fine. So the distinction
+    // worth paying for is between BARELY MOVED and ALREADY RAN — up near the
+    // top one more percent says very little.
+    const at = (pct: number) => scoreOpportunity(rising(pct), P, null, cheap).components.headroom
+    const early = at(0) - at(25)
+    const late = at(175) - at(200)
+    expect(early).toBeGreaterThan(late * 3)
+  })
+
+  it('a token that has run 200% scores about thirty', () => {
+    // The operator's number, and it is what sets the WEIGHT rather than the
+    // curve: the range a component can move the score is bounded by its share
+    // of the weights, so reaching thirty from eighty-two makes headroom the
+    // largest term in the score. Deliberately — see the note on the weight.
+    expect(scoreOpportunity(rising(200), P, null, cheap).score).toBeLessThan(35)
+    expect(scoreOpportunity(rising(0), P, null, cheap).score).toBeGreaterThan(75)
   })
 
   it('does NOT reward a token for being low while falling', () => {

@@ -79,25 +79,39 @@ price signal looks.
   between two risers the one that has not run yet is worth more than the one
   that has. The operator's rule.
 
-  No threshold, deliberately: a cut-off would be the same invented number
-  `momentum` was rewritten to remove. The curve is smooth, monotone at every
-  size, and never reaches zero — a token that has run is worth LESS, not
-  worthless. `headroomHalvingPct` (30) is the rise that halves the room left,
-  and it is what sets how far apart two risers land:
+  **Logarithmic, and it is the largest weight in the score.** The operator's
+  decision, and the reason is asymmetry: *eating a 70% fall loses a fortune; taking
+  a 25% gain and moving on is fine.* Those two are not symmetric, so the score
+  should not be either.
 
-  | Rise in 24h | Headroom | Score |
-  |---|---|---|
-  | 0% | 1.000 | 66.66 |
-  | +10% | 0.750 | 64.39 |
-  | +30% | 0.500 | 61.24 |
-  | +60% | 0.333 | 59.14 |
-  | +200% | 0.130 | 56.58 |
+  | Rise in 24h | Headroom | Score | Step |
+  |---|---|---|---|
+  | 0% | 1.000 | **81.80** | |
+  | +25% | 0.702 | 66.72 | **15.08** |
+  | +50% | 0.518 | 57.10 | 9.62 |
+  | +100% | 0.280 | 44.64 | 5.48 |
+  | +150% | 0.120 | 36.28 | 3.84 |
+  | +200% | 0.000 | **29.99** | 2.95 |
 
-  It started at a halving of 100% and a weight of 0.05, which put a token up 10%
-  and one up 60% **1.27 points apart** — enough to break a tie and nothing more,
-  so any other component that disagreed simply overruled it. The operator asked
-  for more, and both knobs moved: the curve to 30% and the weight to 0.15.
-  **Five points now**, which survives a difference of opinion elsewhere.
+  Big steps low, small steps high — the first percent of a run costs far more
+  than the last, because the distinction worth paying for is between *barely
+  moved* and *already ran*, while near the top one more percent says very little.
+
+  The 30 at +200% is what forced the WEIGHT, not the curve. A component can only
+  move the score within its share of the weights, so reaching 30 from 82 makes
+  `headroom` (1.14) larger than every other term combined. That is the
+  consequence, stated: **a mediocre token that has not moved scores 74.25 while
+  an excellent one that rose 60% scores 63.50.** Volume, buy pressure and cost
+  can no longer outvote it.
+
+  There is no hard cut-off past `headroomFullyRunPct` (200): fully spent is
+  fully spent, and a token up 400% is not worse than one up 200% in any way this
+  component can measure.
+
+  A side effect worth knowing: the neutral 0.5 now carries a quarter of the
+  score, so a token about which nothing is known lands near 36 instead of under
+  30. `minScore` is 0 in production, so nothing gates on it — but any threshold
+  read against the old scale is now wrong.
 
   Only while rising. *Low* and *cheap* are not the same claim: a token down 40%
   and still sinking has enormous room above it and is exactly the knife

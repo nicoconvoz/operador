@@ -74,7 +74,12 @@ describe('ranking — gates first, then score, then slots', () => {
       txns: { h1: { buys: 2, sells: 2 }, h24: { buys: 50, sells: 50 } },
       priceChangePct: { h1: 0, h6: 0, h24: 0 },
     })
-    const strict = { ...policy, minScore: 30 }
+    // 45, not 30. The SCALE moved when `headroom` became the largest weight:
+    // its neutral 0.5 — what a flat token gets, since it has neither run nor
+    // fallen — is now a quarter of the score on its own, so a token about which
+    // nothing is known lands near 36 rather than under 30. The test's point is
+    // unchanged: boring is DROPPED, not rejected.
+    const strict = { ...policy, minScore: 45 }
     const { candidates, rejected } = rankUniverse([boring], new Map(), quality, strict)
     expect(candidates).toEqual([])
     expect(rejected).toEqual([])
