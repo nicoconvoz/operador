@@ -484,42 +484,34 @@ export async function scanOnce(
 
   // ── 4b. And can we actually SEE it trade? ──────────────────────────────────
   //
-  // Last, and only for what survived everything else, because it costs one
-  // candle request each. A candidate the engine can never act on is not a
-  // candidate: leaving it on the shortlist means choosing it, refusing it at
-  // the door, and choosing it again next cycle, forever.
+  // Measured LAST, and only for what survived everything else, because it costs
+  // one candle request each. Written onto the SNAPSHOT rather than filtered out
+  // of the ranking: the dashboard re-evaluates the gates on the stored snapshot,
+  // so a verdict kept only in the ranking meant the screen drew a token as
+  // eligible while the engine refused it — the exact screen-versus-engine
+  // disagreement the read model exists to prevent. Eighteen of twenty-seven
+  // Solana tokens were in that state.
   if (deps.barAgeHours && config.maxBarAgeHours !== undefined) {
-    const maxAge = config.maxBarAgeHours
-    const kept: typeof ranked.candidates[number][] = []
-    const stale: typeof ranked.rejected[number][] = []
+    const measured = new Map<string, number | null>()
     for (const candidate of ranked.candidates) {
-      let age: number | null
       try {
-        age = await deps.barAgeHours(candidate.snapshot)
+        measured.set(tokenKey(candidate.snapshot), await deps.barAgeHours(candidate.snapshot))
       } catch (error) {
         errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
         // Unanswered is not fresh. Fail closed, like every other gate here.
-        age = null
+        measured.set(tokenKey(candidate.snapshot), null)
       }
-      if (age !== null && age <= maxAge) {
-        kept.push(candidate)
-        continue
-      }
-      stale.push({
-        ...candidate,
-        gates: {
-          passed: false,
-          failures: [{
-            gate: 'staleBars',
-            reason: age === null ? 'unknown' : 'failed',
-            detail: age === null
-              ? 'el proveedor de velas no devolvió ninguna operación — sin barras la estrategia no puede decidir'
-              : `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más actividad que reporte el mercado`,
-          }],
-        },
-      })
     }
-    ranked = { ...ranked, candidates: kept, rejected: [...ranked.rejected, ...stale] }
+    if (measured.size > 0) {
+      const withAge = snapshots.map((s) =>
+        measured.has(tokenKey(s)) ? { ...s, lastTradeAgoHours: measured.get(tokenKey(s))! } : s,
+      )
+      snapshots.length = 0
+      snapshots.push(...withAge)
+      // Re-ranked on the completed evidence, so `staleBars` decides here exactly
+      // as it will on the screen and at the door. One gate, one definition.
+      ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
+    }
   }
 
   deps.onProgress?.({

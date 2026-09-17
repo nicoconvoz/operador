@@ -96,6 +96,15 @@ export interface GatePolicy {
    */
   readonly minHistoryBars: number
   /**
+   * How stale the newest bar may be before the token is refused.
+   *
+   * Not an opportunity judgement: it answers whether this engine can SEE the
+   * pool trade, and the strategy cannot decide anything without bars. One hour
+   * matches `minHourlyTxns`'s own window and leaves the three-hour abandonment
+   * freeze clear room.
+   */
+  readonly maxBarAgeHours: number
+  /**
    * Price impact of a reference sell, above which the token is not a trade.
    *
    * The score already penalises cost — `costEfficiency` reaches zero at a 6%
@@ -167,6 +176,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   denylist: SOLANA_DENYLIST,
   canonicalSymbols: SOLANA_CANONICAL_SYMBOLS,
   minHistoryBars: 250,
+  maxBarAgeHours: 1,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
   // Ten percent is already far beyond anything the 1%-per-fill and 3%-exit
   // budgets could rescue; past it there is nothing to size down to.
@@ -266,6 +276,21 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
   const age = hoursOld(snapshot)
   if (age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
   else if (age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+
+  // Can this engine SEE it trade? Only on a measured value: a scan that has not
+  // asked the candle feed says nothing, and the entry confirmation asks again
+  // live before any capital moves.
+  //
+  // A null measurement is NOT silence — it is the feed answering "no trades at
+  // all", which is the strongest form of the failure.
+  if (snapshot.lastTradeAgoHours !== undefined) {
+    const age = snapshot.lastTradeAgoHours
+    if (age === null) {
+      failures.push(fail('staleBars', 'unknown', 'el proveedor de velas no devolvió ninguna operación — sin barras la estrategia no puede decidir'))
+    } else if (age > policy.maxBarAgeHours) {
+      failures.push(fail('staleBars', 'failed', `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más actividad que reporte el mercado`))
+    }
+  }
 
   if (snapshot.volumeUsd.h24 < policy.minVolume24hUsd) {
     failures.push(fail('volume', 'failed', `24h volume $${snapshot.volumeUsd.h24.toFixed(0)} < $${policy.minVolume24hUsd}`))
@@ -405,6 +430,21 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   // candles yet says nothing, and the executor checks again before trading.
   if (snapshot.historyBars !== null && snapshot.historyBars !== undefined && snapshot.historyBars < policy.minHistoryBars) {
     failures.push(fail('history', 'failed', `${snapshot.historyBars} barras de historial < ${policy.minHistoryBars} — EMA-200 no puede existir`))
+  }
+
+  // Can this engine SEE it trade? Only on a measured value: a scan that has not
+  // asked the candle feed says nothing, and the entry confirmation asks again
+  // live before any capital moves.
+  //
+  // A null measurement is NOT silence — it is the feed answering "no trades at
+  // all", which is the strongest form of the failure.
+  if (snapshot.lastTradeAgoHours !== undefined) {
+    const age = snapshot.lastTradeAgoHours
+    if (age === null) {
+      failures.push(fail('staleBars', 'unknown', 'el proveedor de velas no devolvió ninguna operación — sin barras la estrategia no puede decidir'))
+    } else if (age > policy.maxBarAgeHours) {
+      failures.push(fail('staleBars', 'failed', `última vela hace ${age.toFixed(1)}h — sin barras no se puede operar, por más actividad que reporte el mercado`))
+    }
   }
 
   if (snapshot.volumeUsd.h24 < policy.minVolume24hUsd) {

@@ -203,10 +203,19 @@ counting correctly.
 
 It is enforced in two places, and both are needed:
 
-- **`scanOnce`** refuses it as a CANDIDATE (`staleBars`), so it never reaches
-  the shortlist. Asked only of tokens that cleared every other gate — about
-  thirty a scan rather than three hundred, since the gates have already cut
-  ninety percent.
+- **`scanOnce`** measures it for the tokens that cleared every other gate — about
+  thirty a scan rather than three hundred — and writes the answer onto the
+  SNAPSHOT as `lastTradeAgoHours`. `staleBars` is then an ordinary gate in
+  `evaluateGates`, firing on the measurement like `history` does and staying
+  silent where nobody measured.
+
+  It was first written as a post-ranking FILTER, and that was wrong in a way
+  worth keeping. The dashboard re-evaluates the gates on the stored snapshot, so
+  a verdict kept only inside the ranking meant the screen drew a token as
+  eligible while the engine refused it: eighteen of twenty-seven Solana tokens
+  sat in that state, and the operator counted six reds where there should have
+  been twenty-four. Two implementations of "is this tradeable" always drift; the
+  fix is one measurement both of them read.
 - **`confirmEntry`** asks again at the door, because the shortlist can be an
   hour old and this is the moment capital moves.
 

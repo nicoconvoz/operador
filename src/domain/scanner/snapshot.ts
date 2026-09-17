@@ -77,6 +77,20 @@ export interface TokenSnapshot {
    * snapshot written before this existed had been.
    */
   readonly securityChecked?: boolean
+
+  /**
+   * Hours since the newest bar CARRYING VOLUME in this pool, or null when the
+   * candle feed answered nothing at all.
+   *
+   * Absent means nobody measured it — the gate then stays silent, exactly like
+   * `historyBars`. It fires on evidence, never on absence.
+   *
+   * It exists because two providers disagree about the same pool: GeckoTerminal
+   * reported 0 trades in an hour where DexScreener reported 35. The strategy is
+   * bar-driven, so whichever is right about the market, a pool this engine
+   * cannot see trading is one it cannot trade.
+   */
+  readonly lastTradeAgoHours?: number | null
   /**
    * Price impact of a real reference sell, MEASURED by quoting it. Null when
    * no quote was taken.

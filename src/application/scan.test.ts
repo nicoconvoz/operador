@@ -4,7 +4,7 @@ import { DexScreener, DEXSCREENER_BASE, type DexPair } from '../infrastructure/a
 import { GoPlus, GOPLUS_BASE, type GoPlusSolanaToken } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter, JUPITER_LITE_BASE } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { stubHttp } from '../infrastructure/http.js'
-import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { evaluateGates, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { type SecurityReport } from '../domain/scanner/snapshot.js'
 
@@ -400,6 +400,31 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
 
     expect(out.candidates).toEqual([])
     expect(out.rejected.map((r) => r.gates.failures[0]!.gate)).toContain('staleBars')
+  })
+
+  it('writes the verdict onto the SNAPSHOT, so the screen and the engine agree', async () => {
+    // The dashboard re-evaluates the gates on the stored snapshot. A verdict
+    // kept only inside the ranking meant the screen drew a token as eligible
+    // while the engine refused it — eighteen of twenty-seven Solana tokens were
+    // in exactly that state, and the operator counted six reds where there
+    // should have been twenty-four.
+    //
+    // Two implementations of "is this token tradeable" will always drift; the
+    // fix is one measurement both of them read.
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+    })
+
+    const out = await scanOnce({ ...deps, barAgeHours: async () => 5 }, { ...config, maxBarAgeHours: 1 })
+
+    expect(out.snapshots[0]!.lastTradeAgoHours).toBe(5)
+    // And the gates, run again on that snapshot by anyone, reach the same verdict.
+    expect(evaluateGates(out.snapshots[0]!, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('staleBars')
   })
 
   it('keeps a token whose bars are current', async () => {
