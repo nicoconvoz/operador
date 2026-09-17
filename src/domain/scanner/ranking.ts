@@ -1,5 +1,5 @@
 import { type MarketQuality } from '../market/market-quality.js'
-import { evaluateGates, type GatePolicy, type GateResult } from './gates.js'
+import { evaluateGates, forgivableFailures, type GateFailure, type GatePolicy, type GateResult } from './gates.js'
 import { scoreOpportunity, type Opportunity, type OpportunityPolicy } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 
@@ -11,6 +11,16 @@ export interface Candidate {
   readonly snapshot: TokenSnapshot
   readonly opportunity: Opportunity
   readonly marketQuality: MarketQuality
+  /**
+   * Present when this token is here only because nothing better was free, and
+   * carrying the preferences it was forgiven. Absent means it qualified
+   * outright.
+   *
+   * The evidence travels WITH the candidate rather than being recomputed, so
+   * the screen, the allocator and the audit log cannot disagree about why a
+   * token the gates rejected ended up holding money.
+   */
+  readonly forgiven?: readonly GateFailure[]
 }
 
 /** A token the scanner looked at and refused, with the reasons. Kept for the audit log. */
@@ -62,11 +72,15 @@ export function rankUniverse(
   policy: RankingPolicy,
 ): ScanResult {
   const candidates: Candidate[] = []
+  // Held back by taste alone. Kept apart rather than mixed in, because the
+  // allocator must exhaust what qualifies before it reaches for a fallback.
+  const reserve: Candidate[] = []
   const rejected: Rejected[] = []
 
   for (const snapshot of universe) {
     const gates = evaluateGates(snapshot, policy.gates)
-    if (!gates.passed) {
+    const forgiven = gates.passed ? null : forgivableFailures(gates)
+    if (!gates.passed && forgiven === null) {
       rejected.push({ snapshot, gates })
       continue
     }
@@ -75,7 +89,8 @@ export function rankUniverse(
     const marketQuality = quality(snapshot)
     const opportunity = scoreOpportunity(snapshot, policy.opportunity, previous.get(tokenKey(snapshot)) ?? null, marketQuality)
     if (opportunity.score < policy.minScore) continue
-    candidates.push({ snapshot, opportunity, marketQuality })
+    if (forgiven === null) candidates.push({ snapshot, opportunity, marketQuality })
+    else reserve.push({ snapshot, opportunity, marketQuality, forgiven })
   }
 
   // SIZE first, then score. An unknown FDV counts as small: it is the normal
@@ -83,14 +98,18 @@ export function rankUniverse(
   // tokens this system exists to trade.
   const big = (s: TokenSnapshot) =>
     policy.smallCapFdvUsd !== undefined && s.fdvUsd !== null && s.fdvUsd > policy.smallCapFdvUsd ? 1 : 0
-  candidates.sort(
-    (a, b) =>
-      big(a.snapshot) - big(b.snapshot) ||
-      b.opportunity.score - a.opportunity.score ||
-      a.snapshot.address.localeCompare(b.snapshot.address),
-  )
+  const byRank = (a: Candidate, b: Candidate) =>
+    big(a.snapshot) - big(b.snapshot) ||
+    b.opportunity.score - a.opportunity.score ||
+    a.snapshot.address.localeCompare(b.snapshot.address)
+  candidates.sort(byRank)
+  reserve.sort(byRank)
 
-  return { candidates: candidates.slice(0, policy.watchSlots), rejected }
+  // The fallback goes BEHIND every token that qualified, whatever the scores
+  // say, and is cut with them rather than in addition to them — a wider
+  // shortlist is a wider candle bill, and the slots the reserve fills are the
+  // ones nothing else could.
+  return { candidates: [...candidates, ...reserve].slice(0, policy.watchSlots), rejected }
 }
 
 export const tokenKey = (snapshot: TokenSnapshot): string => `${snapshot.chain}:${snapshot.address}`

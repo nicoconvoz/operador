@@ -35,6 +35,16 @@ const candidate = (address: string, score: number): Candidate => ({
   marketQuality: quality,
 })
 
+/**
+ * A token that is only on the list because nothing better was free: it failed
+ * a gate that expresses a preference, and the scanner forgave it so the
+ * capital would not sit idle.
+ */
+const fallback = (address: string, score: number): Candidate => ({
+  ...candidate(address, score),
+  forgiven: [{ gate: 'turnover', reason: 'failed', detail: 'rota 0.2x su liquidez en 24h' }],
+})
+
 const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => ({
   id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
   cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 300,
@@ -349,6 +359,29 @@ describe('runCycle — a reservation nobody used gives up its slot', () => {
 
     expect(result.releasedIds).toEqual([])
     expect((await store.loadPositions()).map((p) => p.id)).toContain('idle-1')
+  })
+
+  it('is never taken by a token that is only there because nothing better was free', async () => {
+    // A reservation is handed on when something BETTER is waiting for it. A
+    // fallback is not better — it is what the allocator reaches for once the
+    // qualified list is exhausted, and letting it evict an incumbent would
+    // trade a token the gates approved for one they did not, at a cost in gas.
+    const { deps, store, throttle } = rig({ scan: async () => [fallback('b', 99)] })
+    await store.savePosition(idle())
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.releasedIds).toEqual([])
+  })
+
+  it('still OPENS with one when the slot is already free', async () => {
+    // The other half of the operator's rule: idle capital is worse than a
+    // second-choice token, as long as the second choice is safe.
+    const { deps, throttle } = rig({ scan: async () => [fallback('b', 60)] })
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.opened).toHaveLength(1)
   })
 
   it('does not blacklist what it releases — the token did nothing wrong', async () => {

@@ -149,3 +149,63 @@ describe('rankUniverse — the small ones fill the book, the big ones complete i
     expect(candidates[0]!.snapshot.address).toBe('UNK')
   })
 })
+
+describe('ranking — the reserve: what gets bought when nothing better is free', () => {
+  // The operator's rule: when there are not enough coins to trade, or capital
+  // is sitting free, reach further down — but always in the order the scores
+  // decided. Measured live on 509 tokens: THREE were ready to trade and
+  // EIGHTY-FOUR were held back by the turnover gate alone.
+  const deep: RankingPolicy = { ...policy, watchSlots: 10, minScore: 0 }
+  const quiet = (address: string, over: Partial<TokenSnapshot> = {}) =>
+    // Trades briskly — four an hour clears `idle` easily — but the pool is so
+    // deep it barely turns over its own liquidity in a day.
+    token(address, { liquidityUsd: 5_000_000, volumeUsd: { h1: 4_000, h6: 24_000, h24: 96_000 }, ...over })
+
+  it('admits a token held back ONLY by a preference, and says what it forgave', () => {
+    const [only] = rankUniverse([quiet('quiet')], new Map(), quality, deep).candidates
+    expect(only?.snapshot.address).toBe('quiet')
+    expect(only?.forgiven?.map((f) => f.gate)).toEqual(['turnover'])
+  })
+
+  it('puts every fully-qualified token ahead of it, whatever the scores say', () => {
+    // A reserve token is a fallback for idle capital, never a competitor.
+    const ranked = rankUniverse([quiet('quiet'), token('clean')], new Map(), quality, deep).candidates
+    expect(ranked.map((c) => c.snapshot.address)).toEqual(['clean', 'quiet'])
+    expect(ranked[0]?.forgiven).toBeUndefined()
+  })
+
+  it('orders the reserve among itself by score, like everything else', () => {
+    const dull = quiet('dull', { priceChangePct: { h1: -1, h6: -2, h24: -3 } })
+    const bright = quiet('bright', { priceChangePct: { h1: 5, h6: 8, h24: 12 } })
+    const ranked = rankUniverse([dull, bright], new Map(), quality, deep).candidates
+    expect(ranked.map((c) => c.snapshot.address)).toEqual(['bright', 'dull'])
+  })
+
+  it('forgives nothing that makes the token DANGEROUS', () => {
+    const rug = quiet('rug', { security: { ...token('x').security, honeypot: true } })
+    expect(rankUniverse([rug], new Map(), quality, deep).candidates).toHaveLength(0)
+  })
+
+  it('forgives nothing the STRATEGY needs in order to run', () => {
+    // `idle` is not a preference: under four trades an hour a 15m bar comes
+    // back empty, and an empty bar is how a position freezes with its capital
+    // unreachable. That is the failure this book just spent a session fixing.
+    const dead = quiet('dead', { txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } })
+    expect(rankUniverse([dead], new Map(), quality, deep).candidates).toHaveLength(0)
+
+    // A pool with no history has no indicators, so the machine cannot step.
+    const newborn = quiet('newborn', { pairCreatedAt: NOW - HOUR })
+    expect(rankUniverse([newborn], new Map(), quality, deep).candidates).toHaveLength(0)
+
+    // And a day-long bleed is an exit in progress — today's decision stands.
+    const knife = quiet('knife', { priceChangePct: { h1: -1, h6: -10, h24: -40 } })
+    expect(rankUniverse([knife], new Map(), quality, deep).candidates).toHaveLength(0)
+  })
+
+  it('never lets the reserve push a qualified token out of the watch slots', () => {
+    const universe = [quiet('q1'), quiet('q2'), quiet('q3'), token('clean')]
+    const ranked = rankUniverse(universe, new Map(), quality, { ...deep, watchSlots: 2 }).candidates
+    expect(ranked[0]?.snapshot.address).toBe('clean')
+    expect(ranked).toHaveLength(2)
+  })
+})

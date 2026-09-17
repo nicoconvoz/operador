@@ -43,6 +43,9 @@ const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string;
   held: { core: '#63e6a5', halo: '99,230,165', label: 'EN POSICIÓN', short: 'operando' },
   prime: { core: '#ffd166', halo: '255,209,102', label: 'ÓPTIMA', short: 'óptima' },
   eligible: { core: '#5aa9e6', halo: '90,169,230', label: 'ELEGIBLE', short: 'elegible' },
+  // Teal, between eligible and filtered, because that is exactly where it
+  // sits: safe and buyable, but only once the elegibles run out.
+  reserve: { core: '#4fb3a4', halo: '79,179,164', label: 'RESERVA', short: 'reserva' },
   // Violet, between eligible and filtered: it is queued, not judged.
   pending: { core: '#9d7cd8', halo: '157,124,216', label: 'SIN REVISAR', short: 'pendiente' },
   filtered: { core: '#5c6773', halo: '92,103,115', label: 'FILTRADA', short: 'filtrada' },
@@ -74,7 +77,7 @@ const COMPONENT_LABEL: Record<string, string> = {
 const BODY_CAP = 400
 const BODY_CAP_COMPACT = 120
 
-const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 'unsafe', 'dead']
+const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'reserve', 'pending', 'filtered', 'unsafe', 'dead']
 
 /**
  * Tiers drawn as ONE body per chain instead of one per token.
@@ -87,7 +90,7 @@ const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filter
  * Collapsed, not hidden: the cluster carries its count, and tapping it filters
  * to exactly those tokens so they expand again. Nothing becomes unreachable.
  */
-const COLLAPSED_TIERS: readonly TokenTier[] = ['pending', 'unsafe', 'filtered']
+const COLLAPSED_TIERS: readonly TokenTier[] = ['reserve', 'pending', 'unsafe', 'filtered']
 
 interface Cluster {
   readonly tier: TokenTier

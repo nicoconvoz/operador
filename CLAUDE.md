@@ -542,6 +542,62 @@ An unknown FDV counts as SMALL. It is the normal case on a young pool, and
 sorting it last would quietly demote exactly the tokens this system exists to
 trade.
 
+### The reserve: what gets bought when nothing better is free
+
+Measured live, 509 tokens in the universe:
+
+| Tier | |
+|---|---|
+| held | 25 |
+| **prime + eligible** | **0** |
+| pending — cleared the free gates, not yet examined | 3 |
+| filtered | 412 |
+| unsafe | 69 |
+
+**Nothing passed every gate.** The book held twenty-five positions against
+$1,500 of capital, deployed $372 of it, and the allocator had nothing to spend
+the rest on. Which gate? One, mostly — `turnover` blocked **eighty-four tokens
+on its own**, more than every other sole cause put together.
+
+The operator's rule: *when there are not enough coins to trade, or capital is
+sitting free, enable the closest scores and put those to work — always
+respecting the scores as we decided them.*
+
+The split it rests on already existed, because `confirmEntry` needed it: some
+gates ask *is this dangerous?* and some ask *is this worth buying?* The second
+kind is a PREFERENCE, and a preference is a reason to rank a token below
+another — never a reason to leave a slot empty while it is the only thing left.
+
+**But the reserve forgives LESS than the door does**, and the difference is the
+whole design. Three of the opportunity gates are not preferences at all:
+
+| Gate | Forgiven? | |
+|---|---|---|
+| `turnover`, `volume`, `marketCap` | **yes** | A deep pool that turns slowly, a thin day, a name bigger than this book prefers. Taste. |
+| `idle` | **no** | Under four trades an hour a 15m bar comes back EMPTY, and an empty bar is how a position freezes with its capital unreachable — the failure this engine just spent a session repairing. |
+| `age`, `history` | **no** | No bars, no indicators. The machine cannot step. |
+| `freefall` | **no** | A day-long bleed is an exit in progress. Forgiving it would quietly undo `maxDailyFallPct`, decided this week and on purpose. |
+
+Result: **3 tradeable becomes 105.**
+
+Three rules keep it from being a back door:
+
+- **It goes behind every qualified token, whatever the scores say**, and is cut
+  with them rather than in addition to them. A wider shortlist is a wider
+  candle bill, and the slots the reserve fills are the ones nothing else could.
+- **It may fill a free slot and never take an occupied one.** `idle-slots`
+  hands a reservation on when something BETTER is waiting; a fallback is not
+  better, and letting it evict an incumbent would swap a token the gates
+  approved for one they refused — and pay gas for it.
+- **The evidence travels with the candidate.** `Candidate.forgiven` carries the
+  failures that were excused, so the allocator, the screen and the audit log
+  cannot disagree about why a token the gates rejected ended up holding money.
+
+It has its own TIER on the screen for the same reason. A token the engine can
+buy while the canvas draws it `filtered` is the screen-versus-engine
+disagreement this read model exists to prevent, and this project has paid for
+that one more than once.
+
 ### Freefall — an entry gate, and deliberately not an exit
 
 A token that has lost more than half its price in about three hours is not an

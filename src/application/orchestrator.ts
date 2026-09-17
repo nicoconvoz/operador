@@ -265,7 +265,16 @@ export async function runCycle(
 
     const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score]))
     const heldNow = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
-    const waiting = candidates.filter((c) => !heldNow.has(`${c.snapshot.chain}:${c.snapshot.address}`))
+    // What is QUEUING for a slot, which is not the same as what is on the list.
+    //
+    // A reservation is handed on when something better is waiting for it. A
+    // FORGIVEN token is not better: it is what the allocator reaches for once
+    // the qualified list runs out, so it may fill a slot that is already free
+    // and may never take one that is not. Otherwise the book would trade a
+    // token the gates approved for one they refused, and pay gas to do it.
+    const waiting = candidates.filter(
+      (c) => c.forgiven === undefined && !heldNow.has(`${c.snapshot.chain}:${c.snapshot.address}`),
+    )
 
     // ── 3b. Slots that are not earning them ──────────────────────────────────
     //

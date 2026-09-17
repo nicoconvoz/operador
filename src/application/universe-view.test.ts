@@ -423,3 +423,32 @@ describe('buildUniverse — one token is one body, however many times it was sca
     expect(view.tokens.find((t) => t.address === 'RICH')!.liquidityUsd).toBe(900_000)
   })
 })
+
+describe('universe — the reserve is its own tier, not a rejection', () => {
+  // The screen re-evaluates the gates on the stored snapshot. A token the
+  // allocator can reach for, drawn as `filtered`, is the exact
+  // screen-versus-engine disagreement this read model exists to prevent — and
+  // this project has paid for that one more than once.
+  const quiet = token('QUIET', { liquidityUsd: 5_000_000, volumeUsd: { h1: 4_000, h6: 24_000, h24: 96_000 } })
+
+  it('draws a token held back only by a preference as reserve', async () => {
+    const store = await seed([quiet])
+    const view = await buildUniverse(store, options)
+    expect(view.tokens[0]?.tier).toBe('reserve')
+  })
+
+  it('still says WHY it is not a first choice', async () => {
+    const store = await seed([quiet])
+    const view = await buildUniverse(store, options)
+    expect(view.tokens[0]?.blockers.join(' ')).toMatch(/liquidez/)
+  })
+
+  it('leaves a token the strategy cannot run on in filtered', async () => {
+    // Under four trades an hour a 15m bar comes back empty, and an empty bar
+    // is how a position freezes. Not taste.
+    const dead = token('DEAD', { txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } })
+    const store = await seed([dead])
+    const view = await buildUniverse(store, options)
+    expect(view.tokens[0]?.tier).toBe('filtered')
+  })
+})

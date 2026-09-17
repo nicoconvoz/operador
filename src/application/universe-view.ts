@@ -1,4 +1,4 @@
-import { evaluateGates, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { evaluateGates, forgivableFailures, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { scoreOpportunity, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
@@ -27,6 +27,16 @@ export type TokenTier =
   | 'prime'
   /** Passed every gate, quieter score. */
   | 'eligible'
+  /**
+   * Failed a gate that is a PREFERENCE, and the allocator may still buy it
+   * when nothing better is free — so it cannot be drawn as a rejection.
+   *
+   * A token the engine can reach for while the screen calls it filtered is the
+   * screen-versus-engine disagreement this read model exists to prevent. It is
+   * not eligible either: it only ever fills a slot the qualified list left
+   * empty, and it never takes one from an incumbent.
+   */
+  | 'reserve'
   /** Failed a market gate: too thin, too young, too quiet, too big. */
   | 'filtered'
   /** Failed a SAFETY gate. Not a missed chance — a bullet dodged. */
@@ -116,7 +126,7 @@ export interface UniverseOptions {
   readonly spreadPct?: number
 }
 
-const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'pending', 'filtered', 'unsafe', 'dead']
+const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'reserve', 'pending', 'filtered', 'unsafe', 'dead']
 
 /** Gates that mean "this could hurt you", as opposed to "not interesting". */
 // `staleBars` belongs here, and the reason is worth stating because the tier
@@ -225,7 +235,9 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
           : unsafe
             ? 'unsafe'
             : !gateResult.passed
-              ? 'filtered'
+              ? forgivableFailures(gateResult) !== null
+                ? 'reserve'
+                : 'filtered'
               : opportunity.score >= PRIME_SCORE
                 ? 'prime'
                 : 'eligible'

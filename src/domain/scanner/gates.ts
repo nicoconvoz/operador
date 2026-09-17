@@ -413,6 +413,43 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
  * answer or an unreadable authority is still a refusal — a token nobody can
  * vouch for at the moment of purchase is not bought.
  */
+/**
+ * The gates a token may be FORGIVEN when capital would otherwise sit idle.
+ *
+ * The operator's rule: when there are not enough coins to trade, reach further
+ * down the ranking rather than leave money doing nothing — always in the order
+ * the scores decided. Measured live across 509 tokens, three were ready to
+ * trade and **eighty-four were held back by `turnover` alone**.
+ *
+ * This is a STRICTER set than `evaluateSafetyGates` forgives at the door, and
+ * the difference is the point. That one answers "is this dangerous?"; this one
+ * has to answer "is this merely not my first choice?", and three of the
+ * opportunity gates fail that test:
+ *
+ *  - `idle` — under four trades an hour a 15m bar comes back EMPTY, and an
+ *    empty bar is how a position freezes with its capital unreachable. Not a
+ *    preference: the exact failure this engine spent a session repairing.
+ *  - `age` / `history` — no bars, no indicators, and the machine cannot step.
+ *  - `freefall` — a day-long bleed is an exit in progress. Forgiving it would
+ *    quietly undo `maxDailyFallPct`, decided this week and on purpose.
+ *
+ * What is left really is taste. A deep pool that turns over slowly, a small
+ * one with a thin day, a name bigger than this book prefers: each is a reason
+ * to rank a token BELOW another, never a reason to leave the slot empty.
+ */
+const FORGIVABLE = new Set<GateName>(['turnover', 'volume', 'marketCap'])
+
+/**
+ * The failures this token would be forgiven, or null when it cannot be.
+ *
+ * Null for a token that passed everything too — a caller asking this question
+ * wants the FALLBACK list, and something that qualifies outright is not on it.
+ */
+export function forgivableFailures(gates: GateResult): readonly GateFailure[] | null {
+  if (gates.passed || gates.failures.length === 0) return null
+  return gates.failures.every((failure) => FORGIVABLE.has(failure.gate)) ? gates.failures : null
+}
+
 export function evaluateSafetyGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
   const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history'])
   const { failures } = evaluateGates(snapshot, policy)
