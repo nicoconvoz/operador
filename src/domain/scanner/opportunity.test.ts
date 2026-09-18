@@ -34,7 +34,8 @@ describe('opportunity — components are explainable and bounded', () => {
     expect(components.buyPressure).toBe(0)
     expect(components.liquidityGrowth).toBeCloseTo(0.5, 9) // no previous → ratio 1
     expect(components.volatility).toBe(0)
-    expect(components.momentum).toBeCloseTo(0.5, 9) // flat in every window → no reason either way
+    // Flat is not positive, so the trend reads zero — the operator's rule.
+    expect(components.momentum).toBe(0) // flat in every window → no reason either way
     expect(components.headroom).toBe(1) // flat is not a collapse, and the hour only asks about that
     expect(components.costEfficiency).toBe(0.5) // unmeasured → neutral, never generous
 
@@ -183,19 +184,19 @@ describe('opportunity — direction, not only motion', () => {
       .toBeGreaterThan(scoreOpportunity(rollingOver, P, null, cheap).components.momentum)
   })
 
-  it('treats a flat token as neutral, not as bad', () => {
+  it('treats a FLAT token as not-up, which is not the same as bad', () => {
     // Zero movement is the absence of a reason either way. Scoring it as a
     // failure would push the book toward whatever moved most in any direction,
     // which is the bias this component exists to remove.
     const flat = scoreOpportunity(base({ priceChangePct: { h1: 0, h6: 0, h24: 0 } }), P, null, cheap)
-    expect(flat.components.momentum).toBeCloseTo(0.5, 6)
+    expect(flat.components.momentum).toBe(0)
   })
 
-  it('treats an unreported window as neutral rather than as a fall', () => {
+  it('treats an unreported hour as not-up either — nobody said it rose', () => {
     // The same rule the whole scanner runs on: silence is not evidence. A
     // provider that omitted a window must not cost the token points.
     const silent = scoreOpportunity(base({ priceChangePct: { h1: null, h6: null, h24: null } }), P, null, cheap)
-    expect(silent.components.momentum).toBeCloseTo(0.5, 6)
+    expect(silent.components.momentum).toBe(0)
   })
 
   it('asks only WHETHER it rose, never by how much', () => {
@@ -646,5 +647,51 @@ describe('opportunity — the hour asks that it has NOT collapsed', () => {
     expect(hour(-2)).toBe(1)
     expect(scoreOpportunity(base({ priceChangePct: { h1: -2, h6: -5, h24: -20 } }), P, null, cheap).components.momentum)
       .toBeLessThan(0.3)
+  })
+})
+
+describe('opportunity — the trend is the HOUR, positive, and nothing else', () => {
+  // The operator, after three measurements of the alternative: *vas a tener en
+  // cuenta solo que en la última hora el % sea positivo, nada más. No importa
+  // si es 0.1 o 2000, el tema es que esté positivo.*
+  //
+  // It used to weigh three windows — 0.6 on the hour, 0.25 on six, 0.15 on the
+  // day — and at a floor of 0.5 the hour already decided every case: the hour
+  // alone reaches 0.6, and the other two together only reach 0.40. The longer
+  // windows were doing nothing except catching five tokens with no hourly data
+  // that had fallen 95-99%, and those are now excluded anyway, because silence
+  // is not POSITIVE.
+  //
+  // Measured across 305 live Solana tokens from all three discovery sources:
+  // 132 have a positive hour, 91 of them are tokens the machine can actually
+  // operate. That is the whole rule.
+
+  const trend = (h1: number | null, h6 = -50, h24 = -80) =>
+    scoreOpportunity(base({ priceChangePct: { h1, h6, h24 } }), P, null, cheap).components.momentum
+
+  it('is 1 whenever the hour is up, by any amount at all', () => {
+    for (const up of [0.01, 0.1, 2, 50, 2_000]) expect(trend(up)).toBe(1)
+  })
+
+  it('is 0 when the hour is flat or down', () => {
+    expect(trend(0)).toBe(0)
+    expect(trend(-0.01)).toBe(0)
+    expect(trend(-60)).toBe(0)
+  })
+
+  it('ignores the longer windows completely — they decided nothing and hid five corpses', () => {
+    // Same hour, opposite days. The six- and twenty-four-hour windows used to
+    // carry 0.40 between them, which could never rescue a falling hour and
+    // could only ever pad one that was already rising.
+    expect(trend(2, -99, -99)).toBe(trend(2, 99, 99))
+    expect(trend(-2, 99, 99)).toBe(0)
+  })
+
+  it('does NOT read an unreported hour as positive', () => {
+    // The one place this file departs from "silence is not evidence", and the
+    // operator's rule is what departs: nobody said it is up, so it is not up.
+    // Measured, it is 29 of 305 tokens — and the ones that surfaced were down
+    // 95-99% over the windows that DID report.
+    expect(trend(null)).toBe(0)
   })
 })

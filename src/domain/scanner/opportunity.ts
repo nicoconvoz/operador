@@ -282,12 +282,23 @@ export function scoreOpportunity(
   // the absence of a reason either way, and silence is not evidence — the same
   // rule the gates run on. Scoring either as a FALL would push the book toward
   // whatever moved most in any direction, which is the bias this removes.
-  const rising = (pct: number | null | undefined) =>
-    pct === null || pct === undefined || pct === 0 ? 0.5 : pct > 0 ? 1 : 0
-  const momentum =
-    0.6 * rising(priceChangePct.h1) +
-    0.25 * rising(priceChangePct.h6) +
-    0.15 * rising(priceChangePct.h24)
+  // THE LAST HOUR, POSITIVE. Nothing else.
+  //
+  // The operator, after three measurements of the alternative: *vas a tener en
+  // cuenta solo que en la ultima hora el % sea positivo, nada mas. No importa
+  // si es 0.1 o 2000, el tema es que este positivo.*
+  //
+  // It weighed three windows before — 0.6 on the hour, 0.25 on six, 0.15 on
+  // the day — and at a floor of 0.5 the hour already decided every case: the
+  // hour alone reaches 0.6, and the other two together only reach 0.40, so
+  // they could never rescue a falling hour and only ever padded a rising one.
+  //
+  // What they DID do was catch five tokens with no hourly data that had fallen
+  // 95-99% over the windows that did report. Those are excluded anyway now,
+  // because an unreported hour is not a POSITIVE one — the single place this
+  // file departs from "silence is not evidence", and the operator's rule is
+  // what departs. Measured: 29 of 305 live tokens.
+  const momentum = priceChangePct.h1 !== null && priceChangePct.h1 !== undefined && priceChangePct.h1 > 0 ? 1 : 0
 
   // HOW MUCH ROOM IS LEFT above it.
   //

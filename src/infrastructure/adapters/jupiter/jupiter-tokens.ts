@@ -63,8 +63,18 @@ export class JupiterTokens implements DecimalsPort {
    * most organically active over 24h. Confirmed live (Sept 2026): each list
    * returns up to `limit` tokens with liquidity, holders, stats and audit —
    * and unlike DexScreener's boosts, most of them have real liquidity.
+   *
+   * ONE HUNDRED, which is the provider's own ceiling — measured, not assumed:
+   * asking for 200 or 500 returns 100 either way. It asked for 50 and the
+   * scanner called it with no argument, so half of Jupiter's universe was
+   * being left on the table for no reason at all.
+   *
+   * It matters more than it looks. Measured across all three discovery sources
+   * on one sweep: Jupiter 195 tokens, GeckoTerminal 145, DexScreener 44, and
+   * 314 unique between them — with 128 that ONLY Jupiter has. It is the
+   * largest single source and it was running at half.
    */
-  async discover(limit = 50): Promise<string[]> {
+  async discover(limit = 100): Promise<string[]> {
     const lists = ['toptrending/24h', 'toptraded/24h', 'toporganicscore/24h']
     const seen = new Set<string>()
     for (const list of lists) {

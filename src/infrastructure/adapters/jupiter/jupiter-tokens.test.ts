@@ -39,3 +39,44 @@ describe('JupiterTokens — decimals port', () => {
     expect(http.calls).toHaveLength(1)
   })
 })
+
+describe('JupiterTokens — discovery asks for everything the provider gives', () => {
+  // It asked for 50 and the scanner called it with no argument, so half of
+  // Jupiter's universe was being left on the table for no reason at all.
+  //
+  // ONE HUNDRED is the provider's own ceiling, measured rather than assumed:
+  // asking for 200 or 500 returns 100 either way. And Jupiter is the LARGEST
+  // of the three discovery sources — one sweep measured Jupiter 195 tokens,
+  // GeckoTerminal 145 and DexScreener 44, with 128 that only Jupiter has.
+  // The biggest one was running at half.
+
+  const asked: string[] = []
+  const spy = stubHttp({
+    [`${JUPITER_LITE_BASE}/tokens/v2/`]: { body: [bonk] },
+  })
+  const recording = async (target: string) => {
+    asked.push(target)
+    return spy(target)
+  }
+
+  it('asks each list for the provider ceiling', async () => {
+    asked.length = 0
+    await new JupiterTokens(recording).discover()
+    expect(asked).toHaveLength(3)
+    for (const target of asked) expect(target).toContain('limit=100')
+  })
+
+  it('still lets a caller ask for less', async () => {
+    asked.length = 0
+    await new JupiterTokens(recording).discover(10)
+    for (const target of asked) expect(target).toContain('limit=10')
+  })
+
+  it('sweeps all three lists, not just the trending one', async () => {
+    asked.length = 0
+    await new JupiterTokens(recording).discover()
+    expect(asked.some((t) => t.includes('toptrending'))).toBe(true)
+    expect(asked.some((t) => t.includes('toptraded'))).toBe(true)
+    expect(asked.some((t) => t.includes('toporganicscore'))).toBe(true)
+  })
+})
