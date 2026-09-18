@@ -79,7 +79,20 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPERADOR_CONTROL_TOKEN: ${{ secrets.OPERADOR_CONTROL_TOKEN }}
           OPERADOR_MODE: paper
-          OPERADOR_CHAIN: solana,bsc
+          # SOLANA ONLY, and it is a measurement rather than a preference.
+          # One run, both chains, same commit:
+          #
+          #   solana  10.4 min   66 examined →  24 candidates   (36%)
+          #   bsc     14.0 min  110 examined →   3 candidates   (2.7%)
+          #
+          # BSC cost more wall clock and returned eight times fewer names — and
+          # every one of the 40 GoPlus rate-limit refusals in that run was its,
+          # against zero on Solana. Half the scan for a tenth of the shortlist.
+          #
+          # A variable, not a deletion: the adapters, the sell probe through
+          # PancakeSwap and the gates all still work, so putting it back is one
+          # value in the repo settings the day BSC is worth the minutes.
+          OPERADOR_CHAIN: ${{ vars.OPERADOR_CHAIN || 'solana' }}
           OPERADOR_TIMEFRAME: 15m
           OPERADOR_CAPITAL_USD: ${{ vars.OPERADOR_CAPITAL_USD || '1000' }}
           # ZERO means no ceiling: the capital decides, at one ladder's worth

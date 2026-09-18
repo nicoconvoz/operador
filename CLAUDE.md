@@ -1422,6 +1422,33 @@ recover → halt what cannot be trusted → tick what can →
 open new positions with what is left → checkpoint → heartbeat
 ```
 
+### Solana only — measured, not preferred
+
+One run, both chains, same commit:
+
+| | Time | Examined | Candidates | Yield |
+|---|---|---|---|---|
+| Solana | **10.4 min** | 66 | **24** | 36% |
+| BSC | **14.0 min** | 110 | **3** | **2.7%** |
+
+BSC cost more wall clock and returned eight times fewer names. And the whole
+rate-limit bill belonged to it: **40 GoPlus refusals and 285 seconds of
+waiting** on BSC against **zero** on Solana in the same run. Half the scan for a
+tenth of the shortlist.
+
+`OPERADOR_CHAIN` defaults to `solana` now. A VARIABLE, not a deletion — the
+adapters, the sell probe through PancakeSwap's router and every gate still work,
+so BSC comes back as one value in the repo settings the day it is worth the
+minutes.
+
+It also parks a real finding rather than fixing it, and that is worth writing
+down so nobody is surprised later: **GoPlus does not learn from a refusal.** It
+waits out its backoff and goes straight back to a two-second spacing for the
+next token, so it hit the same wall forty times instead of once. The candle feed
+and the sell probe pace themselves now; GoPlus is the last fixed interval, and
+it was the last one anybody believed was earned. With BSC off the symptom
+disappears — the cause does not.
+
 ### Three cadences, because the scan was doing two jobs at one rate
 
 The operator asked the right question: *if we re-examine a few positions and
