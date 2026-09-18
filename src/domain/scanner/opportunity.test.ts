@@ -178,143 +178,6 @@ describe('opportunity — direction, not only motion', () => {
   })
 })
 
-describe('opportunity — how much room is left above it', () => {
-  // The HOUR is what moves now. It was `h24` until the operator pointed out
-  // that a day-wide window on tokens that change in minutes lets everything
-  // through, and the fixture has to ask the question the component answers.
-  // ONLY the hour varies; the longer windows are pinned and positive. That is
-  // what isolates `headroom`: `momentum` reads the DIRECTION of all three and
-  // `volatility` reads the day's magnitude, so moving `h24` alongside would
-  // change three components at once and prove nothing about any of them.
-  const rising = (h1: number) => base({ priceChangePct: { h1, h6: 5, h24: 10 } })
-
-  it('prefers a riser that has not run far over one that already has', () => {
-    // The operator's rule: the higher it already is, the more room there is to
-    // fall. Both are going UP — the question is only how much of the move is
-    // already behind us.
-    // RETIRED from the score and kept as a reading. The component still
-    // answers the question correctly — that is what makes it worth drawing —
-    // and the SCORE is now indifferent, which is the operator's decision: a
-    // token up 2000% is the opportunity, not the thing to refuse.
-    const early = scoreOpportunity(rising(1.5), P, null, cheap)
-    const extended = scoreOpportunity(rising(15), P, null, cheap)
-    expect(early.components.headroom).toBeGreaterThan(extended.components.headroom)
-    // The SCORE is not asserted here and cannot be: `volatility` reads
-    // `|h1| + |h6|/2`, so no fixture can move the hour without moving it too.
-    // That `headroom` carries no weight is pinned on the weights directly, in
-    // "carries no weight at all", which is the honest place for it.
-  })
-
-  it('runs from full to empty, and stays empty past the end', () => {
-    // "Full" is where the DOOR OPENS, not at zero. Below `headroomMinRisePct`
-    // nothing is happening and the answer is nothing left — so the highest
-    // value any token can actually carry is the one just past that threshold,
-    // and it is not 1 but about 0.89.
-    const opens = scoreOpportunity(rising(P.headroomMinRisePct + 0.01), P, null, cheap).components.headroom
-    expect(opens).toBeGreaterThan(0.8)
-    expect(opens).toBeLessThan(1)
-    expect(scoreOpportunity(rising(P.headroomFullyRunPct), P, null, cheap).components.headroom).toBeCloseTo(0, 6)
-    // Fully spent is fully spent: a token up 400% is not worse than one up 200%
-    // in any way this component can measure, and a negative would be a claim.
-    expect(scoreOpportunity(rising(2 * P.headroomFullyRunPct), P, null, cheap).components.headroom).toBeCloseTo(0, 6)
-  })
-
-  it('is LOGARITHMIC: the first percent of a run costs more than the last', () => {
-    // The operator's shape, and the reason is asymmetry. Eating a 70% fall is
-    // ruinous; taking a 25% gain and moving on is fine. So the distinction
-    // worth paying for is between BARELY MOVED and ALREADY RAN — up near the
-    // top one more percent says very little.
-    const at = (pct: number) => scoreOpportunity(rising(pct), P, null, cheap).components.headroom
-    // Scaled to the HOUR the component now reads: the measured p25, p75 and
-    // p95 of live risers rather than quarters of a day nobody measured.
-    const early = at(P.headroomMinRisePct + 0.01) - at(4)
-    const late = at(21) - at(25)
-    expect(early).toBeGreaterThan(late * 3)
-  })
-
-  it('costs a token NOTHING to have run all the way', () => {
-    // The operator asked for +200% to land near thirty, and that is what set
-    // the WEIGHT rather than the curve: a component moves the score only within
-    // its share of the weights.
-    //
-    // The ABSOLUTE number is not pinned here, and cannot be, because two more
-    // pillars arrived afterwards — `activity`, then the toll. A score is a
-    // weighted AVERAGE, so every pillar added takes share from the ones already
-    // there: headroom went 37.0% → 30.2% of the weights, and its reach fell
-    // with it. That is arithmetic, not a change of mind.
-    //
-    // What the operator actually decided survives and is asserted below: of
-    // the eight components, headroom is still the LARGEST. What survives here
-    // is the SPREAD — running all the way is still the biggest single thing
-    // that can happen to a score.
-    // REVERSED, and it is the largest single reversal in this file. The
-    // operator asked for +200% to land near thirty, that set the WEIGHT rather
-    // than the curve, and the weight then made headroom the biggest term in the
-    // score. All of it is gone, for one reason: *una moneda de estas puede
-    // subir 2000% y nos estamos perdiendo una oportunidad.*
-    //
-    // The 30 at +200% was never wrong about the arithmetic. It was wrong about
-    // the market this book trades, where the tokens that pay are the ones that
-    // ran — and a component whose whole job was to rank those last could not be
-    // tuned into agreeing with that.
-    // And it is not merely neutral: the one that ran scores SLIGHTLY HIGHER,
-    // because `volatility` reads the size of the move and a token that went up
-    // 200% moved more than one that went nowhere. Half a point, measured — not
-    // a reward for running, just the absence of a punishment for it, with the
-    // movement counting as movement like anything else.
-    // The one that ran scores HIGHER now, and by several points rather than a
-    // rounding error: `headroom` contributes nothing either way, and
-    // `volatility` reads the size of the move, so a token up 25% in the hour
-    // is simply a token that moved more. That is not a reward for running — it
-    // is what is left once the punishment for it is gone.
-    const fresh = scoreOpportunity(rising(P.headroomMinRisePct + 0.01), P, null, cheap)
-    const spent = scoreOpportunity(rising(P.headroomFullyRunPct), P, null, cheap)
-    expect(spent.score).toBeGreaterThan(fresh.score)
-    // And the component itself went the whole way to empty, unweighted.
-    expect(fresh.components.headroom).toBeGreaterThan(0.8)
-    expect(spent.components.headroom).toBeCloseTo(0, 6)
-  })
-
-  it('gives a FALLING token no headroom at all, not a neutral half', () => {
-    // It was 0.5 — neutral — so as not to reward a knife for being far from its
-    // high. That was right while the weight was small and wrong once headroom
-    // became the largest term: measured live, RICHDEBT was down 64% on the day
-    // with momentum at zero and still scored 52.5, because neutral on the
-    // biggest component is a gift rather than an abstention.
-    //
-    // The question this asks is "how much of the upside is left". A token going
-    // the wrong way has NONE of it — that is not punishing the fall twice, it is
-    // the honest answer to the question.
-    const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -40 } })
-    expect(scoreOpportunity(knife, P, null, cheap).components.headroom).toBe(0)
-  })
-
-  it('no longer drops a crashed token by itself — that moved to the GATE', () => {
-    // It used to be a 28-point gap and headroom was most of it. With headroom
-    // at zero what separates them is `momentum` and `volatility` alone, which
-    // is a few points: the score can still tell them apart and can no longer
-    // decide between them.
-    //
-    // That is the correct place for it. A token down 64% on the day is not a
-    // low-ranking opportunity, it is an exit in progress, and `maxDailyFallPct`
-    // (15) REFUSES it outright — the one direction in which the 24h change
-    // still stops a trade. A gate answers "never"; a weight only ever answers
-    // "less than the others", and the two are not the same verdict.
-    const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -64 } })
-    const climbing = base({ priceChangePct: { h1: 2, h6: 5, h24: 10 } })
-    const gap = scoreOpportunity(climbing, P, null, cheap).score - scoreOpportunity(knife, P, null, cheap).score
-    expect(gap).toBeGreaterThan(0)
-    expect(gap).toBeLessThan(28)
-  })
-
-  it('is neutral when the recent window says NOTHING, which is not the same as falling', () => {
-    // Silence is not evidence — the rule the whole scanner runs on. An
-    // unreported window must not be read as a crash.
-    const silent = base({ priceChangePct: { h1: null, h6: null, h24: null } })
-    expect(scoreOpportunity(silent, P, null, cheap).components.headroom).toBeCloseTo(0.5, 6)
-  })
-})
-
 describe('opportunity — activity is the other pillar', () => {
   const traded = (perHour: number) =>
     base({ txns: { h1: { buys: Math.round(perHour * 0.6), sells: Math.round(perHour * 0.4) }, h24: { buys: 800, sells: 700 } } })
@@ -492,11 +355,12 @@ describe('opportunity — how far it has ALREADY run is no longer an argument', 
     // Kept on the screen and out of the arithmetic. The detail sheet draws the
     // components as bars so "why is this ranked here" is answerable without
     // reading code, and deleting the measurement would answer it with silence.
-    // Up 20% inside the hour: the move has happened and what is left of it is
-    // small. Reported as a bar on the detail sheet, worth nothing in the score.
-    const { components } = scoreOpportunity(base({ priceChangePct: { h1: 20, h6: 40, h24: 150 } }), P, null, cheap)
-    expect(components.headroom).toBeGreaterThanOrEqual(0)
-    expect(components.headroom).toBeLessThan(0.3)
+    // Reported on the detail sheet, worth nothing in the score. Two values
+    // only now, because the question it answers is a yes/no.
+    const climbing = scoreOpportunity(base({ priceChangePct: { h1: 20, h6: 40, h24: 150 } }), P, null, cheap)
+    const drifting = scoreOpportunity(base({ priceChangePct: { h1: 0.2, h6: 40, h24: 150 } }), P, null, cheap)
+    expect(climbing.components.headroom).toBe(1)
+    expect(drifting.components.headroom).toBe(0)
   })
 
   it('leaves activity as what the score is now mostly made of — stated, not discovered later', () => {
@@ -540,10 +404,14 @@ describe('opportunity — the run ahead is measured over the HOUR, not the day',
     expect(hour(2, 2_000)).toBeGreaterThan(0.7)
   })
 
-  it('empties as the HOUR runs, not as the day does', () => {
-    expect(hour(1.5)).toBeGreaterThan(hour(8))
-    expect(hour(8)).toBeGreaterThan(hour(20))
-    expect(hour(P.headroomFullyRunPct)).toBeCloseTo(0, 6)
+  it('opens the moment the HOUR is moving, whatever the day did', () => {
+    // It used to measure a DECAY — how much of the run was already spent — and
+    // the operator retired that outright: *sacale el techo.* What is left is a
+    // door, so what this can still say is that the door opens on the hour and
+    // on nothing else.
+    expect(hour(1.5)).toBe(1)
+    expect(hour(20)).toBe(1)
+    expect(hour(0.5)).toBe(0)
   })
 
   it('ignores the day entirely — it is the window that let everything through', () => {
@@ -561,12 +429,14 @@ describe('opportunity — the run ahead is measured over the HOUR, not the day',
     expect(hour(null)).toBeCloseTo(0.5, 6)
   })
 
-  it('is calibrated so the floor cuts where the measured distribution does', () => {
-    // The 0.30 floor lands at about +12% in an hour, which the live sample
-    // puts at the p90 of risers. Below it a token is moving up with room left;
-    // above it the move has already happened and we would be buying its top.
-    expect(hour(11)).toBeGreaterThan(0.3)
-    expect(hour(13)).toBeLessThan(0.3)
+  it('has NO ceiling — a bigger move is never a reason to refuse', () => {
+    // The operator, twice: *sacale el techo.* An earlier version of this test
+    // asserted the opposite, that +13% in an hour closed the door. That was
+    // the last of "how much of the move is already spent", and it refused a
+    // token for the one property this book is looking for.
+    expect(hour(11)).toBe(1)
+    expect(hour(13)).toBe(1)
+    expect(hour(300)).toBe(1)
   })
 })
 
@@ -600,11 +470,6 @@ describe('opportunity — a whisker above zero is not a rise', () => {
     expect(hour(4)).toBeGreaterThan(0.3)
   })
 
-  it('still closes once the move has already happened', () => {
-    expect(hour(13)).toBeLessThan(0.3)
-    expect(hour(30)).toBe(0)
-  })
-
   it('asks for about what an ordinary climbing token already does', () => {
     // The live median riser is +1.45%. A threshold above it would refuse the
     // typical token outright, which is a different rule from "ignore noise".
@@ -613,6 +478,45 @@ describe('opportunity — a whisker above zero is not a rise', () => {
 
   it('keeps a falling token and an unreported hour telling their own stories', () => {
     expect(hour(-3)).toBe(0)
+    expect(scoreOpportunity(base({ priceChangePct: { h1: null, h6: 5, h24: 10 } }), P, null, cheap).components.headroom)
+      .toBeCloseTo(0.5, 6)
+  })
+})
+
+describe('opportunity — above the threshold there is NO ceiling', () => {
+  // *Sacale el techo.* The operator, twice, and it finishes the argument he
+  // started this morning: *una moneda de estas puede subir 2000% y nos estamos
+  // perdiendo una oportunidad.*
+  //
+  // The decay was the last of "how much of the move is already spent", and
+  // that question is now answered by nobody — on purpose. It refused a token
+  // for the crime of moving, which is the one property this book is looking
+  // for. What is left is a single yes/no: **is it climbing meaningfully in the
+  // last hour.**
+  //
+  // So the component is BINARY, and that is the honest shape for a door. The
+  // curve, its knee and its fully-run point are gone rather than left in the
+  // policy doing nothing — a number nobody can justify is a bug waiting.
+
+  const hour = (h1: number) =>
+    scoreOpportunity(base({ priceChangePct: { h1, h6: 5, h24: 10 } }), P, null, cheap).components.headroom
+
+  it('never refuses a token for having moved too much', () => {
+    for (const rise of [1.5, 12, 25, 60, 200, 2_000]) expect(hour(rise)).toBe(1)
+  })
+
+  it('answers exactly one question, so the answer has exactly two values', () => {
+    expect(new Set([hour(1.01), hour(5), hour(500)]).size).toBe(1)
+    expect(hour(0.5)).toBe(0)
+  })
+
+  it('still refuses the noise, the fall and nothing else', () => {
+    expect(hour(P.headroomMinRisePct)).toBe(0)
+    expect(hour(0.1)).toBe(0)
+    expect(hour(-4)).toBe(0)
+  })
+
+  it('still calls an unreported hour silence', () => {
     expect(scoreOpportunity(base({ priceChangePct: { h1: null, h6: 5, h24: 10 } }), P, null, cheap).components.headroom)
       .toBeCloseTo(0.5, 6)
   })

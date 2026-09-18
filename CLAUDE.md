@@ -1944,7 +1944,47 @@ second lock.
 **Still weight zero.** It is a DOOR, not a term in the score — the operator's
 own rule, *un filtro aparte que no modifique el puntaje total*.
 
-#### The cliff at zero, and what it will cost
+#### No ceiling: the component is a yes/no
+
+*Sacale el techo.* The operator, twice, and it finishes the argument he opened
+that morning with *una moneda de estas puede subir 2000% y nos estamos
+perdiendo una oportunidad.*
+
+The decay was the last of "how much of the move is already spent", and that
+question is now answered by nobody, on purpose. It refused a token for the
+crime of moving, which is the one property this book is looking for. What
+survives is a single question — **is it climbing meaningfully in the last
+hour** — and a single question has two answers:
+
+| last hour | value |
+|---|---|
+| not reported | **0.5** — silence is not evidence |
+| at or below `headroomMinRisePct` (1%) | **0** |
+| above it, by any amount at all | **1** |
+
+**The curve, its knee and its fully-run point are DELETED, not left in the
+policy doing nothing.** `logHeadroom` is gone with them. A number nobody can
+justify is a bug waiting, and a dead knob is worse than a wrong one: the next
+person tunes it and nothing happens.
+
+The threshold is what closed the cliff. It sat at exactly 0%, so USELESS at
+**+0.1% in the hour** scored 0.984 — one hundredth of a percent from 0.000,
+which was the whole range of the component. A position oscillating there would
+be rotated out and bought back every half hour, paying its round trip each
+time. At 1% the edge sits on a move rather than on noise, and still below the
+measured median riser (+1.45%), so it ignores drift without refusing the
+ordinary climbing token.
+
+**The label on the screen changed with it**, from *recorrido por delante* to
+*sube en la hora*. The old one described the retired question, and a gauge
+drawn for a value that now has two states is a screen lying about what the
+engine measures — the failure this read model exists to prevent.
+
+The identifier is still `headroom` and that is now a misnomer in the code.
+Renaming it touches fourteen files and was not worth doing while the operator
+was watching money move; it is the obvious next tidy-up.
+
+#### The cliff at zero — CLOSED by the threshold above
 
 Stated rather than discovered later. The magnitude curve is smooth; the
 direction branch is a **hard cliff at exactly 0%**. Measured on the open book

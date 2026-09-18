@@ -53,19 +53,6 @@ export interface OpportunityPolicy {
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
   /**
-   * The shape of the room left above a token: LOGARITHMIC.
-   *
-   * `headroomKneePct` is where the curve bends, and `headroomFullyRunPct` is
-   * the rise at which nothing is left. A log curve spends its steepness early:
-   * the first thirty percent of a run costs far more room than the last thirty,
-   * which is the operator's reading — the higher a token already is, the less
-   * one more percent tells you, while the difference between *barely moved* and
-   * *already ran* is the one worth paying attention to.
-   *
-   * It began as `1 / (1 + run/100)` with a weight of 0.05, where a token up 10%
-   * and one up 60% landed 1.27 points apart. That broke a tie and nothing more.
-   */
-  /**
    * The rise, in percent over the last hour, below which nothing is happening.
    *
    * The operator's number, and it closes a cliff: the direction branch was a
@@ -79,8 +66,6 @@ export interface OpportunityPolicy {
    * refusing the ordinary climbing token.
    */
   readonly headroomMinRisePct: number
-  readonly headroomKneePct: number
-  readonly headroomFullyRunPct: number
   /**
    * Round-trip cost, in percent, at which cost efficiency scores zero.
    *
@@ -199,17 +184,11 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   activityKneeTxnsPerHour: 15,
   fullActivityTxnsPerHour: 300,
   fullVolatilityPct: 20,
-  // DERIVED from 72 live Solana pools over $50k of liquidity, not carried
-  // over from the daily curve. Of those rising in the last hour the median
-  // moves +1.45%, p75 is +3.92%, p90 is +11.56% and p95 is +23.42%; 36% are
-  // flat or falling. Knee at the p75, fully run at the p95 — so the 0.30 floor
-  // lands at about +12% in an hour, which is the p90.
-  //
-  // Below that a token is moving up with room left. Above it the move has
-  // already happened and the next thing we would buy is its top.
+  // The rise over the last HOUR below which nothing is happening. Measured
+  // across 72 live Solana pools over $50k of liquidity, the median riser moves
+  // +1.45% in an hour and 36% are flat or falling — so one percent ignores the
+  // drift without refusing the ordinary climbing token.
   headroomMinRisePct: 1,
-  headroomKneePct: 4,
-  headroomFullyRunPct: 25,
   worstRoundTripPct: 4,
 }
 
@@ -238,31 +217,6 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
  * @param quality the token's measured spread and impact; without it, cost
  *        efficiency is neutral rather than assumed good.
  */
-/**
- * Room left above a token that has risen `runPct`, on a log curve.
- *
- * 1 when it has not moved, 0 once it has run `headroomFullyRunPct`, and never
- * negative past that — fully spent is fully spent, and a token up 400% is not
- * worse than one up 200% in any way this component can measure.
- *
- * Logarithmic on purpose. The steepness lands EARLY: the gap between a token
- * that barely moved and one that already ran is the distinction worth paying
- * for, while up near the top one more percent says very little.
- */
-export function logHeadroom(runPct: number, policy: OpportunityPolicy): number {
-  const knee = policy.headroomKneePct
-  // Clamped at zero before the log, and not for tidiness: a run more negative
-  // than the knee makes `1 + runPct/knee` negative and `Math.log` returns NaN,
-  // which `clamp01` passes straight through. A NaN component poisons the whole
-  // score silently — every comparison against it is false, so a token carrying
-  // one is neither above a floor nor below it, and the ranking simply stops
-  // having an opinion about it.
-  //
-  // The caller answers the falling case first and this is the second lock.
-  const spent = Math.log(1 + Math.max(0, runPct) / knee) / Math.log(1 + policy.headroomFullyRunPct / knee)
-  return clamp01(1 - spent)
-}
-
 export function scoreOpportunity(
   snapshot: TokenSnapshot,
   policy: OpportunityPolicy,
@@ -376,7 +330,7 @@ export function scoreOpportunity(
       ? 0.5
       : recent <= policy.headroomMinRisePct
         ? 0
-        : logHeadroom(recent, policy)
+        : 1
 
   // Round trip = pay to get in, pay to get out.
   //
