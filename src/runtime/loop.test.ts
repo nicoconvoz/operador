@@ -284,7 +284,7 @@ describe('runLoop — it begins with what it already knows', () => {
     let scans = 0
     const { deps } = rig({
       scan: async () => { scans++; return [] },
-      recall: async () => ({ candidates: [], scannedAt: NOW - 60_000 }),
+      recall: async () => ({ candidates: [], switchedOff: [], scannedAt: NOW - 60_000 }),
     })
 
     await runLoop(deps, config, new AlertThrottle(0), {
@@ -310,7 +310,7 @@ describe('runLoop — it begins with what it already knows', () => {
     let clock = NOW
     const { deps } = rig({
       scan: async () => { scans++; return [] },
-      recall: async () => ({ candidates: [], scannedAt: NOW - 60 * 60_000 }),
+      recall: async () => ({ candidates: [], switchedOff: [], scannedAt: NOW - 60 * 60_000 }),
       now: () => clock,
     })
 
@@ -325,7 +325,7 @@ describe('runLoop — it begins with what it already knows', () => {
 describe('runLoop — it says what it did, every pass', () => {
   it('reports each pass, so silence means stopped rather than working', async () => {
     const seen: string[] = []
-    const { deps } = rig({ recall: async () => ({ candidates: [], scannedAt: NOW - 60_000 }) })
+    const { deps } = rig({ recall: async () => ({ candidates: [], switchedOff: [], scannedAt: NOW - 60_000 }) })
 
     await runLoop(deps, config, new AlertThrottle(0), {
       intervalMs: 0, sleep: async () => {}, maxCycles: 2, scanIntervalMs: 10 * 60_000,

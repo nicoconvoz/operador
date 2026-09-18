@@ -101,7 +101,11 @@ export interface CycleDeps {
    * and the deciding half is pure. Returns nothing when the shelf is empty or
    * too old to count as evidence.
    */
-  readonly recall?: () => Promise<{ readonly candidates: readonly Candidate[]; readonly scannedAt: number } | null>
+  readonly recall?: () => Promise<{
+    readonly candidates: readonly Candidate[]
+    readonly switchedOff: readonly SwitchedOff[]
+    readonly scannedAt: number
+  } | null>
   /**
    * What the LAST scan refused on a component floor — the switch, off.
    *
@@ -375,7 +379,8 @@ export async function runCycle(
     // throttled discovery before anything could go in it — with candidates
     // already examined, already stored, already good. The fusion was never
     // necessary.
-    const found = kind === 'watch' ? ((await deps.recall?.())?.candidates ?? []) : await deps.scan(kind)
+    const recalled = kind === 'watch' ? await deps.recall?.() : null
+    const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind)
     const candidates = found
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
@@ -407,11 +412,24 @@ export async function runCycle(
     // would put price into the one path typed to refuse it. Its own comment,
     // its own function, its own line in the tape.
     //
-    // Never on a `watch` pass. A watch re-ranks the SHELF, so a token can drop
-    // below a floor on numbers nobody re-examined; selling a position is worth
-    // a scan that actually looked.
+    // On EVERY kind of pass, and from the source that pass actually read.
+    //
+    // A watch used to be excluded, on the argument that it re-ranks the shelf
+    // with numbers nobody re-examined. That stopped being true: a watch
+    // refreshes the shelf's market half with one batched request, and the
+    // market half is exactly where `headroom` and `momentum` come from.
+    //
+    // What the exclusion cost, measured: the operator watched a position sit
+    // below the floor on a screen that re-scores held tokens live every ten
+    // seconds, while the engine went on holding it for twenty-one minutes
+    // because it only looked on a scan.
+    //
+    // Never the SCAN's verdict on a watch pass, though. That one can be half
+    // an hour old and the token may have recovered since; selling on a stale
+    // answer is the false positive this design keeps trying to avoid.
     const offNow = new Map<string, SwitchedOff>(
-      kind === 'watch' ? [] : (deps.switchedOff?.() ?? []).map((s) => [`${s.snapshot.chain}:${s.snapshot.address}`, s]),
+      (kind === 'watch' ? (recalled?.switchedOff ?? []) : (deps.switchedOff?.() ?? []))
+        .map((s) => [`${s.snapshot.chain}:${s.snapshot.address}`, s]),
     )
     const stillListed = new Set(candidates.map((c) => `${c.snapshot.chain}:${c.snapshot.address}`))
     const rotations = rotateOnSwitchOff(

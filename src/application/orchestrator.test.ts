@@ -746,7 +746,7 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
     let scans = 0
     const { deps, throttle } = rig({
       scan: async () => { scans++; return [] },
-      recall: async () => ({ candidates: await shelved(), scannedAt: NOW - 60_000 }),
+      recall: async () => ({ candidates: await shelved(), switchedOff: [], scannedAt: NOW - 60_000 }),
     })
 
     const result = await runCycle(deps, config, throttle, 'watch')
@@ -761,7 +761,7 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
   })
 
   it('never swaps one token for another on a watch pass', async () => {
-    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: await shelved(), scannedAt: NOW - 60_000 }) })
+    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: await shelved(), switchedOff: [], scannedAt: NOW - 60_000 }) })
     await store.savePosition(position({ id: 'idle-1', tokenAddress: 'Idle', symbol: 'IDLE', openedAt: NOW - 9 * HOUR, lastBarTime: NOW }))
 
     // Taking a slot off one token and giving it to another is a judgement about
@@ -773,7 +773,7 @@ describe('runCycle — a watch pass fills free slots from the shelf', () => {
   })
 
   it('still refuses a token it already holds, or one on the blacklist', async () => {
-    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: [candidate('a', 90), candidate('b', 85)], scannedAt: NOW - 60_000 }) })
+    const { deps, store, throttle } = rig({ recall: async () => ({ candidates: [candidate('a', 90), candidate('b', 85)], switchedOff: [], scannedAt: NOW - 60_000 }) })
     await store.savePosition(position({ tokenAddress: 'a', symbol: 'A', lastBarTime: NOW }))
     await store.blacklist('solana', 'b', 'died', NOW - HOUR)
 
@@ -1126,14 +1126,38 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
   })
 
-  it('never rotates on a WATCH pass', async () => {
-    // A watch re-ranks the SHELF, so a token can fall below a floor on numbers
-    // nobody re-examined. Selling a position is worth a scan that looked.
+  it('rotates on a WATCH pass too, from the shelf the pass just re-priced', async () => {
+    // It used to refuse, on the argument that a watch re-ranks the shelf with
+    // numbers nobody re-examined. That stopped being true: a watch pass
+    // refreshes the shelf's market half with one batched request, and the
+    // market half is exactly where `headroom` and `momentum` come from.
+    //
+    // What it cost, measured: the operator watched a position sit below the
+    // floor on his screen — which re-scores held tokens live every ten
+    // seconds — while the engine went on holding it, because the engine only
+    // looked on a scan. Twenty-one minutes of a losing position nobody could
+    // act on, and the switch he called *ultranecesario* doing nothing.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+      recall: async () => ({ candidates: [candidate('a', 90)], switchedOff: [off('Held')], scannedAt: NOW }),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle, 'watch')
+    const sale = (await store.allFills()).find((f) => f.side === 'sell')
+    expect(sale?.comment).toBe('🔁 Rotación')
+  })
+
+  it('does NOT reuse a scan verdict on a watch pass — the shelf speaks for itself', async () => {
+    // The guard that replaces the old blanket refusal. A watch pass must act
+    // on what IT re-priced, never on a verdict up to half an hour old: the
+    // token may have recovered in between, and selling it on a stale answer
+    // is the false positive this whole design keeps trying to avoid.
     const { deps, store, throttle } = rig({
       brokerFor: seeded,
       switchedOff: () => [off('Held')],
       marketPrices: async () => new Map([['solana:Held', 0.5]]),
-      recall: async () => ({ candidates: [candidate('a', 90)], scannedAt: NOW }),
+      recall: async () => ({ candidates: [candidate('Held', 90)], switchedOff: [], scannedAt: NOW }),
     })
     await withFills(store)
     await runCycle(deps, config, throttle, 'watch')

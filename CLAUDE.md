@@ -2041,10 +2041,25 @@ caller could not tell "our token's switch went off" from "the scanner did not
 find it". Read the wrong way a rate limit would not merely colour a screen, as
 it once did to 26 of 29 positions — **it would liquidate the book at market.**
 
-**And never on a `watch` pass, nor without a live price.** A watch re-ranks the
-SHELF, so a token can fall below a floor on numbers nobody re-examined; selling
-is worth a scan that actually looked. And a sale at a price no second source
-confirmed is how a $15 position once left at a tenth of a cent.
+**On EVERY pass, and from the source that pass actually read.** A watch was
+excluded at first, on the argument that it re-ranks the shelf with numbers
+nobody re-examined. That stopped being true: a watch refreshes the shelf's
+market half with one batched request, and the market half is exactly where
+`headroom` and `momentum` come from.
+
+What the exclusion cost, measured: the operator watched a position sit below
+the floor on a screen that re-scores held tokens live every ten seconds, while
+the engine went on holding it for **twenty-one minutes** because it only looked
+on a scan. He was right and the screenshot was right; the engine was looking at
+19:47 while the screen was looking at now.
+
+A watch still never reuses the SCAN's verdict, and that guard is what replaces
+the blanket refusal: a scan answer can be half an hour old, the token may have
+recovered since, and selling on a stale verdict is the false positive this
+design keeps trying to avoid.
+
+**And never without a live price**, unchanged: a sale at a number no second
+source confirmed is how a $15 position once left at a tenth of a cent.
 
 It reuses the engine's own `settle` — one idempotency key, one no-loss guard,
 one per-fill suffix. A second copy of that is how a retry sells twice. The key

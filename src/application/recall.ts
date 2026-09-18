@@ -1,4 +1,4 @@
-import { rankUniverse, tokenKey, type Candidate, type RankingPolicy } from '../domain/scanner/ranking.js'
+import { rankUniverse, tokenKey, type Candidate, type RankingPolicy, type SwitchedOff } from '../domain/scanner/ranking.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -63,6 +63,16 @@ export interface RecallOptions {
 
 export interface RecalledScan {
   readonly candidates: readonly Candidate[]
+  /**
+   * What the re-priced shelf refused on a component floor — the switch, off.
+   *
+   * A watch pass acts on this and never on the last SCAN's verdict, which can
+   * be half an hour old: the token may have recovered in between, and selling
+   * on a stale answer is the false positive the whole design exists to avoid.
+   * The shelf's market half was refreshed a moment ago by one batched request,
+   * and the market half is exactly where `headroom` and `momentum` come from.
+   */
+  readonly switchedOff: readonly SwitchedOff[]
   /** The OLDEST chain's scan time — a universe is as fresh as its stalest half. */
   readonly scannedAt: number
 }
@@ -120,5 +130,5 @@ export async function recallCandidates(store: StatePort, options: RecallOptions)
     options.ranking,
   )
 
-  return { candidates: ranked.candidates, scannedAt }
+  return { candidates: ranked.candidates, switchedOff: ranked.switchedOff, scannedAt }
 }
