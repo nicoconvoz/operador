@@ -193,18 +193,41 @@ export async function tickPosition(
   //
   // Neither the wallet's capital nor the pool's quality moves within a
   // catch-up, so this is constant across the walk.
+  // ── The rung is DERIVED from the slot, not a constant ─────────────────────
+  //
+  // The operator's rule: split the total among whatever survives the filters,
+  // keeping the two steps of depth. With eight positions on $1,500 that is
+  // ~$187 a slot and ~$62 a rung — not the $15 a flat cap allowed.
+  //
+  // Dividing the capital alone does NOTHING, and that is the part worth
+  // remembering: `scaledParams` only ever shrinks, because its scale is
+  // `sized / nominal` and sizing takes the minimum of the pool's impact budget
+  // and the wallet. A $187 slot under a $15 cap still deploys $47.57 and leaves
+  // $140 idle. The cap has to follow the capital, or the capital does nothing.
+  //
+  // It supersedes `OPERADOR_MAX_USD_PER_LEVEL`, which was a constant argued
+  // from the GAS floor — a flat $15 ladder where gas is 0.33% of each fill. A
+  // bigger rung only makes that argument stronger, so nothing is lost.
+  //
+  // What still binds is the POOL. The 1% impact budget shrinks a rung a thin
+  // venue cannot absorb, exactly as it took PURR's $15 down to $9.46. Depth
+  // outranks capital, and that is the order it has to be in.
+  const rungs = config.maxOpenEntries ?? PYRAMIDING
+  const deployable = deployableCapital({
+    initialCapital: input.position.capitalUsd,
+    gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
+    maxOpenEntries: rungs,
+    params: config.params,
+  })
   const sizing = sizeLadder(
-    config.params,
+    { ...config.params, maxUsdPerLevel: deployable / rungs },
     input.position.quality,
     config.sizing ?? DEFAULT_SIZING_POLICY,
-    deployableCapital({
-      initialCapital: input.position.capitalUsd,
-      gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
-      maxOpenEntries: config.maxOpenEntries ?? PYRAMIDING,
-      params: config.params,
-    }),
+    deployable,
   )
-  const params = sizing.tradeable ? scaledParams(config.params, sizing) : config.params
+  const params = sizing.tradeable
+    ? scaledParams({ ...config.params, maxUsdPerLevel: deployable / rungs }, sizing)
+    : config.params
 
   // Indicators are causal — every one of them reads backwards only — so the
   // context at bar i is the same whether the series ends at i or at the end.

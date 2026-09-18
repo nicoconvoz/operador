@@ -81,6 +81,42 @@ export interface OpportunityPolicy {
   readonly worstRoundTripPct: number
 }
 
+/**
+ * Floors a token must clear on its own terms, whatever its total says.
+ *
+ * The operator's rule: *without cost, headroom AND trend all above thirty
+ * percent, it is not a coin to trade.*
+ *
+ * A FLOOR, not another weight, and the distinction is the whole point. The
+ * score is a weighted AVERAGE, so a token can be ruinous on one term and still
+ * rank well by being good at the rest — PURR charged **15.55% a round trip**,
+ * scored zero on cost, and was bought anyway because everything else carried
+ * it. An average cannot say "this one thing disqualifies you". A floor can.
+ *
+ * The three are not arbitrary either; they are the three pillars. What it costs
+ * to trade, how much of the rise is still ahead, and which way it has been
+ * going — the operator argued for each of them separately over a day, and this
+ * says that being hopeless at any ONE of them cannot be averaged away.
+ *
+ * A MISSING component fails. Everywhere else in this scanner silence means "no
+ * verdict"; here the verdict was already asked for, and an absent number is not
+ * a passing one.
+ *
+ * Measured against a live book of 29 tokens at 0.30: **8 survive** — headroom
+ * rejects 16, cost 8, trend 5. That is the cost of the rule, and it is real:
+ * fewer positions, better ones.
+ */
+export type ComponentFloors = Partial<Record<keyof OpportunityComponents, number>>
+
+export function meetsMinimums(
+  components: Partial<OpportunityComponents>,
+  floors: ComponentFloors | undefined,
+): boolean {
+  if (floors === undefined) return true
+  return (Object.entries(floors) as [keyof OpportunityComponents, number | undefined][])
+    .every(([name, floor]) => floor === undefined || (components[name] ?? -1) >= floor)
+}
+
 export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // `momentum` takes its weight from `volatility`, which it complements rather
   // than replaces: volatility says the token is MOVING, momentum says which

@@ -1,5 +1,5 @@
 import { evaluateGates, forgivableFailures, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { scoreOpportunity, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
+import { meetsMinimums, scoreOpportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -125,6 +125,12 @@ export interface UniverseOptions {
   readonly opportunity?: OpportunityPolicy
   /** Assumed venue fee when nothing was measured, in percent. */
   readonly spreadPct?: number
+  /**
+   * The same component floors the RANKING applies. Passed rather than assumed,
+   * so the screen and the engine cannot hold different opinions about which
+   * tokens the book may buy — the exact drift this read model exists to stop.
+   */
+  readonly minComponents?: ComponentFloors
   /**
    * The market, right now, for the tokens that HOLD money — keyed `chain:address`.
    *
@@ -280,6 +286,12 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
               ? forgivableFailures(gateResult) !== null
                 ? 'reserve'
                 : 'filtered'
+              // Below a component FLOOR is not tradeable, so the screen must not
+              // draw it as if it were. Same function the ranking uses: two
+              // definitions of "worth trading" is how the canvas and the engine
+              // end up disagreeing about what the book may hold.
+              : !meetsMinimums(opportunity.components, options.minComponents)
+                ? 'filtered'
               : opportunity.score >= PRIME_SCORE
                 ? 'prime'
                 : 'eligible'

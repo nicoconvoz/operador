@@ -927,3 +927,45 @@ describe('tickPosition — if it can act now, it does not wait for the next cand
     expect(await store.allFills()).toEqual([])
   })
 })
+
+describe('tickPosition — the rung is derived from the capital, not a constant', () => {
+  // The operator's rule: split the total among whatever survives the filters,
+  // keeping the two steps of depth. With eight positions on $1,500 that is
+  // ~$187 each and ~$62 a rung, not the $15 a flat cap allowed.
+  //
+  // Dividing the capital alone would have done NOTHING. `scaledParams` only
+  // ever shrinks — its scale is `sized / nominal` and sizing takes the minimum
+  // of the pool's impact budget and the wallet — so a $187 slot with a $15 cap
+  // still deploys $47.57 and leaves $140 idle. The cap itself has to follow the
+  // capital.
+  //
+  // What still binds is the pool: the 1% impact budget shrinks a rung a thin
+  // venue cannot absorb, exactly as it took PURR's $15 down to $9.46. Depth
+  // outranks capital, and that is the order it has to be in.
+  // The PRODUCTION ladder, not the reference's. `DEFAULT_PARAMS.maxUsdPerLevel`
+  // is 5,000 because that is what TradingView ran, so a test on it would scale
+  // with capital and prove nothing — the cap that actually bites is the $15 the
+  // runtime composes on top.
+  const rungUsd = async (capitalUsd: number) => {
+    const result = (await tickPosition(
+      { position: position({ capitalUsd }), candles: extend(decline(300)), health: null, marketPriceUsd: 0.65, broker: rig().broker },
+      { ...config, params: { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }, maxOpenEntries: 3 },
+      new MemoryStore(), new RecordingAlerts(), new AlertThrottle(60_000),
+    ))
+    const entry = result.orders.find((o) => o.kind === 'entry')
+    return entry && entry.kind === 'entry' ? entry.usd : 0
+  }
+
+  it('sizes a bigger rung for a bigger slot', async () => {
+    const small = await rungUsd(50)
+    const big = await rungUsd(400)
+    expect(big).toBeGreaterThan(small)
+  })
+
+  it('spends the slot across its rungs rather than leaving most of it idle', async () => {
+    // Three rungs at the production ladder, so a $150 slot should put roughly a
+    // third of it into the first one — not $15 and $100 doing nothing.
+    const rung = await rungUsd(150)
+    expect(rung).toBeGreaterThan(30)
+  })
+})

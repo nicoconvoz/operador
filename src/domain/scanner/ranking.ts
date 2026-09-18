@@ -1,6 +1,6 @@
 import { type MarketQuality } from '../market/market-quality.js'
 import { evaluateGates, forgivableFailures, type GateFailure, type GatePolicy, type GateResult } from './gates.js'
-import { scoreOpportunity, type Opportunity, type OpportunityPolicy } from './opportunity.js'
+import { meetsMinimums, scoreOpportunity, type ComponentFloors, type Opportunity, type OpportunityPolicy } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 
 /**
@@ -41,6 +41,15 @@ export interface RankingPolicy {
   readonly watchSlots: number
   /** Below this score a token is safe but not interesting. */
   readonly minScore: number
+  /**
+   * Floors a token must clear on INDIVIDUAL components, whatever its total says.
+   *
+   * The score is a weighted average, so being ruinous at one thing can be
+   * averaged away by being good at the rest. These cannot: a token below any
+   * floor is not a candidate and not reserve either — the reserve forgives a
+   * preference about the POOL, never a verdict about the opportunity.
+   */
+  readonly minComponents?: ComponentFloors
   /**
    * The line between "fill the book with these" and "complete it with those".
    *
@@ -89,6 +98,10 @@ export function rankUniverse(
     const marketQuality = quality(snapshot)
     const opportunity = scoreOpportunity(snapshot, policy.opportunity, previous.get(tokenKey(snapshot)) ?? null, marketQuality)
     if (opportunity.score < policy.minScore) continue
+    // Not a candidate and not reserve. The reserve exists to put idle capital
+    // into something SAFE that the gates merely did not prefer; a token that
+    // fails a floor is one the operator said outright is not worth trading.
+    if (!meetsMinimums(opportunity.components, policy.minComponents)) continue
     if (forgiven === null) candidates.push({ snapshot, opportunity, marketQuality })
     else reserve.push({ snapshot, opportunity, marketQuality, forgiven })
   }

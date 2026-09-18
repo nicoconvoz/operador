@@ -394,6 +394,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           smallCapFdvUsd: 50_000_000,
           watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
           minScore: 0,
+          // The SAME floors the live scan applies. A shelf that allocated on
+          // looser rules than the scan that filled it would quietly undo them
+          // every five minutes.
+          minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 },
         },
         // The shelf, priced NOW, for one batched request per thirty tokens.
         //
@@ -519,6 +523,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 smallCapFdvUsd: 50_000_000,
                 watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
                 minScore: 0,
+                // The operator's floors: without cost, headroom AND trend all
+                // above thirty percent, it is not a coin to trade. A weighted
+                // average can let one ruinous term be carried by the rest —
+                // PURR charged 15.55% a round trip and was bought anyway — and
+                // a floor is the only thing that says "this alone disqualifies
+                // you". Measured on a live book of 29: 8 survive.
+                minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 },
               },
               // How many candle downloads are worth paying for: the number of
               // positions the capital can actually fund.

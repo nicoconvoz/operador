@@ -47,7 +47,14 @@ export async function buildView(store: StatePort): Promise<ViewData> {
 
   const [dashboard, universe, operations] = await Promise.all([
     buildDashboard(store, { now }),
-    buildUniverse(store, { now, liveMarkets: () => markets }),
+    // The same floors the engine ranks on. A screen that drew a token as
+    // eligible while the book would refuse it is the exact drift this single
+    // builder exists to prevent.
+    buildUniverse(store, {
+      now,
+      liveMarkets: () => markets,
+      minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 },
+    }),
     buildOperations(store, {
       now,
       // The ladder the ENGINE runs, not the reference's. Drawing DEFAULT_PARAMS

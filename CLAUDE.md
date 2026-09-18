@@ -1683,6 +1683,52 @@ do is trade rungs the chain's fixed cost would eat. So the floor is the same
 ladder priced at `minFillUsd`, which is itself `gasFloorUsd`: **~$32 for six
 rungs at $0.05 a swap**, and it rises with gas exactly as it should.
 
+### Floors, and then the capital follows them
+
+Two changes that only make sense together, both the operator's.
+
+**Three floors on the components, not another weight.** *Without cost, headroom
+AND trend all above thirty percent, it is not a coin to trade.* The score is a
+weighted AVERAGE, so a token can be ruinous at one thing and still rank well by
+being good at the rest — PURR charged **15.55% a round trip**, scored zero on
+cost, and was bought anyway because everything else carried it. An average
+cannot say *this alone disqualifies you*; a floor can.
+
+The three are the three pillars, argued one at a time over a day. Measured
+against a live book of 29: **8 survive** — headroom rejects 16, cost 8, trend 5.
+A missing component FAILS, because unlike everywhere else in this scanner the
+verdict was already asked for.
+
+**And then the capital is split among whoever survived.** Handing those eight
+the $47.57 a nominal ladder costs would leave **$1,120 idle** — the same failure
+`targetPositionUsd` was introduced to fix, arriving from the other side once the
+shortlist got short.
+
+| | 29 candidates | 8 candidates |
+|---|---|---|
+| per position | $47.57 | **$187.50** |
+| per rung | $15 | **$62.50** |
+| idle | $73 | **$0** |
+| one death, as a share | 3.2% | **12.5%** |
+
+**Dividing the capital alone does nothing**, and that is the part worth
+remembering. `scaledParams` only ever SHRINKS — its scale is `sized / nominal`
+and sizing takes the minimum of the pool's impact budget and the wallet — so a
+$187 slot under a $15 cap still deploys $47.57. The rung has to follow the
+capital, so `tickPosition` derives it: `deployable / rungs`.
+
+That supersedes `OPERADOR_MAX_USD_PER_LEVEL`, whose argument was the GAS floor —
+a flat $15 ladder where gas is 0.33% of each fill. A bigger rung only makes that
+argument stronger.
+
+What still binds is the POOL, and the order matters: the 1% impact budget
+shrinks a rung a thin venue cannot absorb, exactly as it took PURR's $15 down to
+$9.46. **Depth outranks capital.**
+
+The concentration is the stated cost: one death goes from 3.2% of the book to
+12.5%. The operator's argument for accepting it is the first change — with those
+three floors in front, the tokens that reach a slot are not the ones that die.
+
 ### The width of the book is the division
 
 Raising the ceiling was not enough either, because the split was

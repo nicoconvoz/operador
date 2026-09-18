@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_OPPORTUNITY_POLICY as P, scoreOpportunity } from './opportunity.js'
+import { DEFAULT_OPPORTUNITY_POLICY as P, meetsMinimums, scoreOpportunity } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -339,5 +339,49 @@ describe('opportunity — the toll a token charges is the third pillar', () => {
     // falling token, whose headroom is genuinely zero, an unmeasured toll is
     // an absent answer and the safety gates already refuse to trade on one.
     expect(scoreOpportunity(base(), P).components.costEfficiency).toBe(0.5)
+  })
+})
+
+describe('meetsMinimums — three floors, all of them mandatory', () => {
+  // The operator's rule: if it does not have cost, headroom AND trend all above
+  // thirty percent, it is not a coin to trade.
+  //
+  // A FLOOR, not a weight, and that is the whole point. The score is a weighted
+  // average, so a token can be ruinous on one term and still rank well by being
+  // good at the rest — PURR charged 15.55% a round trip, scored zero on cost,
+  // and was bought anyway because everything else carried it. An average cannot
+  // express "this one thing disqualifies you"; a floor can.
+  //
+  // Measured against a live book of 29: **8 survive**. Headroom rejects 16,
+  // cost 8, trend 5.
+  const floors = { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 }
+
+  it('passes a token clear of all three', () => {
+    expect(meetsMinimums({ costEfficiency: 0.58, headroom: 0.97, momentum: 1 }, floors)).toBe(true)
+  })
+
+  it('refuses one that is ruinous to trade however good the rest is', () => {
+    // RAYCAT, live: a perfect 1.00 of headroom and 0.75 of trend, and a pool so
+    // expensive that cost scores zero.
+    expect(meetsMinimums({ costEfficiency: 0, headroom: 1, momentum: 0.75 }, floors)).toBe(false)
+  })
+
+  it('refuses one that has already run, or is falling', () => {
+    // Bonk, live: cheap and liquid, headroom spent, trend against it.
+    expect(meetsMinimums({ costEfficiency: 0.82, headroom: 0, momentum: 0.4 }, floors)).toBe(false)
+  })
+
+  it('refuses one going the wrong way even when it is cheap and has room', () => {
+    expect(meetsMinimums({ costEfficiency: 0.9, headroom: 0.9, momentum: 0.2 }, floors)).toBe(false)
+  })
+
+  it('reads a MISSING component as failing, because the floors are a promise', () => {
+    // An absent number is not a passing one. Everywhere else in this scanner
+    // silence means "no verdict"; here the verdict was already asked for.
+    expect(meetsMinimums({ headroom: 0.9, momentum: 0.9 }, floors)).toBe(false)
+  })
+
+  it('lets every token through when no floors are set', () => {
+    expect(meetsMinimums({ costEfficiency: 0, headroom: 0, momentum: 0 }, undefined)).toBe(true)
   })
 })

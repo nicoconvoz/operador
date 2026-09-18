@@ -528,7 +528,18 @@ export async function runCycle(
           // each slot an even share of everything — and a flat six-rung $15
           // ladder can only ever spend $95, so the rest comes straight back as
           // idle capital.
-          targetPositionUsd: ladderNeeds,
+          // Split among whatever SURVIVED, not sized to a nominal ladder.
+          //
+          // The operator's rule, and it reverses an earlier decision for a
+          // reason that did not exist then: the floors on cost, headroom and
+          // trend cut a live book of 29 candidates to 8. Handing each of those
+          // eight the $47.57 a nominal ladder costs would leave **$1,120
+          // idle** — the exact failure the nominal sizing was introduced to
+          // FIX, arriving from the other side once the shortlist got short.
+          //
+          // The rung follows, in `tickPosition`: capital alone changes nothing
+          // while a flat cap holds the ladder to $15 a step.
+          targetPositionUsd: eligible.length > 0 ? free / eligible.length : ladderNeeds,
           minPositionUsd: slotFloorUsd(
             config.params,
             config.maxOpenEntries ?? PYRAMIDING,
