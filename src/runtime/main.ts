@@ -426,7 +426,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           gates,
           opportunity: DEFAULT_OPPORTUNITY_POLICY,
           smallCapFdvUsd: 50_000_000,
-          watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
+          // NO CEILING when the book has none, which is what `maxPositions: 0`
+          // means everywhere else in this engine. It arrived here as 50 — the
+          // same zero-means-two-things trap this project has hit three times
+          // now — and it does not bite while a scan produces twelve candidates.
+          // It bites the moment the scan starts working.
+          //
+          // The candle bill is bounded SEPARATELY by `candleBudget`, priced off
+          // what the capital can actually fund, so a longer shortlist costs
+          // nothing extra to examine.
+          watchSlots: config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY,
           minScore: config.minScore,
           // The SAME floors the live scan applies. A shelf that allocated on
           // looser rules than the scan that filled it would quietly undo them
@@ -567,7 +576,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 // cap ahead of every large one whatever the scores say, so a
                 // big name only ever takes a slot nothing smaller wanted.
                 smallCapFdvUsd: 50_000_000,
-                watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
+                // NO CEILING when the book has none, which is what `maxPositions: 0`
+          // means everywhere else in this engine. It arrived here as 50 — the
+          // same zero-means-two-things trap this project has hit three times
+          // now — and it does not bite while a scan produces twelve candidates.
+          // It bites the moment the scan starts working.
+          //
+          // The candle bill is bounded SEPARATELY by `candleBudget`, priced off
+          // what the capital can actually fund, so a longer shortlist costs
+          // nothing extra to examine.
+          watchSlots: config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY,
                 minScore: config.minScore,
                 // The operator's floors: without cost, headroom AND trend all
                 // above thirty percent, it is not a coin to trade. A weighted

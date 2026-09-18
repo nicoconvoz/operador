@@ -330,3 +330,30 @@ describe('ranking — a floor failure is REPORTED, not swallowed', () => {
     expect(switchedOff[0]!.opportunity.score).toBeGreaterThanOrEqual(0)
   })
 })
+
+describe('ranking — an unbounded book gets an unbounded shortlist', () => {
+  // `maxPositions: 0` means NO CEILING everywhere else in this engine — the
+  // operator's own decision, because once every slot is the same size what
+  // bounds the damage one token can do is that SIZE, and capping the count
+  // only leaves capital idle.
+  //
+  // It arrived here as `watchSlots: 50`, which is the same trap this project
+  // has now hit three times: a zero that means "no limit" in one file and a
+  // number in the one next door. It does not bite while a scan produces twelve
+  // candidates; it bites the moment the scan starts working.
+  //
+  // The candle bill is bounded SEPARATELY and always was — `candleBudget` is
+  // priced off what the capital can actually fund — so a longer shortlist
+  // costs nothing extra to examine.
+
+  it('cuts to the slots when there is a ceiling', () => {
+    const universe = Array.from({ length: 10 }, (_, i) => token(`t${i}`))
+    expect(rankUniverse(universe, new Map(), quality, { ...policy, watchSlots: 3 }).candidates).toHaveLength(3)
+  })
+
+  it('keeps every candidate when the book has no ceiling at all', () => {
+    const universe = Array.from({ length: 10 }, (_, i) => token(`t${i}`))
+    const uncapped = { ...policy, watchSlots: Number.POSITIVE_INFINITY }
+    expect(rankUniverse(universe, new Map(), quality, uncapped).candidates).toHaveLength(10)
+  })
+})
