@@ -238,7 +238,11 @@ the cap — which bounds discovery, never the book — and **ahead of every
 candidate** for the security budget, unranked. A held token is not scored
 against strangers for the right to be looked at.
 
-### The two pillars: how much room is left, and whether anyone is trading it
+### The two pillars: how much room is left, and whether anyone is trading it — SUPERSEDED
+
+> `headroom` was RETIRED, weight and floor together. See "`headroom` is
+> retired" below. `activity` survives and is now most of the score on its own.
+
 
 The score has two terms that between them outweigh everything else, and both
 are the operator's decisions taken for stated reasons.
@@ -277,7 +281,13 @@ eighties. What survives from the first pillar's design is the SPREAD — running
 all the way still costs most of the score — and the test pins that rather than
 an absolute number, because the absolute now depends on the other pillar.
 
-### The third pillar: what the token charges to trade it
+### The third pillar: what the token charges to trade it — SUPERSEDED
+
+> It was promoted to a pillar and demoted the same day: the weight went back
+> to 0.2 and the toll became a DOOR instead. See "Two doors and a switch"
+> below. The zero point at a 4% round trip survives, because that is what the
+> floor is measured against.
+
 
 The operator's rule, and it is arithmetic rather than taste: *penalise heavily
 the ones that charge a lot, or we take losses we never had to take.*
@@ -311,7 +321,11 @@ An UNMEASURED toll stays neutral at 0.5. Silence is not evidence, and the
 safety gates already refuse to trade an unexamined token — so the neutral only
 decides where it sits on the screen, never whether money moves.
 
-### What a third pillar costs the first two
+### What a third pillar costs the first two — SUPERSEDED
+
+> The share table below describes weights that no longer exist. Current:
+> `activity` 51.5%, `costEfficiency` 10.3%, `headroom` 0%, total 1.94.
+
 
 A score is a weighted AVERAGE, so weight added anywhere is share taken
 everywhere. Stated rather than discovered later:
@@ -1683,7 +1697,11 @@ do is trade rungs the chain's fixed cost would eat. So the floor is the same
 ladder priced at `minFillUsd`, which is itself `gasFloorUsd`: **~$32 for six
 rungs at $0.05 a swap**, and it rises with gas exactly as it should.
 
-### Floors, and then the capital follows them
+### Floors, and then the capital follows them — PARTLY SUPERSEDED
+
+> There are TWO floors now, not three: `headroom` was retired. The capital
+> argument below is unchanged and still stands.
+
 
 Two changes that only make sense together, both the operator's.
 
@@ -1728,6 +1746,161 @@ $9.46. **Depth outranks capital.**
 The concentration is the stated cost: one death goes from 3.2% of the book to
 12.5%. The operator's argument for accepting it is the first change — with those
 three floors in front, the tokens that reach a slot are not the ones that die.
+
+### Two doors and a switch — the shortlist, rebuilt in one session
+
+Four decisions, all the operator's, all taken on the same afternoon and all
+pulling the same way: **express a preference as a DOOR, never as a weight.**
+
+The first attempt was a weight. *Penalise heavily the ones that charge a lot*
+became `costEfficiency` 0.2 → 0.9, and it worked — expensive tokens sank. It
+also did something nobody asked for, because a score is a weighted average with
+**one denominator**: total weights went 3.08 → 3.78 and every other component
+lost share, so every score in the book fell. The operator caught it from
+outside the code, which is the only place it was visible:
+
+> *porque hace rato en el ciclo antes de los cambios teníamos más monedas
+> arriba de 70 puntos, qué cambió?*
+
+Nothing in the market. Us. And his own fix was the right one — *un filtro
+aparte, que no modifique el puntaje total; una puerta de entrada a los puntajes
+ya calculados.*
+
+| | Expressed as | Lives in |
+|---|---|---|
+| **the switch** — cost and trend must each clear 30% | a binary FLOOR | `DEFAULT_COMPONENT_FLOORS` |
+| **the door** — nothing under 70 points | a threshold on the finished score | `DEFAULT_MIN_SCORE` |
+| the toll's own weight | back to **0.2**, measurable and never decisive | `weights.costEfficiency` |
+
+A door is also STRICTER than the weight ever was, which is what makes this a
+better design and not merely a cheaper one. A weighted average can always be
+carried by its other terms — exactly how PURR was bought while charging
+**15.55% a round trip**, excellent at everything else. No amount of volume,
+freshness or activity talks a floor round.
+
+Both live in `application/production-doors.ts`, alone, for the same reason
+`production-ladder.ts` exists: TWO things need them and neither may own them.
+They were three literal copies — `main.ts` twice and `dashboard/lib/view.ts`
+once — and a screen that draws a token as buyable while the engine refuses it
+is the drift this project has paid for more than once.
+
+`PRIME_SCORE` is now DERIVED from the door rather than fixed at 45, because a
+fixed 45 sits below a door of 70 and every survivor would be drawn `prime` — a
+top tier containing everything says as much as no tier.
+
+### `headroom` is retired — the largest weight in the score, removed
+
+It asked *how much of the rise is still ahead*, it carried **1.14 of 3.08**,
+and its 0.3 floor refused every token up more than about **95% on the day**.
+
+The operator retired it in one sentence, and it is the thesis of the whole book:
+
+> *una moneda de estas puede subir 2000% y nos estamos perdiendo una
+> oportunidad; quitá esa traba.*
+
+The old argument was asymmetry — eating a 70% fall is ruinous, taking a 25%
+gain is fine — and it was never wrong about the arithmetic. It was wrong about
+the market this engine trades, where the tokens that pay are the ones that ran.
+A component whose entire job was to rank those LAST could not be tuned into
+agreeing with that.
+
+Measured on the live shelf the day it went, same tokens, same components:
+
+| | with the penalty | without |
+|---|---|---|
+| USELESS | 47.1 | **74.8** |
+| PAID | 42.7 | **67.7** |
+| POT | 61.5 | **67.6** |
+| AGI | 60.2 | **36.8** |
+| clear the floors | 7 of 10 | **9 of 10** |
+
+And the shelf UNDERSTATES it: every token on it was chosen by the old rules, so
+the ones that had already run were rejected before they were ever stored. The
+sample is biased against exactly what the new scale rewards — which is why the
+operator's *creeme* was better evidence than the ten rows in front of us.
+
+**The 24h change did not stop mattering; it stopped cutting both ways.**
+`maxDailyFallPct` (15) still refuses a token, in ONE direction — a fall is an
+exit in progress. A rise, however violent, is the trade.
+
+**It is still computed and still drawn.** Zero weight adds nothing to the
+numerator and nothing to the denominator, so the score is a clean average of
+the seven that remain, and the detail sheet can still answer "why is this
+ranked here" with a bar instead of a silence.
+
+The cost, stated rather than discovered later: **removing the largest weight
+does not leave a neutral score, it hands the majority to whatever was second.**
+Total weights fall 3.08 → 1.94 and `activity` goes from 32.5% to **51.5%** — so
+"is anyone trading it" is now more than half the answer. There is a test whose
+only job is to say so.
+
+### The switch goes off on a live position: sell and rotate
+
+The operator's rule, and the largest departure from the reference in the
+codebase:
+
+> *si el interruptor on/off se desactiva en vivo y en directo, vender todo y
+> redistribuir en un token nuevo, aunque se pierda. El interruptor es
+> ultranecesario.*
+
+`domain/risk/rotation.ts`, its own comment `🔁 Rotación`, its own step in the
+cycle. Four things keep it from being a stop loss in disguise, and the first is
+structural.
+
+**It is NOT routed through the death watch, deliberately.**
+`AssetHealthObservation` is typed so no price-shaped field can exist on it
+(`price?: never` — a leak fails `tsc`), and that typing is the single
+structural guarantee keeping the death exit from degrading into a stop loss.
+One of these floors — `momentum` — **is** price direction. Folding this in
+would put price into the one path typed to refuse it. So it lives beside that
+path, never inside it, and the tape can never confuse them.
+
+**It is not `idle-slots.ts` either.** That function has one invariant argued at
+length: it releases only slots holding NOTHING, because a position with fills
+is a commitment whose slot cannot come back without selling. This is the case
+where the operator decided the allocator MAY sell, and mixing it in would make
+that file's invariant false.
+
+**Silence is not evidence, and here it is load-bearing.** The switch has THREE
+states — examined and failed, examined and passed, and *never examined* — and
+only the first sells. `rankUniverse` used to `continue` in silence on a floor
+failure, which was fine while the only consequence was "do not buy this"; the
+caller could not tell "our token's switch went off" from "the scanner did not
+find it". Read the wrong way a rate limit would not merely colour a screen, as
+it once did to 26 of 29 positions — **it would liquidate the book at market.**
+
+**And never on a `watch` pass, nor without a live price.** A watch re-ranks the
+SHELF, so a token can fall below a floor on numbers nobody re-examined; selling
+is worth a scan that actually looked. And a sale at a price no second source
+confirmed is how a $15 position once left at a tenth of a cent.
+
+It reuses the engine's own `settle` — one idempotency key, one no-loss guard,
+one per-fill suffix. A second copy of that is how a retry sells twice. The key
+is the position's `lastBarTime`, not the clock, so a re-run of the cycle
+collides with itself instead of selling again.
+
+**The token is NOT blacklisted.** Only a death verdict is terminal. A rotated
+token goes back to being an ordinary candidate and may be bought the day it
+qualifies again.
+
+**What it costs, and the operator was told before it was built.** A DCA rung
+fires AFTER a fall, and a fall is what turns `momentum` down. So the switch and
+the ladder pull against each other: on a token that dips enough to arm rung 2,
+the switch may sell before the rung fills. His argument for accepting it is the
+doors in front of it — with cost and trend both above 30% and a 70-point floor,
+the tokens reaching a slot are not the ones that die, and he would rather
+rotate capital than hold it through a turn.
+
+### The scan is every 30 minutes
+
+`OPERADOR_SCAN_MS` went from an hour to **thirty minutes**, and the operator's
+reading of the economics is right: *total no tarda nada.* Discovery is cached
+six hours, an examination stands for two, and a steady-state scan is the paid
+stage alone — about four minutes, not the fifteen a cold run costs.
+
+It matters more than it did. The doors are strict enough that the book can run
+out of things to buy between scans, and the switch can only ever fire on a pass
+that actually examined something.
 
 ### The width of the book is the division
 

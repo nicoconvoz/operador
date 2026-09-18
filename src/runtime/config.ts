@@ -1,4 +1,5 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
+import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
@@ -147,6 +148,23 @@ export interface RuntimeConfig {
    * noise and pay gas for it.
    */
   readonly minScoreEdge: number
+  /**
+   * The lowest opportunity score the book will open a position on.
+   *
+   * A DOOR, not a weight, and that distinction is the whole design. The same
+   * preference was first expressed by raising `costEfficiency` from 0.2 to
+   * 0.9, which worked and cost too much: a weighted average has one
+   * denominator, so weight added anywhere is share taken everywhere and every
+   * score in the book fell — for a change in our arithmetic, not in the
+   * market. A threshold read against the old scale was then silently wrong.
+   *
+   * This reads the score AFTER it is computed and changes nothing about it,
+   * so the number the operator remembers is the number he still sees.
+   *
+   * Zero is a REAL value here — "let everything through", never "unset".
+   * `dropInitPct` learned that the expensive way.
+   */
+  readonly minScore: number
 
   readonly solanaRpcUrl: string
   readonly bscRpcUrl: string
@@ -241,7 +259,16 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxPositions: numberOrZero(env, 'OPERADOR_MAX_POSITIONS', 0),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
-    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 60 * 60 * 1000),
+    // THIRTY minutes. It was an hour, and before that it was every cycle.
+    // The economies are what pay for it: discovery is cached six hours, an
+    // examination stands for two, and a steady-state scan is the paid stage
+    // alone — about four minutes, not the fifteen a cold run costs. The
+    // operator's reading of that is the right one: *no tarda nada.*
+    //
+    // It matters more now than it did. A shortlist is only as good as the
+    // last sweep that built it, and the doors are strict enough that the book
+    // can run out of things to buy between scans.
+    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 30 * 60 * 1000),
     // The urgent half of a scan, on its own clock: re-examine the BOOK without
     // discovering anything. Twenty minutes against the full scan's hour,
     // because a token holding money can rug in ten minutes while one that does
@@ -278,6 +305,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
+    minScore: productionDoors(env).minScore,
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

@@ -139,3 +139,30 @@ describe('loadConfig — the security budget is a cap you ASK for, not one you g
     expect(() => loadConfig({ ...valid, OPERADOR_MAX_SECURITY_CHECKS: '0' })).toThrow()
   })
 })
+
+describe('minScore — a door on the score, not another weight in it', () => {
+  it('refuses anything under 50 by default', () => {
+    // The operator's rule, and the shape of it is the point: *un filtro
+    // aparte, que no modifique el puntaje total*. The toll was first expressed
+    // as a WEIGHT (0.2 -> 0.9), which worked and cost too much — a weighted
+    // average has one denominator, so weight added anywhere is share taken
+    // everywhere, and every score in the book fell for a change in our own
+    // arithmetic rather than in the market.
+    //
+    // A door does not have that property. It reads the score after it is
+    // computed and answers one question, so the scale it is read against is
+    // the same scale yesterday's numbers were.
+    expect(loadConfig(valid).minScore).toBe(70)
+  })
+
+  it('takes zero as a real value — it is "let everything through", not "unset"', () => {
+    // `dropInitPct` learned this the expensive way: zero is a REAL setting
+    // here, so parsing it as absent would silently restore a threshold the
+    // operator turned off on purpose.
+    expect(loadConfig({ ...valid, OPERADOR_MIN_SCORE: '0' }).minScore).toBe(0)
+  })
+
+  it('is tunable without a deploy', () => {
+    expect(loadConfig({ ...valid, OPERADOR_MIN_SCORE: '65' }).minScore).toBe(65)
+  })
+})

@@ -185,10 +185,14 @@ describe('opportunity — how much room is left above it', () => {
     // The operator's rule: the higher it already is, the more room there is to
     // fall. Both are going UP — the question is only how much of the move is
     // already behind us.
+    // RETIRED from the score and kept as a reading. The component still
+    // answers the question correctly — that is what makes it worth drawing —
+    // and the SCORE is now indifferent, which is the operator's decision: a
+    // token up 2000% is the opportunity, not the thing to refuse.
     const early = scoreOpportunity(rising(5), P, null, cheap)
     const extended = scoreOpportunity(rising(120), P, null, cheap)
     expect(early.components.headroom).toBeGreaterThan(extended.components.headroom)
-    expect(early.score).toBeGreaterThan(extended.score)
+    expect(early.score).toBe(extended.score)
   })
 
   it('runs from full to empty, and stays empty past the end', () => {
@@ -210,7 +214,7 @@ describe('opportunity — how much room is left above it', () => {
     expect(early).toBeGreaterThan(late * 3)
   })
 
-  it('costs a token most of the score to have run all the way', () => {
+  it('costs a token NOTHING to have run all the way', () => {
     // The operator asked for +200% to land near thirty, and that is what set
     // the WEIGHT rather than the curve: a component moves the score only within
     // its share of the weights.
@@ -225,9 +229,25 @@ describe('opportunity — how much room is left above it', () => {
     // the eight components, headroom is still the LARGEST. What survives here
     // is the SPREAD — running all the way is still the biggest single thing
     // that can happen to a score.
+    // REVERSED, and it is the largest single reversal in this file. The
+    // operator asked for +200% to land near thirty, that set the WEIGHT rather
+    // than the curve, and the weight then made headroom the biggest term in the
+    // score. All of it is gone, for one reason: *una moneda de estas puede
+    // subir 2000% y nos estamos perdiendo una oportunidad.*
+    //
+    // The 30 at +200% was never wrong about the arithmetic. It was wrong about
+    // the market this book trades, where the tokens that pay are the ones that
+    // ran — and a component whose whole job was to rank those last could not be
+    // tuned into agreeing with that.
+    // And it is not merely neutral: the one that ran scores SLIGHTLY HIGHER,
+    // because `volatility` reads the size of the move and a token that went up
+    // 200% moved more than one that went nowhere. Half a point, measured — not
+    // a reward for running, just the absence of a punishment for it, with the
+    // movement counting as movement like anything else.
     const fresh = scoreOpportunity(rising(0), P, null, cheap).score
     const spent = scoreOpportunity(rising(P.headroomFullyRunPct), P, null, cheap).score
-    expect(fresh - spent).toBeGreaterThan(28)
+    expect(spent).toBeGreaterThanOrEqual(fresh)
+    expect(spent - fresh).toBeLessThan(1)
   })
 
   it('gives a FALLING token no headroom at all, not a neutral half', () => {
@@ -244,11 +264,22 @@ describe('opportunity — how much room is left above it', () => {
     expect(scoreOpportunity(knife, P, null, cheap).components.headroom).toBe(0)
   })
 
-  it('drops a crashed token far below a rising one', () => {
+  it('no longer drops a crashed token by itself — that moved to the GATE', () => {
+    // It used to be a 28-point gap and headroom was most of it. With headroom
+    // at zero what separates them is `momentum` and `volatility` alone, which
+    // is a few points: the score can still tell them apart and can no longer
+    // decide between them.
+    //
+    // That is the correct place for it. A token down 64% on the day is not a
+    // low-ranking opportunity, it is an exit in progress, and `maxDailyFallPct`
+    // (15) REFUSES it outright — the one direction in which the 24h change
+    // still stops a trade. A gate answers "never"; a weight only ever answers
+    // "less than the others", and the two are not the same verdict.
     const knife = base({ priceChangePct: { h1: -5, h6: -20, h24: -64 } })
     const climbing = base({ priceChangePct: { h1: 2, h6: 5, h24: 10 } })
-    expect(scoreOpportunity(climbing, P, null, cheap).score - scoreOpportunity(knife, P, null, cheap).score)
-      .toBeGreaterThan(28)
+    const gap = scoreOpportunity(climbing, P, null, cheap).score - scoreOpportunity(knife, P, null, cheap).score
+    expect(gap).toBeGreaterThan(0)
+    expect(gap).toBeLessThan(28)
   })
 
   it('is neutral when the recent window says NOTHING, which is not the same as falling', () => {
@@ -303,35 +334,55 @@ describe('opportunity — the toll a token charges is the third pillar', () => {
     expect(scoreOpportunity(base(), P, null, twoTargets).components.costEfficiency).toBe(0)
   })
 
-  it('weighs more than volume, buy pressure, liquidity growth and volatility COMBINED', () => {
-    // At 0.2 of 3.08 the toll was 6.5% of the score: measurable, never
-    // decisive. The operator's rule — heavily penalise the ones that charge a
-    // lot, or we take losses we never had to take.
+  it('stays measurable and never decisive — the teeth are the FLOOR, not the weight', () => {
+    // REVERSED on purpose, and the reason is worth more than the number.
+    //
+    // It ran at 0.9 for a day and the arithmetic of a weighted average made
+    // that expensive everywhere: ONE denominator, so weight added here is
+    // share taken from every other term. The operator watched his whole
+    // shortlist sink below the thresholds he reads it against and asked the
+    // right question — what changed? Nothing in the market. Us.
+    //
+    // The toll's real teeth moved to `minComponents`, and a floor is
+    // STRICTER than the weight ever was: an average can be carried by the
+    // other terms — which is exactly how PURR was bought at a 15.55% round
+    // trip — and a floor cannot be carried by anything.
     const w = P.weights
-    expect(w.costEfficiency).toBeGreaterThan(w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.volatility)
+    expect(w.costEfficiency).toBeLessThan(w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.volatility)
   })
 
-  it('separates a cheap token from its expensive twin by more than those four can ever move', () => {
-    // Pins the INTENT rather than a number: whatever the weights become, the
-    // toll must be able to outvote everything except the two pillars.
+  it('separates a cheap token from its expensive twin, but does not decide between them', () => {
+    // Both halves matter. The toll must still MOVE the ranking — between two
+    // tokens the gates let through, the cheaper one is worth more and the
+    // score should say so. What it must not do is settle the question on its
+    // own, because the question "is this too expensive to trade" already has
+    // a better answer that no amount of other merit can talk round.
     const weights = Object.values(P.weights) as number[]
     const total = weights.reduce((sum, x) => sum + x, 0)
     const four = P.weights.volumeExpansion + P.weights.buyPressure + P.weights.liquidityGrowth + P.weights.volatility
     const gap = scoreOpportunity(base(), P, null, cheap).score - scoreOpportunity(base(), P, null, dear).score
-    expect(gap).toBeGreaterThan((four / total) * 100)
+    expect(gap).toBeGreaterThan(0)
+    expect(gap).toBeLessThan((four / total) * 100)
   })
 
-  it('ranks the three pillars in the order the operator decided them', () => {
-    // headroom ("es mas importante que todo"), then activity ("la otra pata"),
-    // then the toll ("penaliza con poco puntaje los que cobren tanto"). This is
-    // the durable statement: the absolute scale moves every time a pillar is
-    // added, the ORDER is the decision.
+  it('leaves ONE pillar in the score, and the toll is not it', () => {
+    // headroom ("es mas importante que todo") then activity ("la otra pata")
+    // are what the score is mostly made of, and that survives. The toll was
+    // briefly promoted to a third and demoted again the same day: it is a
+    // question of ADMISSION, not of ranking, and the two are answered in
+    // different places on purpose.
+    //
+    // This is the durable statement. An absolute score moves every time a
+    // weight does; the ORDER is the decision.
+    // `headroom` was the other one and the operator retired it outright, so
+    // `activity` is now alone at the top — and with more than half the score,
+    // which is stated in its own test rather than left to be discovered.
     const w = P.weights
-    expect(w.headroom).toBeGreaterThan(w.activity)
-    expect(w.activity).toBeGreaterThan(w.costEfficiency)
-    for (const other of [w.volumeExpansion, w.buyPressure, w.liquidityGrowth, w.volatility, w.momentum]) {
-      expect(w.costEfficiency).toBeGreaterThan(other)
+    expect(w.headroom).toBe(0)
+    for (const other of [w.volumeExpansion, w.buyPressure, w.liquidityGrowth, w.volatility, w.momentum, w.costEfficiency]) {
+      expect(w.activity).toBeGreaterThan(other)
     }
+    expect(w.costEfficiency).toBeLessThan(w.activity)
   })
 
   it('still does not punish a toll NOBODY measured', () => {
@@ -383,5 +434,53 @@ describe('meetsMinimums — three floors, all of them mandatory', () => {
 
   it('lets every token through when no floors are set', () => {
     expect(meetsMinimums({ costEfficiency: 0, headroom: 0, momentum: 0 }, undefined)).toBe(true)
+  })
+})
+
+describe('opportunity — how far it has ALREADY run is no longer an argument', () => {
+  // The operator's reversal, and his reason is the thesis this system was
+  // built on: *una moneda de estas puede subir 2000% y nos estamos perdiendo
+  // una oportunidad.* `headroom` answered "how much of the rise is still
+  // ahead", and on a micro-cap that answer was a bet the move was over.
+  //
+  // It was not a small term. At 1.14 it was the LARGEST weight in the score
+  // and its 0.3 floor refused every token up more than about 95% on the day —
+  // which is precisely the shape of the runner this book exists to catch.
+  //
+  // What replaces it is not nothing. The 24h change still refuses a token, in
+  // one direction only: `maxDailyFallPct` (15) is a gate on the FALL. A token
+  // going the wrong way is an exit in progress; one going the right way, however
+  // violently, is the trade.
+
+  it('scores a token up 2000% exactly as one up 5%, all else equal', () => {
+    const moving = { h1: 5, h6: 40 }
+    const ran = scoreOpportunity(base({ priceChangePct: { ...moving, h24: 2_000 } }), P, null, cheap).score
+    const fresh = scoreOpportunity(base({ priceChangePct: { ...moving, h24: 5 } }), P, null, cheap).score
+    expect(ran).toBe(fresh)
+  })
+
+  it('carries no weight at all, so nothing it reports can move a ranking', () => {
+    expect(P.weights.headroom).toBe(0)
+  })
+
+  it('still REPORTS the number, because a diagnostic is not a verdict', () => {
+    // Kept on the screen and out of the arithmetic. The detail sheet draws the
+    // components as bars so "why is this ranked here" is answerable without
+    // reading code, and deleting the measurement would answer it with silence.
+    const { components } = scoreOpportunity(base({ priceChangePct: { h1: 1, h6: 1, h24: 150 } }), P, null, cheap)
+    expect(components.headroom).toBeGreaterThanOrEqual(0)
+    expect(components.headroom).toBeLessThan(0.3)
+  })
+
+  it('leaves activity as what the score is now mostly made of — stated, not discovered later', () => {
+    // Removing the largest weight does not leave a neutral score: it hands the
+    // majority to whatever was second. Total weights fall 3.08 -> 1.94 and
+    // `activity` goes from 32.5% to 51.5% of the score, so "is anyone trading
+    // it" is now more than half the answer. That is a consequence of the
+    // operator's decision, and it belongs written down rather than found.
+    const w = P.weights
+    const total = (Object.values(w) as number[]).reduce((sum, x) => sum + x, 0)
+    expect(w.activity / total).toBeGreaterThan(0.5)
+    expect(w.activity).toBeGreaterThan(w.costEfficiency)
   })
 })

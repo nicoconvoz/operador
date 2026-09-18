@@ -20,6 +20,7 @@ export type AlertKind =
   | 'position-halted'
   | 'kill-switch'
   | 'token-retired'
+  | 'token-rotated'
   // Operations
   | 'engine-started'
   | 'heartbeat'
@@ -61,6 +62,10 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   // log must carry even if it repeats, because it is the only kind the system
   // did not decide for itself.
   'token-retired': 'critical',
+  // CRITICAL, and never throttled into silence. Real money left a position at
+  // whatever price existed, possibly at a loss — the operator asked for that
+  // outcome and must still be told each time it happens.
+  'token-rotated': 'critical',
   'engine-started': 'info',
   heartbeat: 'info',
   'scan-empty': 'warn',

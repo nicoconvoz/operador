@@ -9,6 +9,9 @@ import { type Candles } from './replay.js'
 import { type EntryConfirmation } from './confirm-entry.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
+import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { type SwitchedOff } from '../domain/scanner/ranking.js'
+import { settle } from './engine.js'
 import { commonFund, positionLedger, type PositionLedger } from './ledger.js'
 import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
@@ -99,6 +102,19 @@ export interface CycleDeps {
    * too old to count as evidence.
    */
   readonly recall?: () => Promise<{ readonly candidates: readonly Candidate[]; readonly scannedAt: number } | null>
+  /**
+   * What the LAST scan refused on a component floor — the switch, off.
+   *
+   * Optional, and absent means NOTHING HAPPENS. That default is the safety:
+   * "we did not measure it" and "it failed" must never be the same state, and
+   * read the wrong way here a rate limit would not colour a screen, it would
+   * liquidate the whole book at market.
+   *
+   * A separate dep rather than a wider `scan` return, so the twenty existing
+   * callers that hand back a plain candidate list keep working — and keep
+   * working SAFELY, since not supplying it means no position is ever rotated.
+   */
+  readonly switchedOff?: () => readonly SwitchedOff[]
   readonly now: () => number
 }
 
@@ -355,6 +371,81 @@ export async function runCycle(
       ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
     }
 
+    // ── 3a-bis. The switch went off on a position holding money ─────────────
+    //
+    // The operator's rule, and the largest departure from the reference in
+    // this file: *si el interruptor on/off se desactiva en vivo y en directo,
+    // vender todo y redistribuir en un token nuevo, aunque se pierda.*
+    //
+    // It is deliberately NOT routed through the death watch.
+    // `AssetHealthObservation` is typed so no price-shaped field can exist on
+    // it, and that typing is what stops the death exit degrading into a stop
+    // loss. One of these floors — `momentum` — IS price, so folding it in
+    // would put price into the one path typed to refuse it. Its own comment,
+    // its own function, its own line in the tape.
+    //
+    // Never on a `watch` pass. A watch re-ranks the SHELF, so a token can drop
+    // below a floor on numbers nobody re-examined; selling a position is worth
+    // a scan that actually looked.
+    const offNow = new Map<string, SwitchedOff>(
+      kind === 'watch' ? [] : (deps.switchedOff?.() ?? []).map((s) => [`${s.snapshot.chain}:${s.snapshot.address}`, s]),
+    )
+    const stillListed = new Set(candidates.map((c) => `${c.snapshot.chain}:${c.snapshot.address}`))
+    const rotations = rotateOnSwitchOff(
+      recovery.positions.map((r) => {
+        const key = `${r.position.chain}:${r.position.tokenAddress}`
+        const off = offNow.get(key)
+        return {
+          id: r.position.id,
+          symbol: r.position.symbol,
+          chain: r.position.chain,
+          tokenAddress: r.position.tokenAddress,
+          openQty: ledgers.get(r.position.id)?.qty ?? 0,
+          // THREE states, and the third is the one that matters. Examined and
+          // failed, examined and passed, or never examined at all — and only
+          // the first sells. A token missing from both lists is silence.
+          switchOff: off !== undefined ? true : stillListed.has(key) ? false : null,
+          failed: off?.failed ?? [],
+        }
+      }),
+    )
+
+    const rotatedIds: string[] = []
+    for (const { holder, reason } of rotations) {
+      const recovered = recovery.positions.find((r) => r.position.id === holder.id)
+      const price = marketPrices.get(`${holder.chain}:${holder.tokenAddress}`)
+      // No live price, no sale. Selling at a number nobody confirmed is how a
+      // position once left at a ten-thousandth of its value.
+      if (recovered === undefined || price === undefined || price <= 0) continue
+      const broker = await deps.brokerFor(recovered.position)
+      // The SAME `settle` the engine tick uses — the idempotency key, the
+      // no-loss guard and the per-fill suffix all come from one place. A
+      // second copy of that is how a retry sells twice.
+      await settle(
+        [{ kind: 'closeAll', comment: ROTATION_EXIT_COMMENT }],
+        // Keyed by the bar the position last evaluated, not by the clock: a
+        // re-run of this cycle then collides with itself instead of selling
+        // the same position again.
+        recovered.position.lastBarTime,
+        price,
+        at,
+        recovered.position,
+        broker,
+        deps.store,
+      )
+      await deps.store.closePosition(holder.id)
+      rotatedIds.push(holder.id)
+      const rotated = alert(
+        'token-rotated',
+        `🔁 ${holder.symbol} sale y el capital rota`,
+        `${reason}. Se vendió todo a ${price} y la ranura vuelve al reparto. El token NO queda vetado: puede volver a entrar el día que califique.`,
+        at,
+        { position: holder.id, token: holder.tokenAddress },
+      )
+      if (throttle.shouldSend(rotated, `rotated:${holder.id}`)) await deps.alerts.send(rotated)
+    }
+    const rotated = new Set(rotatedIds)
+
     const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score]))
     const heldNow = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
     // What is QUEUING for a slot, which is not the same as what is on the list.
@@ -411,8 +502,8 @@ export async function runCycle(
       if (throttle.shouldSend(handed, `released:${holder.id}`)) await deps.alerts.send(handed)
     }
 
-    const released = new Set(releasedIds)
-    const keeping = recovery.positions.filter((r) => !released.has(r.position.id))
+    const released = new Set([...releasedIds, ...rotatedIds])
+    const keeping = recovery.positions.filter((r) => !released.has(r.position.id) && !rotated.has(r.position.id))
     const held = new Set(keeping.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
 
     // ── 3c. Trim each position to the wallet its ladder actually needs ───────

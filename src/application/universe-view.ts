@@ -132,6 +132,16 @@ export interface UniverseOptions {
    */
   readonly minComponents?: ComponentFloors
   /**
+   * The same SCORE door the ranking applies, for the same reason as the floors
+   * above: a screen that draws a token as buyable while the engine refuses it
+   * is the drift this read model exists to stop, and this project has paid for
+   * that one more than once.
+   *
+   * Absent means no door — the old behaviour exactly, so a caller that does
+   * not know the engine's threshold is not silently given a different rule.
+   */
+  readonly minScore?: number
+  /**
    * The market, right now, for the tokens that HOLD money — keyed `chain:address`.
    *
    * The scan runs hourly, so a position's numbers, and the score computed from
@@ -161,7 +171,25 @@ const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'reserve', 'pending', '
 // position can neither buy nor sell. Six of them proved it in production.
 const SAFETY_GATES = new Set(['honeypot', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'topHolders', 'creatorShare', 'proxy', 'impersonation', 'staleBars', 'priceMismatch'])
 
+/**
+ * The line between "fill the book with these" and "and these too".
+ *
+ * DERIVED from the engine's own door rather than fixed, because a fixed 45 sat
+ * BELOW a door of 50 the moment one was set — and every survivor would then
+ * have been drawn `prime`, which is a band that has stopped distinguishing
+ * anything. A screen whose top tier is everything says as much as no tier.
+ *
+ * The margin is `minScoreEdge` (10): the points the allocator already requires
+ * before it will swap one token for another. It is the project's own answer to
+ * "how much better is meaningfully better", so borrowing it here keeps ONE
+ * definition instead of inventing a second.
+ *
+ * With no door it is the 45 it always was, measured against a book that then
+ * ran 25..88.
+ */
+const PRIME_MARGIN = 10
 const PRIME_SCORE = 45
+const primeLine = (door: number): number => (door > 0 ? door + PRIME_MARGIN : PRIME_SCORE)
 
 /** The most recent verdict's reasons, newest observation first. */
 const latestSignals = (position: PersistedPosition): readonly string[] =>
@@ -292,7 +320,10 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
               // end up disagreeing about what the book may hold.
               : !meetsMinimums(opportunity.components, options.minComponents)
                 ? 'filtered'
-              : opportunity.score >= PRIME_SCORE
+              // And below the engine's own SCORE door, for the same reason.
+              : opportunity.score < (options.minScore ?? 0)
+                ? 'filtered'
+              : opportunity.score >= primeLine(options.minScore ?? 0)
                 ? 'prime'
                 : 'eligible'
 

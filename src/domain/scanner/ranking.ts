@@ -1,6 +1,6 @@
 import { type MarketQuality } from '../market/market-quality.js'
 import { evaluateGates, forgivableFailures, type GateFailure, type GatePolicy, type GateResult } from './gates.js'
-import { meetsMinimums, scoreOpportunity, type ComponentFloors, type Opportunity, type OpportunityPolicy } from './opportunity.js'
+import { failedMinimums, scoreOpportunity, type ComponentFloors, type Opportunity, type OpportunityComponents, type OpportunityPolicy } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 
 /**
@@ -29,9 +29,27 @@ export interface Rejected {
   readonly gates: GateResult
 }
 
+/**
+ * A token that was scored and then refused by a component FLOOR.
+ *
+ * Kept apart from `rejected`, which means a GATE said no. The two are
+ * different verdicts about different questions — "is this dangerous" versus
+ * "is this worth trading" — and only this one can also mean "sell what we
+ * already hold of it", so conflating them would let a honeypot verdict close a
+ * healthy position and a floor verdict blacklist a healthy token.
+ */
+export interface SwitchedOff {
+  readonly snapshot: TokenSnapshot
+  readonly opportunity: Opportunity
+  /** Which floors it failed, so the evidence travels with the decision. */
+  readonly failed: readonly (keyof OpportunityComponents)[]
+}
+
 export interface ScanResult {
   readonly candidates: readonly Candidate[]
   readonly rejected: readonly Rejected[]
+  /** Examined, scored, and refused by a floor. The switch, off. */
+  readonly switchedOff: readonly SwitchedOff[]
 }
 
 export interface RankingPolicy {
@@ -81,6 +99,15 @@ export function rankUniverse(
   policy: RankingPolicy,
 ): ScanResult {
   const candidates: Candidate[] = []
+  // Tokens that were EXAMINED and failed a floor — the switch, off.
+  //
+  // It used to `continue` in silence, which was fine while the only
+  // consequence was "do not buy this". It stopped being fine the moment the
+  // same verdict can SELL a live position: the caller could not distinguish
+  // "our token's switch went off" from "the scanner did not find it", and
+  // those two must never produce the same action. Silence is not evidence,
+  // and the absence of a name here is silence.
+  const switchedOff: SwitchedOff[] = []
   // Held back by taste alone. Kept apart rather than mixed in, because the
   // allocator must exhaust what qualifies before it reaches for a fallback.
   const reserve: Candidate[] = []
@@ -101,7 +128,11 @@ export function rankUniverse(
     // Not a candidate and not reserve. The reserve exists to put idle capital
     // into something SAFE that the gates merely did not prefer; a token that
     // fails a floor is one the operator said outright is not worth trading.
-    if (!meetsMinimums(opportunity.components, policy.minComponents)) continue
+    const failed = failedMinimums(opportunity.components, policy.minComponents)
+    if (failed.length > 0) {
+      switchedOff.push({ snapshot, opportunity, failed })
+      continue
+    }
     if (forgiven === null) candidates.push({ snapshot, opportunity, marketQuality })
     else reserve.push({ snapshot, opportunity, marketQuality, forgiven })
   }
@@ -122,7 +153,7 @@ export function rankUniverse(
   // say, and is cut with them rather than in addition to them — a wider
   // shortlist is a wider candle bill, and the slots the reserve fills are the
   // ones nothing else could.
-  return { candidates: [...candidates, ...reserve].slice(0, policy.watchSlots), rejected }
+  return { candidates: [...candidates, ...reserve].slice(0, policy.watchSlots), rejected, switchedOff }
 }
 
 export const tokenKey = (snapshot: TokenSnapshot): string => `${snapshot.chain}:${snapshot.address}`

@@ -114,13 +114,21 @@ export type EntryOrder = {
 export type CloseAllOrder = {
   readonly kind: 'closeAll'
   /**
-   * The two strategy exits, plus the risk layer's two (see domain/risk).
+   * The two strategy exits, plus the risk layer's THREE (see domain/risk).
    *
    * A union rather than a string, so the no-loss guard can tell them apart in
    * the TYPE system: a strategy exit may not fill below average cost, and the
-   * risk layer's two must, because they leave for a reason that is not price.
+   * risk layer's must, because they leave for a reason that is not the
+   * strategy's own profit target.
+   *
+   * `🔁 Rotación` is the ALLOCATOR's, and it is the one the operator added
+   * against the reference outright: the opportunity floors went off on a
+   * position holding money, so the money leaves and buys something that
+   * qualifies — *aunque se pierda*. It is NOT a death exit and never
+   * blacklists the token, which is exactly why it needs a name of its own
+   * instead of borrowing one.
    */
-  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit' | '❄️ Salida por congelamiento'
+  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit' | '❄️ Salida por congelamiento' | '🔁 Rotación'
 }
 
 export type Order = EntryOrder | CloseAllOrder

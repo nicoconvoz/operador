@@ -1,4 +1,5 @@
 import { type AlertPort, AlertThrottle, alert } from '../domain/notifications/alerts.js'
+import { ROTATION_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT, type AssetHealthObservation, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { idempotencyKeyFor, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { stepCascade } from '../domain/strategy/cascade.js'
@@ -519,7 +520,7 @@ async function advanceOneBar(
  * Recovery looks a fill up by exactly that, and keying it the other way would
  * leave it unable to find its own work and halt every position it had traded.
  */
-async function settle(
+export async function settle(
   orders: readonly Order[],
   keyBarTime: number,
   price: number,
@@ -568,6 +569,12 @@ function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: 
   // A guard that held them would hold exactly the positions that most need to
   // get out.
   if (order.comment === DEATH_EXIT_COMMENT || order.comment === FROZEN_EXIT_COMMENT) return false
+  // The ALLOCATOR's exit, and the only one that leaves for a reason which is
+  // partly price: `momentum` is one of the floors that turns the switch off.
+  // Held to the no-loss rule it would do nothing in the one case it exists
+  // for, because a token whose switch went off is usually one that is down.
+  // The operator asked for it with the consequence stated: *aunque se pierda.*
+  if (order.comment === ROTATION_EXIT_COMMENT) return false
   // Nothing held, so no cost basis and no loss to make.
   if (avgPrice === null) return false
   return fillPrice < avgPrice

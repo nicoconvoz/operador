@@ -2,6 +2,7 @@ import { buildDashboard } from '../../src/application/dashboard.js'
 import { buildUniverse } from '../../src/application/universe-view.js'
 import { buildOperations } from '../../src/application/operations-view.js'
 import { productionLadder } from '../../src/application/production-ladder.js'
+import { productionDoors } from '../../src/application/production-doors.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
 import { DexScreener, type MarketSnapshot } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
 import { makeHttpGet } from '../../src/infrastructure/http.js'
@@ -35,6 +36,9 @@ export interface ViewData {
 export async function buildView(store: StatePort): Promise<ViewData> {
   const now = () => Date.now()
   const ladder = productionLadder(process.env)
+  // The same doors the ENGINE ranks with, from the same module. Three literal
+  // copies of these numbers lived in three files until now.
+  const doors = productionDoors(process.env)
 
   // ONE request for both readers.
   //
@@ -53,7 +57,12 @@ export async function buildView(store: StatePort): Promise<ViewData> {
     buildUniverse(store, {
       now,
       liveMarkets: () => markets,
-      minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 },
+      minComponents: doors.minComponents,
+      // And the engine's own SCORE door. Without it the canvas draws as
+      // buyable everything the floors let through, the book's own threshold
+      // included — the screen-versus-engine disagreement this single builder
+      // exists to prevent.
+      minScore: doors.minScore,
     }),
     buildOperations(store, {
       now,

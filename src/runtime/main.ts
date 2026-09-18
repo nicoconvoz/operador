@@ -7,6 +7,8 @@ import { DEFAULT_GATE_POLICY, minAgeForHistory, type GatePolicy } from '../domai
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { DEFAULT_COMPONENT_FLOORS } from '../application/production-doors.js'
+import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { ladderCapitalUsd } from '../application/paper-run.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type Chain } from '../domain/scanner/snapshot.js'
@@ -178,6 +180,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
 
   /** Which scan each position has already had folded into its evidence. */
   const foldedScanAt = new Map<string, number>()
+
+  let lastSwitchedOff: SwitchedOff[] = []
 
   const brokerFor = async (position: PersistedPosition) => {
     let broker = brokers.get(position.id)
@@ -393,11 +397,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           opportunity: DEFAULT_OPPORTUNITY_POLICY,
           smallCapFdvUsd: 50_000_000,
           watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
-          minScore: 0,
+          minScore: config.minScore,
           // The SAME floors the live scan applies. A shelf that allocated on
           // looser rules than the scan that filled it would quietly undo them
           // every five minutes.
-          minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 },
+          minComponents: DEFAULT_COMPONENT_FLOORS,
         },
         // The shelf, priced NOW, for one batched request per thirty tokens.
         //
@@ -434,7 +438,19 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // nobody should be spending from.
         maxAgeMs: 2 * config.scanIntervalMs,
       }),
+    // What the last scan refused on a component floor — the switch, off.
+    //
+    // A closure rather than a wider `scan` return, and the reason is blast
+    // radius: twenty call sites hand back a plain candidate list, and every
+    // one of them would have to change to carry a field only the composition
+    // root can fill. Not supplying it means no position is ever rotated, so
+    // the safe answer is also the default.
+    //
+    // Reset per scan, never accumulated. A verdict from the pass before last
+    // is not a verdict about now, and this one can SELL.
+    switchedOff: () => lastSwitchedOff,
     scan: async (kind) => {
+      lastSwitchedOff = []
       const candidates: Candidate[] = []
       // What we already hold, per chain. Every universe source is a list of
       // what is POPULAR NOW, so a token bought six hours ago that has stopped
@@ -522,14 +538,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 // big name only ever takes a slot nothing smaller wanted.
                 smallCapFdvUsd: 50_000_000,
                 watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
-                minScore: 0,
+                minScore: config.minScore,
                 // The operator's floors: without cost, headroom AND trend all
                 // above thirty percent, it is not a coin to trade. A weighted
                 // average can let one ruinous term be carried by the rest —
                 // PURR charged 15.55% a round trip and was bought anyway — and
                 // a floor is the only thing that says "this alone disqualifies
                 // you". Measured on a live book of 29: 8 survive.
-                minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 },
+                minComponents: DEFAULT_COMPONENT_FLOORS,
               },
               // How many candle downloads are worth paying for: the number of
               // positions the capital can actually fund.
@@ -586,6 +602,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           console.log(`[scan:stored] ${chain} ${keep.length} de ${result.snapshots.length}`)
           await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: keep })
           candidates.push(...result.candidates)
+          // Only for tokens we HOLD is this ever acted on, but it is collected
+          // whole: the orchestrator does the matching, and a filter here would
+          // be a second place that decides what counts as our own position.
+          lastSwitchedOff.push(...result.switchedOff)
           // A scan three times slower in CI than on a laptop is either a rate
           // limit or a mystery. This is how it stops being a mystery.
           console.log(`[scan:limits] ${chain} ${spentSince()}`)

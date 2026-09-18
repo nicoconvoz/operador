@@ -39,6 +39,9 @@ const SPANISH: Record<string, string> = {
   '⚖️ BE Exit': '⚖️ Salida a la par',
   '☠️ Death Exit': '☠️ Salida por muerte',
   '❄️ Salida por congelamiento': '❄️ Salida por congelamiento',
+  // The allocator's, and it says WHY in the word: the coin stopped qualifying
+  // and the money went to one that does. Not a death — it is not blacklisted.
+  '🔁 Rotación': '🔁 Rotación por filtros',
 }
 // A DCA rung arrives as "➕ DCA-2" and needs no translating; anything unknown is
 // shown as it came rather than blanked, because an unrecognised comment is

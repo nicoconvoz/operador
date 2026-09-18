@@ -996,3 +996,162 @@ describe('runCycle — a frozen ladder gives back what it can no longer spend', 
     expect(after?.capitalUsd).toBeGreaterThan(15)
   })
 })
+
+describe('runCycle — the switch goes off on a position holding money', () => {
+  // The operator's rule: *si el interruptor on/off se desactiva en vivo y en
+  // directo, vender todo y redistribuir en un token nuevo, aunque se pierda.*
+  //
+  // The domain function is tested on its own, and that is not enough. The
+  // failure this project has paid for more than any other is a function that
+  // is written, tested, documented as the fix, and reached only by the offline
+  // path — the missing execution layer, the ladder the engine never sized.
+  // These tests exist to prove the CYCLE reaches it.
+
+  const off = (address: string, failed: readonly string[] = ['momentum']) => ({
+    snapshot: { chain: 'solana' as const, address, symbol: address, pairAddress: `pair-${address}`, priceUsd: 0.01 } as TokenSnapshot,
+    opportunity: { score: 12, components: {} as never },
+    failed: failed as never,
+  })
+
+  const withFills = async (store: MemoryStore) => {
+    held = store
+    await store.savePosition(position({ tokenAddress: 'Held', symbol: 'HELD' }))
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', idempotencyKey: 'k1', side: 'buy',
+      qty: 1_000, price: 1, costUsd: 0.05, comment: 'Entry', time: NOW - HOUR,
+    })
+  }
+
+  /**
+   * A broker SEEDED from the recorded fills, as production's is.
+   *
+   * The shared rig hands back a flat one, so no orchestrator test before these
+   * had ever exercised a position that actually holds something — and a
+   * rotation is meaningless against a broker with nothing to sell. `main.ts`
+   * calls `broker.seed(await store.fillsFor(id))` for exactly this reason:
+   * the engine wakes as a fresh process and the fills are the only record that
+   * survives it.
+   */
+  // Assigned by `withFills` below, which every test in this block calls
+  // before the cycle runs. The broker is only ever BUILT inside runCycle, so a
+  // closure read is enough and the rig does not have to change shape.
+  let held: MemoryStore
+  const seeded = async (p: PersistedPosition) => {
+    const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+    broker.seed(await held.fillsFor(p.id))
+    return broker
+  }
+
+  it('sells everything and frees the slot', async () => {
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+    })
+    await withFills(store)
+
+    await runCycle(deps, config, throttle)
+
+    // Sold at the LIVE price, below cost, and the position is gone.
+    const fills = await store.allFills()
+    const sale = fills.find((f) => f.side === 'sell')
+    expect(sale?.comment).toBe('🔁 Rotación')
+    // 0.4975, not 0.5: the paper broker pays the venue spread on the way out,
+    // as a real one would. An honest simulator is the whole premise of paper
+    // mode, and a rotation is not exempt from what leaving actually costs.
+    expect(sale?.price).toBeLessThan(0.5)
+    expect(sale?.price).toBeCloseTo(0.5, 2)
+    // The slot is gone from the book; the cycle then refills it from the
+    // shortlist, which is the "redistribuir en un token nuevo" half.
+    const left = await store.loadPositions()
+    expect(left.find((x) => x.id === 'pos-1')).toBeUndefined()
+  })
+
+  it('sells even though it is a LOSS — that is the point of it', async () => {
+    // Bought at 1, sold at 0.5. The no-loss guard holds the two strategy exits
+    // and must not hold this one, or it would do nothing in the only case it
+    // exists for: a token whose switch went off is usually one that is down.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell')
+    expect(sale!.price).toBeLessThan(1)
+  })
+
+  it('does NOT blacklist the token — a rotation is not a death', async () => {
+    // It may be bought again the day it qualifies. Only a death verdict is
+    // terminal, and confusing the two would permanently retire a token for
+    // having had a bad hour.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    expect((await store.blacklisted()).size).toBe(0)
+  })
+
+  it('leaves the position alone when NOBODY measured the switch', async () => {
+    // Silence is not evidence, and here it is load-bearing: a rate limit once
+    // turned 26 of 29 positions red because an unanswered request was read as
+    // a verdict. Read that way here it would liquidate the book at market.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      scan: async () => [candidate('a', 90)],
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+    // Still ours. The cycle opens other positions alongside it, so the count
+    // is not the question — whether THIS one survived is.
+    expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
+  })
+
+  it('refuses to sell without a live price', async () => {
+    // Selling at a number no second source confirmed is how a $15 position
+    // once left at a tenth of a cent. No price, no sale — it waits.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded, switchedOff: () => [off('Held')] })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+    // Still ours. The cycle opens other positions alongside it, so the count
+    // is not the question — whether THIS one survived is.
+    expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
+  })
+
+  it('never rotates on a WATCH pass', async () => {
+    // A watch re-ranks the SHELF, so a token can fall below a floor on numbers
+    // nobody re-examined. Selling a position is worth a scan that looked.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+      recall: async () => ({ candidates: [candidate('a', 90)], scannedAt: NOW }),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle, 'watch')
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+  })
+
+  it('alerts CRITICAL, because real money left at whatever price existed', async () => {
+    const { deps, store, alerts, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held', ['costEfficiency', 'momentum'])],
+      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    const sent = alerts.sent.find((a) => a.kind === 'token-rotated')
+    expect(sent?.level).toBe('critical')
+    // The evidence travels with the decision: which floors, by name.
+    expect(sent?.body).toContain('costEfficiency')
+    expect(sent?.body).toContain('momentum')
+  })
+})

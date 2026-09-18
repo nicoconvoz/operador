@@ -112,9 +112,29 @@ export function meetsMinimums(
   components: Partial<OpportunityComponents>,
   floors: ComponentFloors | undefined,
 ): boolean {
-  if (floors === undefined) return true
+  return failedMinimums(components, floors).length === 0
+}
+
+/**
+ * WHICH floors failed, not merely that one did.
+ *
+ * The boolean was enough while a failure only meant "do not buy this". It is
+ * not enough now that it can also mean "sell what you hold of this": a
+ * decision that moves money has to carry its own evidence, or the allocator,
+ * the screen and the audit log end up with three different stories about why
+ * a position was closed.
+ *
+ * Order follows the floors object, so the reason string is stable rather than
+ * dependent on which check happened to run first.
+ */
+export function failedMinimums(
+  components: Partial<OpportunityComponents>,
+  floors: ComponentFloors | undefined,
+): readonly (keyof OpportunityComponents)[] {
+  if (floors === undefined) return []
   return (Object.entries(floors) as [keyof OpportunityComponents, number | undefined][])
-    .every(([name, floor]) => floor === undefined || (components[name] ?? -1) >= floor)
+    .filter(([name, floor]) => floor !== undefined && (components[name] ?? -1) < floor)
+    .map(([name]) => name)
 }
 
 export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
@@ -127,7 +147,40 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // are most of the score, deliberately. The operator's thesis: a 70% fall is
   // ruinous while a 25% gain is simply cashed, and a pool nobody trades is one
   // nobody will buy from us either.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 1.0, volatility: 0.05, momentum: 0.14, headroom: 1.14, costEfficiency: 0.9 },
+  //
+  // The toll is NOT a third pillar, and it was one for a day. At 0.9 it took
+  // the total from 3.08 to 3.78 and a weighted average has ONE denominator, so
+  // every other component lost share and every score in the book fell — for a
+  // change in our arithmetic rather than in the market. The operator caught it
+  // from the outside ("teníamos más monedas arriba de 70 puntos, qué cambió?")
+  // and named the fix: *un filtro aparte, que no modifique el puntaje total*.
+  //
+  // So the toll is a DOOR now — `minComponents` in the ranking policy, on/off
+  // at 0.3 — and the weight is back to what it was: measurable, never
+  // decisive. A door is also stricter than the weight ever was, because an
+  // average can be carried by its other terms and a floor cannot.
+  //
+  // `headroom` weighs ZERO, and it was 1.14 — the largest weight in the score.
+  // The operator retired it with the argument the whole book rests on: *una
+  // moneda de estas puede subir 2000% y nos estamos perdiendo una
+  // oportunidad.* It asked how much of the rise was still ahead, and on a
+  // micro-cap that is a bet that the move is over.
+  //
+  // It is still COMPUTED and still drawn, because the detail sheet answers
+  // "why is this ranked here" with the components as bars and a deleted
+  // measurement answers it with silence. Zero weight contributes nothing to
+  // the numerator and nothing to the denominator, so the score is a clean
+  // average of the seven that remain.
+  //
+  // The 24h change did not stop mattering; it stopped cutting BOTH ways. It
+  // still refuses a token through `maxDailyFallPct` (15), which fires on a
+  // FALL — an exit in progress — and never on a rise, however violent.
+  //
+  // The cost, stated rather than discovered later: removing the largest weight
+  // does not leave a neutral score, it hands the majority to whatever was
+  // second. Total weights fall 3.08 -> 1.94 and `activity` goes from 32.5% to
+  // 51.5%, so "is anyone trading it" is now more than half the answer.
+  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 1.0, volatility: 0.05, momentum: 0.14, headroom: 0, costEfficiency: 0.2 },
   fullExpansionRatio: 3,
   activityKneeTxnsPerHour: 15,
   fullActivityTxnsPerHour: 300,

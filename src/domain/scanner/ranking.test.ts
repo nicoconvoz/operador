@@ -209,3 +209,108 @@ describe('ranking — the reserve: what gets bought when nothing better is free'
     expect(ranked).toHaveLength(2)
   })
 })
+
+describe('ranking — two doors on an already-computed score', () => {
+  // The operator's framing, and the whole reason both of these live HERE and
+  // not in the weights: *un filtro aparte, que no modifique el puntaje total*.
+  //
+  // A weight cannot say "this alone disqualifies you" — it is one term of an
+  // average and the other terms can always carry it, which is how PURR was
+  // bought at a 15.55% round trip. A door can, and it costs the scale nothing:
+  // every number the operator reads is the number it was yesterday.
+
+  const expensive = (s: TokenSnapshot): MarketQuality => ({
+    // 8% round trip, twice the zero point. `costEfficiency` is 0, the floor
+    // is 0.3, and nothing else about the token is allowed to rescue it.
+    liquidityUsd: s.liquidityUsd, spreadPct: 4, slippagePct: 4, referenceUsd: 100, observedAt: s.observedAt,
+  })
+
+  const floors = { ...policy, minScore: 0, minComponents: { costEfficiency: 0.3, headroom: 0.3, momentum: 0.3 } }
+
+  it('refuses a ruinous toll however good the rest of the token is', () => {
+    const great = token('great', {
+      volumeUsd: { h1: 20_000, h6: 60_000, h24: 120_000 },
+      txns: { h1: { buys: 200, sells: 40 }, h24: { buys: 3_000, sells: 900 } },
+      priceChangePct: { h1: 3, h6: 5, h24: 8 },
+    })
+    // It clears every gate and scores well when the toll is ordinary...
+    expect(rankUniverse([great], new Map(), quality, floors).candidates).toHaveLength(1)
+    // ...and is gone the moment the toll is ruinous, on the same token.
+    const { candidates, rejected } = rankUniverse([great], new Map(), expensive, floors)
+    expect(candidates).toEqual([])
+    // Not REJECTED either: the gates had no complaint. It failed a floor,
+    // which the caller reads as "not worth trading" rather than "dangerous".
+    expect(rejected).toEqual([])
+  })
+
+  it('keeps a floor failure out of the RESERVE as well, not only the shortlist', () => {
+    // The reserve forgives a preference about the POOL — a deep one that turns
+    // slowly, a thin day, a name bigger than this book likes. It may never
+    // forgive a verdict about the OPPORTUNITY, or the fallback becomes a back
+    // door around the rule it was told to respect.
+    const thin = token('thin', { volumeUsd: { h1: 200, h6: 1_200, h24: 6_000 } })
+    const { candidates } = rankUniverse([thin], new Map(), expensive, floors)
+    expect(candidates.filter((c) => c.forgiven !== undefined)).toEqual([])
+  })
+
+  it('leaves the SCORE untouched — the door reads it, it never moves it', () => {
+    // The property the operator asked for by name. Same token, same market,
+    // two different doors: the score that comes back is identical, and only
+    // whether it comes back at all differs.
+    const open = { ...policy, minScore: 0 }
+    const shut = { ...policy, minScore: 99 }
+    const scored = rankUniverse([token('x')], new Map(), quality, open).candidates
+    expect(scored).toHaveLength(1)
+    expect(rankUniverse([token('x')], new Map(), quality, shut).candidates).toEqual([])
+    // and re-opening it returns the very same number, to the last decimal
+    expect(rankUniverse([token('x')], new Map(), quality, open).candidates[0]!.opportunity.score).toBe(
+      scored[0]!.opportunity.score,
+    )
+  })
+})
+
+describe('ranking — a floor failure is REPORTED, not swallowed', () => {
+  // It used to `continue` in silence, which was fine while the only
+  // consequence was "do not buy this". It stopped being fine the moment the
+  // same verdict can SELL a position: the orchestrator could not tell "the
+  // switch went off on our token" from "the scanner did not find it this
+  // cycle", and those two must never produce the same action.
+  //
+  // The distinction the scanner has paid for twice already: an answered
+  // question with a bad answer, versus no answer at all.
+
+  const expensive = (s: TokenSnapshot): MarketQuality => ({
+    liquidityUsd: s.liquidityUsd, spreadPct: 4, slippagePct: 4, referenceUsd: 100, observedAt: s.observedAt,
+  })
+  const floors = { ...policy, minScore: 0, minComponents: { costEfficiency: 0.3, momentum: 0.3 } }
+
+  it('names the token and the floors it failed', () => {
+    const { switchedOff } = rankUniverse([token('toll')], new Map(), expensive, floors)
+    expect(switchedOff.map((s) => s.snapshot.address)).toEqual(['toll'])
+    expect(switchedOff[0]!.failed).toContain('costEfficiency')
+  })
+
+  it('reports nothing for a token that cleared every floor', () => {
+    expect(rankUniverse([token('fine')], new Map(), quality, floors).switchedOff).toEqual([])
+  })
+
+  it('reports nothing for a token a GATE rejected — it was never scored', () => {
+    // A gate failure is a different verdict and already has its own channel.
+    // Reporting it here too would tell the allocator the switch went off on a
+    // token nobody ever measured the switch for.
+    const rug = token('rug', { security: { ...token('rug').security, honeypot: true } })
+    const { switchedOff, rejected } = rankUniverse([rug], new Map(), expensive, floors)
+    expect(switchedOff).toEqual([])
+    expect(rejected).toHaveLength(1)
+  })
+
+  it('reports nothing when no floors were configured at all', () => {
+    const { minComponents: _omitted, ...none } = { ...policy, minScore: 0 }
+    expect(rankUniverse([token('toll')], new Map(), expensive, none).switchedOff).toEqual([])
+  })
+
+  it('carries the score too, so the alert can say what it fell to', () => {
+    const { switchedOff } = rankUniverse([token('toll')], new Map(), expensive, floors)
+    expect(switchedOff[0]!.opportunity.score).toBeGreaterThanOrEqual(0)
+  })
+})
