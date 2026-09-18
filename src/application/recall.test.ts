@@ -88,3 +88,52 @@ describe('recallCandidates — the last scan, re-ranked from the shelf', () => {
     expect((await recallCandidates(store, options))!.scannedAt).toBe(NOW - 2 * HOUR)
   })
 })
+
+describe('recallCandidates — a shelf priced NOW, for one batched request', () => {
+  // The operator's idea, and it turned out to be cheaper than he asked for.
+  //
+  // A watch pass already re-ranks the stored shelf with no network at all, but
+  // it re-ranks the same numbers — so nothing moves until the next full scan an
+  // hour later. Since `worthStoring` the shelf is about twenty tokens rather
+  // than five hundred, and refreshing its market half is ONE DexScreener call
+  // per thirty. Free enough to do every five minutes instead of every thirty.
+  //
+  // What it buys: a token that fell below what the book will accept is dropped
+  // on the next pass rather than on the next scan, and the slot goes to
+  // whatever now scores above it. The expensive half — security, history, bar
+  // freshness — still stands until a real scan replaces it.
+
+  it('ranks on the refreshed numbers, not the stored ones', async () => {
+    const store = await shelf([token('a', { liquidityUsd: 20_000 })])
+    const stale = await recallCandidates(store, options)
+    const fresh = await recallCandidates(store, {
+      ...options,
+      liveMarkets: async () => new Map([['solana:a', { ...token('a'), liquidityUsd: 900_000, observedAt: NOW }]]),
+    })
+    expect(fresh!.candidates[0]!.snapshot.liquidityUsd).toBe(900_000)
+    expect(stale!.candidates[0]!.snapshot.liquidityUsd).toBe(20_000)
+  })
+
+  it('keeps the shelf exactly as it was when the feed says nothing', async () => {
+    const store = await shelf([token('a')])
+    const out = await recallCandidates(store, { ...options, liveMarkets: async () => new Map() })
+    expect(out!.candidates[0]!.snapshot.liquidityUsd).toBe(token('a').liquidityUsd)
+  })
+
+  it('is never fatal — a bad minute serves the stored shelf rather than nothing', async () => {
+    const store = await shelf([token('a')])
+    const out = await recallCandidates(store, { ...options, liveMarkets: async () => { throw new Error('502') } })
+    expect(out!.candidates).toHaveLength(1)
+  })
+
+  it('does not move the scan TIME, because the expensive half is still that old', async () => {
+    // `maxAgeMs` asks how old the EXAMINATION is. Letting a market refresh reset
+    // it would keep a shelf alive forever on security nobody re-checked.
+    const store = await shelf([token('a')])
+    const out = await recallCandidates(store, {
+      ...options,
+      liveMarkets: async () => new Map([['solana:a', { ...token('a'), observedAt: NOW }]]),
+    })
+    expect(out!.scannedAt).toBeLessThan(NOW)
+  })
+})

@@ -1,6 +1,8 @@
 import { rankUniverse, tokenKey, type Candidate, type RankingPolicy } from '../domain/scanner/ranking.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type StatePort } from '../domain/persistence/store.js'
+import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
+import { withLiveMarket, type LiveMarket } from '../domain/scanner/live-market.js'
 
 /**
  * The last scan, re-ranked from the shelf. No network at all.
@@ -38,6 +40,25 @@ export interface RecallOptions {
   readonly referenceUsd: number
   /** Older than this and the shelf stops counting as evidence. */
   readonly maxAgeMs: number
+  /**
+   * The market, right now, for what is ON the shelf — keyed `chain:address`.
+   *
+   * A watch pass already re-ranks with no network at all, but it re-ranks the
+   * SAME numbers, so nothing moves until the next full scan an hour later.
+   * Since only what the engine may act on is stored, the shelf is about twenty
+   * tokens rather than five hundred, and refreshing its market half is one
+   * batched request per thirty of them.
+   *
+   * What it buys: a token that has fallen below what the book will accept is
+   * dropped on the next five-minute pass instead of the next scan, and the slot
+   * goes to whatever now outscores it. The expensive half — security, the
+   * history count, bar freshness — still stands until a real scan replaces it,
+   * which is the whole reason a full scan still exists.
+   *
+   * Optional and never fatal: a bad minute serves the stored shelf rather than
+   * nothing, because a slightly old universe beats no universe.
+   */
+  readonly liveMarkets?: (snapshots: readonly TokenSnapshot[]) => Promise<ReadonlyMap<string, LiveMarket>>
 }
 
 export interface RecalledScan {
@@ -53,8 +74,21 @@ export async function recallCandidates(store: StatePort, options: RecallOptions)
   const scannedAt = Math.min(...scans.map((scan) => scan.scannedAt))
   if (options.now() - scannedAt > options.maxAgeMs) return null
 
-  const snapshots = scans.flatMap((scan) => scan.snapshots)
-  if (snapshots.length === 0) return null
+  const stored = scans.flatMap((scan) => scan.snapshots)
+  if (stored.length === 0) return null
+
+  // Refreshed in MEMORY, never written back. `scannedAt` answers how old the
+  // EXAMINATION is, and letting a market refresh reset it would keep a shelf
+  // alive for ever on security nobody re-checked.
+  let live: ReadonlyMap<string, LiveMarket> = new Map()
+  if (options.liveMarkets) {
+    try {
+      live = await options.liveMarkets(stored)
+    } catch {
+      live = new Map()
+    }
+  }
+  const snapshots = stored.map((snapshot) => withLiveMarket(snapshot, live.get(tokenKey(snapshot))))
 
   // The impact each token actually quoted, when something quoted it. Read once
   // rather than per lookup, because `rankUniverse` is synchronous and the cache

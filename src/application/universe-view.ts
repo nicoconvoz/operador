@@ -3,6 +3,7 @@ import { scoreOpportunity, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } 
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
+import { withLiveMarket } from '../domain/scanner/live-market.js'
 
 /**
  * The universe, as something you can look at.
@@ -218,18 +219,11 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
   const snapshots: readonly TokenSnapshot[] = [...deepest.values()].map((snapshot) => {
     const key = `${snapshot.chain}:${snapshot.address}`
     const now = heldBy.has(key) ? live.get(key) : undefined
-    return now === undefined
-      ? snapshot
-      : {
-          ...snapshot,
-          priceUsd: now.priceUsd,
-          liquidityUsd: now.liquidityUsd,
-          fdvUsd: now.fdvUsd,
-          volumeUsd: now.volumeUsd,
-          priceChangePct: now.priceChangePct,
-          txns: now.txns,
-          observedAt: now.observedAt,
-        }
+    // `withLiveMarket` is the ONE definition of which half a market feed may
+    // refresh. The recall a watch pass allocates from uses the same one, and
+    // two copies of that rule would eventually disagree about whether a token
+    // is safe.
+    return withLiveMarket(snapshot, now)
   })
 
   const tokens: UniverseToken[] = snapshots.map((snapshot) => {

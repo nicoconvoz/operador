@@ -1422,6 +1422,48 @@ recover → halt what cannot be trusted → tick what can →
 open new positions with what is left → checkpoint → heartbeat
 ```
 
+### The shelf is priced NOW, for one batched request
+
+The operator's idea, and it came out cheaper than he asked for: instead of a
+full scan every half hour, re-examine only what already scored well, drop the
+two or three that fell below what the book accepts, and let a real scan stay
+rare.
+
+A watch pass already re-ranked the stored shelf with **no network at all**. What
+it could not do was change its mind, because it re-ranked the same numbers —
+nothing moved until the next full scan an hour later.
+
+Since only what the engine may act on is stored, the shelf is about **twenty**
+tokens rather than five hundred, and refreshing its market half is **one
+DexScreener request per thirty**. Cheap enough for every five-minute pass, not
+every thirty minutes.
+
+| | Refreshed | By |
+|---|---|---|
+| price, liquidity, volume, the changes, the counts | **every 5 min** | one batched request |
+| security, history count, bar freshness, candle price | **every full scan** | the expensive stage |
+
+`withLiveMarket` is the ONE definition of which half a feed may refresh, and it
+is shared with the universe view. Two copies of that rule would eventually
+disagree about whether a token is safe — and the safety gates fail CLOSED, so
+overlaying a market response whole would turn a position red for the crime of
+being refreshed.
+
+Three properties:
+
+- **Refreshed in memory, never written back.** `scannedAt` answers how old the
+  EXAMINATION is, and letting a market refresh reset it would keep a shelf alive
+  for ever on security nobody re-checked.
+- **The PAIR is kept**, not adopted from the feed. The engine trades the pool it
+  was examined on and takes its candles from there; following whichever pool the
+  feed names today would price one venue and trade another.
+- **Never fatal.** A bad minute serves the stored shelf, because a slightly old
+  universe beats no universe.
+
+What it changes about the full scan: it is now only needed to find tokens the
+shelf does not have, and to re-examine what money is sitting in. That is what
+makes a longer `OPERADOR_SCAN_MS` reasonable rather than a gamble.
+
 ### Two cadences, not one
 
 The cycle above has two halves that cost wildly different amounts, and they used

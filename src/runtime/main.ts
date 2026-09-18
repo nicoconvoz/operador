@@ -37,6 +37,7 @@ import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { worthStoring } from '../application/worth-storing.js'
+import { type LiveMarket } from '../domain/scanner/live-market.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
 /**
@@ -393,6 +394,35 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           smallCapFdvUsd: 50_000_000,
           watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
           minScore: 0,
+        },
+        // The shelf, priced NOW, for one batched request per thirty tokens.
+        //
+        // A watch pass already re-ranked with no network at all — but it
+        // re-ranked the SAME numbers, so nothing moved until the next full scan
+        // an hour later. Since only what the engine may act on is stored the
+        // shelf is about twenty tokens, and this makes every five-minute pass
+        // act on current prices: a token that fell below what the book accepts
+        // is dropped now, and the slot goes to whatever outscores it.
+        //
+        // The expensive half stands until a real scan replaces it, which is why
+        // a full scan still exists.
+        liveMarkets: async (snapshots) => {
+          const markets = new Map<string, LiveMarket>()
+          const byChain = new Map<Chain, string[]>()
+          for (const s of snapshots) byChain.set(s.chain, [...(byChain.get(s.chain) ?? []), s.address])
+          for (const [chain, addresses] of byChain) {
+            for (let i = 0; i < addresses.length; i += 30) {
+              try {
+                const pairs = await dex.tokens(chain, addresses.slice(i, i + 30))
+                for (const m of dex.toMarketSnapshots(chain, pairs)) {
+                  if (m.priceUsd > 0) markets.set(`${chain}:${m.address}`, m)
+                }
+              } catch {
+                // Never fatal: a slightly old universe beats no universe.
+              }
+            }
+          }
+          return markets
         },
         referenceUsd: 100,
         spreadPct: 0.3,
