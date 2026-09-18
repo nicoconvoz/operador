@@ -623,3 +623,83 @@ describe('scanOnce — ONE candle download, for the ones that already won', () =
     expect(asked).toEqual([])
   })
 })
+
+describe('scanOnce — fills the slots, topping up from the next best score', () => {
+  // The operator's rule: download candles for the ones the budget can fund, and
+  // if one fails, move to the next highest score until the slots are full.
+  //
+  // A fixed overshoot cannot do both. Too small and a bad batch leaves capital
+  // idle — exactly the failure this book spent a morning on. Too large and
+  // every scan pays for candles nobody will use, against the provider that
+  // rate-limits hardest. Asking for the SHORTFALL never does either.
+  const bars = (traded: boolean) => ({
+    time: Array.from({ length: 300 }, (_, i) => NOW - (299 - i) * 900_000),
+    open: Array.from({ length: 300 }, () => 1),
+    high: Array.from({ length: 300 }, () => 1),
+    low: Array.from({ length: 300 }, () => 1),
+    close: Array.from({ length: 300 }, () => 0.01),
+    // Never traded → `staleBars` condemns it, which is what makes it drop out
+    // of the candidates after the re-rank.
+    volume: Array.from({ length: 300 }, () => (traded ? 100 : 0)),
+  })
+
+  const many = (addresses: string[]) => {
+    const table: Record<string, { body: unknown; status?: number }> = {
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: addresses.map((a) => ({ chainId: 'solana', tokenAddress: a })) },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/${addresses.join(',')}`]: { body: addresses.map((a) => pair(a)) },
+    }
+    for (const a of addresses) {
+      table[`${GOPLUS_BASE}/solana/token_security?contract_addresses=${a}`] = { body: { code: 1, message: 'ok', result: { [a]: safe } } }
+      table[`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=${a}`] = { body: goodQuote }
+    }
+    return table
+  }
+
+  it('asks only for as many as the budget funds when they all survive', async () => {
+    const asked: string[] = []
+    const { deps } = build(many(['a', 'b', 'c', 'd']))
+    await scanOnce(
+      { ...deps, poolCandles: async (s: { address: string }) => { asked.push(s.address); return bars(true) } },
+      { ...config, maxBarAgeHours: 1, candleBudget: 2 },
+    )
+    expect(asked).toHaveLength(2)
+  })
+
+  it('reaches for the NEXT best when one fails the candle gates', async () => {
+    // The first two answer "nobody ever traded" and are condemned; the loop
+    // must not stop there with two empty slots.
+    const asked: string[] = []
+    const { deps } = build(many(['a', 'b', 'c', 'd']))
+    const out = await scanOnce(
+      {
+        ...deps,
+        poolCandles: async (s: { address: string }) => { asked.push(s.address); return bars(asked.length > 2) },
+      },
+      { ...config, maxBarAgeHours: 1, candleBudget: 2 },
+    )
+    expect(asked).toHaveLength(4)
+    expect(out.candidates).toHaveLength(2)
+  })
+
+  it('never asks about the same token twice, however many rounds it takes', async () => {
+    const asked: string[] = []
+    const { deps } = build(many(['a', 'b', 'c', 'd']))
+    await scanOnce(
+      { ...deps, poolCandles: async (s: { address: string }) => { asked.push(s.address); return bars(false) } },
+      { ...config, maxBarAgeHours: 1, candleBudget: 2 },
+    )
+    expect(new Set(asked).size).toBe(asked.length)
+  })
+
+  it('stops when the list runs out rather than asking forever', async () => {
+    const asked: string[] = []
+    const { deps } = build(many(['a', 'b']))
+    await scanOnce(
+      { ...deps, poolCandles: async (s: { address: string }) => { asked.push(s.address); return bars(false) } },
+      { ...config, maxBarAgeHours: 1, candleBudget: 10 },
+    )
+    expect(asked).toHaveLength(2)
+  })
+})

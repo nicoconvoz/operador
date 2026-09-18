@@ -7,6 +7,7 @@ import { DEFAULT_GATE_POLICY, minAgeForHistory, type GatePolicy } from '../domai
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { ladderCapitalUsd } from '../application/paper-run.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
@@ -374,8 +375,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           (stage: ScanError['stage'], error: unknown) => console.warn('[confirm]', stage, String(error).slice(0, 200)),
         )
         // The candle price beside the market price, so `priceMismatch` decides
-        // here too. `examineToken` does not fetch candles for the price — only
-        // for the history count — so this is the one place it has to be asked.
+        // here too. `examineToken` fetches no candles at all now, so this is the
+        // one place the door can ask.
         let lastCandlePriceUsd: number | null = null
         try {
           const candles = await gecko.candles(examined.chain, examined.pairAddress, config.barSize, 2)
@@ -434,6 +435,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // encontró en este ciclo", which means nobody had re-checked their
       // honeypot answer since the day they were bought.
       const open = await store.loadPositions()
+      // Priced exactly as the allocator prices it, so the scan buys candles for
+      // the number of positions the capital will actually open — not one more.
+      const fundedSlots = Math.max(1, Math.ceil(
+        config.totalCapitalUsd /
+        ladderCapitalUsd(
+          { ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel, dropInitPct: config.dropInitPct },
+          config.maxDcaPerToken + 1,
+          config.gasUsdPerSwap,
+        ),
+      ))
       for (const chain of config.chains) {
         // The counters live on adapters SHARED by every chain, so they are
         // cumulative. Reporting them raw labelled the second chain with the
@@ -474,7 +485,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // rate-limits hardest — and most of them for tokens the ranking
               // had already discarded.
               poolCandles: (snapshot) =>
-                gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, DEFAULT_GATE_POLICY.minHistoryBars * 3),
+                // `+ 1` because `candles` discards the bar still being built.
+                // That compensation used to live inside `historyBars`, beside
+                // the discard, precisely so a caller could not get it wrong —
+                // and this is a new caller that bypasses it. Asking for exactly
+                // the threshold once produced 99 against a minimum of 100 and
+                // emptied the entire book.
+                gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, DEFAULT_GATE_POLICY.minHistoryBars * 3 + 1),
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),
@@ -492,6 +509,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 watchSlots: config.maxPositions > 0 ? config.maxPositions : 50,
                 minScore: 0,
               },
+              // How many candle downloads are worth paying for: the number of
+              // positions the capital can actually fund.
+              //
+              // Not a guess and not a margin — `scanOnce` asks for the
+              // SHORTFALL and reaches for the next best score when one fails
+              // its candle gates, so the exact figure is the right one. Given
+              // to each chain in full rather than divided: the allocator picks
+              // the best across both, and halving it would starve one chain on
+              // a day the other had nothing.
+              candleBudget: fundedSlots,
               // A shortlist the engine can act on. One candle request per
               // CANDIDATE — after the gates cut ninety percent — so about
               // thirty a scan rather than three hundred.

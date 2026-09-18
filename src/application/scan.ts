@@ -150,6 +150,21 @@ export interface ScanConfig {
   readonly securityTtlMs?: number
   /** How stale the newest bar may be before a candidate is refused. */
   readonly maxBarAgeHours?: number
+  /**
+   * How many tokens the engine can actually fund — the number of candle
+   * downloads worth paying for.
+   *
+   * The operator's rule: score everything on what is FREE, keep the ones the
+   * budget can fund, and only then pay for candles. None of the score's
+   * components reads a candle — liquidity, volume, the price changes, the
+   * transaction counts and the measured toll are all in hand before this — so
+   * the ranking is complete without spending a single request on the provider
+   * that rate-limits hardest.
+   *
+   * Absent means no budget: download for every candidate, which is what it did
+   * before and costs about four times as much.
+   */
+  readonly candleBudget?: number
 }
 
 /**
@@ -527,40 +542,73 @@ export async function scanOnce(
   // disagreement the read model exists to prevent. Eighteen of twenty-seven
   // Solana tokens were in that state.
   if (deps.poolCandles && config.maxBarAgeHours !== undefined) {
+    // Fill the slots, topping up from the next best score.
+    //
+    // The three candle gates — `history`, `staleBars`, `priceMismatch` — can
+    // only fire AFTER the download, so some of the best-scoring tokens die
+    // here. A fixed overshoot cannot answer that: too small and a bad batch
+    // leaves capital idle, which is the failure this book spent a morning on;
+    // too large and every scan pays for candles nobody will use.
+    //
+    // Asking for the SHORTFALL does neither. If they all survive it downloads
+    // exactly what the budget funds; if one fails it reaches for the next
+    // highest score, and only as far as it has to.
+    const target = config.candleBudget ?? Number.POSITIVE_INFINITY
+    const attempted = new Set<string>()
     const measured = new Map<string, number | null>()
     const priced = new Map<string, number | null>()
     const bars = new Map<string, number>()
-    for (const candidate of ranked.candidates) {
-      const key = tokenKey(candidate.snapshot)
-      try {
-        // ONE request, three answers. They all come out of the same series and
-        // were three separate downloads: the history count per affordable
-        // token, the bar age per candidate, and the candle price per candidate
-        // again — about 205 requests a chain to the provider that rate-limits
-        // hardest. The doc comment beside the price already claimed they shared
-        // a fetch; they did not.
-        const series = await deps.poolCandles(candidate.snapshot)
-        bars.set(key, series.time.length)
-        measured.set(key, hoursSinceLastTrade(series, scannedAt))
-        priced.set(key, series.close.at(-1) ?? null)
-      } catch (error) {
-        errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
-        // NOT a verdict. `null` means the feed answered and nobody had traded —
-        // the strongest form of "this engine cannot watch it", and rightly a
-        // safety failure. A request that never got an answer says nothing about
-        // the TOKEN; it says something about us.
-        //
-        // Collapsing the two turned 26 of 29 live positions red at once, Bonk
-        // among them, the moment a tighter retry budget let 429s through. The
-        // screen announced that the whole book had gone dangerous; what had
-        // happened was that we had run out of quota. It is the sell probe's own
-        // rule, broken here: an RPC failure is never read as "no route".
-        //
-        // Left ABSENT, the gate stays silent — it fires on evidence — and
-        // `confirmEntry` asks again, live, before any capital moves.
+
+    for (;;) {
+      // Survivors are the ones we PAID for that are still candidates after the
+      // re-rank. A token condemned by its own candles is not one of them.
+      const survivors = ranked.candidates.filter((c) => attempted.has(tokenKey(c.snapshot))).length
+      const shortfall = target - survivors
+      if (shortfall <= 0) break
+      const next = ranked.candidates.filter((c) => !attempted.has(tokenKey(c.snapshot))).slice(0, shortfall)
+      if (next.length === 0) break
+
+      for (const candidate of next) {
+        const key = tokenKey(candidate.snapshot)
+        // Marked ATTEMPTED, not measured: a request that threw must not be
+        // asked again on the next round, or a rate-limited provider becomes an
+        // infinite loop.
+        attempted.add(key)
+        try {
+          // ONE request, three answers. They all come out of the same series and
+          // were three separate downloads: the history count per affordable
+          // token, the bar age per candidate, and the candle price per candidate
+          // again — about 205 requests a chain to the provider that rate-limits
+          // hardest. The doc comment beside the price already claimed they shared
+          // a fetch; they did not.
+          const series = await deps.poolCandles(candidate.snapshot)
+          bars.set(key, series.time.length)
+          // `now()`, not `scannedAt`. The scan starts minutes before this loop
+          // runs — four in steady state, fifteen cold — so anchoring to the
+          // start under-reports idleness by the whole duration, against a
+          // threshold of one hour. `hoursSinceLastTrade` is deliberately
+          // conservative in the other direction: over-reporting idleness only
+          // ever makes the watch more careful, and this was doing the opposite.
+          measured.set(key, hoursSinceLastTrade(series, now()))
+          priced.set(key, series.close.at(-1) ?? null)
+        } catch (error) {
+          errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
+          // NOT a verdict. `null` means the feed answered and nobody had traded —
+          // the strongest form of "this engine cannot watch it", and rightly a
+          // safety failure. A request that never got an answer says nothing about
+          // the TOKEN; it says something about us.
+          //
+          // Collapsing the two turned 26 of 29 live positions red at once, Bonk
+          // among them, the moment a tighter retry budget let 429s through. The
+          // screen announced that the whole book had gone dangerous; what had
+          // happened was that we had run out of quota. It is the sell probe's own
+          // rule, broken here: an RPC failure is never read as "no route".
+          //
+          // Left ABSENT, the gate stays silent — it fires on evidence — and
+          // `confirmEntry` asks again, live, before any capital moves.
+        }
       }
-    }
-    if (measured.size > 0) {
+
       const withAge = snapshots.map((s) =>
         measured.has(tokenKey(s))
           ? {
@@ -574,8 +622,23 @@ export async function scanOnce(
       snapshots.length = 0
       snapshots.push(...withAge)
       // Re-ranked on the completed evidence, so `staleBars` decides here exactly
-      // as it will on the screen and at the door. One gate, one definition.
+      // as it will on the screen and at the door. One gate, one definition —
+      // and it is what tells the loop whether the slot was really filled.
       ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
+    }
+
+    // We only vouch for what we PAID to check.
+    //
+    // The re-rank shrinks the list — the candle gates can only add failures —
+    // so tokens below the cut get pulled up into it carrying no measurement at
+    // all. Handing those on would let the allocator spend on a pool whose
+    // history, freshness and price nobody looked at, and `confirmEntry` cannot
+    // save it: `history` is an OPPORTUNITY gate, so the door never re-asks it.
+    //
+    // Only with a budget. Without one every candidate was measured anyway, and
+    // filtering would be a no-op wearing a rule's clothes.
+    if (config.candleBudget !== undefined) {
+      ranked = { ...ranked, candidates: ranked.candidates.filter((c) => attempted.has(tokenKey(c.snapshot))) }
     }
   }
 
