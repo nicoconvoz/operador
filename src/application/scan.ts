@@ -35,7 +35,6 @@ export interface DecimalsPort {
  * just means a token with no indicators never reaches the shortlist.
  */
 export interface HistoryPort {
-  historyBars(chain: Chain, poolAddress: string): Promise<number | null>
   /**
    * Optional chain-agnostic universe. Matters most on chains with no native
    * token list: BSC's only other source is DexScreener's boosts, which are

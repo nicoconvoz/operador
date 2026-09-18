@@ -17,7 +17,6 @@ import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { GeckoTerminal, barMinutes } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
-import { CachedHistory } from '../infrastructure/adapters/geckoterminal/cached-history.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
@@ -34,7 +33,6 @@ import { recallCandidates } from '../application/recall.js'
 import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
-import { CachedBarActivity } from '../application/bar-activity.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { worthStoring } from '../application/worth-storing.js'
 import { runLoop, shutdownSignal } from './loop.js'
@@ -89,26 +87,6 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // is the same quota.
   const gecko = new GeckoTerminal(http, geckoThrottle)
 
-  // Counting a pool's bars is the heaviest GeckoTerminal call in a cycle and
-  // it was 80% of the wall time in rate-limit backoff — measured, not guessed.
-  // A pool cannot lose candles, so the answer is worth keeping.
-  // Two economies, both of them arithmetic rather than cleverness.
-  //
-  // THE BAR SIZE THE STRATEGY ACTUALLY TRADES. This counted 1H bars — the
-  // adapter's default — while production runs 15m, so "250 bars" demanded 10.4
-  // days of pool age instead of the 2.6 CLAUDE.md has claimed since the
-  // timeframe moved. A decision documented and never implemented, the same
-  // shape as the $15 ladder that ran at $1,000 for weeks.
-  //
-  // ONLY AS MANY ROWS AS THE THRESHOLD NEEDS. It asked for a thousand candles
-  // to produce one integer, once per examined token, against the provider that
-  // rate-limits hardest. The gate asks "at least 250?", so the request does too.
-  const cachedHistory = new CachedHistory(
-    { historyBars: (chain, pool) => gecko.historyBars(chain, pool, config.barSize, DEFAULT_GATE_POLICY.minHistoryBars) },
-    store,
-    { now: () => Date.now(), minBars: DEFAULT_GATE_POLICY.minHistoryBars },
-  )
-
   // And the cheapest rejection of all: one that needs no request. A pool younger
   // than `minHistoryBars` bars CANNOT hold them, so it is refused by
   // subtraction instead of by a candle download it was always going to fail.
@@ -126,31 +104,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // expires because new pools appear — but a pool younger than the window
   // cannot clear the history gate anyway, which wants 250 bars: 2.6 days at 15m.
   const cachedDiscovery = new CachedDiscovery(gecko, store, { now: () => Date.now() })
-
-  // And the third download nobody should pay twice: proving again that a quiet
-  // pool is still quiet. One candle request per CANDIDATE is about thirty a
-  // scan against the provider that rate-limits hardest, and most of it re-learns
-  // something that has not changed.
-  const barActivity = new CachedBarActivity(
-    {
-      // It THROWS rather than answering null, and the difference is the whole
-      // bug. `null` here means the feed answered and nobody had traded — a
-      // safety verdict, and remembered in `pool_quiet` for an hour. Catching a
-      // rate limit and returning null handed that verdict to every token the
-      // provider happened to refuse: 26 of 29 live positions went red at once,
-      // Bonk among them, and stayed red long after the quota recovered.
-      //
-      // Letting it throw reaches `scanOnce`, which leaves the measurement
-      // ABSENT — the gate fires on evidence and stays silent — and the cache
-      // never remembers a verdict nobody gave.
-      barAgeHours: async (chain, pool) =>
-        hoursSinceLastTrade(await gecko.candles(chain, pool, config.barSize, 300), Date.now()),
-    },
-    store,
-    { now: () => Date.now() },
-  )
   const history = {
-    historyBars: (chain: Parameters<typeof gecko.historyBars>[0], pool: string) => cachedHistory.historyBars(chain, pool),
     discoverPools: (chain: Parameters<typeof gecko.discoverPools>[0]) => cachedDiscovery.discoverPools(chain),
   }
 
