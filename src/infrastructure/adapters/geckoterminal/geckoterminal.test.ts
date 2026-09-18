@@ -225,7 +225,11 @@ describe('GeckoTerminal — historyBars asks for what the gate needs, not for a 
       return { status: 200, json: async () => ({ data: { attributes: { ohlcv_list: [] } } }) }
     })
     await gt.historyBars('solana', 'Pool1', ONE_HOUR, 250)
-    expect(seen[0]).toContain('limit=250')
+    // 251, not 250: one of the rows is the bar still being built and gets
+    // discarded, so a page of exactly `enough` can never COUNT to `enough`.
+    // The economy this test exists for is untouched — the point was never the
+    // exact number, it was not downloading a thousand rows for a boolean.
+    expect(seen[0]).toContain('limit=251')
     expect(seen[0]).not.toContain('limit=1000')
   })
 
@@ -241,5 +245,46 @@ describe('GeckoTerminal — historyBars asks for what the gate needs, not for a 
     const rows = Array.from({ length: 40 }, (_, i) => [1_700_000_000 + i * 3600, 1, 2, 0.5, 1.5, 100])
     const gt = new GeckoTerminal(async () => ({ status: 200, json: async () => ({ data: { attributes: { ohlcv_list: rows } } }) }))
     expect(await gt.historyBars('solana', 'Pool1', ONE_HOUR, 250)).toBe(40)
+  })
+})
+
+describe('GeckoTerminal — counting history when one row is always discarded', () => {
+  // The gate asks a THRESHOLD, not a depth: "at least 100?" So the runtime asks
+  // GeckoTerminal for exactly `minHistoryBars` rows and counts what comes back.
+  //
+  // Dropping the bar still being built then made that count unreachable BY
+  // CONSTRUCTION: a hundred rows requested, the newest discarded, ninety-nine
+  // returned — forever, for every pool on both chains. Measured in production
+  // the morning after: **162 tokens rejected with "99 barras de historial <
+  // 100"**, and a book of four positions where the day before it ran thirty.
+  //
+  // The adapter is what drops the row, so the adapter is what compensates.
+  // Pushing this onto the caller puts the reason in a different file from the
+  // cause, and the next caller gets it wrong again.
+  const rows = (count: number, startSeconds: number) =>
+    Array.from({ length: count }, (_, i) => [startSeconds - i * 3600, 1, 1, 1, 1, 10])
+
+  it('still reaches the count it was asked for', async () => {
+    const nowMs = 1_800_000_000_000
+    const newest = nowMs / 1000 // the bar opening right now: still forming
+    const http = stubHttp({ [url]: { body: body(rows(101, newest)) } })
+    const gt = new GeckoTerminal(http, undefined, undefined, { now: () => nowMs })
+
+    expect(await gt.historyBars('solana', POOL, ONE_HOUR, 100)).toBe(100)
+  })
+
+  it('asks for one MORE row than it needs to count', async () => {
+    const http = stubHttp({ [url]: { body: body([]) } })
+    const gt = new GeckoTerminal(http)
+    await gt.historyBars('solana', POOL, ONE_HOUR, 100)
+    expect(http.calls[0]).toContain('limit=101')
+  })
+
+  it('still reports a SHORT pool short, which is the whole point of the gate', async () => {
+    const nowMs = 1_800_000_000_000
+    const http = stubHttp({ [url]: { body: body(rows(40, nowMs / 1000)) } })
+    const gt = new GeckoTerminal(http, undefined, undefined, { now: () => nowMs })
+
+    expect(await gt.historyBars('solana', POOL, ONE_HOUR, 100)).toBe(39)
   })
 })

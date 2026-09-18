@@ -223,9 +223,28 @@ export class GeckoTerminal {
    *
    * The default stays 1000 so nothing that did not ask changes behaviour.
    */
+  /**
+   * How many closed bars this pool has, saturating at `enough`.
+   *
+   * **It asks for one row MORE than it needs to count**, because `candles`
+   * discards the bar still being built. Without the extra, a caller asking for
+   * exactly the gate's threshold could never reach it: a hundred rows
+   * requested, the newest dropped, ninety-nine counted — forever, for every
+   * pool on both chains.
+   *
+   * That is not hypothetical. It shipped, and the morning after **162 tokens
+   * were rejected with "99 barras de historial < 100"** and the book fell from
+   * thirty positions to four. The gate asks a THRESHOLD, not a depth, so the
+   * runtime passes `minHistoryBars` as `enough` — which made the threshold
+   * unreachable by construction.
+   *
+   * The compensation belongs HERE, beside the discard. Asking the caller to
+   * add one puts the reason in a different file from the cause, and the next
+   * caller gets it wrong again.
+   */
   async historyBars(chain: Chain, poolAddress: string, size: BarSize = ONE_HOUR, enough = 1000): Promise<number | null> {
     try {
-      return (await this.candles(chain, poolAddress, size, enough)).time.length
+      return (await this.candles(chain, poolAddress, size, enough + 1)).time.length
     } catch {
       return null
     }

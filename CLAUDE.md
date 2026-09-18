@@ -2149,6 +2149,33 @@ being wrong. What it also costs, stated: the newest candle is now up to 30
 minutes old rather than 15, which `maxPriceRatio` (5) absorbs without noticing
 and `maxBarAgeHours` (1) still clears.
 
+### The threshold the fix made unreachable
+
+Dropping the forming bar had a second consequence nobody looked for, and it
+emptied the book.
+
+The history gate asks a THRESHOLD, not a depth — *"at least 100?"* — so the
+runtime passes `minHistoryBars` straight through as the number of rows to
+download. A hundred requested, the newest **discarded**, ninety-nine counted.
+For every pool, on both chains, forever.
+
+Measured the next morning on a fresh database: **162 tokens rejected with "99
+barras de historial < 100"**, zero eligible, zero reserve, and a book of FOUR
+positions where the day before it ran thirty.
+
+And the four are the joke that makes the lesson stick. The gate fires on
+EVIDENCE, never on absence — an unmeasured count stays silent — so the only
+tokens that got through were the ones whose history request had **failed**. The
+engine bought the four it knew least about, and it was right to, by its own
+rules.
+
+`historyBars` now asks for `enough + 1`. The compensation belongs beside the
+discard: pushing it onto the caller puts the reason in a different file from the
+cause, and the next caller gets it wrong again.
+
+The economy that test was written for is untouched — it was never about the
+exact number, it was about not downloading a thousand rows to answer a boolean.
+
 ### A rule change is not a reason to wipe
 
 Every time the selection rules moved, the recommendation was the same: truncate
