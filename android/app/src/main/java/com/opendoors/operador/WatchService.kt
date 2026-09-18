@@ -123,7 +123,28 @@ class WatchService : Service() {
      * missing one is the whole failure.
      */
     private fun drainAlerts(prefs: Prefs, serverCursor: Long) {
-        if (serverCursor <= prefs.cursor) return
+        // The log went BACKWARDS, so it is not the same log any more.
+        //
+        // `seq` is a BIGSERIAL: it only ever climbs within one database. A
+        // server cursor BELOW the phone's own therefore means the alerts table
+        // was reset — a new project, a restored backup, a truncate — and the
+        // phone is holding a cursor from a history that no longer exists.
+        //
+        // Left as it was, `serverCursor <= prefs.cursor` returned on every poll
+        // and the phone went silent FOREVER, without an error and without a
+        // symptom: the app would keep reporting the engine healthy while
+        // delivering nothing, which is the exact failure this whole channel was
+        // built to replace. A death exit would simply never arrive.
+        //
+        // Adopting the new cursor rather than replaying from zero is the same
+        // rule a fresh install follows: start from now. The alerts that belong
+        // to a database the phone never saw are not news.
+        if (serverCursor < prefs.cursor) {
+            prefs.cursor = serverCursor
+            return
+        }
+
+        if (serverCursor == prefs.cursor) return
 
         // A fresh install starts from now rather than replaying a month of
         // history into the notification shade.

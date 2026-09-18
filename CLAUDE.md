@@ -1979,6 +1979,31 @@ Three properties worth naming:
   dashboard. A phone that buzzes on every heartbeat is a phone whose
   notifications get turned off, and then the death exit does not arrive either.
 
+### A log that goes backwards is a different log
+
+`seq` is a `BIGSERIAL`, so within one database it only climbs — which is why the
+cursor is a sequence and not a timestamp. The phone kept that guarantee and
+drew the wrong conclusion from it:
+
+```kotlin
+if (serverCursor <= prefs.cursor) return
+```
+
+A server cursor BELOW the phone's own does not mean "nothing new". It means the
+alerts table was **reset** — a new project, a restored backup, a truncate — and
+the cursor the phone is holding belongs to a history that no longer exists. With
+the comparison as written the poll returned on every pass and **the phone went
+silent forever**, with no error and no symptom: the ongoing notification would
+go on saying the engine was healthy while delivering nothing. A death exit would
+simply never arrive.
+
+Found the day the operator moved the database, and before the move rather than
+after — which is the only reason it is a paragraph here and not an incident.
+
+It adopts the new cursor instead of replaying from zero, which is the rule a
+fresh install already follows: start from now. Alerts belonging to a database
+this phone never saw are not news.
+
 ### The one write path
 
 Removing Telegram removed the phone kill switch, which CLAUDE.md lists as
