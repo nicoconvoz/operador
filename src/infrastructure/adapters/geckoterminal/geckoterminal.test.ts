@@ -268,3 +268,40 @@ describe('GeckoTerminal — a budget of TIME, not a count of tries', () => {
     expect(total).toBeLessThanOrEqual(10_000)
   })
 })
+
+describe('GeckoTerminal — discovery has nothing to wait for', () => {
+  // The rule is not "discovery matters less". It is the sell probe's own
+  // distinction, applied where it belongs: a failure that would be read as a
+  // VERDICT deserves patience, a failure that says nothing and has a fallback
+  // does not.
+  //
+  //   a sell quote fails  → honeypot unknown → a good token thrown out  → wait
+  //   a pool page fails   → a few tokens fewer, and the stale list stands → go on
+  //
+  // `CachedDiscovery` already falls back to the previous list precisely because
+  // an old universe beats no universe. So there is nothing here a wait could
+  // buy — and paying the 60-second budget thirty times per chain bought nine
+  // minutes of a log that printed nothing at all.
+  it('moves straight on from a refused page instead of backing off', async () => {
+    const sleeps: number[] = []
+    const gt = new GeckoTerminal(stubHttp({ [`${GECKOTERMINAL_BASE}/networks/bsc`]: { status: 429, body: {} } }),
+      undefined, undefined, { sleep: async (ms) => { sleeps.push(ms) } })
+
+    expect(await gt.discoverPools('bsc', 2)).toEqual([])
+    expect(sleeps).toEqual([])
+  })
+
+  it('keeps what the other lists DID return', async () => {
+    // One list refusing must not cost the others their pages: the same rule
+    // `latestScansByChain` exists for, one level down.
+    let calls = 0
+    const http = async () => {
+      calls++
+      return calls <= 2
+        ? { status: 429, json: async () => ({}) }
+        : { status: 200, json: async () => ({ data: [{ attributes: { address: 'poolA' }, relationships: { base_token: { data: { id: 'bsc_0xabc' } } } }] }) }
+    }
+    const gt = new GeckoTerminal(http, undefined, undefined, { sleep: async () => {} })
+    expect(await gt.discoverPools('bsc', 1)).toEqual([{ tokenAddress: '0xabc', poolAddress: 'poolA' }])
+  })
+})

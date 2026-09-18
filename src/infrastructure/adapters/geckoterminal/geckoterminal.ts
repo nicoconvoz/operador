@@ -81,7 +81,7 @@ export class GeckoTerminal {
 
   constructor(
     private readonly http: HttpGet,
-    private readonly throttle: Throttle = NO_THROTTLE,
+    private readonly throttle: Throttle & { pushedBack?(): void; wentThrough?(): void } = NO_THROTTLE,
     private readonly base: string = GECKOTERMINAL_BASE,
     options: GeckoTerminalOptions = {},
   ) {
@@ -194,9 +194,26 @@ export class GeckoTerminal {
       for (let page = 1; page <= pages; page++) {
         let body: PoolsResponse
         try {
-          body = (await this.getWithBackoff(`${this.base}/networks/${NETWORK[chain]}/${list}?page=${page}`)) as PoolsResponse
+          // NO budget here, and it is the sell probe's own distinction rather
+          // than an opinion about importance: a failure that would be read as a
+          // VERDICT deserves patience, one that says nothing and has a fallback
+          // does not.
+          //
+          // A refused sell quote leaves `honeypot` unknown and throws a good
+          // token out as unsellable — worth waiting for. A refused pool page
+          // costs a few names on a list that `CachedDiscovery` already backs
+          // with the previous one, because an old universe beats no universe.
+          // There is nothing a wait could buy.
+          //
+          // It cost nine minutes of a log printing nothing but `[boot]`: thirty
+          // pages a chain, each spending the full sixty-second budget on an
+          // answer that did not matter, before the first progress line exists.
+          body = (await this.getWithBackoff(`${this.base}/networks/${NETWORK[chain]}/${list}?page=${page}`, 0)) as PoolsResponse
         } catch {
-          break
+          // The PAGE, not the list. A 429 on page three says nothing about page
+          // four, and breaking out threw away the rest of a list because one
+          // request arrived at a bad moment.
+          continue
         }
         const items = body.data ?? []
         if (items.length === 0) break
@@ -255,14 +272,20 @@ export class GeckoTerminal {
    * The doubling itself stays. It is the polite shape for a rate limit: ask
    * again soon in case it was a blip, and back off hard if it was not.
    */
-  private async getWithBackoff(url: string): Promise<unknown> {
+  private async getWithBackoff(url: string, budgetMs = this.waitBudgetMs): Promise<unknown> {
     let waited = 0
     for (let attempt = 0; ; attempt++) {
       await this.throttle.wait()
       const response = await this.http(url)
-      if (response.status === 200) return response.json()
+      if (response.status === 200) {
+        // The provider answered: it has room. Told so the pace can relax again,
+        // or one bad minute costs the rest of the hour.
+        this.throttle.wentThrough?.()
+        return response.json()
+      }
+      if (response.status === 429) this.throttle.pushedBack?.()
 
-      const remaining = this.waitBudgetMs - waited
+      const remaining = budgetMs - waited
       if (response.status === 429 && remaining > 0) {
         const wait = Math.min(this.backoffMs * 2 ** attempt, remaining)
         waited += wait

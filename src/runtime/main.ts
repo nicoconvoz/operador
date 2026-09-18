@@ -66,7 +66,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // calls a token, 2.2s each, against a security stage of a hundred tokens.
   // It starts at zero and slows only when Jupiter says to.
   const jupiterThrottle = makeAdaptiveThrottle()
-  const geckoThrottle = makeThrottle(2_500)
+  // Adaptive here too, and the argument is different from Jupiter's. 2,500ms
+  // was not a guess — it matches GeckoTerminal's documented ~30/min and was
+  // earned by measuring 45 rejections. What it cannot know is that the quota is
+  // SHARED: a CI runner's IP carries thousands of unrelated jobs, so the room
+  // we have swings by the minute. A constant is the average of a number that
+  // never sits still — too slow on a quiet minute, too fast on a busy one.
+  const geckoThrottle = makeAdaptiveThrottle()
 
   const store = new PostgresStore(ports.sql)
   // Alerts go into the store, not down a wire.

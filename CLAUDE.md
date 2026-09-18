@@ -2485,6 +2485,21 @@ each is invisible from the other side.
 | 3 retries, doubling from 4s | a **60s deadline**, stop the instant the data arrives | 33 minutes to examine 100 tokens, ~20s each against a 2.5s throttle |
 | Jupiter at a flat 1,100ms | starts at **zero**, backs off only on a 429, speeds back up when they stop | GoPlus reported **zero rejections** across a hundred calls; nobody had ever measured Jupiter's |
 
+**And what a failure COSTS decides whether to wait at all.** It is the sell
+probe's own distinction, applied to timing:
+
+| A refused | leaves | so |
+|---|---|---|
+| sell quote | `honeypot` unknown → the gates fail closed → a good token thrown out as unsellable | **wait** |
+| pool page | a few names off a list `CachedDiscovery` already backs with the previous one | **go on** |
+
+Discovery therefore waits for NOTHING, and it is not a judgement that it matters
+less. *An old universe beats no universe* was already written down; a page that
+does not arrive is not evidence, and there is nothing a wait could buy. Getting
+that backwards cost **nine minutes of a log printing only `[boot]`** — thirty
+pages a chain, each spending the full sixty-second budget on an answer that
+changed nothing, before the first progress line even exists.
+
 The rule, in three parts:
 
 - **Prefer a DEADLINE to a count.** "Wait until it answers, give up after sixty
