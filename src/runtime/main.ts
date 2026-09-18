@@ -158,6 +158,26 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     decimals: (chain: Chain, address: string) =>
       chain === 'bsc' ? erc20.decimals(chain, address) : jupiterTokens.decimals(chain, address),
     security: (chain: Chain, address: string) => jupiterTokens.security(chain, address),
+    /**
+     * Jupiter's three lists, and they were MISSING here for the life of this
+     * composition.
+     *
+     * `JupiterTokens.discover()` exists, is tested, and is documented as a
+     * universe source — and this hand-built object forwarded two methods and
+     * forgot the third, so `if (deps.decimals.discover)` in the scan was
+     * always false and the largest single source never ran.
+     *
+     * Measured the night it was found: locally the three sources give Jupiter
+     * 198, GeckoTerminal 285 and DexScreener 47 for 453 unique. The live run
+     * reported 323, and the 130 missing were exactly these.
+     *
+     * TypeScript could not catch it and that is the lesson, not the oversight:
+     * `discover` is OPTIONAL on the port, because not every chain has a token
+     * list, so an object without it is a perfectly valid one. The same shape
+     * as every other gap in this project — written, tested, documented, and
+     * reached by nobody.
+     */
+    discover: () => jupiterTokens.discover(),
   }
 
   // In paper mode every position keeps its own broker, so one position's cash
