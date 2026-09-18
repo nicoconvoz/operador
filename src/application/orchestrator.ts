@@ -295,6 +295,28 @@ export async function runCycle(
     }
   }
 
+  /**
+   * Each position as it stands AFTER its tick — the only version later steps
+   * may read or write.
+   *
+   * `recovery.positions` is a snapshot taken BEFORE the tick, and everything
+   * downstream used to read it. The capital trim then wrote that snapshot back
+   * with `savePosition`, silently reverting every field the tick had just
+   * decided: `cascade`, `deathWatch`, `lastBarTime`, `lastPriceUsd` and
+   * `pendingOrders`.
+   *
+   * Measured in production: EVERY position carried two `Entry` fills one bar
+   * apart, same id, the second sized from the capital the first had just been
+   * trimmed to. The machine reached level 1, the trim put it back to 0, and the
+   * entry gate fired again on the next bar.
+   *
+   * The double buy was the cheapest symptom. A reverted `deathWatch` means a
+   * freeze can never accumulate its observations, and a reverted `lastBarTime`
+   * means the same bars are replayed for ever.
+   */
+  const current = new Map<string, PersistedPosition>(recovery.positions.map((r) => [r.position.id, r.position]))
+  const now = (id: string, fallback: PersistedPosition) => current.get(id) ?? fallback
+
   for (const recovered of recovery.positions) {
     if (latestClosedBar !== null && recovered.position.lastBarTime >= latestClosedBar) continue
 
@@ -336,6 +358,7 @@ export async function runCycle(
       throttle,
     )
     ticks.push(result)
+    current.set(recovered.position.id, result.position)
   }
 
   // ── 3. Open new positions with what is genuinely free ──────────────────────
@@ -412,7 +435,8 @@ export async function runCycle(
 
     const rotatedIds: string[] = []
     for (const { holder, reason } of rotations) {
-      const recovered = recovery.positions.find((r) => r.position.id === holder.id)
+      const found = recovery.positions.find((r) => r.position.id === holder.id)
+      const recovered = found === undefined ? undefined : { ...found, position: now(holder.id, found.position) }
       const price = marketPrices.get(`${holder.chain}:${holder.tokenAddress}`)
       // No live price, no sale. Selling at a number nobody confirmed is how a
       // position once left at a ten-thousandth of its value.
@@ -481,7 +505,7 @@ export async function runCycle(
         openedAt: r.position.openedAt,
         openQty: ledgers.get(r.position.id)?.qty ?? 0,
         hasFills: ledgers.get(r.position.id)?.hasFills ?? false,
-        frozen: r.position.deathWatch.stage === 'frozen',
+        frozen: now(r.position.id, r.position).deathWatch.stage === 'frozen',
         score: scoreOf.get(`${r.position.chain}:${r.position.tokenAddress}`) ?? null,
       })),
       waiting.map((c) => c.opportunity.score),
@@ -523,7 +547,10 @@ export async function runCycle(
     )
     const kept: PersistedPosition[] = []
     for (const recovered of keeping) {
-      const deployed = ledgers.get(recovered.position.id)?.deployedUsd ?? 0
+      // The TICKED position, never the pre-tick snapshot. Writing the latter
+      // back is what put every ladder into an infinite first rung.
+      const position = now(recovered.position.id, recovered.position)
+      const deployed = ledgers.get(position.id)?.deployedUsd ?? 0
       // A FROZEN ladder needs nothing beyond what it already holds.
       //
       // Frozen means no new capital enters — that is the whole definition — so
@@ -542,12 +569,12 @@ export async function runCycle(
       // cheaper side — the alternative is reserving capital for hours against a
       // rung that may never fire, on a book whose whole thesis is that scale
       // comes from more tokens rather than more size per token.
-      const needs = recovered.position.deathWatch.stage === 'frozen' ? deployed : Math.max(ladderNeeds, deployed)
-      if (recovered.position.capitalUsd <= needs + 0.01) {
-        kept.push(recovered.position)
+      const needs = position.deathWatch.stage === 'frozen' ? deployed : Math.max(ladderNeeds, deployed)
+      if (position.capitalUsd <= needs + 0.01) {
+        kept.push(position)
         continue
       }
-      const trimmed = { ...recovered.position, capitalUsd: needs, updatedAt: at }
+      const trimmed = { ...position, capitalUsd: needs, updatedAt: at }
       await deps.store.savePosition(trimmed)
       kept.push(trimmed)
     }

@@ -1155,3 +1155,76 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect(sent?.body).toContain('momentum')
   })
 })
+
+describe('runCycle — the trim must not write over what the tick just decided', () => {
+  // Found from the tape: every position carried TWO `Entry` fills, one bar
+  // apart, same position id, the second sized from the capital the first had
+  // just been trimmed to.
+  //
+  // `tickPosition` saves the advanced position and the orchestrator collects
+  // its result into `ticks` — and then every later step reads
+  // `recovery.positions`, which is the snapshot from BEFORE the tick. The
+  // capital trim writes that snapshot back, so `cascade`, `deathWatch`,
+  // `lastBarTime`, `lastPriceUsd` and `pendingOrders` all revert. Next cycle
+  // the machine is at level 0 again and re-enters.
+  //
+  // The double buy is the cheapest symptom. A reverted `deathWatch` means a
+  // freeze can never accumulate its observations, and a reverted `lastBarTime`
+  // means the same bars are replayed for ever.
+
+  const trimming: CycleConfig = {
+    ...config,
+    // A ladder small enough that a $300 slot is genuinely more than it needs,
+    // which is what makes the trim fire at all.
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 },
+    maxOpenEntries: 3,
+    gasUsdPerSwap: 0.05,
+  }
+
+  it('keeps the bar the tick advanced to', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [] })
+    await store.savePosition(position({ capitalUsd: 300, lastBarTime: -1 }))
+
+    await runCycle(deps, trimming, throttle)
+
+    const after = (await store.loadPositions()).find((p) => p.id === 'pos-1')!
+    // Trimmed, as intended...
+    expect(after.capitalUsd).toBeLessThan(300)
+    // ...without losing the tick. -1 means the cycle threw the walk away and
+    // the next one replays every bar from the beginning.
+    expect(after.lastBarTime).toBeGreaterThan(0)
+  })
+
+  it('keeps the cascade the tick advanced', async () => {
+    // Level 1 WITH the fill that backs it, and a broker seeded from that fill —
+    // as production's is. Level 1 against a flat broker is the one combination
+    // that cannot be honest, and the desync guard rightly resets it; this test
+    // is about the trim, so the fixture has to be a position that really holds
+    // something.
+    const store = new MemoryStore()
+    await store.savePosition(position({
+      capitalUsd: 300,
+      cascade: { ...initialState(), level: 1, ep1: 1, lastFill: 1, totalInvested: 100 },
+    }))
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', idempotencyKey: 'seed', side: 'buy',
+      qty: 100, price: 1, costUsd: 0.05, comment: 'Entry', time: NOW - HOUR,
+    })
+    const { deps, throttle } = rig({
+      store,
+      scan: async () => [],
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+
+    await runCycle(deps, trimming, throttle)
+
+    const after = (await store.loadPositions()).find((p) => p.id === 'pos-1')!
+    expect(after.capitalUsd).toBeLessThan(300)
+    expect(after.cascade.level).toBe(1)
+    expect(after.cascade.ep1).toBe(1)
+  })
+})

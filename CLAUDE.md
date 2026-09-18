@@ -1665,6 +1665,61 @@ would have. That is the cheaper side — the alternative is holding capital idle
 for hours against a rung that may never fire, on a book whose whole thesis is
 that scale comes from more tokens rather than more size per token.
 
+### The trim wrote over what the tick had just decided
+
+Found from the tape, reported as *"por qué hay doble compra"*. Every one of
+seven positions carried **two `Entry` fills, one bar apart, under the same
+position id**:
+
+| USELESS | |
+|---|---|
+| 17:45 | `Entry` — 712.31 @ 0.28668 = **$204.20** |
+| 18:00 | `Entry` — 222.78 @ 0.29449 = **$65.61** |
+| `capitalUsd` after | **$204.20** — exactly the first fill |
+| `deployedUsd` | **$269.81** — more than the position was ever allocated |
+
+Not a DCA: the order id is `Entry` both times, and the price went UP between
+them while a rung needs a fall. Not idempotency either — the key carries the
+bar time, the two bars differ, and the guard was right to let both through.
+The machine genuinely decided a second entry.
+
+The cause is four lines apart in `orchestrator.ts`:
+
+```ts
+const result = await tickPosition(...)   // saves the position at level 1
+ticks.push(result)                       // ...and the result goes nowhere else
+...
+const trimmed = { ...recovered.position, capitalUsd: needs }   // the PRE-tick one
+await deps.store.savePosition(trimmed)                         // written back over it
+```
+
+`recovery.positions` is a snapshot taken **before** the tick, and every later
+step read it. The capital trim then persisted that snapshot, silently reverting
+`cascade`, `deathWatch`, `lastBarTime`, `lastPriceUsd` and `pendingOrders`.
+Level went back to 0, and the entry gate fired again on the next bar — sized
+from the capital the trim had just reduced, which is why the second fill is
+exactly a third of the first.
+
+**The double buy is the cheapest symptom.** A reverted `deathWatch` means a
+freeze can never accumulate its observations — the death watch would restart
+its streak every cycle, for ever. A reverted `lastBarTime` means the same bars
+are replayed on every pass.
+
+It also explains why the desync guard stayed quiet. That guard fires on *flat
+broker + level above zero* — the machine believing it holds something the
+broker does not. This is the mirror image: the broker holds and the machine
+believes it is flat, which nothing was watching for.
+
+The fix is one map. Every position is kept as it stands AFTER its tick, and the
+trim, the release check and the rotation all read that instead of the snapshot.
+
+**Why it survived the tests:** `runCycle`'s own suite ran with `DEFAULT_PARAMS`,
+whose `maxUsdPerLevel` is 5,000 — so the ladder always "needed" more than the
+fixture's $300 slot and the trim never fired. The bug lives entirely in the
+branch where a position has MORE capital than its ladder can spend, which is
+every position in production and none in the tests. The regression test sets a
+$15 rung so the trim actually runs.
+
 ### A position keeps only what its ladder can spend
 
 A slot used to keep whatever the portfolio handed it at birth. Measured live:
