@@ -105,3 +105,38 @@ describe('PostgresStore — reading back what Postgres actually returns', () => 
     expect(await new PostgresStore(absent.client).hasFill('k')).toBe(false)
   })
 })
+
+describe('PostgresStore — a scan is the newest picture, not an archive', () => {
+  it('drops the older scans of that chain as soon as a new one lands', async () => {
+    // `scans` stores the WHOLE universe as JSONB — about 280 snapshots per
+    // chain — and nothing ever deleted a row. A scan every fifteen minutes on
+    // two chains writes roughly 40 MB a day into a 0.5 GB free tier, and the
+    // project stopped answering at all: "Your account or project has exceeded
+    // the quota", which takes the dashboard AND the engine's writes with it.
+    //
+    // Nothing reads an old one. `latestScansByChain` wants the newest per
+    // chain, `latestScan` the newest overall, and `scanOnce`'s `previous`
+    // argument is never passed by the runtime. The history was pure cost.
+    const { client, calls } = fakeSql()
+    const store = new PostgresStore(client)
+
+    await store.saveScan({ scannedAt: NOW, chain: 'solana', snapshots: [] })
+
+    const pruned = calls.find((c) => /DELETE FROM scans/i.test(c.sql))
+    expect(pruned).toBeDefined()
+    expect(pruned!.params).toEqual(['solana', NOW])
+  })
+
+  it('never touches the other chain, which has its own newest', async () => {
+    // One chain failing must not cost the other its universe — the same rule
+    // `latestScansByChain` exists for.
+    const { client, calls } = fakeSql()
+    const store = new PostgresStore(client)
+
+    await store.saveScan({ scannedAt: NOW, chain: 'bsc', snapshots: [] })
+
+    const pruned = calls.find((c) => /DELETE FROM scans/i.test(c.sql))!
+    expect(pruned.sql).toMatch(/chain\s*=\s*\$1/i)
+    expect(pruned.params[0]).toBe('bsc')
+  })
+})

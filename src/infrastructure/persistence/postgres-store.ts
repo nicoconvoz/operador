@@ -148,12 +148,35 @@ export class PostgresStore implements StatePort {
     return rows.length > 0
   }
 
+  /**
+   * The newest picture of a chain, and only the newest.
+   *
+   * A scan row carries the WHOLE universe as JSONB — about 280 snapshots per
+   * chain — and nothing ever deleted one. At a scan every fifteen minutes on
+   * two chains that is roughly 40 MB a day into a 0.5 GB free tier, and the
+   * project eventually answered nothing at all: *"Your account or project has
+   * exceeded the quota"*, which takes the dashboard AND the engine's writes
+   * with it. An unattended system whose store fills up does not degrade, it
+   * stops.
+   *
+   * Nothing ever read an old one. `latestScansByChain` wants the newest per
+   * chain, `latestScan` the newest overall, and `scanOnce`'s `previous`
+   * argument — the one thing that could have used history, for
+   * `liquidityGrowth` — is never passed by the runtime. The archive was pure
+   * cost with no reader.
+   *
+   * Pruned AFTER the insert and scoped to the CHAIN, so a scan that fails
+   * halfway cannot leave that chain with no universe at all, and one chain's
+   * turn never deletes the other's — the same rule `latestScansByChain` exists
+   * for.
+   */
   async saveScan(scan: PersistedScan): Promise<void> {
     await this.sql.query(
       `INSERT INTO scans (scanned_at, chain, snapshots) VALUES ($1,$2,$3)
        ON CONFLICT (scanned_at) DO NOTHING`,
       [scan.scannedAt, scan.chain, JSON.stringify(scan.snapshots)],
     )
+    await this.sql.query('DELETE FROM scans WHERE chain = $1 AND scanned_at < $2', [scan.chain, scan.scannedAt])
   }
 
   async latestScansByChain(): Promise<readonly PersistedScan[]> {
