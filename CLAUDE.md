@@ -2500,6 +2500,29 @@ that backwards cost **nine minutes of a log printing only `[boot]`** — thirty
 pages a chain, each spending the full sixty-second budget on an answer that
 changed nothing, before the first progress line even exists.
 
+**And a request slower than the provider's own answers is not worth waiting
+for.** The operator's rule again, one level down: measure what it normally
+delivers over a number of connections, leave a small space in case it takes a
+little longer, restart it past that, and move on if the second one is slow too.
+
+Not the AVERAGE. Half of any sample sits above its own mean by definition, so an
+average cut-off restarts half of everything — doubling the load on a provider
+exactly when it is struggling. The base is the **slowest answer that recently
+worked**: the upper edge of normal, measured rather than chosen. The margin on
+top is proportional (a quarter), so it scales with whatever the provider turns
+out to be instead of claiming to know it.
+
+Wrapped per PROVIDER, because a shared baseline is the average of different
+things — GoPlus answers in about half a second, Jupiter in one, GeckoTerminal in
+one and a half — and an outlier is only an outlier against its own kind. It
+never judges before it has a history, and it restarts exactly ONCE: a second
+slow answer is the provider describing itself rather than one unlucky
+connection.
+
+It replaces a 20-second timeout nobody measured — forever on an API that answers
+in 80ms, too soon on one having a bad afternoon. The timeout stays as the last
+line of defence; the hedge decides long before it.
+
 The rule, in three parts:
 
 - **Prefer a DEADLINE to a count.** "Wait until it answers, give up after sixty

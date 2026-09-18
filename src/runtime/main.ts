@@ -24,6 +24,7 @@ import { Erc20Decimals } from '../infrastructure/adapters/pancakeswap/erc20-deci
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { makeAdaptiveThrottle } from '../infrastructure/adaptive-throttle.js'
+import { makeHedgedGet } from '../infrastructure/hedged-get.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { PostgresStore, type SqlClient } from '../infrastructure/persistence/postgres-store.js'
 import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js'
@@ -59,7 +60,16 @@ export interface RuntimePorts {
 }
 
 export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtime {
+  // The hard timeout stays as the last line of defence, and the HEDGE decides
+  // long before it: a request slower than this provider's own recent answers is
+  // restarted once, and a second slow one moves on to the next token.
+  //
+  // Wrapped PER PROVIDER, because a shared baseline would be the average of
+  // different things — GoPlus answers in about half a second, Jupiter in one,
+  // GeckoTerminal in one and a half — and an outlier is only an outlier against
+  // its own kind.
   const http = makeHttpGet({ timeoutMs: 20_000 })
+  const hedged = () => makeHedgedGet(http)
   // One throttle per provider, shared by every adapter that talks to it.
   // No fixed interval: the provider sets the pace. 1,100ms was a number nobody
   // measured, and it made the sell quote the slowest thing in a scan — two
@@ -84,9 +94,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // trail, which the pipe never was.
   const alerts = new StoredAlertSink(store, (error) => console.error('[alerts]', error))
 
-  const dex = new DexScreener(http)
-  const goplus = new GoPlus(http)
-  const jupiter = new Jupiter(http, jupiterThrottle)
+  const dex = new DexScreener(hedged())
+  const goplus = new GoPlus(hedged())
+  const jupiter = new Jupiter(hedged(), jupiterThrottle)
   const jupiterTokens = new JupiterTokens(http, jupiterThrottle)
   // ONE client, one rule: wait until it answers, give up after sixty seconds.
   //
@@ -96,7 +106,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // whoever asked, so the book gets its patience without the scan paying a
   // fixed toll for it. The ceiling is the same for everyone because the quota
   // is the same quota.
-  const gecko = new GeckoTerminal(http, geckoThrottle)
+  const gecko = new GeckoTerminal(hedged(), geckoThrottle)
 
   // And the cheapest rejection of all: one that needs no request. A pool younger
   // than `minHistoryBars` bars CANNOT hold them, so it is refused by
