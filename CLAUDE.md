@@ -2469,6 +2469,49 @@ Test first. Always. Non-negotiable for anything that can move money.
 
 No network, no sleeps, no wall-clock dependencies in domain tests.
 
+## House rule: never invent a number the world will tell you
+
+Decided after it went wrong three times in one day, always the same way.
+
+**A timing constant is a claim about somebody else's system.** Every one in this
+codebase was chosen by us and none was ever checked: GeckoTerminal at 2,500ms,
+Jupiter at 1,100, GoPlus at 2,000, three retries doubling from four seconds. A
+guess like that is wrong in BOTH directions at once — too slow against a
+provider that never pushes back, too fast on the day one does — and the cost of
+each is invisible from the other side.
+
+| Was | Is | What told us |
+|---|---|---|
+| 3 retries, doubling from 4s | a **60s deadline**, stop the instant the data arrives | 33 minutes to examine 100 tokens, ~20s each against a 2.5s throttle |
+| Jupiter at a flat 1,100ms | starts at **zero**, backs off only on a 429, speeds back up when they stop | GoPlus reported **zero rejections** across a hundred calls; nobody had ever measured Jupiter's |
+
+The rule, in three parts:
+
+- **Prefer a DEADLINE to a count.** "Wait until it answers, give up after sixty
+  seconds" prices the thing that matters — how long a scan takes. "Try three
+  times" prices nothing, and is cheap against a provider that answers and
+  ruinous against one that does not.
+- **Let the provider set the pace.** A 429 is the only evidence about somebody
+  else's quota that exists. Start at no wait, slow down when refused, speed back
+  up when the refusals stop — otherwise one bad minute costs the whole hour, and
+  a fixed interval has that failure permanently.
+- **A number you cannot justify is a bug waiting.** `minPositionUsd: 200`
+  survived its own measurement being superseded and capped the book at four
+  slots for weeks. `maxSecurityChecks: 20` outlived the cost that justified it.
+  Both were right once.
+
+Two things that make starting at zero SAFE rather than reckless, and neither is
+optional:
+
+- **The counters already exist.** Every adapter records its own 429s and the
+  scan prints them as `[scan:limits]`. Going too fast is visible in one run,
+  which is what turns this from a guess into an experiment.
+- **A refusal must never be read as a verdict.** An unanswered sell quote leaves
+  `honeypot` unknown, the gates fail closed, and a perfectly good token is
+  thrown out as unsellable. Speed was never free — it was paid for in candidates
+  nobody could see being lost, which is why Jupiter now retries at the pace it
+  was just asked for instead of reporting a failure.
+
 ## Conventions
 
 - Conventional commits. No AI attribution in commit messages.

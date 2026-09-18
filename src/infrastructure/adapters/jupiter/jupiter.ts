@@ -52,7 +52,7 @@ export interface SellAssessment {
 export class Jupiter {
   constructor(
     private readonly http: HttpGet,
-    private readonly throttle: Throttle = NO_THROTTLE,
+    private readonly throttle: Throttle & { pushedBack?(): void; wentThrough?(): void } = NO_THROTTLE,
     private readonly base: string = JUPITER_LITE_BASE,
   ) {}
 
@@ -61,12 +61,29 @@ export class Jupiter {
     const url =
       `${this.base}/swap/v1/quote?inputMint=${mint}&outputMint=${USDC_MINT}` +
       `&amount=${amountRaw.toString()}&slippageBps=${slippageBps}&swapMode=ExactIn`
+    // The PROVIDER sets the pace. A 429 is it saying so out loud, and it is the
+    // only evidence about its quota that exists — everything else would be a
+    // number we chose. So the throttle is told, and the call is retried once at
+    // the pace it just asked for rather than being reported as a failure.
+    //
+    // That last part is what makes this safe to run with no fixed interval: an
+    // unanswered sell quote leaves `honeypot` unknown, the gates fail closed,
+    // and a perfectly good token is thrown out as unsellable. Speed here was
+    // never free — it was paid for in candidates nobody could see being lost.
     let response
-    try {
-      await this.throttle.wait()
-      response = await this.http(url)
-    } catch (error) {
-      return { ok: false, reason: 'http', detail: String(error) }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.throttle.wait()
+        response = await this.http(url)
+      } catch (error) {
+        return { ok: false, reason: 'http', detail: String(error) }
+      }
+      if (response.status !== 429) {
+        this.throttle.wentThrough?.()
+        break
+      }
+      this.throttle.pushedBack?.()
+      if (attempt >= 2) break
     }
     const body = (await response.json()) as Partial<JupiterQuote> & { error?: string }
     if (response.status !== 200) {

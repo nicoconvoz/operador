@@ -23,6 +23,7 @@ import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakes
 import { Erc20Decimals } from '../infrastructure/adapters/pancakeswap/erc20-decimals.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
+import { makeAdaptiveThrottle } from '../infrastructure/adaptive-throttle.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { PostgresStore, type SqlClient } from '../infrastructure/persistence/postgres-store.js'
 import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js'
@@ -60,7 +61,11 @@ export interface RuntimePorts {
 export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtime {
   const http = makeHttpGet({ timeoutMs: 20_000 })
   // One throttle per provider, shared by every adapter that talks to it.
-  const jupiterThrottle = makeThrottle(1_100)
+  // No fixed interval: the provider sets the pace. 1,100ms was a number nobody
+  // measured, and it made the sell quote the slowest thing in a scan — two
+  // calls a token, 2.2s each, against a security stage of a hundred tokens.
+  // It starts at zero and slows only when Jupiter says to.
+  const jupiterThrottle = makeAdaptiveThrottle()
   const geckoThrottle = makeThrottle(2_500)
 
   const store = new PostgresStore(ports.sql)
