@@ -1,6 +1,7 @@
 import { HttpError, NO_THROTTLE, type HttpGet, type Throttle } from '../../http.js'
 import { type Chain } from '../../../domain/scanner/snapshot.js'
 import { type Candles } from '../../../application/replay.js'
+import { type MarketSnapshot } from '../dexscreener/dexscreener.js'
 
 /**
  * GeckoTerminal — OHLCV for a DEX pool. The candles the executor runs on.
@@ -49,6 +50,24 @@ export const barSizeMs = (size: BarSize): number =>
 
 interface OhlcvResponse {
   readonly data?: { readonly attributes?: { readonly ohlcv_list?: readonly (readonly number[])[] } }
+}
+
+/** One pool as `pools/multi` returns it: every market field, already ours. */
+interface PoolRow {
+  readonly attributes?: {
+    readonly address?: string
+    readonly base_token_price_usd?: string | null
+    readonly reserve_in_usd?: string | null
+    readonly fdv_usd?: string | null
+    readonly pool_created_at?: string | null
+    readonly volume_usd?: { readonly h1?: string; readonly h6?: string; readonly h24?: string }
+    readonly price_change_percentage?: { readonly h1?: string; readonly h6?: string; readonly h24?: string }
+    readonly transactions?: {
+      readonly h1?: { readonly buys?: number; readonly sells?: number }
+      readonly h24?: { readonly buys?: number; readonly sells?: number }
+    }
+  }
+  readonly relationships?: { readonly base_token?: { readonly data?: { readonly id?: string } } }
 }
 
 interface PoolsResponse {
@@ -176,6 +195,95 @@ export class GeckoTerminal {
    * Returns base token addresses paired with the pool they were found in, so
    * the caller does not have to look the pair up again.
    */
+  /**
+   * Market data for pools DexScreener cannot see.
+   *
+   * Measured on one sweep: of the addresses this adapter discovers, DexScreener
+   * prices only 65% — 46 of 132 are simply not in its index, too new or too
+   * small. Jupiter's addresses price at 97%, so the loss is specific to the
+   * pools, and it was most of the difference between a book of ninety and a
+   * book of eleven.
+   *
+   * The data was in our hands the whole time. Every pool response already
+   * carries `base_token_price_usd`, `reserve_in_usd`, `volume_usd`, the price
+   * changes and the transaction counts by window — the complete snapshot — and
+   * the scanner discarded it and then asked a provider that had never heard of
+   * the token.
+   *
+   * It cannot come from the discovery CACHE, which stands for six hours and
+   * whose market half would be six hours stale. `pools/multi` takes thirty
+   * pool addresses per call, so the ones DexScreener missed cost two requests
+   * rather than forty-six.
+   *
+   * NEVER throws. This is a fallback: a bad minute costs the tokens it would
+   * have recovered, never the cycle.
+   */
+  async poolMarkets(chain: Chain, poolAddresses: readonly string[]): Promise<MarketSnapshot[]> {
+    const out: MarketSnapshot[] = []
+    for (let i = 0; i < poolAddresses.length; i += 30) {
+      const batch = poolAddresses.slice(i, i + 30)
+      try {
+        const body = (await this.getWithBackoff(
+          `${this.base}/networks/${NETWORK[chain]}/pools/multi/${batch.join(',')}`,
+        )) as { data?: PoolRow[] }
+        for (const row of body.data ?? []) {
+          const market = this.toPoolMarket(chain, row)
+          if (market) out.push(market)
+        }
+      } catch {
+        // A refused batch is tokens not recovered, not a cycle lost.
+      }
+    }
+    return out
+  }
+
+  /** One pool row into the shape every other source produces. */
+  private toPoolMarket(chain: Chain, row: PoolRow): MarketSnapshot | null {
+    const a = row.attributes
+    const token = row.relationships?.base_token?.data?.id?.replace(`${NETWORK[chain]}_`, '')
+    const price = Number(a?.base_token_price_usd)
+    const reserve = Number(a?.reserve_in_usd)
+    // The same rule DexScreener's mapping follows: a pool nobody can price is
+    // an unanswered question, not a cheap token, and the gates fail closed on
+    // those for a reason.
+    if (!token || !a?.address) return null
+    if (a.base_token_price_usd === null || a.base_token_price_usd === undefined || !Number.isFinite(price)) return null
+    if (a.reserve_in_usd === null || a.reserve_in_usd === undefined || !Number.isFinite(reserve)) return null
+
+    const num = (value: string | number | null | undefined): number => {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : 0
+    }
+    const pct = (value: string | number | null | undefined): number | null => {
+      if (value === null || value === undefined) return null
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+    const fdv = Number(a.fdv_usd)
+
+    return {
+      chain,
+      address: token,
+      symbol: token,
+      pairAddress: a.address,
+      observedAt: this.now(),
+      priceUsd: price,
+      liquidityUsd: reserve,
+      fdvUsd: Number.isFinite(fdv) && a.fdv_usd !== null && a.fdv_usd !== undefined ? fdv : null,
+      volumeUsd: { h1: num(a.volume_usd?.h1), h6: num(a.volume_usd?.h6), h24: num(a.volume_usd?.h24) },
+      priceChangePct: {
+        h1: pct(a.price_change_percentage?.h1),
+        h6: pct(a.price_change_percentage?.h6),
+        h24: pct(a.price_change_percentage?.h24),
+      },
+      txns: {
+        h1: { buys: a.transactions?.h1?.buys ?? 0, sells: a.transactions?.h1?.sells ?? 0 },
+        h24: { buys: a.transactions?.h24?.buys ?? 0, sells: a.transactions?.h24?.sells ?? 0 },
+      },
+      pairCreatedAt: a.pool_created_at ? Date.parse(a.pool_created_at) : null,
+    }
+  }
+
   async discoverPools(chain: Chain, pages = 5): Promise<{ tokenAddress: string; poolAddress: string }[]> {
     // 'new_pools' was missing while this function's own comment claimed it,
     // and it is the only source in the whole universe that is not ranked by

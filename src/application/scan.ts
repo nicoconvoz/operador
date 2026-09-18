@@ -1,4 +1,5 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
+import { type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
 import { evaluateMarketGates, forgivableFailures } from '../domain/scanner/gates.js'
 import { hoursSinceLastTrade } from './idle-hours.js'
@@ -41,6 +42,16 @@ export interface HistoryPort {
    * paid promotions and returned NINE tokens when measured.
    */
   discoverPools?(chain: Chain, pages?: number): Promise<{ tokenAddress: string; poolAddress: string }[]>
+  /**
+   * Market data for the pools the price provider cannot see.
+   *
+   * Measured on one sweep: DexScreener prices 97% of Jupiter's addresses and
+   * only 65% of the pools discovered here — 46 of 132 are not in its index at
+   * all, too new or too small. That gap was most of the difference between a
+   * book of ninety candidates and a book of eleven, and the data was already
+   * in the discovery response we were throwing away.
+   */
+  poolMarkets?(chain: Chain, poolAddresses: readonly string[]): Promise<MarketSnapshot[]>
 }
 
 export interface ScanDeps {
@@ -193,7 +204,15 @@ export type ScanProgress =
    */
   | { readonly stage: 'discovery'; readonly chain: Chain; readonly source: string; readonly found: number }
   | { readonly stage: 'universe'; readonly chain: Chain; readonly discovered: number; readonly dropped: number }
-  | { readonly stage: 'market'; readonly chain: Chain; readonly priced: number }
+  | {
+      readonly stage: 'market'
+      readonly chain: Chain
+      readonly priced: number
+      /** How many were asked about at all, so the LOSS is visible and not only the survivors. */
+      readonly asked?: number
+      /** How many the price provider could not see and the pool fallback got back. */
+      readonly recovered?: number
+    }
   | { readonly stage: 'budget'; readonly chain: Chain; readonly affordable: number; readonly checking: number }
   | { readonly stage: 'checked'; readonly chain: Chain; readonly done: number; readonly of: number }
   | { readonly stage: 'done'; readonly chain: Chain; readonly candidates: number; readonly elapsedMs: number }
@@ -359,6 +378,8 @@ export async function scanOnce(
   // never be what decides whether our own position is looked at.
   const held = new Set(config.held ?? [])
   const universe = new Set<string>(held)
+  /** Which pool each discovered token came from, for the market fallback below. */
+  const poolOf = new Map<string, string>()
   // ── A scan that only re-examines what we HOLD ─────────────────────────────
   //
   // The full scan does two jobs with very different urgencies, and it used to
@@ -384,7 +405,12 @@ export async function scanOnce(
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'empezando', found: 0 })
   if (deps.history?.discoverPools) {
     try {
-      for (const { tokenAddress } of await deps.history.discoverPools(config.chain)) universe.add(tokenAddress)
+      for (const { tokenAddress, poolAddress } of await deps.history.discoverPools(config.chain)) {
+        universe.add(tokenAddress)
+        // Kept so a token the price provider cannot see can still be asked
+        // about, at its own pool, in one batched call.
+        if (!poolOf.has(tokenAddress)) poolOf.set(tokenAddress, poolAddress)
+      }
       deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'pools', found: universe.size })
     } catch (error) {
       errors.push({ address: '*', stage: 'market', error: `pool universe: ${String(error)}` })
@@ -432,9 +458,53 @@ export async function scanOnce(
       for (const address of batch) errors.push({ address, stage: 'market', error: String(error) })
     }
   }
+  // ── 2b. What the price provider could not see, asked at its own pool ──────
+  //
+  // Measured: DexScreener prices 97% of Jupiter's addresses and 65% of the
+  // pools GeckoTerminal discovers — 46 of 132 in one sweep are not in its
+  // index at all. Those were being discovered, counted, and then dropped
+  // before any gate had an opinion, which was most of the distance between a
+  // book of ninety candidates and a book of eleven.
+  //
+  // The data was in our hands. Every pool response already carries the price,
+  // the reserve, the volumes, the changes and the transaction counts; the
+  // scanner discarded them and asked a provider that had never heard of the
+  // token. It cannot come from the discovery CACHE, which stands six hours and
+  // whose market half would be six hours stale — so it is re-asked, thirty
+  // pools per call, only for what is actually missing.
+  const missing = addresses.filter((address) => !bestByAddress.has(address) && poolOf.has(address))
+  let recovered = 0
+  if (deps.history?.poolMarkets && missing.length > 0) {
+    try {
+      const fromPools = await deps.history.poolMarkets(config.chain, missing.map((a) => poolOf.get(a)!))
+      for (const market of fromPools) {
+        // Never over a price the main provider DID give: one source per token,
+        // and the one that indexes it properly wins.
+        if (!bestByAddress.has(market.address)) {
+          bestByAddress.set(market.address, market)
+          recovered++
+        }
+      }
+    } catch {
+      // A fallback that throws would cost the cycle the tokens it was meant to
+      // save and the ones it already had. It is allowed to fail quietly.
+    }
+  }
   markets.push(...bestByAddress.values())
 
-  deps.onProgress?.({ stage: 'market', chain: config.chain, priced: markets.length })
+  // What the price provider COULD NOT answer, and how much of it came back.
+  //
+  // A log that prints the survivors alone reads identically whether a provider
+  // is blind to a third of the universe or the day was quiet — and that is
+  // exactly the number nobody could see while the book starved: 323 discovered
+  // became 173 priced and the 150 in between were invisible.
+  deps.onProgress?.({
+    stage: 'market',
+    chain: config.chain,
+    priced: markets.length,
+    asked: addresses.length,
+    recovered,
+  })
 
   // ── 3. Free gates before paid ones ─────────────────────────────────────────
   // Security costs one throttled request per token and the universe is larger

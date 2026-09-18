@@ -305,3 +305,79 @@ describe('GeckoTerminal — discovery has nothing to wait for', () => {
     expect(await gt.discoverPools('bsc', 1)).toEqual([{ tokenAddress: '0xabc', poolAddress: 'poolA' }])
   })
 })
+
+describe('GeckoTerminal — market data for the pools DexScreener cannot see', () => {
+  // Measured, and it is why the book was starving: of the addresses
+  // GeckoTerminal discovers, DexScreener can price only 65% — 46 of 132 in one
+  // sweep are simply not in its index, too new or too small. Jupiter's
+  // addresses price at 97%, so the loss is specific to the pools.
+  //
+  // And the data was in our hands the whole time. Every pool response carries
+  // `base_token_price_usd`, `reserve_in_usd`, `volume_usd`, the price changes
+  // and the transaction counts by window — the complete market snapshot — and
+  // the scanner threw it away and then asked a provider that had never heard
+  // of the token.
+  //
+  // It cannot come from the discovery CACHE, which stands for six hours and
+  // whose market half would be six hours stale. `pools/multi` takes up to
+  // thirty pool addresses in one call, so the ones DexScreener missed cost two
+  // requests rather than forty-six.
+
+  const pool = (address: string, over: Record<string, unknown> = {}) => ({
+    id: `solana_${address}`,
+    attributes: {
+      address,
+      base_token_price_usd: '0.0125',
+      reserve_in_usd: '48200.5',
+      fdv_usd: '990000',
+      pool_created_at: '2026-09-10T12:00:00Z',
+      volume_usd: { h1: '4500.25', h6: '26000', h24: '98000' },
+      price_change_percentage: { h1: '3.2', h6: '-1.5', h24: '12.8' },
+      transactions: { h1: { buys: 41, sells: 22 }, h24: { buys: 900, sells: 700 } },
+      ...over,
+    },
+    relationships: { base_token: { data: { id: `solana_TOKEN-${address}` } } },
+  })
+
+  const url = (pools: string) => `${GECKOTERMINAL_BASE}/networks/solana/pools/multi/${pools}`
+
+  it('reads a pool into the same shape the scanner uses everywhere else', async () => {
+    const gecko = new GeckoTerminal(stubHttp({ [url('P1')]: { body: { data: [pool('P1')] } } }))
+    const [market] = await gecko.poolMarkets('solana', ['P1'])
+
+    expect(market!.address).toBe('TOKEN-P1')
+    expect(market!.pairAddress).toBe('P1')
+    expect(market!.priceUsd).toBeCloseTo(0.0125, 9)
+    expect(market!.liquidityUsd).toBeCloseTo(48_200.5, 6)
+    expect(market!.fdvUsd).toBeCloseTo(990_000, 6)
+    expect(market!.volumeUsd).toEqual({ h1: 4_500.25, h6: 26_000, h24: 98_000 })
+    expect(market!.priceChangePct).toEqual({ h1: 3.2, h6: -1.5, h24: 12.8 })
+    expect(market!.txns.h1).toEqual({ buys: 41, sells: 22 })
+    expect(market!.pairCreatedAt).toBe(Date.parse('2026-09-10T12:00:00Z'))
+  })
+
+  it('asks for thirty at a time, because that is the endpoint ceiling', async () => {
+    const asked: string[] = []
+    const http = async (target: string) => {
+      asked.push(target)
+      return stubHttp({ [`${GECKOTERMINAL_BASE}/networks/solana/pools/multi/`]: { body: { data: [] } } })(target)
+    }
+    await new GeckoTerminal(http).poolMarkets('solana', Array.from({ length: 65 }, (_, i) => `P${i}`))
+    expect(asked).toHaveLength(3)
+  })
+
+  it('drops a pool with no price or no reserve rather than inventing one', async () => {
+    // The same rule DexScreener's mapping follows. A pool nobody can price is
+    // not a cheap token, it is an unanswered question, and the gates fail
+    // closed on those for a reason.
+    const http = stubHttp({
+      [url('P1,P2')]: { body: { data: [pool('P1', { base_token_price_usd: null }), pool('P2', { reserve_in_usd: null })] } },
+    })
+    expect(await new GeckoTerminal(http).poolMarkets('solana', ['P1', 'P2'])).toEqual([])
+  })
+
+  it('never throws into the scan — a bad minute costs the fallback, not the cycle', async () => {
+    const http = stubHttp({ [url('P1')]: { status: 500, body: {} } })
+    expect(await new GeckoTerminal(http).poolMarkets('solana', ['P1'])).toEqual([])
+  })
+})

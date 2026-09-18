@@ -830,3 +830,88 @@ describe('scanOnce — the door is asked BEFORE anything is paid for', () => {
     expect(paid).toEqual(['ours'])
   })
 })
+
+describe('scanOnce — a token the price provider cannot see is asked at its own pool', () => {
+  // Measured on one sweep: DexScreener prices 97% of Jupiter's addresses and
+  // 65% of the pools GeckoTerminal discovers — 46 of 132 are not in its index
+  // at all. Those were discovered, counted, and then dropped before any gate
+  // had an opinion, which was most of the distance between a book of ninety
+  // candidates and a book of eleven.
+
+  const market = (address: string) => ({
+    chain: 'solana' as const, address, symbol: address, pairAddress: `pool-${address}`,
+    observedAt: NOW, priceUsd: 0.01, liquidityUsd: 150_000, fdvUsd: 2_000_000,
+    volumeUsd: { h1: 35_000, h6: 180_000, h24: 525_000 },
+    priceChangePct: { h1: 2, h6: -3, h24: 5 },
+    txns: { h1: { buys: 40, sells: 30 }, h24: { buys: 900, sells: 850 } },
+    pairCreatedAt: NOW - 30 * DAY,
+  })
+
+  it('recovers the market from the pool when DexScreener has nothing', async () => {
+    const asked: string[][] = []
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      // DexScreener knows nothing about it.
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/hidden`]: { body: [] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=hidden`]: { body: { code: 1, message: 'ok', result: { hidden: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=hidden`]: { body: goodQuote },
+    })
+    const withPools: ScanDeps = {
+      ...deps,
+      history: {
+        discoverPools: async () => [{ tokenAddress: 'hidden', poolAddress: 'pool-hidden' }],
+        poolMarkets: async (_chain, pools) => { asked.push([...pools]); return [market('hidden')] },
+      },
+    }
+
+    const out = await scanOnce(withPools, config)
+
+    expect(asked).toEqual([['pool-hidden']])
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['hidden'])
+  })
+
+  it('never asks about a token the price provider DID answer for', async () => {
+    const asked: string[][] = []
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/seen`]: { body: [pair('seen')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=seen`]: { body: { code: 1, message: 'ok', result: { seen: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=seen`]: { body: goodQuote },
+    })
+    const withPools: ScanDeps = {
+      ...deps,
+      history: {
+        discoverPools: async () => [{ tokenAddress: 'seen', poolAddress: 'pool-seen' }],
+        poolMarkets: async (_chain, pools) => { asked.push([...pools]); return [] },
+      },
+    }
+
+    await scanOnce(withPools, config)
+
+    // One source per token, and the one that indexes it properly wins.
+    expect(asked).toEqual([])
+  })
+
+  it('carries on when the fallback itself fails', async () => {
+    // A fallback that throws would cost the cycle the tokens it was meant to
+    // save AND the ones it already had.
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/hidden`]: { body: [] },
+    })
+    const withPools: ScanDeps = {
+      ...deps,
+      history: {
+        discoverPools: async () => [{ tokenAddress: 'hidden', poolAddress: 'pool-hidden' }],
+        poolMarkets: async () => { throw new Error('gecko down') },
+      },
+    }
+    await expect(scanOnce(withPools, config)).resolves.toBeDefined()
+  })
+})
