@@ -224,6 +224,12 @@ export async function tickPosition(
         // went by. Applying it once per replayed bar would let one observation
         // accumulate into a death sentence it never earned.
         health: barIndex === last ? input.health : null,
+        // Only on the LAST bar, and for the same reason as the health reading:
+        // it is a measurement of NOW. A catch-up replaying twenty missed bars
+        // must fill each of them at its own open, as it always did — filling a
+        // bar from four hours ago at today's price would rewrite history with a
+        // number that did not exist then.
+        marketPriceUsd: barIndex === last ? (input.marketPriceUsd ?? null) : null,
         broker,
       },
       barIndex,
@@ -295,35 +301,7 @@ async function advanceOneBar(
   // find its own fills and it would halt every position it had just traded.
   let exitRefused = false
   const rejectedBefore = broker.rejections.length
-  for (const order of position.pendingOrders) {
-    const key = idempotencyKeyFor(position.id, position.lastBarTime, orderKeyPart(order))
-    // Guarded here as well as in SQL: the store would reject the duplicate
-    // anyway, but a second execute() would also move the broker's cash.
-    if (await store.hasFill(key)) continue
-
-    if (refusesToSellAtALoss(order, broker.snapshot(barOpen).avgPrice, barOpen)) {
-      exitRefused = true
-      continue
-    }
-
-    const fills = broker.execute([order], barOpen, barTime)
-    for (const [index, fill] of fills.entries()) {
-      await store.recordFill({
-        positionId: position.id,
-        orderId: fill.id,
-        side: fill.side,
-        time: fill.time,
-        price: fill.price,
-        qty: fill.qty,
-        costUsd: fill.commission,
-        comment: fill.comment,
-        // One close sells every open entry, so it produces several fills for a
-        // single order. The FIRST carries the order's canonical key, which is
-        // the one recovery asks about; the rest are suffixed.
-        idempotencyKey: index === 0 ? key : `${key}#${index}`,
-      })
-    }
-  }
+  exitRefused = await settle(position.pendingOrders, position.lastBarTime, barOpen, barTime, position, broker, store)
 
   // ── 0b. Say that the position was kept ────────────────────────────────────
   //
@@ -441,6 +419,35 @@ async function advanceOneBar(
   }
   await store.savePosition(next)
 
+  // ── 5. And send it NOW, if there is a price we have already checked ────────
+  //
+  // The creator's decision, and the reason is fifteen minutes of nothing: a
+  // slot opens, the next tick with a new bar decides, and the tick AFTER that
+  // fills at the following open. Up to half an hour before a token the scanner
+  // chose holds anything at all — and the second wait protects nothing, because
+  // the decision is already taken on a bar that already closed.
+  //
+  // **Bar-close semantics are untouched.** What moves is when the order reaches
+  // the venue, not what it was decided on. A real venue does not make you wait
+  // for a candle to send an order it already agreed to.
+  //
+  // It is safe now and would not have been this morning: the live market price
+  // arrives every cycle for everything held, and this tick REFUSES to trade at
+  // all when that price and the candle disagree. So an immediate fill is priced
+  // against a number already checked against a second source — which is exactly
+  // what the old path could not say about the next bar's open.
+  //
+  // Written down BEFORE it is sent, above, and cleared after. A crash in
+  // between leaves a pending order whose fill is already recorded under the
+  // same key, and recovery's first question — "is a fill recorded?" — answers
+  // itself.
+  const live = input.marketPriceUsd
+  const settled = orders.length > 0 && live !== null && live !== undefined && live > 0
+  if (settled) {
+    exitRefused = (await settle(orders, barTime, live, barTime, next, broker, store)) || exitRefused
+    await store.savePosition({ ...next, pendingOrders: [] })
+  }
+
   for (const order of orders) {
     if (order.kind === 'closeAll' && order.comment === DEATH_EXIT_COMMENT) continue // already alerted
     if (order.kind === 'entry') {
@@ -451,7 +458,10 @@ async function advanceOneBar(
     }
   }
 
-  return { position: next, orders, vetoed }
+  // The CLEARED position when it was settled, or the next tick would see a
+  // pending order that already filled — the exact state recovery exists to
+  // untangle, handed to it for nothing.
+  return { position: settled ? { ...next, pendingOrders: [] } : next, orders, vetoed }
 }
 
 /**
@@ -473,6 +483,61 @@ async function advanceOneBar(
  * death exit sells because the ASSET stopped being an asset, and holding out
  * for a better price on something unsellable is how you hold it forever.
  */
+/**
+ * Send orders to the venue and write down what came back.
+ *
+ * One implementation, two callers: the orders a PREVIOUS bar decided, filled at
+ * this bar's open, and the ones just decided, filled at the market price right
+ * now. They must agree about every detail that matters — the idempotency key,
+ * the no-loss guard, the per-fill suffix — because a second copy of this is how
+ * a retry buys twice.
+ *
+ * `keyBarTime` is the bar the order was DECIDED on, never the one it fills at.
+ * Recovery looks a fill up by exactly that, and keying it the other way would
+ * leave it unable to find its own work and halt every position it had traded.
+ */
+async function settle(
+  orders: readonly Order[],
+  keyBarTime: number,
+  price: number,
+  time: number,
+  position: PersistedPosition,
+  broker: BrokerPort,
+  store: StatePort,
+): Promise<boolean> {
+  let exitRefused = false
+  for (const order of orders) {
+    const key = idempotencyKeyFor(position.id, keyBarTime, orderKeyPart(order))
+    // Guarded here as well as in SQL: the store would reject the duplicate
+    // anyway, but a second execute() would also move the broker's cash.
+    if (await store.hasFill(key)) continue
+
+    if (refusesToSellAtALoss(order, broker.snapshot(price).avgPrice, price)) {
+      exitRefused = true
+      continue
+    }
+
+    const fills = broker.execute([order], price, time)
+    for (const [index, fill] of fills.entries()) {
+      await store.recordFill({
+        positionId: position.id,
+        orderId: fill.id,
+        side: fill.side,
+        time: fill.time,
+        price: fill.price,
+        qty: fill.qty,
+        costUsd: fill.commission,
+        comment: fill.comment,
+        // One close sells every open entry, so it produces several fills for a
+        // single order. The FIRST carries the order's canonical key, which is
+        // the one recovery asks about; the rest are suffixed.
+        idempotencyKey: index === 0 ? key : `${key}#${index}`,
+      })
+    }
+  }
+  return exitRefused
+}
+
 function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: number): boolean {
   if (order.kind !== 'closeAll') return false
   // Neither exit may be blocked by the no-loss rule, and for the same reason:

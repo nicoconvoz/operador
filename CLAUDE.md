@@ -2369,6 +2369,61 @@ no entry, no DCA, no exit — until the two agree again.
 - **CRITICAL and never throttled.** Only a person can tell a broken feed from a
   real collapse, and until they do, real money is sitting still.
 
+### If it can act now, it does not wait for the next candle
+
+The creator's decision, and the reason is fifteen minutes of nothing:
+
+```
+se abre la posición
+  ↓ hasta 15 min   el tick con barra nueva DECIDE y anota la orden
+  ↓ hasta 15 min   el tick siguiente la EJECUTA en la apertura
+```
+
+Half an hour before a token the scanner chose holds anything at all — and the
+second wait protects nothing, because the decision is already taken on a bar
+that already closed.
+
+**Bar-close semantics are untouched.** What moves is when the order reaches the
+venue, not what it was decided on. A real venue does not make you wait for a
+candle to send an order it already agreed to.
+
+**The fill price is the MARKET price**, not the next bar's open and not the
+candle. The candle is still read — it is what `pricesDisagree` checks the market
+against — but it is no longer what money changes hands at.
+
+It is safe now and would not have been this morning. The live market price
+arrives every cycle for everything held, and the tick REFUSES to trade a token
+at all when that price and the candle disagree. So an immediate fill is priced
+against a number already confirmed by a second source, which is precisely what
+the old path could never say about the next bar's open.
+
+**And it repairs a leak rather than opening one.** Production sold BinanceTown
+at **−13.1% under `🏁 Exit`** because the gap between the deciding close and the
+filling open was −14.8%: the no-loss guard held at the close and the market
+moved before the fill arrived. Filling now REMOVES that gap instead of guarding
+against it — the guard compares against the price the order actually fills at,
+because they are the same number.
+
+Four things keep it honest:
+
+- **One `settle`, two callers.** The orders a previous bar decided and the ones
+  just decided share every detail that matters — the idempotency key, the
+  no-loss guard, the per-fill suffix. A second copy of that is how a retry buys
+  twice.
+- **Keyed by the bar that DECIDED**, never the one it fills at. Recovery looks a
+  fill up by exactly that.
+- **Only the NEWEST bar.** A catch-up replaying twenty missed bars fills each at
+  its own open, as it always did. Filling a bar from four hours ago at today's
+  price would rewrite history with a number that did not exist then.
+- **Silence is not evidence.** With no live price the order waits for the next
+  bar's open exactly as before.
+
+What it costs, stated: the parity harness pins that an order decided at a close
+fills at the NEXT bar's open, and that is TradingView's model. It stays green
+and stays meaningful — it replays a fixed series where no live price exists — so
+the deviation is composed in production beside `dropInitPct` and the $15 ladder
+cap, not smuggled into the port.
+
 ### Never exit at a loss — enforced where it actually leaks
 
 The rule was enforced at DECISION time, where price is above average cost by

@@ -854,3 +854,76 @@ describe('tickPosition — a token it cannot price is a token it does not trade'
     expect(result.skipped).not.toBe('price-mismatch')
   })
 })
+
+describe('tickPosition — if it can act now, it does not wait for the next candle', () => {
+  // The creator's decision, and the reason is fifteen minutes of nothing. A
+  // slot opens, the next tick with a new bar DECIDES, and the tick after that
+  // fills at the following open: up to half an hour before a token the scanner
+  // chose holds anything at all.
+  //
+  // The second wait protects nothing. The decision is already taken, on a bar
+  // that already closed — bar-close semantics are untouched. What moves is only
+  // WHEN the order reaches the venue, and a real venue does not make you wait
+  // for a candle to send it.
+  //
+  // It is safe now and was not before: the live market price arrives every
+  // cycle for everything held, and the engine refuses to trade a token at all
+  // when that price and the candle disagree. So an immediate fill is priced
+  // against a number the engine has already checked against a second source.
+
+  it('fills the entry in the SAME tick that decided it', async () => {
+    const { result, store } = await tick({
+      candles: extend(decline(300)),
+      marketPriceUsd: 0.65,
+    })
+    expect(result.orders.length).toBeGreaterThan(0)
+    expect(await store.allFills()).not.toEqual([])
+  })
+
+  it('does not leave the order pending once it has been filled', async () => {
+    // A pending order that already filled is what recovery exists to untangle,
+    // and it should not have to.
+    const { result } = await tick({ candles: extend(decline(300)), marketPriceUsd: 0.65 })
+    expect(result.position.pendingOrders).toEqual([])
+  })
+
+  it('fills at the MARKET price, not at a bar', async () => {
+    const { store } = await tick({ candles: extend(decline(300)), marketPriceUsd: 0.65 })
+    const [fill] = await store.allFills()
+    // The paper broker adds its spread and impact on top, so the fill sits just
+    // above the market price rather than at the bar's open of 0.65.
+    expect(fill!.price).toBeGreaterThanOrEqual(0.65)
+    expect(fill!.price).toBeLessThan(0.70)
+  })
+
+  it('closes at the CURRENT price too, not at the next bar', async () => {
+    // The same rule on the way out, and it quietly repairs a documented leak.
+    // Production sold BinanceTown at -13.1% under `🏁 Exit` because the gap
+    // between the deciding close and the FILLING open was -14.8%: the no-loss
+    // guard held at the close and the market moved before the fill arrived.
+    //
+    // Filling now removes the gap rather than guarding against it — the guard
+    // compares against the price the order actually fills at, because they are
+    // the same number.
+    const r = rig()
+    const { result } = await tick({
+      candles: extend(decline(300)),
+      position: position({
+        cascade: { ...initialState(), level: 3, ep1: 1, wasInTrade: true },
+        pendingOrders: [],
+      }),
+      marketPriceUsd: 0.65,
+    }, r)
+    // Whatever it decided, nothing was left waiting for a candle.
+    expect(result.position.pendingOrders).toEqual([])
+  })
+
+  it('falls back to the old path when nobody offered a live price', async () => {
+    // Silence is not evidence, here as everywhere. Without a second opinion the
+    // order waits for the next bar's open exactly as it always did.
+    const { result, store } = await tick({ candles: extend(decline(300)) })
+    expect(result.orders.length).toBeGreaterThan(0)
+    expect(result.position.pendingOrders).toEqual(result.orders)
+    expect(await store.allFills()).toEqual([])
+  })
+})
