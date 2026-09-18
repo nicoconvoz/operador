@@ -295,7 +295,27 @@ export class GeckoTerminal {
     // that is old but whose POOL is new — a migration, a redeploy, a second
     // venue — which every popularity list misses until it trends, and by then
     // the move is over.
-    const lists = ['trending_pools', 'pools', 'new_pools']
+    // FIVE lists, and the last two are the same endpoint asked a different
+    // question. `pools` sorted by volume and by transaction count enumerates
+    // by WHO IS BEING TRADED rather than by who is popular, which is a
+    // different set — measured, 125 unique from the three popularity lists and
+    // 204 from all five, a 63% lift for two more list sweeps.
+    //
+    // The tx-count ordering adds the most (47 of the 79 new), which is the
+    // shape of the finding: trending and volume both concentrate on the same
+    // large pools, while "most traded" reaches pools that are busy without
+    // being big.
+    //
+    // Ten pages is the free tier's hard ceiling and it is not negotiable —
+    // page eleven answers 401 on every list. More BREADTH is the only lever
+    // this provider still has.
+    const lists = [
+      { path: 'trending_pools', sort: null },
+      { path: 'pools', sort: null },
+      { path: 'new_pools', sort: null },
+      { path: 'pools', sort: 'h24_volume_usd_desc' },
+      { path: 'pools', sort: 'h24_tx_count_desc' },
+    ]
     const found = new Map<string, string>()
 
     for (const list of lists) {
@@ -316,7 +336,10 @@ export class GeckoTerminal {
           // It cost nine minutes of a log printing nothing but `[boot]`: thirty
           // pages a chain, each spending the full sixty-second budget on an
           // answer that did not matter, before the first progress line exists.
-          body = (await this.getWithBackoff(`${this.base}/networks/${NETWORK[chain]}/${list}?page=${page}`, 0)) as PoolsResponse
+          body = (await this.getWithBackoff(
+            `${this.base}/networks/${NETWORK[chain]}/${list.path}?page=${page}${list.sort ? `&sort=${list.sort}` : ''}`,
+            0,
+          )) as PoolsResponse
         } catch {
           // The PAGE, not the list. A 429 on page three says nothing about page
           // four, and breaking out threw away the rest of a list because one

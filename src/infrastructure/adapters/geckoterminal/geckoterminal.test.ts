@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { GeckoTerminal, GECKOTERMINAL_BASE, FIFTEEN_MINUTES, ONE_HOUR, barSizeMs } from './geckoterminal.js'
 import { stubHttp } from '../../http.js'
+/** * How many lists `discoverPools` sweeps. * * Named so a test can say "two pages per list" instead of a number that breaks * every time the breadth changes — which it did the day `pools` gained a * volume and a transaction-count ordering. */const LISTS = 5
 
 const POOL = '5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9'
 const url = `${GECKOTERMINAL_BASE}/networks/solana/pools/${POOL}/ohlcv/hour`
@@ -153,8 +154,15 @@ describe('GeckoTerminal — a universe that works on any chain', () => {
     }
     const gt = new GeckoTerminal(http)
     await gt.discoverPools('bsc', 5)
-    // page 1 has data, page 2 is empty and breaks — then the second list does the same.
-    expect(calls).toBeLessThanOrEqual(4)
+    // One page of data and one empty page per list, and then it moves on: the
+    // count is TWO PER LIST, not the five pages it was allowed to ask for.
+    //
+    // Asserted as a ratio rather than a number, because the number moved the
+    // day a fourth and fifth list were added — and what this test is about is
+    // that an empty page ends a list, not how many lists there are.
+    const perList = calls / LISTS
+    expect(perList).toBeLessThanOrEqual(2)
+    expect(calls).toBeLessThan(5 * LISTS)
   })
 
   it('a failing list does not lose what the others found', async () => {
