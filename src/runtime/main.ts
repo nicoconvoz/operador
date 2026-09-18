@@ -580,7 +580,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // `maxSecurityChecks` and rotates through the cache, so a wider
               // universe reaches further over cycles instead of costing more
               // per cycle.
-              maxTokens: 700,
+              // The cap must not be what decides the universe. Three lists at
+              // GeckoTerminal ten-page ceiling is up to 600 pools per chain,
+              // plus Jupiter lists and DexScreener boosts: about 700 unique,
+              // which is exactly what 700 was sized for and therefore exactly
+              // where it would start cutting.
+              //
+              // The expensive stage is bounded SEPARATELY and always was:
+              // market data is one DexScreener call per thirty tokens, the free
+              // gates cost nothing, and roughly one token in ten survives them.
+              // A wider universe reaches further per scan rather than costing
+              // proportionally more.
+              maxTokens: 5_000,
               // A bounded budget per chain, because each surviving token costs
               // about nine throttled seconds and a cycle has to finish inside
               // one bar. What it cannot reach is reported as unchecked rather

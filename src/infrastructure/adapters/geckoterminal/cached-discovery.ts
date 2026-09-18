@@ -78,13 +78,25 @@ export class CachedDiscovery implements PoolDiscoverySource {
     }
 
     try {
-      // Nothing on the shelf at all is the one pass that gets the deep sweep.
-      // `remembered` distinguishes it from a REFRESH, where an old list exists
-      // and expired — and those are different questions. A refresh asks what
-      // appeared since, which is page one. A cold start asks what EXISTS, and
-      // answering that with five pages of trending is answering a different
-      // question quietly.
-      const found = await this.source.discoverPools(chain, remembered ? pages : (pages ?? DEEP_SWEEP_PAGES))
+      // EVERY sweep is the deep sweep now, cold or refresh alike.
+      //
+      // A refresh used to ask five pages — what appeared SINCE — while only
+      // a cold start asked ten, what EXISTS. That split earned its keep when
+      // a scan ran every cycle and had to finish inside a bar. It stopped
+      // earning it the moment the full scan became a two-hourly event, with
+      // a twenty-minute held pass and a five-minute watch doing the fast
+      // work in between: the expensive sweep now happens twelve times a day,
+      // and half of it was being skipped to save minutes nobody needed back.
+      //
+      // The operator's framing: *escaneá toda la red de Solana... la primera
+      // corrida va a ser un poco lenta pero podemos hacerla una vez cada dos
+      // horas, y luego el que trabaja sobre las opciones disponibles es más
+      // rápido.*
+      //
+      // Bounded and known: ten is GeckoTerminal's own ceiling, so this asks
+      // for everything the provider will give and not one request more. A
+      // caller may still ask for less on a day the providers are unhappy.
+      const found = await this.source.discoverPools(chain, pages ?? DEEP_SWEEP_PAGES)
       // An empty answer is not evidence that a chain has no pools; it is far
       // more likely to be a provider having a bad minute. Remembering it would
       // blind the chain for the whole window.

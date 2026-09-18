@@ -259,16 +259,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxPositions: numberOrZero(env, 'OPERADOR_MAX_POSITIONS', 0),
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
-    // THIRTY minutes. It was an hour, and before that it was every cycle.
-    // The economies are what pay for it: discovery is cached six hours, an
-    // examination stands for two, and a steady-state scan is the paid stage
-    // alone — about four minutes, not the fifteen a cold run costs. The
-    // operator's reading of that is the right one: *no tarda nada.*
-    //
-    // It matters more now than it did. A shortlist is only as good as the
-    // last sweep that built it, and the doors are strict enough that the book
-    // can run out of things to buy between scans.
-    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 30 * 60 * 1000),
+    // TWO hours. The full sweep now asks GeckoTerminal for every page it
+    // will give, on every pass rather than only on a cold one, so it is a
+    // deliberate event rather than a background hum. The held pass (20 min)
+    // and the watch (5 min) are what keep the book current in between.
+    scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 2 * 60 * 60 * 1000),
     // The urgent half of a scan, on its own clock: re-examine the BOOK without
     // discovering anything. Twenty minutes against the full scan's hour,
     // because a token holding money can rug in ten minutes while one that does

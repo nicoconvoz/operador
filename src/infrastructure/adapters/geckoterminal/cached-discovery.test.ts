@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { CachedDiscovery, DEEP_SWEEP_PAGES } from './cached-discovery.js'
 import { MemoryStore } from '../../persistence/memory-store.js'
+import { type Chain } from '../../../domain/scanner/snapshot.js'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
@@ -29,18 +30,6 @@ describe('CachedDiscovery — a cold shelf is swept to the bottom', () => {
     expect(asked[0]).toBe(DEEP_SWEEP_PAGES)
   })
 
-  it('refreshes a stale shelf at the shallow depth, not the deep one', async () => {
-    // A refresh is looking for what APPEARED since. The deep tail was already
-    // swept and cannot have moved: pools do not become older than they were.
-    // Paying thirty throttled calls an hour for that would make every scan the
-    // cold one.
-    let clock = NOW
-    const { discovery, asked } = rig(async () => pools(3), () => clock)
-    await discovery.discoverPools('solana')
-    clock += 7 * HOUR
-    await discovery.discoverPools('solana')
-    expect(asked[1]).toBeUndefined()
-  })
 })
 
 describe('CachedDiscovery — the universe does not change minute to minute', () => {
@@ -111,5 +100,54 @@ describe('CachedDiscovery — the universe does not change minute to minute', ()
   it('refuses to invent one when there is nothing on the shelf either', async () => {
     const { discovery } = rig(async () => { throw new Error('429') })
     await expect(discovery.discoverPools('solana')).rejects.toThrow('429')
+  })
+})
+
+describe('discovery — every sweep is the deep sweep', () => {
+  // The operator's change: *escaneá toda la red de Solana... la primera corrida
+  // va a ser un poco lenta pero podemos hacerla una vez cada dos horas, y luego
+  // el que trabaja sobre las opciones disponibles es más rápido.*
+  //
+  // A REFRESH used to ask five pages — what appeared since — while only a cold
+  // start asked ten, what EXISTS. That split made sense when a scan ran every
+  // cycle and had to finish inside a bar. It stopped making sense the moment
+  // the full scan became a two-hourly event with a twenty-minute held pass and
+  // a five-minute watch doing the fast work between them: the expensive sweep
+  // happens twelve times a day, and half of it was being skipped to save
+  // minutes nobody needed back.
+  //
+  // What it costs is bounded and known: ten pages is GeckoTerminal's own
+  // ceiling, so this asks for everything the provider will give and not one
+  // request more.
+
+  it('asks for the full depth on a REFRESH, not only on a cold start', async () => {
+    const asked: number[] = []
+    const source = {
+      discoverPools: async (_chain: Chain, pages?: number) => {
+        asked.push(pages ?? -1)
+        return [{ tokenAddress: 'A', poolAddress: 'P' }]
+      },
+    }
+    const cache = new MemoryStore()
+    // An expired list on the shelf: the REFRESH case, which used to get five.
+    await cache.recordDiscoveredPools('solana', [{ tokenAddress: 'old', poolAddress: 'oldP' }], 0)
+    const discovery = new CachedDiscovery(source, cache, { now: () => 7 * 3_600_000 })
+
+    await discovery.discoverPools('solana')
+
+    expect(asked).toEqual([DEEP_SWEEP_PAGES])
+  })
+
+  it('still lets a caller ask for less, for a day the providers are unhappy', async () => {
+    const asked: number[] = []
+    const source = {
+      discoverPools: async (_chain: Chain, pages?: number) => {
+        asked.push(pages ?? -1)
+        return [{ tokenAddress: 'A', poolAddress: 'P' }]
+      },
+    }
+    const discovery = new CachedDiscovery(source, new MemoryStore(), { now: () => 0 })
+    await discovery.discoverPools('solana', 2)
+    expect(asked).toEqual([2])
   })
 })
