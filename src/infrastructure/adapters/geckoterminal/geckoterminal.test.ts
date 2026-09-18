@@ -389,3 +389,50 @@ describe('GeckoTerminal — market data for the pools DexScreener cannot see', (
     expect(await new GeckoTerminal(http).poolMarkets('solana', ['P1'])).toEqual([])
   })
 })
+
+describe('GeckoTerminal — breadth is the only lever left', () => {
+  // Ten pages is the free tier's hard ceiling: page eleven answers 401 on
+  // every list, measured. So depth is exhausted and the only thing that still
+  // widens the universe is asking the same endpoint a DIFFERENT question.
+  //
+  // `pools` accepts a sort, and the orderings are not the same set. Measured
+  // over one sweep: 125 unique from the three popularity lists, 204 from all
+  // five. The transaction-count ordering adds the most of the 79 new, which is
+  // the shape of it — trending and volume both concentrate on the same large
+  // pools, while "most traded" reaches ones that are busy without being big.
+  //
+  // This test exists because a mutation that DELETED both sorted lists killed
+  // nothing: they were wired and unproved, which is the third time in one
+  // night that the wiring was the part nobody tested.
+
+  const swept = async () => {
+    const asked: string[] = []
+    const http = async (target: string) => {
+      asked.push(target)
+      return { status: 200, json: async () => ({ data: [] }) }
+    }
+    await new GeckoTerminal(http).discoverPools('solana', 1)
+    return asked
+  }
+
+  it('asks the popularity lists', async () => {
+    const asked = await swept()
+    expect(asked.some((t) => t.includes('trending_pools'))).toBe(true)
+    expect(asked.some((t) => t.includes('new_pools'))).toBe(true)
+  })
+
+  it('asks `pools` by VOLUME and by TRANSACTION COUNT as well', async () => {
+    const asked = await swept()
+    expect(asked.some((t) => t.includes('sort=h24_volume_usd_desc'))).toBe(true)
+    expect(asked.some((t) => t.includes('sort=h24_tx_count_desc'))).toBe(true)
+  })
+
+  it('still asks `pools` unsorted, which is a third set again', async () => {
+    const asked = await swept()
+    expect(asked.some((t) => /\/pools\?page=\d+$/.test(t))).toBe(true)
+  })
+
+  it('sweeps every list, so breadth is what the count reflects', async () => {
+    expect(await swept()).toHaveLength(LISTS)
+  })
+})
