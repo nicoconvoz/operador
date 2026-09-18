@@ -213,7 +213,25 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   minHourlyTxns: 4,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
-  maxTopHoldersPct: 40,
+  // EIGHTY, and the operator named the trade: *subilo al 80%, nos vamos a
+  // arriesgar.*
+  //
+  // Forty was calibrated for a more distributed market than this book trades.
+  // Measured live on Solana: cbBTC 26.67%, eHYUSD 45%, TRUMP 81.28% — and over
+  // 35 tokens that cleared every other gate, this one blocked 20 and was the
+  // SOLE cause for 7, more than any other check. High concentration here is
+  // the norm, and it is not always the creator: an LP position, an exchange
+  // wallet or simply the first buyers all look identical from this distance.
+  //
+  // What eighty COSTS, stated rather than softened: a holder with four fifths
+  // of the supply can sell whenever they like and this engine will be inside
+  // when they do. The check is close to open now — it refuses the extreme case
+  // and nothing milder.
+  //
+  // What still does real work is the UNKNOWN branch, which is unchanged. GoPlus
+  // returns an empty holders array for most Solana tokens, and an unmeasured
+  // concentration is an unanswered question rather than a low one.
+  maxTopHoldersPct: 80,
   maxCreatorPct: 10,
   // The CEILING, not the preference. $50M for months, which excluded every
   // established token outright — and measured on ten days of 15m candles, that

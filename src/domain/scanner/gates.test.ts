@@ -88,8 +88,13 @@ describe('gates — the shapes of real rugs', () => {
     expect(failedGates(clean({}, { lpLockedPct: 10 }))).toEqual(['lpLocked:failed'])
   })
 
-  it('whale-heavy: top holders own 70%', () => {
-    expect(failedGates(clean({}, { topHoldersPct: 70 }))).toEqual(['topHolders:failed'])
+  it('whale-heavy: top holders own almost everything', () => {
+    // 70% used to be the fixture, and 70% now PASSES: the operator raised the
+    // ceiling to 80 after this gate turned out to be the single largest cut on
+    // a market where high concentration is ordinary. What is still a rug shape
+    // is a supply nearly all in a few hands.
+    expect(failedGates(clean({}, { topHoldersPct: 70 }))).toEqual([])
+    expect(failedGates(clean({}, { topHoldersPct: 95 }))).toEqual(['topHolders:failed'])
   })
 
   it('creator still holds a quarter of supply', () => {
@@ -701,5 +706,41 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
   it('still refuses a pool whose bars come back empty', () => {
     const still = gentle({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 40, sells: 30 } } })
     expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
+  })
+})
+
+describe('gates — concentration at eighty, which is nearly open', () => {
+  // The operator, with the trade stated in his own words: *subilo al 80%, nos
+  // vamos a arriesgar.*
+  //
+  // Forty was calibrated for a more distributed market than the one this book
+  // trades. Measured on live Solana tokens: cbBTC 26.67%, eHYUSD 45%, TRUMP
+  // 81.28% — and in a run over 35 tokens that cleared every other gate,
+  // `topHolders` blocked 20 and was the SOLE cause for 7, more than any other
+  // check. High concentration on Solana is the norm rather than the exception,
+  // and it is not always the creator: an LP position, an exchange wallet or
+  // the first buyers all look the same from here.
+  //
+  // What eighty BUYS is those seven back. What it COSTS is stated rather than
+  // softened: a holder with four fifths of the supply can sell whenever they
+  // like, and this engine will be inside when they do. The check is close to
+  // open now — it still refuses the extreme case, and nothing milder.
+
+  it('admits the concentration this market actually has', () => {
+    expect(failedGates(clean({}, { topHoldersPct: 26 }))).toEqual([])
+    expect(failedGates(clean({}, { topHoldersPct: 45 }))).toEqual([])
+    expect(failedGates(clean({}, { topHoldersPct: 79 }))).toEqual([])
+  })
+
+  it('still refuses the extreme', () => {
+    expect(failedGates(clean({}, { topHoldersPct: 81 }))).toEqual(['topHolders:failed'])
+    expect(failedGates(clean({}, { topHoldersPct: 99 }))).toEqual(['topHolders:failed'])
+  })
+
+  it('still fails CLOSED when nobody measured it', () => {
+    // Unchanged, and it is the half of this gate that still does real work:
+    // GoPlus returns an empty holders array for most Solana tokens, and an
+    // unknown concentration is an unanswered question rather than a low one.
+    expect(failedGates(clean({}, { topHoldersPct: null }))).toEqual(['topHolders:unknown'])
   })
 })
