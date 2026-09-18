@@ -3,7 +3,7 @@ import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../
 import { evaluateMarketGates, forgivableFailures } from '../domain/scanner/gates.js'
 import { hoursSinceLastTrade } from './idle-hours.js'
 import { type Candles } from './replay.js'
-import { scoreOpportunity } from '../domain/scanner/opportunity.js'
+import { meetsMinimums, scoreOpportunity } from '../domain/scanner/opportunity.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { mergeSecurity } from '../domain/scanner/security-merge.js'
 import { lpLockFromVenue } from '../infrastructure/adapters/solana/lp-heuristics.js'
@@ -467,6 +467,57 @@ export async function scanOnce(
     if (cheap.passed || forgivableFailures(cheap) !== null) affordable.push(market)
     else snapshots.push(provisional)
   }
+
+  // ── 3a-bis. The DOOR, asked before anything is paid for ────────────────────
+  //
+  // The operator: *¿no podemos filtrar antes a los tokens, de pasarlos por la
+  // revisión de Gecko?*
+  //
+  // `provisionalScore` already existed and was only used to ORDER a bounded
+  // budget — so with the budget unbounded it did not even sort, and every
+  // token clearing the free gates cost a throttled security call, two sell
+  // quotes and a history count. About 2.5 seconds each, set by the slowest
+  // throttle rather than by any latency.
+  //
+  // Asking the score door and the component floors FIRST is safe, and provably
+  // rather than approximately. The provisional score models slippage from
+  // REPORTED liquidity, which overstates depth — HEV reported $186k against
+  // $3.8k of real depth. Overstated depth means understated cost, so the
+  // provisional `costEfficiency`, and therefore the provisional score, are an
+  // UPPER BOUND on the real ones: a token below the door provisionally is
+  // below it really. `headroom` and `momentum` come out identical either way,
+  // because they read the same price changes.
+  //
+  // So this can only ever drop tokens the full evaluation would have dropped
+  // anyway, which is the property that makes it an economy rather than a
+  // softening of the rules.
+  const wanted = affordable.filter((market) => {
+    // Ours is never filtered out. Its security is the answer we most need
+    // current, because it is the one a rug would cost us — and the score
+    // decides what to BUY, never what to keep watching.
+    if (held.has(market.address)) return true
+    const provisional = scoreOpportunity(
+      { ...market, security: UNKNOWN_SECURITY, historyBars: null },
+      config.ranking.opportunity,
+      null,
+      {
+        liquidityUsd: market.liquidityUsd,
+        spreadPct: config.spreadPct,
+        slippagePct: market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100,
+        referenceUsd: config.referenceUsd,
+        observedAt: market.observedAt,
+      },
+    )
+    if (provisional.score < config.ranking.minScore) return false
+    return meetsMinimums(provisional.components, config.ranking.minComponents)
+  })
+  for (const market of affordable) {
+    if (!wanted.includes(market)) {
+      snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
+    }
+  }
+  affordable.length = 0
+  affordable.push(...wanted)
 
   // ── 3b. What is already known does not need paying for again ──────────────
   // A cached report keeps the token fully evaluated at no network cost, which

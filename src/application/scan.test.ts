@@ -747,3 +747,82 @@ describe('scanOnce — the same scan, over a smaller universe', () => {
     expect(out.snapshots.map((s) => s.address).sort()).toEqual(['found', 'ours'])
   })
 })
+
+describe('scanOnce — the door is asked BEFORE anything is paid for', () => {
+  // The operator: *¿no podemos filtrar antes a los tokens, de pasarlos por la
+  // revisión de Gecko?*
+  //
+  // `provisionalScore` already existed and was only used to ORDER a bounded
+  // budget — so with the budget unbounded it did not even sort, and every
+  // token that cleared the free gates cost a throttled GoPlus call, two sell
+  // quotes and a history count. About 2.5 seconds each, set by the slowest
+  // throttle and not by any latency.
+  //
+  // Asking the score door and the floors first is SAFE, and provably so rather
+  // than approximately: the provisional score models slippage from REPORTED
+  // liquidity, which overstates depth — HEV reported $186k against $3.8k of
+  // real depth. Overstated depth means understated cost, so the provisional
+  // `costEfficiency` and therefore the provisional score are an UPPER BOUND on
+  // the real ones. A token below the door provisionally is below it really.
+  // `headroom` and `momentum` come out identical, because they read the same
+  // price changes either way.
+
+  it('never pays for a token the score door would have refused anyway', async () => {
+    const paid: string[] = []
+    const { deps, http } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'dull' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/dull`]: { body: [pair('dull')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=dull`]: { body: { code: 1, message: 'ok', result: { dull: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=dull`]: { body: goodQuote },
+    })
+    const spy: ScanDeps = {
+      ...deps,
+      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
+    }
+    // A door nothing can clear.
+    await scanOnce(spy, { ...config, ranking: { ...config.ranking, minScore: 999 } })
+    expect(paid).toEqual([])
+  })
+
+  it('still pays for a token that clears it', async () => {
+    const paid: string[] = []
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+    })
+    const spy: ScanDeps = {
+      ...deps,
+      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
+    }
+    await scanOnce(spy, { ...config, ranking: { ...config.ranking, minScore: 0 } })
+    expect(paid).toEqual(['good'])
+  })
+
+  it('never lets the pre-filter touch a token we HOLD', async () => {
+    // Its security is the one answer we most need current, because it is the
+    // one a rug would cost us. A held token is not competing for a look and
+    // must never be skipped for scoring badly — the score decides what to BUY,
+    // never what to keep watching.
+    const paid: string[] = []
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/ours`]: { body: [pair('ours')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=ours`]: { body: { code: 1, message: 'ok', result: { ours: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=ours`]: { body: goodQuote },
+    })
+    const spy: ScanDeps = {
+      ...deps,
+      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
+    }
+    await scanOnce(spy, { ...config, held: ['ours'], ranking: { ...config.ranking, minScore: 999 } })
+    expect(paid).toEqual(['ours'])
+  })
+})
