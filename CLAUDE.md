@@ -1795,6 +1795,61 @@ the operations view wants the price to value. Fetching twice would double a bill
 already paid and let two views disagree about the same token in the same frame —
 which is the exact failure the single builder exists to prevent.
 
+### The free tier's real limit was network, and the screen was the one spending it
+
+The whole project stopped — dashboard AND engine writes — with
+*"Your account or project has exceeded the quota."* Not storage, not compute
+hours: **network transfer**, of which Neon's free tier gives **5 GB a month**.
+
+| | |
+|---|---|
+| The page polls `/api/view` every | 10 s |
+| Each poll pulled back the whole universe as JSONB | ~490 KB |
+| Per day | **4.2 GB** |
+| Per month | **127 GB against a 5 GB allowance** |
+
+The allowance was gone in **thirty-four hours**, and when it went the engine's
+writes went with it. An unattended system whose store stops answering does not
+degrade — it stops, holding thirty positions nobody is watching.
+
+**The cure is not a slower screen.** The figure on it is `qty × livePrice`: the
+quantity comes from Postgres and barely moves, the PRICE comes from DexScreener
+and is not this database's business at all. So the ten-second poll stays, the
+number goes on ticking, and what stops repeating is the question whose answer
+was already known.
+
+`cacheFor` wraps the six reads the dashboard makes, once per module so every
+viewer of every tab shares one answer — per METHOD rather than around
+`buildView`, because the three builders ask for overlapping things and a cache
+around the whole view would still pay for `loadPositions` three times.
+
+| Read | Window | Against |
+|---|---|---|
+| `latestScansByChain`, `latestScan`, `blacklisted` | **15 min** | a scan, which happens once an HOUR |
+| `loadPositions`, `allFills`, `loadCheckpoint` | **2 min** | the engine tick, every FIVE minutes |
+
+**127 GB a month becomes 3.1 — forty-one times less**, with room under the
+limit rather than just inside it. The first attempt used 5 min and 60 s and
+landed at 7.3 GB, still over: a fix that lands just past the limit is not a fix.
+
+Two properties carry more weight than the caching:
+
+- **The in-flight promise is shared**, not only the settled value. Several
+  viewers, or one page asking twice in a frame, would otherwise each pay for the
+  same read and the saving would evaporate exactly under load.
+- **A failure is never cached.** Remembering "the database was down" turns one
+  bad moment into two minutes of blank screen — the same rule the discovery and
+  history caches already run on.
+
+**The ENGINE is never cached.** It opens its own store and this module is not in
+its path: a trading decision taken on a two-minute-old position is not a saving,
+it is a bug.
+
+And the storage side was leaking too, separately: `scans` wrote the whole
+universe as JSONB per chain per scan and **nothing ever deleted a row**, though
+nothing ever read an old one either. `saveScan` now prunes its own chain, and
+`tools/free-space.sql` clears what accumulated.
+
 ### A freeze that will not say why
 
 Six positions showed `❄️ congelada` and not one of them said what for. The
