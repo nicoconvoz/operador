@@ -175,6 +175,16 @@ export interface ScanConfig {
  * fixing the cause and guessing at it.
  */
 export type ScanProgress =
+  /**
+   * Where discovery IS, not where it got to.
+   *
+   * Everything before the `universe` line is silent, and on a cold shelf that
+   * is thirty throttled calls per chain — the longest unbroken stretch in the
+   * whole cycle. Nine minutes of a log showing nothing but `[boot]` is
+   * indistinguishable from a hang, which is the exact failure the progress
+   * events were added for and the one stage they did not cover.
+   */
+  | { readonly stage: 'discovery'; readonly chain: Chain; readonly source: string; readonly found: number }
   | { readonly stage: 'universe'; readonly chain: Chain; readonly discovered: number; readonly dropped: number }
   | { readonly stage: 'market'; readonly chain: Chain; readonly priced: number }
   | { readonly stage: 'budget'; readonly chain: Chain; readonly affordable: number; readonly checking: number }
@@ -349,14 +359,17 @@ export async function scanOnce(
       errors.push({ address: '*', stage: 'market', error: `universe: ${String(error)}` })
     }
   }
+  deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'empezando', found: 0 })
   if (deps.history?.discoverPools) {
     try {
       for (const { tokenAddress } of await deps.history.discoverPools(config.chain)) universe.add(tokenAddress)
+      deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'pools', found: universe.size })
     } catch (error) {
       errors.push({ address: '*', stage: 'market', error: `pool universe: ${String(error)}` })
     }
   }
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
+  deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
   // The cap bounds DISCOVERY, never what we hold. A book wider than the cap
   // would otherwise start dropping its own positions out of the scan, which is
   // the failure this whole ordering exists to prevent.
