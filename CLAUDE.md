@@ -1929,6 +1929,41 @@ universe as JSONB per chain per scan and **nothing ever deleted a row**, though
 nothing ever read an old one either. `saveScan` now prunes its own chain, and
 `tools/free-space.sql` clears what accumulated.
 
+### The radar carries what we may act on, nothing else
+
+Measured on one live scan:
+
+| | Tokens | Stored | Share |
+|---|---|---|---|
+| filtered | 187 | 146 KB | 64% |
+| unsafe | 108 | 81 KB | 35% |
+| **everything tradeable** | **2** | **1 KB** | **1%** |
+
+**Ninety-nine percent of what was written, read back on every poll and drawn on
+a phone was tokens nobody will ever touch** — and the same bytes are what
+exhausted a 5 GB monthly transfer allowance in thirty-four hours.
+
+The operator's rule: *do not even put them on the radar.* Nothing is lost by
+forgetting a rejection, because the universe is re-discovered from scratch on
+every scan — a token that becomes tradeable comes back on the next pass with
+fresh numbers rather than stale ones.
+
+`worthStoring` keeps a snapshot when the token is a CANDIDATE (reserve
+included) or when we HOLD it.
+
+**The held clause is the trap in this change**, and it has its own test. A token
+of ours whose mint authority came back fails every safety gate, and it is the
+most urgent thing this screen can say — `turnedUnsafe` exists for exactly that.
+Dropping it as "rejected" would delete the alarm and leave the dashboard
+serenely quiet about our money sitting in something that just turned.
+
+What is lost, stated rather than discovered later: the per-token REASONS for
+every rejection. Tallying those across the rejected set is what found three
+separate bugs in a single day — `turnover` blocking 108 tokens on its own, a
+history gate stuck at "99 < 100", and 26 positions reddened by a rate limit. A
+histogram of gate → count would keep that power for a few hundred bytes, and is
+the obvious next step if diagnosing a quiet scanner ever gets hard again.
+
 ### A freeze that will not say why
 
 Six positions showed `❄️ congelada` and not one of them said what for. The

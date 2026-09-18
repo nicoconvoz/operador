@@ -35,6 +35,7 @@ import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
 import { CachedBarActivity } from '../application/bar-activity.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
+import { worthStoring } from '../application/worth-storing.js'
 import { runLoop, shutdownSignal } from './loop.js'
 
 /**
@@ -532,7 +533,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               ...(config.maxSecurityChecks === null ? {} : { maxSecurityChecks: config.maxSecurityChecks }),
             },
           )
-          await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: result.snapshots })
+          // Only what the engine may act on. 187 filtered and 108 unsafe cost
+          // 227 KB against ONE kilobyte of tradeable tokens, and those bytes
+          // are what a phone downloads on every poll.
+          const keep = worthStoring(result.snapshots, result.candidates, open.filter((p) => p.chain === chain).map((p) => p.tokenAddress))
+          console.log(`[scan:stored] ${chain} ${keep.length} de ${result.snapshots.length}`)
+          await store.saveScan({ scannedAt: result.scannedAt, chain, snapshots: keep })
           candidates.push(...result.candidates)
           // A scan three times slower in CI than on a laptop is either a rate
           // limit or a mystery. This is how it stops being a mystery.
