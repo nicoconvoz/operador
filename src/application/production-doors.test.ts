@@ -6,12 +6,15 @@ describe('productionDoors — one definition of what the book may buy', () => {
     // The operator's words for it — *o está on o está off*. Below any of the
     // three the coin is out; above all three it passes and the score is
     // computed as it always was, with the check playing no part in it.
-    expect(productionDoors({}).minComponents).toEqual({ costEfficiency: 0.3, momentum: 0.3 })
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3, momentum: 0.3 })
-    // `headroom` was the third and is RETIRED: at 0.3 it refused every token up
-    // more than about 95% on the day, which is the runner this book exists to
-    // catch. The 24h change still refuses a FALL through `maxDailyFallPct`.
-    expect(DEFAULT_COMPONENT_FLOORS.headroom).toBeUndefined()
+    expect(productionDoors({}).minComponents).toEqual({ costEfficiency: 0.3, momentum: 0.3, headroom: 0.3 })
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3, momentum: 0.3, headroom: 0.3 })
+    // `headroom` came BACK, and what changed is the window it reads rather
+    // than the mind of whoever set it. Over a DAY it refused every token up
+    // more than ~95%, which is the runner this book exists to catch. Over the
+    // HOUR it asks a different question — is this still climbing, and has the
+    // climb not already happened — and the 2000%-in-a-day token now passes it
+    // whenever its current hour is calm.
+    expect(DEFAULT_COMPONENT_FLOORS.headroom).toBe(0.3)
   })
 
   it('shuts the score door at fifty', () => {

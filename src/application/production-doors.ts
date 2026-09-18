@@ -60,6 +60,7 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
 export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
   costEfficiency: 0.3,
   momentum: 0.3,
+  headroom: 0.3,
 }
 
 /**

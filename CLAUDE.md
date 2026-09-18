@@ -1843,7 +1843,11 @@ is the drift this project has paid for more than once.
 fixed 45 sits below a door of 70 and every survivor would be drawn `prime` — a
 top tier containing everything says as much as no tier.
 
-### `headroom` is retired — the largest weight in the score, removed
+### `headroom` was retired as a DAILY measure — SUPERSEDED
+
+> It came back the same evening reading the HOUR instead of the day, floor
+> and all. See "The run ahead is measured over the HOUR" below. Why the
+> DAILY version had to go is what follows, and it still stands.
 
 It asked *how much of the rise is still ahead*, it carried **1.14 of 3.08**,
 and its 0.3 floor refused every token up more than about **95% on the day**.
@@ -1888,6 +1892,79 @@ does not leave a neutral score, it hands the majority to whatever was second.**
 Total weights fall 3.08 → 1.94 and `activity` goes from 32.5% to **51.5%** — so
 "is anyone trading it" is now more than half the answer. There is a test whose
 only job is to say so.
+
+### The run ahead is measured over the HOUR — the day let everything through
+
+`headroom` came back as a floor, and what changed is the WINDOW it reads, not
+the mind of whoever set it. The operator's argument:
+
+> *de qué me sirve una ventana tan grande de un día en tokens que cambian en
+> minutos... el día cuela todo.*
+
+It is the same class of error `dropInitPct` already cost this project: **a
+parameter calibrated for one window stops meaning what it meant when the window
+changes**, and this engine trades 15-minute bars. Over a DAY the component said
+a token that moved at breakfast and has been flat since was fully spent, and
+one running right now was fresh because its day had not caught up. Both answers
+are about yesterday.
+
+It also dissolves the contradiction that retired it in the first place. Over a
+day, *up 2000%* scored zero and was refused — the runner this book exists to
+catch. Over the hour, the same token passes whenever its current hour is calm,
+because the question is no longer "how big was the move" but **"is this still
+climbing, and has the climb not already happened."**
+
+**The curve is DERIVED, not carried over.** Measured across 72 live Solana
+pools over $50k of liquidity:
+
+| of those RISING in the last hour | |
+|---|---|
+| median | **+1.45%** |
+| p75 | +3.92% |
+| p90 | +11.56% |
+| p95 | +23.42% |
+| max | +31.6% |
+| **flat or falling** | **36% of the sample** |
+
+`headroomKneePct` is the p75 (**4**) and `headroomFullyRunPct` the p95 (**25**),
+so the 0.30 floor lands at about **+12% in an hour** — the p90. Below it a
+token is moving up with room left; above it the move has already happened and
+the next thing we would buy is its top. The old 30 and 200 are unreachable on
+an hour: almost nothing gets there, so every riser would have scored ~1.0 and
+the component would have said nothing at all.
+
+**`logHeadroom` now clamps its input at zero**, and not for tidiness. A run more
+negative than the knee makes `1 + runPct/knee` negative, `Math.log` returns NaN,
+and `clamp01` passes it straight through. A NaN component poisons the score
+silently: every comparison against it is false, so a token carrying one is
+neither above a floor nor below it, and the ranking simply stops having an
+opinion about it. The caller answers the falling case first and this is the
+second lock.
+
+**Still weight zero.** It is a DOOR, not a term in the score — the operator's
+own rule, *un filtro aparte que no modifique el puntaje total*.
+
+#### The cliff at zero, and what it will cost
+
+Stated rather than discovered later. The magnitude curve is smooth; the
+direction branch is a **hard cliff at exactly 0%**. Measured on the open book
+the hour this shipped:
+
+| | unrealised | 1h | headroom |
+|---|---|---|---|
+| USELESS | −$5.51 | **+0.1%** | **0.984** |
+| STONK | −$2.54 | +0.5% | 0.939 |
+
+USELESS sits one hundredth of a percent from the other side, where `headroom`
+drops from 0.984 to **0.000** — the whole range of the component, on a rounding
+error. A token oscillating around zero for the hour is therefore sold by the
+rotation switch and bought back by the allocator, repeatedly, paying its round
+trip (0.86% on USELESS) every time.
+
+Nothing here guards against that yet: a rotated token is deliberately not
+blacklisted, and unlike `idle-slots` — which refuses to re-open what it just
+released in the same cycle — the rotation has no cooldown. That is the next
+thing to decide, and it is a decision about churn rather than about the window.
 
 ### The switch goes off on a live position: sell and rotate
 

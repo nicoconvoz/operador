@@ -185,8 +185,16 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   activityKneeTxnsPerHour: 15,
   fullActivityTxnsPerHour: 300,
   fullVolatilityPct: 20,
-  headroomKneePct: 30,
-  headroomFullyRunPct: 200,
+  // DERIVED from 72 live Solana pools over $50k of liquidity, not carried
+  // over from the daily curve. Of those rising in the last hour the median
+  // moves +1.45%, p75 is +3.92%, p90 is +11.56% and p95 is +23.42%; 36% are
+  // flat or falling. Knee at the p75, fully run at the p95 — so the 0.30 floor
+  // lands at about +12% in an hour, which is the p90.
+  //
+  // Below that a token is moving up with room left. Above it the move has
+  // already happened and the next thing we would buy is its top.
+  headroomKneePct: 4,
+  headroomFullyRunPct: 25,
   worstRoundTripPct: 4,
 }
 
@@ -228,7 +236,15 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x))
  */
 export function logHeadroom(runPct: number, policy: OpportunityPolicy): number {
   const knee = policy.headroomKneePct
-  const spent = Math.log(1 + runPct / knee) / Math.log(1 + policy.headroomFullyRunPct / knee)
+  // Clamped at zero before the log, and not for tidiness: a run more negative
+  // than the knee makes `1 + runPct/knee` negative and `Math.log` returns NaN,
+  // which `clamp01` passes straight through. A NaN component poisons the whole
+  // score silently — every comparison against it is false, so a token carrying
+  // one is neither above a floor nor below it, and the ranking simply stops
+  // having an opinion about it.
+  //
+  // The caller answers the falling case first and this is the second lock.
+  const spent = Math.log(1 + Math.max(0, runPct) / knee) / Math.log(1 + policy.headroomFullyRunPct / knee)
   return clamp01(1 - spent)
 }
 
@@ -324,14 +340,28 @@ export function scoreOpportunity(
   // An UNREPORTED window is still neutral, because silence is not evidence —
   // the rule the whole scanner runs on — and reading it as a crash would
   // condemn every token a provider was quiet about.
+  // Measured over the HOUR, and it used to be measured over the day.
+  //
+  // The operator's argument, and it is the same class of error `dropInitPct`
+  // already cost this project: *de qué me sirve una ventana tan grande de un
+  // día en tokens que cambian en minutos... el día cuela todo.* A parameter
+  // calibrated for one window stops meaning what it meant when the window
+  // changes, and this engine trades 15-minute bars.
+  //
+  // What the daily version actually did: a token that moved at breakfast and
+  // has been flat since read as fully spent, and one running right now read as
+  // fresh because its day had not caught up. Both answers are about yesterday.
+  //
+  // A token going the WRONG WAY has none of the upside left — that is the
+  // honest answer to the question asked, not a second punishment for the fall.
+  // An UNREPORTED hour stays neutral, because silence is not evidence.
   const recent = priceChangePct.h1
-  const day = priceChangePct.h24
   const headroom =
     recent === null || recent === undefined
       ? 0.5
       : recent <= 0
         ? 0
-        : logHeadroom(Math.max(0, day ?? 0), policy)
+        : logHeadroom(recent, policy)
 
   // Round trip = pay to get in, pay to get out.
   //
