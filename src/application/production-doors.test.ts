@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS } from './production-doors.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
-  it('is a binary key: the floors at thirty percent', () => {
+  it('is a binary key: trend at fifty, the other two at thirty', () => {
     // The operator's words for it — *o está on o está off*. Below any of the
     // three the coin is out; above all three it passes and the score is
     // computed as it always was, with the check playing no part in it.
-    expect(productionDoors({}).minComponents).toEqual({ costEfficiency: 0.3, momentum: 0.3, headroom: 0.3 })
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3, momentum: 0.3, headroom: 0.3 })
+    expect(productionDoors({}).minComponents).toEqual({ momentum: 0.5, headroom: 0.3, costEfficiency: 0.3 })
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ momentum: 0.5, headroom: 0.3, costEfficiency: 0.3 })
     // `headroom` came BACK, and what changed is the window it reads rather
     // than the mind of whoever set it. Over a DAY it refused every token up
     // more than ~95%, which is the runner this book exists to catch. Over the
@@ -17,9 +17,9 @@ describe('productionDoors — one definition of what the book may buy', () => {
     expect(DEFAULT_COMPONENT_FLOORS.headroom).toBe(0.3)
   })
 
-  it('shuts the score door at fifty', () => {
+  it('leaves the score door OPEN — the floors are the whole rule', () => {
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
-    expect(DEFAULT_MIN_SCORE).toBe(25)
+    expect(DEFAULT_MIN_SCORE).toBe(0)
   })
 
   it('takes zero as "let everything through", never as unset', () => {

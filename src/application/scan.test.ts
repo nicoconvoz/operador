@@ -4,7 +4,7 @@ import { DexScreener, DEXSCREENER_BASE, type DexPair } from '../infrastructure/a
 import { GoPlus, GOPLUS_BASE, type GoPlusSolanaToken } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter, JUPITER_LITE_BASE } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { stubHttp } from '../infrastructure/http.js'
-import { evaluateGates, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { evaluateGates, DEFAULT_GATE_POLICY, STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { type SecurityReport } from '../domain/scanner/snapshot.js'
 
@@ -504,7 +504,11 @@ describe('scanOnce — the reserve has to be EXAMINED before it can be reserve',
       [`${GOPLUS_BASE}/solana/token_security?contract_addresses=slow`]: { body: { code: 1, message: 'ok', result: { slow: safe } } },
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=slow`]: { body: goodQuote },
     })
-    const out = await scanOnce(deps, config)
+    // Under the STRICT policy, where the taste gates still live: production
+    // stopped asking turnover, volume and the FDV cap, so nothing is ever
+    // FORGIVEN under the default and the reserve has nothing to hold. The
+    // mechanism is proved here and returns the day those gates do.
+    const out = await scanOnce(deps, { ...config, ranking: { ...config.ranking, gates: STRICT_GATE_POLICY } })
 
     expect(out.snapshots[0]?.securityChecked).toBe(true)
     expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['slow'])

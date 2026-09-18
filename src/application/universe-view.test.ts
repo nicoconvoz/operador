@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildUniverse } from './universe-view.js'
+import { STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch, type DeathWatchState } from '../domain/risk/death-exit.js'
@@ -44,6 +45,17 @@ const seed = async (snapshots: TokenSnapshot[]) => {
 
 const options = { now: () => NOW }
 
+/**
+ * The tiers, under the policy that still asks the taste gates.
+ *
+ * Production narrowed to three component floors plus safety, so
+ * `DEFAULT_GATE_POLICY` no longer asks turnover, volume or the FDV cap — which
+ * means nothing is ever FORGIVEN under it and the `reserve` tier has nothing
+ * to hold. The tier LOGIC is still worth proving, and it comes back the day
+ * those gates do.
+ */
+const strictOptions = { now: () => NOW, gates: STRICT_GATE_POLICY }
+
 describe('buildUniverse — tiers tell the story', () => {
   it('an empty store yields an empty universe, not a crash', async () => {
     const view = await buildUniverse(new MemoryStore(), options)
@@ -60,12 +72,17 @@ describe('buildUniverse — tiers tell the story', () => {
   })
 
   it('a clean but quiet token is eligible, not prime', async () => {
+    // What makes a token score low CHANGED. Volume and trade counts used to
+    // carry weight and no longer do — the score is momentum, the hour, and
+    // what the pool charges. So "dull" is now a token going nowhere in a pool
+    // that is expensive to trade, which is exactly what this one is: flat in
+    // every window, and thin enough that a reference order moves it 4%.
     const quiet = token('CALM', {
-      // Live enough to clear the turnover gate, dull enough to score low:
-      // the pool moves, nothing is happening in it.
       volumeUsd: { h1: 1_000, h6: 10_000, h24: 700_000 },
       txns: { h1: { buys: 2, sells: 2 }, h24: { buys: 100, sells: 100 } },
-      priceChangePct: { h1: 0, h6: 0, h24: 0 },
+      // Sliding in the hour: momentum reads zero and so does the hour's own
+      // door, which between them are 80% of the score.
+      priceChangePct: { h1: -10, h6: 0, h24: 0 },
     })
     const [t] = (await buildUniverse(await seed([quiet]), options)).tokens
     expect(t!.tier).toBe('eligible')
@@ -432,14 +449,22 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
   const quiet = token('QUIET', { liquidityUsd: 5_000_000, volumeUsd: { h1: 4_000, h6: 24_000, h24: 96_000 } })
 
   it('draws a token held back only by a preference as reserve', async () => {
+    // Under the STRICT policy, which is where these gates still live: the
+    // production default stopped asking turnover, volume and the FDV cap, so
+    // nothing is ever FORGIVEN under it and the reserve has nothing to hold.
+    // The mechanism is proved here and comes back the day those gates do.
     const store = await seed([quiet])
-    const view = await buildUniverse(store, options)
+    const view = await buildUniverse(store, strictOptions)
     expect(view.tokens[0]?.tier).toBe('reserve')
   })
 
   it('still says WHY it is not a first choice', async () => {
+    // Under the STRICT policy, which is where these gates still live: the
+    // production default stopped asking turnover, volume and the FDV cap, so
+    // nothing is ever FORGIVEN under it and the reserve has nothing to hold.
+    // The mechanism is proved here and comes back the day those gates do.
     const store = await seed([quiet])
-    const view = await buildUniverse(store, options)
+    const view = await buildUniverse(store, strictOptions)
     expect(view.tokens[0]?.blockers.join(' ')).toMatch(/liquidez/)
   })
 

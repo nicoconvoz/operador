@@ -141,7 +141,7 @@ describe('loadConfig — the security budget is a cap you ASK for, not one you g
 })
 
 describe('minScore — a door on the score, not another weight in it', () => {
-  it('refuses anything under 50 by default', () => {
+  it('is OPEN by default — the component floors are the whole rule', () => {
     // The operator's rule, and the shape of it is the point: *un filtro
     // aparte, que no modifique el puntaje total*. The toll was first expressed
     // as a WEIGHT (0.2 -> 0.9), which worked and cost too much — a weighted
@@ -152,7 +152,7 @@ describe('minScore — a door on the score, not another weight in it', () => {
     // A door does not have that property. It reads the score after it is
     // computed and answers one question, so the scale it is read against is
     // the same scale yesterday's numbers were.
-    expect(loadConfig(valid).minScore).toBe(25)
+    expect(loadConfig(valid).minScore).toBe(0)
   })
 
   it('takes zero as a real value — it is "let everything through", not "unset"', () => {

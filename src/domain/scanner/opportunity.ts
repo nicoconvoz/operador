@@ -53,19 +53,22 @@ export interface OpportunityPolicy {
   /** Absolute 1h move (plus half the 6h move) that counts as fully volatile, percent. */
   readonly fullVolatilityPct: number
   /**
-   * The rise, in percent over the last hour, below which nothing is happening.
+   * How far the last hour may have FALLEN before the token is refused.
    *
-   * The operator's number, and it closes a cliff: the direction branch was a
-   * hard edge at exactly 0%, so a token at +0.1% scored 0.984 — one hundredth
-   * of a percent from 0.000, which is the entire range of the component. A
-   * position oscillating there would be rotated out and bought back every half
-   * hour, paying its round trip each time.
+   * The operator's calibration: *ponele que no haya descendido más del -3%
+   * en la última hora.* It asked for a RISE of more than 1% before, and that
+   * was too strict by a measured margin: of 84 live Solana tokens only 37%
+   * cleared it, so this floor — not the score door — was what held the book
+   * at seven positions where it had once run thirty-one. Lowering minScore
+   * from 50 to 25 could not compensate, because the score was never what was
+   * cutting.
    *
-   * At 1% the edge sits on a move rather than on noise, and it still sits
-   * BELOW the measured median riser (+1.45%), so it ignores drift without
-   * refusing the ordinary climbing token.
+   * At -3% the same sample keeps 75%, and 68% once momentum has its say. The
+   * question changes with it: not "is it going up right now", which is a
+   * snapshot of one instant and re-rolls every scan, but "is it not falling
+   * out from under us", which is what a door is for.
    */
-  readonly headroomMinRisePct: number
+  readonly headroomMaxFallPct: number
   /**
    * Round-trip cost, in percent, at which cost efficiency scores zero.
    *
@@ -179,7 +182,11 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // does not leave a neutral score, it hands the majority to whatever was
   // second. Total weights fall 3.08 -> 1.94 and `activity` goes from 32.5% to
   // 51.5%, so "is anyone trading it" is now more than half the answer.
-  weights: { volumeExpansion: 0.3, buyPressure: 0.15, liquidityGrowth: 0.1, activity: 1.0, volatility: 0.05, momentum: 0.14, headroom: 0, costEfficiency: 0.2 },
+  // THREE components, and the operator set them as shares: *tendencia
+  // reciente alcista 50%, sube en una hora 30%, eficiencia de costos 30%.*
+  // Everything else is still measured and still drawn — the detail sheet
+  // answers "why is this ranked here" with bars — and decides nothing.
+  weights: { volumeExpansion: 0, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0.5, headroom: 0.3, costEfficiency: 0.3 },
   fullExpansionRatio: 3,
   activityKneeTxnsPerHour: 15,
   fullActivityTxnsPerHour: 300,
@@ -188,7 +195,7 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // across 72 live Solana pools over $50k of liquidity, the median riser moves
   // +1.45% in an hour and 36% are flat or falling — so one percent ignores the
   // drift without refusing the ordinary climbing token.
-  headroomMinRisePct: 1,
+  headroomMaxFallPct: 3,
   worstRoundTripPct: 4,
 }
 
@@ -328,7 +335,7 @@ export function scoreOpportunity(
   const headroom =
     recent === null || recent === undefined
       ? 0.5
-      : recent <= policy.headroomMinRisePct
+      : recent < -policy.headroomMaxFallPct
         ? 0
         : 1
 

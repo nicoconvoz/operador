@@ -1281,3 +1281,51 @@ describe('runCycle — the trim must not write over what the tick just decided',
     expect(after.cascade.ep1).toBe(1)
   })
 })
+
+describe('runCycle — the exit cost reaches the guard, not just the function', () => {
+  // A mutation check found this hole the hard way: breaking
+  // `refusesToSellAtALoss` killed two tests, and breaking the CALL SITE that
+  // feeds it the exit cost killed none. The function was right and nobody was
+  // handing it the number — which is precisely how the production bug
+  // happened, a `🔁 Rotación` marked -$2.07 with a guard that was working
+  // perfectly against the wrong input.
+  //
+  // So this exercises the whole path: a live market price a hair above average
+  // cost, and a venue whose spread is wider than the hair.
+
+  const barelyUp = async (market: number) => {
+    const store = new MemoryStore()
+    await store.savePosition(position({ tokenAddress: 'Held', symbol: 'HELD' }))
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', idempotencyKey: 'k1', side: 'buy',
+      qty: 1_000, price: 1, costUsd: 0.05, comment: 'Entry', time: NOW - HOUR,
+    })
+    const { deps, throttle } = rig({
+      store,
+      scan: async () => [],
+      switchedOff: () => [{
+        snapshot: { chain: 'solana' as const, address: 'Held', symbol: 'Held', pairAddress: 'pair-Held', priceUsd: 0.01 } as TokenSnapshot,
+        opportunity: { score: 12, components: {} as never },
+        failed: ['momentum'] as never,
+      }],
+      marketPrices: async () => new Map([['solana:Held', market]]),
+      brokerFor: async (p) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(p.id))
+        return broker
+      },
+    })
+    await runCycle(deps, config, throttle)
+    return (await store.allFills()).some((f) => f.side === 'sell')
+  }
+
+  it('refuses when the spread would eat the whole gain', async () => {
+    // Bought at 1, market at 1.001, and leaving costs 0.30% — so the position
+    // would receive 0.998 and book a loss on a screen showing a profit.
+    expect(await barelyUp(1.001)).toBe(false)
+  })
+
+  it('sells once the gain clears what leaving costs', async () => {
+    expect(await barelyUp(1.05)).toBe(true)
+  })
+})

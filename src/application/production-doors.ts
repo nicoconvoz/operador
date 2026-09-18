@@ -58,9 +58,9 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  * not a passing one.
  */
 export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
-  costEfficiency: 0.3,
-  momentum: 0.3,
+  momentum: 0.5,
   headroom: 0.3,
+  costEfficiency: 0.3,
 }
 
 /**
@@ -86,7 +86,12 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
  * before they were ever stored. The sample is biased against exactly what
  * this scale now rewards.
  */
-export const DEFAULT_MIN_SCORE = 25
+// ZERO, because the floors ARE the rule now. *Esa va a ser la única regla.*
+// A score door on top of three floors that already carry the whole score
+// would be a fourth rule doing the same job twice — and it was the wrong one
+// to reach for anyway: at 50 it was blamed for a narrow book while the real
+// cut was `momentum`, which only a third of tokens clear in any given hour.
+export const DEFAULT_MIN_SCORE = 0
 
 export interface ProductionDoors {
   /** The binary key. Below any floor the token is neither candidate nor reserve. */

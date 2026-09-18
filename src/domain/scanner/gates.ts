@@ -170,12 +170,46 @@ export const SOLANA_CANONICAL_SYMBOLS: Readonly<Record<string, string>> = {
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = {
-  minLiquidityUsd: 20_000,
+  // THE TASTE GATES STEP ASIDE.
+  //
+  // The operator narrowed what a gate is allowed to be: *tendencia reciente
+  // alcista +50%, sube en una hora +30% y eficiencia de costos +30%, esa va a
+  // ser la única regla, y obvio la regla de que no nos metan una cripto
+  // trampa.* Three component floors plus safety; everything that merely
+  // expressed a preference about the pool stops deciding.
+  //
+  // Measured on 114 live Solana tokens before the change: `turnover` blocked 20
+  // of them and was the SOLE cause for 15 — more than any other. `freefall`
+  // blocked 23, sole cause for 11. And `liquidity` and `volume` blocked 32 and
+  // 17 while being the sole cause for ZERO: they only ever fired alongside
+  // something else, so they were never deciding anything.
+  //
+  // Zero and null are the honest way to express "this does not decide" — the
+  // gate and its reason survive for the day it is wanted back, and a reader
+  // sees a policy rather than a hole where a check used to be.
+  // NOT zero, and this one is not taste. `liquidity` is also a SAFETY gate:
+  // it answers "can this position be left", which is the one question a
+  // position cannot survive getting wrong — and the operator's own exception
+  // covers it, *que no nos metan una cripto trampa.*
+  //
+  // DERIVED rather than picked, like the gas floor. The smallest order worth
+  // placing is `minFillUsd` (~$16, itself the gas floor), and the impact model
+  // inverts to depth = 200 x usd / impact%. At the 1% budget that is $3,200,
+  // so below roughly $3,000 of depth even the smallest viable order costs more
+  // than the whole budget. It rises with gas exactly as it should.
+  //
+  // It was $20,000, and measured on 114 live tokens it blocked 32 of them while
+  // being the SOLE cause for zero: it only ever fired alongside something else,
+  // so it was never deciding anything — it was just making the universe look
+  // smaller than the real constraints made it.
+  minLiquidityUsd: 3_000,
   minAgeHours: 24,
-  minVolume24hUsd: 10_000,
-  maxFallPct: 50,
-  maxDailyFallPct: 15,
-  minTurnoverRatio: 1,
+  minVolume24hUsd: 0,
+  // The hour decides a collapse now, through the `headroom` floor at -3%. A
+  // daily threshold on top was belt and braces against the same accident.
+  maxFallPct: 100,
+  maxDailyFallPct: 100,
+  minTurnoverRatio: 0,
   minHourlyTxns: 4,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
@@ -196,7 +230,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // ahead of every large one regardless of score, so the big names only ever
   // take a slot nothing smaller wanted. The ceiling admits them; the order
   // decides they come last.
-  maxFdvUsd: 500_000_000,
+  maxFdvUsd: null,
   denylist: SOLANA_DENYLIST,
   canonicalSymbols: SOLANA_CANONICAL_SYMBOLS,
   // ENOUGH TO ENTER, not enough for every door.
@@ -227,6 +261,28 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // budgets could rescue; past it there is nothing to size down to.
   maxReferenceImpactPct: 10,
 }
+
+/**
+ * The thresholds the taste gates USED to carry, kept so their logic stays
+ * tested after production stopped asking them.
+ *
+ * The gates themselves are unchanged and still work; what changed is that
+ * `DEFAULT_GATE_POLICY` no longer asks them anything, because the operator
+ * narrowed the rule to three component floors plus safety. A test that proves
+ * `turnover` fires on a slow pool is still worth having — it just has to say
+ * which policy it is proving it under, rather than leaning on a default whose
+ * whole point is that it does not decide any more.
+ */
+export const STRICT_GATE_POLICY: GatePolicy = {
+  ...DEFAULT_GATE_POLICY,
+  minLiquidityUsd: 20_000,
+  minVolume24hUsd: 10_000,
+  maxFallPct: 50,
+  maxDailyFallPct: 15,
+  minTurnoverRatio: 1,
+  maxFdvUsd: 500_000_000,
+}
+
 
 /**
  * The age a pool must have before it could POSSIBLY hold `bars` of history.

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { entryAlertLabel, MAX_CATCH_UP_BARS, tickPosition, type EngineConfig, type TickInput } from './engine.js'
+import { entryAlertLabel, MAX_CATCH_UP_BARS, refusesToSellAtALoss, tickPosition, type EngineConfig, type TickInput } from './engine.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
+import { DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT } from '../domain/risk/death-exit.js'
+import { type CloseAllOrder } from '../domain/strategy/state.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
@@ -967,5 +969,67 @@ describe('tickPosition — the rung is derived from the capital, not a constant'
     // third of it into the first one — not $15 and $100 doing nothing.
     const rung = await rungUsd(150)
     expect(rung).toBeGreaterThan(30)
+  })
+})
+
+describe('tickPosition — the no-loss rule must survive what LEAVING costs', () => {
+  // Found in production by the operator: a `🔁 Rotación` sale marked -$2.07.
+  //
+  //   bought at            0.05076167
+  //   the guard looked at  0.05078      <- above cost, so it allowed the sale
+  //   the fill landed at   0.0506076    <- below cost
+  //
+  // The guard compared the GROSS market price and the venue then took its cut:
+  // 0.34%, which is the spread on the way out. So "never sell at a loss" held
+  // right up to the moment money changed hands.
+  //
+  // CLAUDE.md already records this exact mistake once, about the strategy's own
+  // exit: *the rule was enforced at DECISION time, where price is above average
+  // cost by construction; it leaked at EXECUTION time.* Fixing it there and
+  // leaving it here is the same bug twice, in two places, a day apart.
+  //
+  // What the guard must compare is the price NET of what leaving costs — the
+  // venue spread plus the impact this position's own size will cause — because
+  // that is the number the position will actually receive.
+
+  const refuses = (market: number, exitCostPct: number, comment: CloseAllOrder['comment'] = '🔁 Rotación') =>
+    refusesToSellAtALoss({ kind: 'closeAll', comment }, 1, market, exitCostPct)
+
+  it('refuses a sale whose NET proceeds land below average cost', () => {
+    // The production case, scaled: a market price a hair above cost, and a
+    // venue that takes more than the hair on the way out.
+    expect(refuses(1.001, 0.7)).toBe(true)
+  })
+
+  it('allows one whose net proceeds clear it', () => {
+    expect(refuses(1.05, 0.7)).toBe(false)
+  })
+
+  it('is exactly the round trip, not a fudge factor', () => {
+    // At a 0.7% exit cost the break-even market price is 1/(1 - 0.007). Just
+    // under it the sale is refused and just over it it goes through, so the
+    // threshold is arithmetic rather than a margin someone chose.
+    const breakEven = 1 / (1 - 0.007)
+    expect(refuses(breakEven * 0.999, 0.7)).toBe(true)
+    expect(refuses(breakEven * 1.001, 0.7)).toBe(false)
+  })
+
+  it('costs nothing when leaving costs nothing', () => {
+    // The old behaviour exactly, so a caller that cannot measure the exit cost
+    // is not silently given a different rule.
+    expect(refuses(1.001, 0)).toBe(false)
+    expect(refuses(0.999, 0)).toBe(true)
+  })
+
+  it('still lets the two RISK exits out at any price at all', () => {
+    // They leave because the asset stopped being an asset, and holding out for
+    // a better price on something unsellable is how you hold it for ever. What
+    // leaving costs cannot be a reason to stay.
+    expect(refuses(0.1, 0.7, DEATH_EXIT_COMMENT)).toBe(false)
+    expect(refuses(0.1, 0.7, FROZEN_EXIT_COMMENT)).toBe(false)
+  })
+
+  it('has nothing to hold when the position holds nothing', () => {
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🔁 Rotación' }, null, 0.1, 5)).toBe(false)
   })
 })

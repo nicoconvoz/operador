@@ -28,15 +28,30 @@ const base = (over: Partial<TokenSnapshot> = {}): TokenSnapshot => ({
 })
 
 describe('opportunity — components are explainable and bounded', () => {
-  it('a steady, balanced, quiet token scores low with neutral components', () => {
+  it('a steady, balanced, quiet token reports neutral components and sits between the extremes', () => {
     const { score, components } = scoreOpportunity(base(), P)
     expect(components.volumeExpansion).toBeCloseTo(1 / 3, 9) // ratio 1 of 3
     expect(components.buyPressure).toBe(0)
     expect(components.liquidityGrowth).toBeCloseTo(0.5, 9) // no previous → ratio 1
     expect(components.volatility).toBe(0)
+    expect(components.momentum).toBeCloseTo(0.5, 9) // flat in every window → no reason either way
+    expect(components.headroom).toBe(1) // flat is not a collapse, and the hour only asks about that
     expect(components.costEfficiency).toBe(0.5) // unmeasured → neutral, never generous
-    expect(score).toBeGreaterThan(0)
-    expect(score).toBeLessThan(50)
+
+    // The score used to be asserted BELOW 50 here, and that number was a
+    // consequence of eight weighted terms rather than a decision. Three carry
+    // it now — *tendencia reciente alcista 50%, sube en una hora 30%,
+    // eficiencia de costos 30%* — and two of them are neutral by construction
+    // on a token like this, so any absolute bound would be pinning arithmetic
+    // that the next weight change moves again.
+    //
+    // What survives the change is an ORDERING, which is the actual claim: a
+    // quiet token is worth strictly less than the same token climbing and
+    // strictly more than the same token falling out from under us.
+    const climbing = scoreOpportunity(base({ priceChangePct: { h1: 5, h6: 5, h24: 5 } }), P).score
+    const collapsing = scoreOpportunity(base({ priceChangePct: { h1: -30, h6: -30, h24: -30 } }), P).score
+    expect(score).toBeLessThan(climbing)
+    expect(score).toBeGreaterThan(collapsing)
   })
 
   it('every component and the score stay within bounds under extreme inputs', () => {
@@ -55,34 +70,67 @@ describe('opportunity — components are explainable and bounded', () => {
   })
 })
 
-describe('opportunity — the signal moves the right way', () => {
-  it('a volume burst scores higher than steady volume', () => {
-    const steady = scoreOpportunity(base(), P).score
-    const burst = scoreOpportunity(base({ volumeUsd: { h1: 3_000, h6: 8_000, h24: 24_000 } }), P).score
-    expect(burst).toBeGreaterThan(steady)
+describe('opportunity — the components still move the right way, weighed or not', () => {
+  // The operator cut the score down to three terms: *tendencia reciente
+  // alcista +50%, sube en una hora +30% y eficiencia de costos +30%, esa va a
+  // ser la única regla.* The other five are still COMPUTED and still drawn —
+  // the dashboard's detail sheet renders every component as a bar so "why is
+  // this ranked here" is answerable without reading code — they simply no
+  // longer move the total.
+  //
+  // So these tests moved down one level rather than being deleted. Their
+  // subject was always the MEASUREMENT; asserting it through the score was a
+  // convenience that stopped being available, and a measurement nobody checks
+  // is a bar on a screen that can quietly start lying.
+
+  it('a volume burst raises volumeExpansion, and no longer moves the score', () => {
+    const steady = scoreOpportunity(base(), P)
+    const burst = scoreOpportunity(base({ volumeUsd: { h1: 3_000, h6: 8_000, h24: 24_000 } }), P)
+    expect(burst.components.volumeExpansion).toBeGreaterThan(steady.components.volumeExpansion)
+    // Tripling the hourly run-rate is the full-expansion case, so the bar goes
+    // to the top of the screen — and the total does not move by a point.
+    expect(burst.components.volumeExpansion).toBe(1)
+    expect(burst.score).toBe(steady.score)
   })
 
-  it('buyers outnumbering sellers scores higher; sellers dominating scores no lower than neutral', () => {
+  it('buyers outnumbering sellers raises buyPressure; sellers dominating floors it at neutral', () => {
     const neutral = scoreOpportunity(base(), P)
     const buying = scoreOpportunity(base({ txns: { h1: { buys: 18, sells: 2 }, h24: { buys: 240, sells: 240 } } }), P)
     const selling = scoreOpportunity(base({ txns: { h1: { buys: 2, sells: 18 }, h24: { buys: 240, sells: 240 } } }), P)
-    expect(buying.score).toBeGreaterThan(neutral.score)
+    expect(buying.components.buyPressure).toBeGreaterThan(neutral.components.buyPressure)
+    // Only the EXCESS over an even split counts, so a book of sellers reads as
+    // "no buying pressure" rather than as a negative — the component has no
+    // way to say "actively bad" and must not pretend otherwise.
     expect(selling.components.buyPressure).toBe(0)
+    expect(buying.score).toBe(neutral.score)
   })
 
-  it('growing liquidity scores higher than draining liquidity', () => {
+  it('growing liquidity still separates from draining liquidity, and neither moves the score', () => {
     const previous = base({ liquidityUsd: 100_000 })
     const growing = scoreOpportunity(base({ liquidityUsd: 150_000 }), P, previous)
     const draining = scoreOpportunity(base({ liquidityUsd: 60_000 }), P, previous)
     expect(growing.components.liquidityGrowth).toBe(1)
     expect(draining.components.liquidityGrowth).toBeCloseTo(0.1, 9)
-    expect(growing.score).toBeGreaterThan(draining.score)
+    expect(growing.score).toBe(draining.score)
   })
 
-  it('a moving price scores higher than a flat one — the ladder needs drops to work', () => {
-    const flat = scoreOpportunity(base(), P).score
-    const moving = scoreOpportunity(base({ priceChangePct: { h1: -8, h6: 12, h24: 3 } }), P).score
-    expect(moving).toBeGreaterThan(flat)
+  it('reads motion as volatility whichever way it goes — and the score now asks WHICH way', () => {
+    // This test used to say "a moving price scores higher than a flat one —
+    // the ladder needs drops to work", and the operator's rule reversed the
+    // second half of that sentence. Motion is no longer worth anything on its
+    // own; direction is worth half the score.
+    //
+    // The pair below is the cleanest statement of both facts at once: the same
+    // absolute move, up and down, is the SAME volatility — the component is
+    // blind to direction by design, and that blindness is exactly why it could
+    // not be allowed to carry weight — while the scores are as far apart as
+    // this scanner can put two tokens.
+    const flat = scoreOpportunity(base(), P)
+    const up = scoreOpportunity(base({ priceChangePct: { h1: 8, h6: 12, h24: 3 } }), P)
+    const down = scoreOpportunity(base({ priceChangePct: { h1: -8, h6: -12, h24: -3 } }), P)
+    expect(up.components.volatility).toBeGreaterThan(flat.components.volatility)
+    expect(down.components.volatility).toBe(up.components.volatility)
+    expect(up.score).toBeGreaterThan(down.score)
   })
 
   it('zero 24h volume does not divide by zero', () => {
@@ -178,40 +226,59 @@ describe('opportunity — direction, not only motion', () => {
   })
 })
 
-describe('opportunity — activity is the other pillar', () => {
+describe('opportunity — activity is measured and drawn, and no longer weighed', () => {
+  // It WAS the other pillar, at 32.5% and then at 51.5% of the score, and the
+  // operator retired it with the other four: *tendencia reciente alcista +50%,
+  // sube en una hora +30% y eficiencia de costos +30%, esa va a ser la única
+  // regla.*
+  //
+  // The measurement stays, and keeping these tests is the reason it can. "Is
+  // anyone trading this pool" did not stop mattering — it is asked by the
+  // GATES instead (`minHourlyTxns` at 4, `minTurnoverRatio`, `staleBars`),
+  // where a failure refuses a token outright rather than docking it points.
+  // A door is stricter than a weight, which is the same trade the toll made
+  // when it moved to `minComponents`.
   const traded = (perHour: number) =>
     base({ txns: { h1: { buys: Math.round(perHour * 0.6), sells: Math.round(perHour * 0.4) }, h24: { buys: 800, sells: 700 } } })
 
-  it('keeps paying for more trades well past the old ceiling', () => {
+  it('keeps separating pools well past the old flat ceiling', () => {
     // It was `txns / 60` flat, so a pool with sixty trades an hour and one with
-    // five hundred scored IDENTICALLY — every difference above the cap was
-    // invisible to the ranking, which is the opposite of "more activity is
-    // worth more".
-    expect(scoreOpportunity(traded(100), P, null, cheap).score)
-      .toBeGreaterThan(scoreOpportunity(traded(60), P, null, cheap).score)
-    expect(scoreOpportunity(traded(200), P, null, cheap).score)
-      .toBeGreaterThan(scoreOpportunity(traded(100), P, null, cheap).score)
+    // five hundred read IDENTICALLY — every difference above the cap was
+    // invisible, which is the opposite of "more activity is worth more".
+    //
+    // Asserted on the component now that the weight is zero. The claim was
+    // never really about the total: it is that the CURVE has no ceiling, and
+    // that is what the bar on the detail sheet is drawn from.
+    const at = (n: number) => scoreOpportunity(traded(n), P, null, cheap).components.activity
+    expect(at(100)).toBeGreaterThan(at(60))
+    expect(at(200)).toBeGreaterThan(at(100))
   })
 
   it('has diminishing returns, so the first trades matter most', () => {
-    // The same shape as `headroom` and for the same reason: the distinction
-    // worth paying for is between DEAD and ALIVE, not between very busy and
-    // slightly busier.
+    // The distinction worth paying for is between DEAD and ALIVE, not between
+    // very busy and slightly busier.
     const at = (n: number) => scoreOpportunity(traded(n), P, null, cheap).components.activity
     expect(at(25) - at(4)).toBeGreaterThan(at(200) - at(100))
   })
 
-  it('separates a dead pool from a live one by enough to decide a ranking', () => {
-    // The operator's rule. A pool nobody is trading is one nobody will buy from
-    // us either — which is the death watch's whole subject, met here at the
-    // door instead of three hours into a position.
-    const dead = scoreOpportunity(traded(4), P, null, cheap).score
-    const alive = scoreOpportunity(traded(300), P, null, cheap).score
-    expect(alive - dead).toBeGreaterThan(25)
+  it('separates a dead pool from a live one on the screen, not in the score', () => {
+    // Both halves are the point, and the second is what the change cost.
+    //
+    // The component still tells a dead pool from a live one by almost its
+    // whole range — the operator's reason for it survives intact: a pool
+    // nobody is trading is one nobody will buy from us either. What is gone is
+    // its vote. Four trades an hour and three hundred now produce the SAME
+    // total, so the only thing standing between the book and a dead pool is
+    // the gate, and this test says so out loud rather than leaving somebody to
+    // find it from a frozen position.
+    const dead = scoreOpportunity(traded(4), P, null, cheap)
+    const alive = scoreOpportunity(traded(300), P, null, cheap)
+    expect(alive.components.activity - dead.components.activity).toBeGreaterThan(0.9)
+    expect(alive.score).toBe(dead.score)
   })
 })
 
-describe('opportunity — the toll a token charges is the third pillar', () => {
+describe('opportunity — the toll a token charges is one of the three', () => {
   it('scores zero once the round trip eats two of the profits the exit asks for', () => {
     // `minProfitPct` is 2: the normal exit sells at avg_cost + 2%. The zero
     // point is DERIVED from that, not picked — a token whose round trip costs
@@ -222,55 +289,71 @@ describe('opportunity — the toll a token charges is the third pillar', () => {
     expect(scoreOpportunity(base(), P, null, twoTargets).components.costEfficiency).toBe(0)
   })
 
-  it('stays measurable and never decisive — the teeth are the FLOOR, not the weight', () => {
-    // REVERSED on purpose, and the reason is worth more than the number.
+  it('is a minority of the score — the teeth are still the FLOOR, not the weight', () => {
+    // The claim survives its third rewrite; only the arithmetic behind it has
+    // moved. It read `costEfficiency < the four minor weights` while those
+    // four existed; they are all zero now, so the same sentence has to be
+    // said against what is left.
     //
-    // It ran at 0.9 for a day and the arithmetic of a weighted average made
-    // that expensive everywhere: ONE denominator, so weight added here is
-    // share taken from every other term. The operator watched his whole
-    // shortlist sink below the thresholds he reads it against and asked the
-    // right question — what changed? Nothing in the market. Us.
+    // Why it is still worth saying: the toll ran at 0.9 for a day and a
+    // weighted average has ONE denominator, so weight added here was share
+    // taken from every other term. The operator watched his whole shortlist
+    // sink below the thresholds he reads it against and asked the right
+    // question — what changed? Nothing in the market. Us.
     //
-    // The toll's real teeth moved to `minComponents`, and a floor is
-    // STRICTER than the weight ever was: an average can be carried by the
-    // other terms — which is exactly how PURR was bought at a 15.55% round
-    // trip — and a floor cannot be carried by anything.
+    // The toll's real teeth are in `minComponents`, and a floor is STRICTER
+    // than any weight: an average can be carried by its other terms — which
+    // is exactly how PURR was bought at a 15.55% round trip — and a floor
+    // cannot be carried by anything.
     const w = P.weights
-    expect(w.costEfficiency).toBeLessThan(w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.volatility)
+    const total = (Object.values(w) as number[]).reduce((sum, x) => sum + x, 0)
+    expect(w.costEfficiency).toBeLessThan(w.momentum)
+    expect(w.costEfficiency * 2).toBeLessThan(total)
   })
 
-  it('separates a cheap token from its expensive twin, but does not decide between them', () => {
-    // Both halves matter. The toll must still MOVE the ranking — between two
-    // tokens the gates let through, the cheaper one is worth more and the
-    // score should say so. What it must not do is settle the question on its
-    // own, because the question "is this too expensive to trade" already has
-    // a better answer that no amount of other merit can talk round.
-    const weights = Object.values(P.weights) as number[]
-    const total = weights.reduce((sum, x) => sum + x, 0)
-    const four = P.weights.volumeExpansion + P.weights.buyPressure + P.weights.liquidityGrowth + P.weights.volatility
-    const gap = scoreOpportunity(base(), P, null, cheap).score - scoreOpportunity(base(), P, null, dear).score
-    expect(gap).toBeGreaterThan(0)
-    expect(gap).toBeLessThan((four / total) * 100)
+  it('separates a cheap token from its expensive twin, and still cannot outvote direction', () => {
+    // Both halves matter, and the second is the operator's own ordering:
+    // *tendencia reciente alcista +50%, sube en una hora +30% y eficiencia de
+    // costos +30%.* The toll must MOVE the ranking — between two tokens the
+    // gates let through, the cheaper one is worth more and the score should
+    // say so — and it must not settle the question on its own.
+    //
+    // The upper bound used to be weight arithmetic against the four minor
+    // terms, which are now zero, so it is stated where it actually bites
+    // instead: the cheapest token in the book, drifting DOWN, loses to the
+    // dearest one that is climbing. Headroom is 1 on both — a 2% drift is not
+    // a collapse — so momentum against the toll is the only thing being
+    // compared, which is what makes it an isolation rather than a vibe.
+    const twins = scoreOpportunity(base(), P, null, cheap).score - scoreOpportunity(base(), P, null, dear).score
+    expect(twins).toBeGreaterThan(0)
+
+    const cheapDrifting = scoreOpportunity(base({ priceChangePct: { h1: -2, h6: 0, h24: 0 } }), P, null, cheap)
+    const dearClimbing = scoreOpportunity(base({ priceChangePct: { h1: 8, h6: 8, h24: 8 } }), P, null, dear)
+    expect(cheapDrifting.components.costEfficiency).toBeGreaterThan(dearClimbing.components.costEfficiency)
+    expect(cheapDrifting.components.headroom).toBe(dearClimbing.components.headroom)
+    expect(dearClimbing.score).toBeGreaterThan(cheapDrifting.score)
   })
 
-  it('leaves ONE pillar in the score, and the toll is not it', () => {
-    // headroom ("es mas importante que todo") then activity ("la otra pata")
-    // are what the score is mostly made of, and that survives. The toll was
-    // briefly promoted to a third and demoted again the same day: it is a
-    // question of ADMISSION, not of ranking, and the two are answered in
-    // different places on purpose.
+  it('leaves THREE terms in the score, and the toll is one of them', () => {
+    // It was briefly a third pillar, demoted the same day to a door, and the
+    // operator has now put it back as one of exactly three: *esa va a ser la
+    // única regla.* Five components are silent, and silent here means a
+    // literal zero — they contribute nothing to the numerator AND nothing to
+    // the denominator, so the score is a clean average of the three.
     //
-    // This is the durable statement. An absolute score moves every time a
-    // weight does; the ORDER is the decision.
-    // `headroom` was the other one and the operator retired it outright, so
-    // `activity` is now alone at the top — and with more than half the score,
-    // which is stated in its own test rather than left to be discovered.
+    // The ORDER is the decision and an absolute score is its consequence, so
+    // the order is what is pinned. Direction leads; the hour and the toll are
+    // given the same share as each other; and the two of them together can
+    // still outvote direction, which is what stops "it went up in the last
+    // hour" from being the only thing this scanner can see.
     const w = P.weights
-    expect(w.headroom).toBe(0)
-    for (const other of [w.volumeExpansion, w.buyPressure, w.liquidityGrowth, w.volatility, w.momentum, w.costEfficiency]) {
-      expect(w.activity).toBeGreaterThan(other)
+    for (const silent of [w.volumeExpansion, w.buyPressure, w.liquidityGrowth, w.activity, w.volatility]) {
+      expect(silent).toBe(0)
     }
-    expect(w.costEfficiency).toBeLessThan(w.activity)
+    expect(w.momentum).toBeGreaterThan(w.headroom)
+    expect(w.momentum).toBeGreaterThan(w.costEfficiency)
+    expect(w.headroom).toBe(w.costEfficiency)
+    expect(w.headroom + w.costEfficiency).toBeGreaterThan(w.momentum)
   })
 
   it('still does not punish a toll NOBODY measured', () => {
@@ -339,6 +422,13 @@ describe('opportunity — how far it has ALREADY run is no longer an argument', 
   // one direction only: `maxDailyFallPct` (15) is a gate on the FALL. A token
   // going the wrong way is an exit in progress; one going the right way, however
   // violently, is the trade.
+  //
+  // The NAME survived and now asks something else: *sube en una hora +30%.*
+  // Binary over the last hour — 0 below `headroomMaxFallPct`, 1 above it, 0.5
+  // when nobody reported the window — and weighted again at 0.3. So "how far
+  // it has already run" really is gone; what carries weight under that name is
+  // "has it just fallen out from under us", which is a different question with
+  // a different answer on the same token.
 
   it('scores a token up 2000% exactly as one up 5%, all else equal', () => {
     const moving = { h1: 5, h6: 40 }
@@ -347,32 +437,64 @@ describe('opportunity — how far it has ALREADY run is no longer an argument', 
     expect(ran).toBe(fresh)
   })
 
-  it('carries no weight at all, so nothing it reports can move a ranking', () => {
-    expect(P.weights.headroom).toBe(0)
-  })
-
-  it('still REPORTS the number, because a diagnostic is not a verdict', () => {
-    // Kept on the screen and out of the arithmetic. The detail sheet draws the
-    // components as bars so "why is this ranked here" is answerable without
-    // reading code, and deleting the measurement would answer it with silence.
-    // Reported on the detail sheet, worth nothing in the score. Two values
-    // only now, because the question it answers is a yes/no.
-    const climbing = scoreOpportunity(base({ priceChangePct: { h1: 20, h6: 40, h24: 150 } }), P, null, cheap)
-    const drifting = scoreOpportunity(base({ priceChangePct: { h1: 0.2, h6: 40, h24: 150 } }), P, null, cheap)
-    expect(climbing.components.headroom).toBe(1)
-    expect(drifting.components.headroom).toBe(0)
-  })
-
-  it('leaves activity as what the score is now mostly made of — stated, not discovered later', () => {
-    // Removing the largest weight does not leave a neutral score: it hands the
-    // majority to whatever was second. Total weights fall 3.08 -> 1.94 and
-    // `activity` goes from 32.5% to 51.5% of the score, so "is anyone trading
-    // it" is now more than half the answer. That is a consequence of the
-    // operator's decision, and it belongs written down rather than found.
+  it('weighs again under the same name, and a collapse costs exactly its share', () => {
+    // It went to zero for a day and came back at 0.3 asking a different
+    // question, which is why this test now asserts the opposite of what it
+    // used to. The weight is only half the statement — the useful half is
+    // WHAT it buys, and here that is isolated rather than argued.
+    //
+    // Both tokens below are falling, so `momentum` reads the same on each and
+    // cancels out; `costEfficiency` is the same measured pool. The ONLY
+    // difference is that one drifted 1% and the other fell through the -3%
+    // line, and the distance between their scores is therefore exactly
+    // headroom's whole share of the score — which is the arithmetic claim
+    // "the weight is applied to this term and normalised by the total",
+    // written as a ratio so no future weight change can make it a lie.
     const w = P.weights
     const total = (Object.values(w) as number[]).reduce((sum, x) => sum + x, 0)
-    expect(w.activity / total).toBeGreaterThan(0.5)
-    expect(w.activity).toBeGreaterThan(w.costEfficiency)
+    expect(w.headroom).toBeGreaterThan(0)
+
+    const drifting = scoreOpportunity(base({ priceChangePct: { h1: -1, h6: 0, h24: 0 } }), P, null, cheap)
+    const collapsing = scoreOpportunity(base({ priceChangePct: { h1: -10, h6: 0, h24: 0 } }), P, null, cheap)
+    expect(collapsing.components.momentum).toBe(drifting.components.momentum)
+    expect(drifting.components.headroom - collapsing.components.headroom).toBe(1)
+    expect(drifting.score - collapsing.score).toBeCloseTo((w.headroom / total) * 100, 9)
+  })
+
+  it('still REPORTS a number the day it stops being weighed', () => {
+    // The detail sheet draws every component as a bar so "why is this ranked
+    // here" is answerable without reading code. Five of them weigh nothing
+    // today and are drawn all the same, and this component has been on both
+    // sides of that line inside a week — which is the argument for measuring
+    // everything and weighing only what the operator asked for.
+    //
+    // Two values only now, because the question it answers is a yes/no.
+    const climbing = scoreOpportunity(base({ priceChangePct: { h1: 20, h6: 40, h24: 150 } }), P, null, cheap)
+    const collapsing = scoreOpportunity(base({ priceChangePct: { h1: -30, h6: 40, h24: 150 } }), P, null, cheap)
+    expect(climbing.components.headroom).toBe(1)
+    expect(collapsing.components.headroom).toBe(0)
+  })
+
+  it('leaves a score made of exactly three shares, none of them a majority — stated, not discovered later', () => {
+    // The operator named them as percentages — *tendencia reciente alcista
+    // +50%, sube en una hora +30% y eficiencia de costos +30%* — and they sum
+    // to 110, not 100. A weighted average normalises by its own denominator,
+    // so what he called 50% is 45.5% of the score and each 30% is 27.3%.
+    //
+    // Nothing is wrong with that: the ORDER is what he decided and the order
+    // is exactly what was implemented. But "direction is half the score" is
+    // the sentence everyone will repeat, and it is not true — direction is the
+    // largest share and the other two together outvote it. That belongs
+    // written down here rather than discovered from a shortlist nobody can
+    // explain.
+    //
+    // The day somebody normalises the weights to 0.5/0.25/0.25 this test is
+    // what will say the claim has changed, which is the whole reason it exists.
+    const w = P.weights
+    const total = (Object.values(w) as number[]).reduce((sum, x) => sum + x, 0)
+    expect(w.momentum + w.headroom + w.costEfficiency).toBe(total)
+    expect(w.momentum / total).toBeGreaterThan(w.headroom / total)
+    expect(w.momentum / total).toBeLessThan(0.5)
   })
 })
 
@@ -404,14 +526,12 @@ describe('opportunity — the run ahead is measured over the HOUR, not the day',
     expect(hour(2, 2_000)).toBeGreaterThan(0.7)
   })
 
-  it('opens the moment the HOUR is moving, whatever the day did', () => {
-    // It used to measure a DECAY — how much of the run was already spent — and
-    // the operator retired that outright: *sacale el techo.* What is left is a
-    // door, so what this can still say is that the door opens on the hour and
-    // on nothing else.
-    expect(hour(1.5)).toBe(1)
-    expect(hour(20)).toBe(1)
-    expect(hour(0.5)).toBe(0)
+  it('opens on the HOUR and on nothing else', () => {
+    // It measured a DECAY once — how much of the run was already spent — and
+    // the operator retired that outright. What is left is a door, and what
+    // this can still say is that the door reads the hour and ignores the day.
+    expect(hour(1.5, 2_000)).toBe(hour(1.5, 0))
+    expect(hour(-30, 2_000)).toBe(0)
   })
 
   it('ignores the day entirely — it is the window that let everything through', () => {
@@ -420,9 +540,12 @@ describe('opportunity — the run ahead is measured over the HOUR, not the day',
     expect(hour(3, 0)).toBe(hour(3, 500))
   })
 
-  it('still gives a token going the wrong way NOTHING', () => {
-    expect(hour(-1)).toBe(0)
-    expect(hour(0)).toBe(0)
+  it('gives a COLLAPSING token nothing, and tolerates a drift', () => {
+    // -3% is the operator's line. Above it the token is still a token; below
+    // it the hour is an exit in progress.
+    expect(hour(-30)).toBe(0)
+    expect(hour(-1)).toBe(1)
+    expect(hour(0)).toBe(1)
   })
 
   it('still treats an unreported hour as silence, never as a crash', () => {
@@ -437,49 +560,6 @@ describe('opportunity — the run ahead is measured over the HOUR, not the day',
     expect(hour(11)).toBe(1)
     expect(hour(13)).toBe(1)
     expect(hour(300)).toBe(1)
-  })
-})
-
-describe('opportunity — a whisker above zero is not a rise', () => {
-  // The operator's number, and it closes a cliff I had just flagged: the
-  // direction branch was a hard edge at exactly 0%, so USELESS sat at +0.1%
-  // in the hour scoring 0.984 — one hundredth of a percent from 0.000, which
-  // is the entire range of the component. A position oscillating there would
-  // be rotated out and bought back every half hour, paying its round trip
-  // each time.
-  //
-  // At +1% the edge sits on a move rather than on noise. Measured on the same
-  // 72-pool sample, the median riser moves +1.45%, so this asks for about what
-  // an ordinary climbing token is already doing.
-  //
-  // The admitted band is now stateable in one line: UP between 1% and about
-  // 12% in the hour. Below it nothing is happening; above it the move already
-  // happened and what we would buy is its top.
-
-  const hour = (h1: number) =>
-    scoreOpportunity(base({ priceChangePct: { h1, h6: 5, h24: 10 } }), P, null, cheap).components.headroom
-
-  it('gives nothing to a token drifting inside the noise', () => {
-    expect(hour(0.1)).toBe(0)
-    expect(hour(0.9)).toBe(0)
-    expect(hour(P.headroomMinRisePct)).toBe(0)
-  })
-
-  it('opens the moment the rise is real', () => {
-    expect(hour(1.5)).toBeGreaterThan(0.3)
-    expect(hour(4)).toBeGreaterThan(0.3)
-  })
-
-  it('asks for about what an ordinary climbing token already does', () => {
-    // The live median riser is +1.45%. A threshold above it would refuse the
-    // typical token outright, which is a different rule from "ignore noise".
-    expect(P.headroomMinRisePct).toBeLessThan(1.45)
-  })
-
-  it('keeps a falling token and an unreported hour telling their own stories', () => {
-    expect(hour(-3)).toBe(0)
-    expect(scoreOpportunity(base({ priceChangePct: { h1: null, h6: 5, h24: 10 } }), P, null, cheap).components.headroom)
-      .toBeCloseTo(0.5, 6)
   })
 })
 
@@ -507,17 +587,64 @@ describe('opportunity — above the threshold there is NO ceiling', () => {
 
   it('answers exactly one question, so the answer has exactly two values', () => {
     expect(new Set([hour(1.01), hour(5), hour(500)]).size).toBe(1)
-    expect(hour(0.5)).toBe(0)
+    expect(hour(-30)).toBe(0)
   })
 
-  it('still refuses the noise, the fall and nothing else', () => {
-    expect(hour(P.headroomMinRisePct)).toBe(0)
-    expect(hour(0.1)).toBe(0)
-    expect(hour(-4)).toBe(0)
+  it('refuses a COLLAPSE and nothing else', () => {
+    expect(hour(-P.headroomMaxFallPct - 0.01)).toBe(0)
+    expect(hour(-30)).toBe(0)
+    expect(hour(0.1)).toBe(1)
   })
 
   it('still calls an unreported hour silence', () => {
     expect(scoreOpportunity(base({ priceChangePct: { h1: null, h6: 5, h24: 10 } }), P, null, cheap).components.headroom)
       .toBeCloseTo(0.5, 6)
+  })
+})
+
+describe('opportunity — the hour asks that it has NOT collapsed', () => {
+  // The operator's calibration, and it is the right question: *ponele que no
+  // haya descendido más del -3% en la última hora.*
+  //
+  // Asking for a RISE of more than 1% was too strict, and measurably so: of 84
+  // live Solana tokens only 37% cleared it, so the floor — not the score door
+  // — was what kept the book at seven positions while he had run thirty-one.
+  // Lowering minScore from 50 to 25 could not compensate, because the score
+  // was never what was cutting.
+  //
+  // Asking that it has not COLLAPSED keeps 75% of the same sample, 68% once
+  // momentum has its say. The rule stops being "is it going up right now",
+  // which is a snapshot of one instant, and becomes "is it not falling out
+  // from under us", which is what a door is actually for.
+
+  const hour = (h1: number | null) =>
+    scoreOpportunity(base({ priceChangePct: { h1, h6: 5, h24: 10 } }), P, null, cheap).components.headroom
+
+  it('admits anything that is not collapsing, rising or not', () => {
+    for (const change of [50, 5, 1, 0, -1, -2.9, -P.headroomMaxFallPct]) expect(hour(change)).toBe(1)
+  })
+
+  it('refuses a token falling harder than the limit', () => {
+    expect(hour(-3.01)).toBe(0)
+    expect(hour(-10)).toBe(0)
+    expect(hour(-60)).toBe(0)
+  })
+
+  it('still has NO ceiling — a bigger rise is never a reason to refuse', () => {
+    expect(hour(2_000)).toBe(1)
+  })
+
+  it('still calls an unreported hour silence, never a crash', () => {
+    expect(hour(null)).toBeCloseTo(0.5, 6)
+  })
+
+  it('is looser than the momentum floor it sits beside, on purpose', () => {
+    // They answer different questions and the overlap is the point: momentum
+    // asks which WAY it has been going across three windows, this asks only
+    // that the most recent one has not fallen out. A token drifting down 2% in
+    // the hour is still a token; one down 30% is an exit in progress.
+    expect(hour(-2)).toBe(1)
+    expect(scoreOpportunity(base({ priceChangePct: { h1: -2, h6: -5, h24: -20 } }), P, null, cheap).components.momentum)
+      .toBeLessThan(0.3)
   })
 })

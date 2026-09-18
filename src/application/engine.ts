@@ -536,7 +536,10 @@ export async function settle(
     // anyway, but a second execute() would also move the broker's cash.
     if (await store.hasFill(key)) continue
 
-    if (refusesToSellAtALoss(order, broker.snapshot(price).avgPrice, price)) {
+    // The position's own measured quality: the venue spread plus the impact
+    // its size causes. This is what the sale will actually cost to make.
+    const exitCostPct = position.quality.spreadPct + position.quality.slippagePct
+    if (refusesToSellAtALoss(order, broker.snapshot(price).avgPrice, price, exitCostPct)) {
       exitRefused = true
       continue
     }
@@ -562,7 +565,28 @@ export async function settle(
   return exitRefused
 }
 
-function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: number): boolean {
+/**
+ * Never sell at a loss — measured on what the position will RECEIVE.
+ *
+ * Found in production by the operator: a `🔁 Rotación` marked -$2.07. Bought
+ * at 0.05076167, the guard looked at 0.05078 and allowed it, and the fill
+ * landed at 0.0506076. The 0.34% in between is the venue's cut on the way out.
+ *
+ * CLAUDE.md already records this exact mistake once, about the strategy's own
+ * exit: *the rule was enforced at DECISION time, where price is above average
+ * cost by construction; it leaked at EXECUTION time.* Fixing it there and
+ * leaving it here was the same bug twice, a day apart.
+ *
+ * `exitCostPct` is what leaving takes — the venue spread plus the impact this
+ * position's own size will cause. Zero reproduces the old behaviour exactly,
+ * so a caller that cannot measure it is not silently given a different rule.
+ */
+export function refusesToSellAtALoss(
+  order: Order,
+  avgPrice: number | null,
+  fillPrice: number,
+  exitCostPct = 0,
+): boolean {
   if (order.kind !== 'closeAll') return false
   // Neither exit may be blocked by the no-loss rule, and for the same reason:
   // both leave because the ASSET stopped working, not because the price fell.
@@ -583,7 +607,8 @@ function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: 
   // leave because the asset stopped being an asset.
   // Nothing held, so no cost basis and no loss to make.
   if (avgPrice === null) return false
-  return fillPrice < avgPrice
+  // What the position RECEIVES, not what the screen quotes.
+  return fillPrice * (1 - exitCostPct / 100) < avgPrice
 }
 
 /**

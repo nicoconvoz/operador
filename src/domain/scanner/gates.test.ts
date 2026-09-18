@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_PARAMS } from '../strategy/params.js'
-import { minAgeForHistory, evaluateSafetyGates, DEFAULT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
+import { minAgeForHistory, evaluateSafetyGates, DEFAULT_GATE_POLICY, STRICT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
 const HOUR = 3_600_000
@@ -40,7 +40,22 @@ const clean = (over: Partial<TokenSnapshot> = {}, security: Partial<SecurityRepo
   ...over,
 })
 
-const failedGates = (snapshot: TokenSnapshot) => evaluateGates(snapshot, P).failures.map((f) => `${f.gate}:${f.reason}`)
+/**
+ * Every gate's LOGIC, proved under the policy that still asks them all.
+ *
+ * Production narrowed to three component floors plus safety, so
+ * `DEFAULT_GATE_POLICY` no longer asks the taste gates anything — turnover,
+ * volume, the daily fall, the FDV ceiling, the liquidity floor. The gates
+ * themselves are unchanged and a test that proves `turnover` fires on a slow
+ * pool is still worth having; it just has to name the policy it proves that
+ * under, instead of leaning on a default whose whole point is that it does not
+ * decide any more.
+ *
+ * The structural thresholds — age, history, idle, staleBars, priceMismatch —
+ * are identical in both, so nothing about them changes meaning here.
+ */
+const failedGates = (snapshot: TokenSnapshot) =>
+  evaluateGates(snapshot, STRICT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)
 
 describe('gates — a clean token passes', () => {
   it('passes with no failures', () => {
@@ -239,7 +254,7 @@ describe('evaluateMarketGates — free gates, run before the paid ones', () => {
   })
 
   it('still rejects on liquidity, age, volume, FDV, denylist and impersonation', () => {
-    const failed = (s: TokenSnapshot) => evaluateMarketGates(s, P).failures.map((f) => f.gate)
+    const failed = (s: TokenSnapshot) => evaluateMarketGates(s, STRICT_GATE_POLICY).failures.map((f) => f.gate)
     expect(failed(clean({ liquidityUsd: 100 }))).toEqual(['liquidity'])
     expect(failed(clean({ pairCreatedAt: NOW - HOUR }))).toEqual(['age'])
     expect(failed(clean({ volumeUsd: { h1: 0, h6: 0, h24: 10 } }))).toEqual(['volume', 'turnover'])
@@ -309,7 +324,7 @@ describe('gates — a token in freefall is not an opportunity', () => {
   })
 
   it('says how far it fell and over what', () => {
-    const [failure] = evaluateGates(clean({ priceChangePct: { h1: -3, h6: -70, h24: 0 } }), DEFAULT_GATE_POLICY).failures
+    const [failure] = evaluateGates(clean({ priceChangePct: { h1: -3, h6: -70, h24: 0 } }), STRICT_GATE_POLICY).failures
     expect(failure!.detail).toContain('70')
     expect(failure!.detail).toContain('6h')
   })
@@ -383,7 +398,7 @@ describe('gates — a pool that does not turn over is not active', () => {
   it('says the ratio it measured, not just that it failed', () => {
     const [failure] = evaluateGates(
       clean({ liquidityUsd: 1_000_000, volumeUsd: { h1: 500, h6: 3_000, h24: 200_000 } }),
-      DEFAULT_GATE_POLICY,
+      STRICT_GATE_POLICY,
     ).failures
     expect(failure!.detail).toContain('0.2')
   })
@@ -418,7 +433,7 @@ describe('gates — a sustained bleed over a full day', () => {
   })
 
   it('names the day as the window, so the reason can be checked', () => {
-    const [failure] = evaluateGates(clean({ priceChangePct: { h1: 0, h6: 0, h24: -80 } }), DEFAULT_GATE_POLICY).failures
+    const [failure] = evaluateGates(clean({ priceChangePct: { h1: 0, h6: 0, h24: -80 } }), STRICT_GATE_POLICY).failures
     expect(failure!.detail).toContain('24h')
   })
 
@@ -522,8 +537,8 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
     // motion the strategy exists to harvest — and it filled the alert log
     // while the book sat at eight positions.
     const crashed = clean({ priceChangePct: { h1: -60, h6: -55, h24: -65 } })
-    expect(evaluateGates(crashed, DEFAULT_GATE_POLICY).passed).toBe(false)
-    expect(evaluateSafetyGates(crashed, DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateGates(crashed, STRICT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(crashed, STRICT_GATE_POLICY).passed).toBe(true)
   })
 
   it('does not re-argue activity either', () => {
@@ -546,7 +561,7 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
     // Liquidity and impact are not about attractiveness. They answer "can this
     // position be left", which is the one question a ladder cannot survive
     // getting wrong.
-    expect(evaluateSafetyGates(clean({ liquidityUsd: 900 }), DEFAULT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(clean({ liquidityUsd: 400 }), DEFAULT_GATE_POLICY).passed).toBe(false)
     expect(evaluateSafetyGates(clean({ measuredImpactPct: 40 }), DEFAULT_GATE_POLICY).passed).toBe(false)
   })
 })
@@ -636,5 +651,55 @@ describe('freefall — fifteen percent on the day, and only downward', () => {
     // The short windows earn their place here: up on the day, collapsing in the
     // hour. The daily gate cannot see it because the day is still green.
     expect(failedGates(clean({ priceChangePct: { h1: -55, h6: 10, h24: 40 } }))).toEqual(['freefall:failed'])
+  })
+})
+
+describe('gates — the taste gates step aside; the structural ones do not', () => {
+  // The operator's rule, and it is a deliberate narrowing of what a GATE is
+  // allowed to be: *tendencia reciente alcista +50%, sube en una hora +30% y
+  // eficiencia de costos +30%, esa va a ser la única regla, y obvio la regla
+  // de que no nos metan una cripto trampa.*
+  //
+  // So: three component floors plus safety. Everything that merely expressed a
+  // PREFERENCE about the pool — how fast it turns, how much it traded
+  // yesterday, how big the name is, how far it fell today — stops deciding.
+  // Measured on 114 live Solana tokens, those four together were blocking a
+  // third of the universe while `liquidity` and `volume` never blocked anything
+  // on their own at all.
+  //
+  // Two survive the cut and they are NOT taste, which is the distinction worth
+  // keeping. `age`/`history` and `idle` are the machine's own requirements: no
+  // bars means no Bollinger basis and no twenty-bar swing high, so the strategy
+  // has nothing to decide an entry with; and under four trades an hour a 15m
+  // bar comes back EMPTY, which is exactly how six positions once froze with
+  // their capital unreachable.
+
+  const gentle = (over: Partial<TokenSnapshot> = {}) => ({ ...clean(), ...over })
+
+  it('no longer refuses a pool that turns slowly', () => {
+    const slow = gentle({ liquidityUsd: 2_000_000, volumeUsd: { h1: 5_000, h6: 30_000, h24: 120_000 } })
+    expect(evaluateMarketGates(slow, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('turnover')
+  })
+
+  it('no longer refuses a thin day', () => {
+    const quiet = gentle({ volumeUsd: { h1: 400, h6: 2_400, h24: 9_000 } })
+    expect(evaluateMarketGates(quiet, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('volume')
+  })
+
+  it('no longer refuses a token for having fallen today', () => {
+    // The hour is what decides now, through the `headroom` floor at -3%. A
+    // daily threshold on top was belt and braces against the same accident.
+    const bled = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
+    expect(evaluateMarketGates(bled, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
+  })
+
+  it('still refuses a pool the machine cannot compute an entry on', () => {
+    const newborn = gentle({ pairCreatedAt: NOW - 60 * 60 * 1000 })
+    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
+  })
+
+  it('still refuses a pool whose bars come back empty', () => {
+    const still = gentle({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 40, sells: 30 } } })
+    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
   })
 })

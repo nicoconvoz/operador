@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { rankUniverse, tokenKey, type RankingPolicy } from './ranking.js'
-import { DEFAULT_GATE_POLICY } from './gates.js'
+import { DEFAULT_GATE_POLICY, STRICT_GATE_POLICY } from './gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 import { type MarketQuality } from '../market/market-quality.js'
@@ -79,7 +79,15 @@ describe('ranking — gates first, then score, then slots', () => {
     // fallen — is now a quarter of the score on its own, so a token about which
     // nothing is known lands near 36 rather than under 30. The test's point is
     // unchanged: boring is DROPPED, not rejected.
-    const strict = { ...policy, minScore: 45 }
+    // The door is derived from what this token actually scores, not written as
+    // a number. Every change to the weights moved that number — 30, then 45,
+    // then the operator's three-component rule moved it again — and each time
+    // the test broke for a reason that had nothing to do with what it proves:
+    // that boring is DROPPED and rejected is REJECTED, which are different
+    // verdicts about different questions.
+    const open = { ...policy, minScore: 0 }
+    const scored = rankUniverse([boring], new Map(), quality, open).candidates[0]!.opportunity.score
+    const strict = { ...policy, minScore: scored + 1 }
     const { candidates, rejected } = rankUniverse([boring], new Map(), quality, strict)
     expect(candidates).toEqual([])
     expect(rejected).toEqual([])
@@ -155,13 +163,17 @@ describe('ranking — the reserve: what gets bought when nothing better is free'
   // is sitting free, reach further down — but always in the order the scores
   // decided. Measured live on 509 tokens: THREE were ready to trade and
   // EIGHTY-FOUR were held back by the turnover gate alone.
-  const deep: RankingPolicy = { ...policy, watchSlots: 10, minScore: 0 }
+  const deep: RankingPolicy = { ...policy, gates: STRICT_GATE_POLICY, watchSlots: 10, minScore: 0 }
   const quiet = (address: string, over: Partial<TokenSnapshot> = {}) =>
     // Trades briskly — four an hour clears `idle` easily — but the pool is so
     // deep it barely turns over its own liquidity in a day.
     token(address, { liquidityUsd: 5_000_000, volumeUsd: { h1: 4_000, h6: 24_000, h24: 96_000 }, ...over })
 
   it('admits a token held back ONLY by a preference, and says what it forgave', () => {
+    // Under the STRICT policy, which is where these gates still live: the
+    // production default stopped asking turnover, volume and the FDV cap, so
+    // nothing is ever FORGIVEN under it and the reserve has nothing to hold.
+    // The mechanism is proved here and comes back the day those gates do.
     const [only] = rankUniverse([quiet('quiet')], new Map(), quality, deep).candidates
     expect(only?.snapshot.address).toBe('quiet')
     expect(only?.forgiven?.map((f) => f.gate)).toEqual(['turnover'])
@@ -187,6 +199,10 @@ describe('ranking — the reserve: what gets bought when nothing better is free'
   })
 
   it('forgives nothing the STRATEGY needs in order to run', () => {
+    // Under the STRICT policy, which is where these gates still live: the
+    // production default stopped asking turnover, volume and the FDV cap, so
+    // nothing is ever FORGIVEN under it and the reserve has nothing to hold.
+    // The mechanism is proved here and comes back the day those gates do.
     // `idle` is not a preference: under four trades an hour a 15m bar comes
     // back empty, and an empty bar is how a position freezes with its capital
     // unreachable. That is the failure this book just spent a session fixing.
