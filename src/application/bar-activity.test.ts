@@ -69,3 +69,49 @@ describe('CachedBarActivity — a pool that went quiet is not re-downloaded to l
     expect(calls()).toBe(2)
   })
 })
+
+describe('CachedBarActivity — "could not ask" is not "nobody traded"', () => {
+  // The sell probe's rule, which this broke: an RPC failure is never read as
+  // "no route". One is inconclusive, the other is a verdict.
+  //
+  // Measured live after the retry budget was cut from 28s to 6s: **26 of 29
+  // positions turned red at once**, every one of them carrying "el proveedor de
+  // velas no devolvió ninguna operación". None of those pools had died — Bonk
+  // was among them. GeckoTerminal was rate-limiting, the adapter caught the
+  // error and returned null, and null is the STRONGEST form of this failure.
+  //
+  // Worse, the null was then remembered in `pool_quiet` for an hour, so the
+  // book stayed red long after the provider recovered.
+  const store = () => {
+    const quiet = new Map<string, number>()
+    return {
+      quietPoolSince: async (c: string, p: string) => quiet.get(`${c}:${p}`) ?? null,
+      recordQuietPool: async (c: string, p: string, at: number) => { quiet.set(`${c}:${p}`, at) },
+      size: () => quiet.size,
+    }
+  }
+
+  it('lets a failed request THROW instead of answering for the pool', async () => {
+    const cache = store()
+    const cached = new CachedBarActivity(
+      { barAgeHours: async () => { throw new Error('429') } }, cache, { now: () => 1_000 },
+    )
+    await expect(cached.barAgeHours('solana', 'P')).rejects.toThrow('429')
+  })
+
+  it('never remembers it, so one rate limit is not an hour of red', async () => {
+    const cache = store()
+    const cached = new CachedBarActivity(
+      { barAgeHours: async () => { throw new Error('429') } }, cache, { now: () => 1_000 },
+    )
+    await cached.barAgeHours('solana', 'P').catch(() => undefined)
+    expect(cache.size()).toBe(0)
+  })
+
+  it('still remembers a MEASURED silence, which is the whole point of the shelf', async () => {
+    const cache = store()
+    const cached = new CachedBarActivity({ barAgeHours: async () => null }, cache, { now: () => 1_000 })
+    expect(await cached.barAgeHours('solana', 'P')).toBeNull()
+    expect(cache.size()).toBe(1)
+  })
+})

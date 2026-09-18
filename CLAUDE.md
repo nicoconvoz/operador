@@ -499,6 +499,54 @@ that moved.
 It counts as a SAFETY gate on the screen — red, not grey. Buying one is not a
 mediocre trade: it is capital converted into the wrong quantity of a token.
 
+### Patience belongs where the money is
+
+A single retry policy served two questions that are not the same question, and
+the project already had the argument written down for the cadences: *a token you
+HOLD can rug in ten minutes; an opportunity missed by an hour is only a missed
+opportunity.* The retries did not know that.
+
+| Asks about | How many | How often | Gives up after |
+|---|---|---|---|
+| `gecko` — STRANGERS, for the scan | ~200 | hourly | **6s** — 2 retries from 2s |
+| `geckoBook` — the BOOK, for the tick | ~29 | every 5 min | **28s** — 3 retries from 4s |
+
+The throttle is SHARED, because the quota is one quota and the IP is one IP.
+Only the giving-up differs.
+
+What the single policy cost, measured cold on a runner: **33 minutes to examine
+100 tokens**, about 20 seconds each against a 2.5 second throttle. The rest was
+backoff — 4 + 8 + 16 — spent on a queue that is not ours, since GeckoTerminal
+limits by IP and a CI runner shares its address with thousands of unrelated
+jobs. A 429 there usually means somebody else already spent the minute.
+
+### A provider that could not answer has not condemned anything
+
+Cutting that budget exposed a worse bug underneath, and it turned the whole book
+red in one pass: **26 of 29 live positions**, Bonk among them, every one
+carrying *"el proveedor de velas no devolvió ninguna operación"*.
+
+Nothing had died. We had run out of quota.
+
+```ts
+try  { return hoursSinceLastTrade(await gecko.candles(...), Date.now()) }
+catch { return null }        // ← a 429 becomes "the feed says nobody traded"
+```
+
+`null` is a VERDICT: the feed answered and there were no trades, the strongest
+form of "this engine cannot watch it", and rightly a safety failure. A request
+that never got an answer says nothing about the token — it says something about
+us. It is the sell probe's own rule, broken in the mirror image: *an RPC failure
+is never read as "no route" — one is inconclusive, the other is a death signal,
+and confusing them would either liquidate a healthy position or hold a dead one.*
+
+Worse, `CachedBarActivity` then remembered that verdict in `pool_quiet` **for an
+hour**, so the book stayed red long after the provider recovered.
+
+It throws now. The error reaches `scanOnce`, which leaves the measurement
+ABSENT rather than writing null — the gate fires on evidence and stays silent —
+and nothing is cached, because nobody gave a verdict to cache.
+
 ### Is it alive NOW?
 
 The 24h figures cannot answer that. A token was reported live with **$168k of

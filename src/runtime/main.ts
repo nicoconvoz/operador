@@ -77,7 +77,27 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const goplus = new GoPlus(http)
   const jupiter = new Jupiter(http, jupiterThrottle)
   const jupiterTokens = new JupiterTokens(http, jupiterThrottle)
+  // TWO clients, one quota, two different amounts of patience.
+  //
+  // The operator's rule: *the ones we actually trade are few — give THOSE more
+  // time.* It is the asymmetry the two cadences already encode, finally applied
+  // to the retries: a token you HOLD can rug in ten minutes, an opportunity
+  // missed by an hour is only a missed opportunity.
+  //
+  // `gecko` asks about STRANGERS — two hundred of them per scan, once an hour.
+  // A 429 there costs one candidate, and waiting 28 seconds for each cost 33
+  // minutes to examine a hundred tokens, measured on a runner. It gives up in
+  // six.
+  //
+  // `geckoBook` asks about the money — twenty-nine positions, every five
+  // minutes. A 429 there blinds the death watch on something that might be
+  // dying, so it keeps the long patience: four retries doubling from four
+  // seconds.
+  //
+  // The THROTTLE is shared, because the quota is one quota and the IP is one
+  // IP. Only the giving-up differs.
   const gecko = new GeckoTerminal(http, geckoThrottle)
+  const geckoBook = new GeckoTerminal(http, geckoThrottle, undefined, { maxRetries: 3, backoffMs: 4_000 })
 
   // Counting a pool's bars is the heaviest GeckoTerminal call in a cycle and
   // it was 80% of the wall time in rate-limit backoff — measured, not guessed.
@@ -123,13 +143,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // something that has not changed.
   const barActivity = new CachedBarActivity(
     {
-      barAgeHours: async (chain, pool) => {
-        try {
-          return hoursSinceLastTrade(await gecko.candles(chain, pool, config.barSize, 300), Date.now())
-        } catch {
-          return null
-        }
-      },
+      // It THROWS rather than answering null, and the difference is the whole
+      // bug. `null` here means the feed answered and nobody had traded — a
+      // safety verdict, and remembered in `pool_quiet` for an hour. Catching a
+      // rate limit and returning null handed that verdict to every token the
+      // provider happened to refuse: 26 of 29 live positions went red at once,
+      // Bonk among them, and stayed red long after the quota recovered.
+      //
+      // Letting it throw reaches `scanOnce`, which leaves the measurement
+      // ABSENT — the gate fires on evidence and stays silent — and the cache
+      // never remembers a verdict nobody gave.
+      barAgeHours: async (chain, pool) =>
+        hoursSinceLastTrade(await gecko.candles(chain, pool, config.barSize, 300), Date.now()),
     },
     store,
     { now: () => Date.now() },
@@ -230,7 +255,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     probe: async () => (config.mode === 'paper' ? 'not-filled' : 'unknown'),
     candlesFor: async (position) => {
       try {
-        return await gecko.candles(position.chain, position.pairAddress, config.barSize, 1000)
+        // The patient client: this is the book, and a position nobody could
+        // fetch bars for is a position the death watch cannot advance.
+        return await geckoBook.candles(position.chain, position.pairAddress, config.barSize, 1000)
       } catch {
         return null
       }

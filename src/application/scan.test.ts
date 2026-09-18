@@ -508,3 +508,38 @@ describe('scanOnce — the reserve has to be EXAMINED before it can be reserve',
     expect(http.calls.some((u) => u.includes('token_security'))).toBe(false)
   })
 })
+
+describe('scanOnce — a provider that could not answer has not condemned anything', () => {
+  // `null` from the candle feed means "asked, and nobody traded" — the
+  // strongest form of "this engine cannot watch it", and rightly a SAFETY
+  // failure. A request that never got an answer says nothing about the token.
+  //
+  // Collapsing the two turned **26 of 29 live positions red at once**, Bonk
+  // among them, the moment the retry budget was cut and 429s started landing.
+  // The screen said the whole book had gone dangerous; what had happened was
+  // that we had run out of quota.
+  const table = {
+    [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+    [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+  }
+
+  it('leaves the measurement ABSENT when the feed could not be reached', async () => {
+    const { deps } = build(table)
+    const out = await scanOnce({ ...deps, barAgeHours: async () => { throw new Error('429') } }, { ...config, maxBarAgeHours: 1 })
+
+    expect(out.snapshots[0]?.lastTradeAgoHours).toBeUndefined()
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
+  })
+
+  it('still condemns a pool the feed answered about with SILENCE', async () => {
+    const { deps } = build(table)
+    const out = await scanOnce({ ...deps, barAgeHours: async () => null }, { ...config, maxBarAgeHours: 1 })
+
+    expect(out.snapshots[0]?.lastTradeAgoHours).toBeNull()
+    expect(out.candidates).toEqual([])
+  })
+})

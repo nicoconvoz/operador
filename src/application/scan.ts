@@ -536,8 +536,19 @@ export async function scanOnce(
         if (deps.lastCandlePriceUsd) priced.set(key, await deps.lastCandlePriceUsd(candidate.snapshot))
       } catch (error) {
         errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
-        // Unanswered is not fresh. Fail closed, like every other gate here.
-        measured.set(key, null)
+        // NOT a verdict. `null` means the feed answered and nobody had traded —
+        // the strongest form of "this engine cannot watch it", and rightly a
+        // safety failure. A request that never got an answer says nothing about
+        // the TOKEN; it says something about us.
+        //
+        // Collapsing the two turned 26 of 29 live positions red at once, Bonk
+        // among them, the moment a tighter retry budget let 429s through. The
+        // screen announced that the whole book had gone dangerous; what had
+        // happened was that we had run out of quota. It is the sell probe's own
+        // rule, broken here: an RPC failure is never read as "no route".
+        //
+        // Left ABSENT, the gate stays silent — it fires on evidence — and
+        // `confirmEntry` asks again, live, before any capital moves.
       }
     }
     if (measured.size > 0) {
