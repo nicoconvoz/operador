@@ -40,6 +40,26 @@ const minty: GoPlusSolanaToken = { ...safe, mintable: { status: '1', authority: 
 
 const goodQuote = { inputMint: 'x', inAmount: '1', outputMint: 'y', outAmount: '99000000', otherAmountThreshold: '0', swapMode: 'ExactIn', slippageBps: 50, priceImpactPct: '0.004', routePlan: [] }
 
+
+/**
+ * A candle series whose newest TRADED bar is `hoursAgo` old.
+ *
+ * `poolCandles` replaced three separate downloads, so a test that wants to say
+ * "this pool last traded five hours ago" now says it the way the engine reads
+ * it: out of the bars themselves. `volume: 0` is a bar nobody traded, which is
+ * what `hoursSinceLastTrade` walks back past.
+ */
+const seriesAged = (hoursAgo: number | null, bars = 300) => ({
+  time: Array.from({ length: bars }, (_, i) => NOW - (bars - 1 - i) * 900_000),
+  open: Array.from({ length: bars }, () => 1),
+  high: Array.from({ length: bars }, () => 1),
+  low: Array.from({ length: bars }, () => 1),
+  close: Array.from({ length: bars }, () => 0.01),
+  // null means "the feed answered and nobody ever traded" — every bar empty.
+  volume: Array.from({ length: bars }, (_, i) =>
+    hoursAgo === null ? 0 : NOW - (bars - 1 - i) * 900_000 <= NOW - hoursAgo * 3_600_000 ? 100 : 0),
+})
+
 const config: ScanConfig = {
   chain: 'solana',
   ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 5, minScore: 0 },
@@ -396,7 +416,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
     })
 
-    const out = await scanOnce({ ...deps, barAgeHours: async () => 5 }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, { ...config, maxBarAgeHours: 1 })
 
     expect(out.candidates).toEqual([])
     expect(out.rejected.map((r) => r.gates.failures[0]!.gate)).toContain('staleBars')
@@ -420,7 +440,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
     })
 
-    const out = await scanOnce({ ...deps, barAgeHours: async () => 5 }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, { ...config, maxBarAgeHours: 1 })
 
     expect(out.snapshots[0]!.lastTradeAgoHours).toBe(5)
     // And the gates, run again on that snapshot by anyone, reach the same verdict.
@@ -437,7 +457,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
     })
 
-    const out = await scanOnce({ ...deps, barAgeHours: async () => 0.2 }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(0.2) }, { ...config, maxBarAgeHours: 1 })
 
     expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
   })
@@ -459,7 +479,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
     })
 
     await scanOnce(
-      { ...deps, barAgeHours: async (s) => { asked.push(s.address); return 0.2 } },
+      { ...deps, poolCandles: async (s: { address: string }) => { asked.push(s.address); return seriesAged(0.2) } },
       { ...config, maxBarAgeHours: 1 },
     )
 
@@ -529,7 +549,7 @@ describe('scanOnce — a provider that could not answer has not condemned anythi
 
   it('leaves the measurement ABSENT when the feed could not be reached', async () => {
     const { deps } = build(table)
-    const out = await scanOnce({ ...deps, barAgeHours: async () => { throw new Error('429') } }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => { throw new Error('429') } }, { ...config, maxBarAgeHours: 1 })
 
     expect(out.snapshots[0]?.lastTradeAgoHours).toBeUndefined()
     expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
@@ -537,9 +557,69 @@ describe('scanOnce — a provider that could not answer has not condemned anythi
 
   it('still condemns a pool the feed answered about with SILENCE', async () => {
     const { deps } = build(table)
-    const out = await scanOnce({ ...deps, barAgeHours: async () => null }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(null) }, { ...config, maxBarAgeHours: 1 })
 
     expect(out.snapshots[0]?.lastTradeAgoHours).toBeNull()
     expect(out.candidates).toEqual([])
+  })
+})
+
+describe('scanOnce — ONE candle download, for the ones that already won', () => {
+  // Measured per chain, before: `historyBars` for every affordable token
+  // (~105), then `barAgeHours` for every candidate (~50), then
+  // `lastCandlePriceUsd` for every candidate again (~50). **About 205 requests
+  // to the provider that rate-limits hardest**, and 155 of them for tokens the
+  // ranking had already put out of reach.
+  //
+  // All three answers come out of one series. The operator's rule: score them
+  // on what is free, keep the ones the budget can fund, and only then pay for
+  // candles.
+  const candles = (bars: number, at: number) => ({
+    time: Array.from({ length: bars }, (_, i) => at - (bars - 1 - i) * 900_000),
+    open: Array.from({ length: bars }, () => 1),
+    high: Array.from({ length: bars }, () => 1),
+    low: Array.from({ length: bars }, () => 1),
+    close: Array.from({ length: bars }, () => 0.01),
+    volume: Array.from({ length: bars }, () => 100),
+  })
+
+  const table = (address: string) => ({
+    [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: address }] },
+    [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/${address}`]: { body: [pair(address)] },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=${address}`]: { body: { code: 1, message: 'ok', result: { [address]: safe } } },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=${address}`]: { body: goodQuote },
+  })
+
+  it('asks the candle feed ONCE per candidate and answers all three questions', async () => {
+    const asked: string[] = []
+    const { deps } = build(table('good'))
+    const out = await scanOnce(
+      { ...deps, poolCandles: async (s) => { asked.push(s.address); return candles(300, NOW) } },
+      { ...config, maxBarAgeHours: 1 },
+    )
+
+    expect(asked).toEqual(['good'])
+    const snapshot = out.snapshots[0]!
+    expect(snapshot.historyBars).toBe(300)
+    expect(snapshot.lastTradeAgoHours).toBeCloseTo(0, 6)
+    expect(snapshot.lastCandlePriceUsd).toBe(0.01)
+  })
+
+  it('never asks about a token the ranking already discarded', async () => {
+    // A honeypot is refused on the sell quote, which costs no candles at all.
+    const asked: string[] = []
+    const { deps } = build({
+      ...table('trap'),
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=trap`]: { status: 400, body: { error: 'Could not find any route' } },
+    })
+    const out = await scanOnce(
+      { ...deps, poolCandles: async (s) => { asked.push(s.address); return candles(300, NOW) } },
+      { ...config, maxBarAgeHours: 1 },
+    )
+
+    expect(out.candidates).toEqual([])
+    expect(asked).toEqual([])
   })
 })

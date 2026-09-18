@@ -466,18 +466,15 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // WITHOUT another download. Only the negative verdict is kept and
               // `confirmEntry` still asks live at the door, so nothing is ever
               // bought on a remembered answer.
-              barAgeHours: (snapshot) => barActivity.barAgeHours(snapshot.chain, snapshot.pairAddress),
-              // What the CANDLE provider thinks this token costs, against what
-              // the MARKET provider says. They disagreed by 10,846× on ZCAT,
-              // and the engine sizes from one while filling at the other.
-              lastCandlePriceUsd: async (snapshot) => {
-                try {
-                  const candles = await gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, 2)
-                  return candles.close.at(-1) ?? null
-                } catch {
-                  return null
-                }
-              },
+              // ONE download, three answers: how many bars this pool has, how
+              // long since the newest carried a trade, and what the candle feed
+              // says it costs. They were three separate requests — the count
+              // per AFFORDABLE token, the age per candidate, the price per
+              // candidate again, about 205 a chain against the provider that
+              // rate-limits hardest — and most of them for tokens the ranking
+              // had already discarded.
+              poolCandles: (snapshot) =>
+                gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, DEFAULT_GATE_POLICY.minHistoryBars * 3),
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

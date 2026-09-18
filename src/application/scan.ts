@@ -1,6 +1,8 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
 import { evaluateMarketGates, forgivableFailures } from '../domain/scanner/gates.js'
+import { hoursSinceLastTrade } from './idle-hours.js'
+import { type Candles } from './replay.js'
 import { scoreOpportunity } from '../domain/scanner/opportunity.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { mergeSecurity } from '../domain/scanner/security-merge.js'
@@ -82,18 +84,15 @@ export interface ScanDeps {
    *
    * Whoever is right about the market, the engine's answer is the same: it does
    * not shortlist what it cannot watch.
-   */
-  readonly barAgeHours?: (snapshot: TokenSnapshot) => Promise<number | null>
-  /**
-   * The newest candle's close, from the CANDLE provider, for the same token.
    *
-   * Measured in the SAME fetch as `barAgeHours` — no extra request — and
-   * compared against the market price by the `priceMismatch` gate. Two
-   * providers that disagree by four orders of magnitude about what a token
-   * costs cannot both be right, and the engine sizes from one while filling at
-   * the other.
+   * Whatever the caller returns, THREE answers come out of it and none of them
+   * costs a second request: how many bars this pool has, how long since the
+   * newest one carried a trade, and what the candle feed thinks it costs. Those
+   * were three separate downloads — the count per affordable token, the age per
+   * candidate, the price per candidate again, about 205 a chain — and the
+   * comment beside the price already claimed they shared a fetch. They did not.
    */
-  readonly lastCandlePriceUsd?: (snapshot: TokenSnapshot) => Promise<number | null>
+  readonly poolCandles?: (snapshot: TokenSnapshot) => Promise<Candles>
 }
 
 export interface CachedSecurity {
@@ -263,17 +262,17 @@ export async function examineToken(
     }
   }
 
-  const askHistory = async (): Promise<number | null> => {
-    if (!deps.history) return null
-    try {
-      return await deps.history.historyBars(config.chain, market.pairAddress)
-    } catch (error) {
-      record('history', error)
-      return null
-    }
-  }
-
-  const [primary, metadata, historyBars] = await Promise.all([askGoPlus(), askMetadataProvider(), askHistory()])
+  // NO candles here. The history count used to ride along in this parallel
+  // burst, once per AFFORDABLE token — about 105 a chain — and the ranking then
+  // discarded most of them. Candles come from the provider that rate-limits
+  // hardest, so those were the most expensive requests in the cycle and the
+  // ones with the least chance of mattering.
+  //
+  // The operator's rule: score them on what is FREE, keep the ones the budget
+  // can fund, and only then pay for candles. The count is measured in step 4b
+  // now, out of the one series that also answers bar freshness and the candle
+  // price — for the candidates alone.
+  const [primary, metadata] = await Promise.all([askGoPlus(), askMetadataProvider()])
 
   // Merged in TRUST order, which the concurrency must not disturb: GoPlus
   // first, then the metadata provider's audit, then venue heuristics.
@@ -302,7 +301,9 @@ export async function examineToken(
   // skipped set false — three values for two meanings. Readers survived it by
   // testing `!== false`, which is a trap waiting for the first reader that
   // tests `=== true`.
-  const snapshot: TokenSnapshot = { ...market, security, historyBars, securityChecked: true, measuredImpactPct: slippagePct }
+  // `historyBars: null` — unmeasured, not short. The gate fires on evidence and
+  // stays silent here; step 4b fills it in for whatever survives the ranking.
+  const snapshot: TokenSnapshot = { ...market, security, historyBars: null, securityChecked: true, measuredImpactPct: slippagePct }
   return { snapshot, slippagePct }
 }
 
@@ -525,15 +526,23 @@ export async function scanOnce(
   // eligible while the engine refused it — the exact screen-versus-engine
   // disagreement the read model exists to prevent. Eighteen of twenty-seven
   // Solana tokens were in that state.
-  if (deps.barAgeHours && config.maxBarAgeHours !== undefined) {
+  if (deps.poolCandles && config.maxBarAgeHours !== undefined) {
     const measured = new Map<string, number | null>()
     const priced = new Map<string, number | null>()
+    const bars = new Map<string, number>()
     for (const candidate of ranked.candidates) {
       const key = tokenKey(candidate.snapshot)
       try {
-        measured.set(key, await deps.barAgeHours(candidate.snapshot))
-        // The same fetch, so this costs nothing beyond what was already paid.
-        if (deps.lastCandlePriceUsd) priced.set(key, await deps.lastCandlePriceUsd(candidate.snapshot))
+        // ONE request, three answers. They all come out of the same series and
+        // were three separate downloads: the history count per affordable
+        // token, the bar age per candidate, and the candle price per candidate
+        // again — about 205 requests a chain to the provider that rate-limits
+        // hardest. The doc comment beside the price already claimed they shared
+        // a fetch; they did not.
+        const series = await deps.poolCandles(candidate.snapshot)
+        bars.set(key, series.time.length)
+        measured.set(key, hoursSinceLastTrade(series, scannedAt))
+        priced.set(key, series.close.at(-1) ?? null)
       } catch (error) {
         errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
         // NOT a verdict. `null` means the feed answered and nobody had traded —
@@ -557,6 +566,7 @@ export async function scanOnce(
           ? {
               ...s,
               lastTradeAgoHours: measured.get(tokenKey(s))!,
+              ...(bars.has(tokenKey(s)) ? { historyBars: bars.get(tokenKey(s))! } : {}),
               ...(priced.has(tokenKey(s)) ? { lastCandlePriceUsd: priced.get(tokenKey(s))! } : {}),
             }
           : s,
