@@ -89,7 +89,7 @@ export interface CycleDeps {
    */
   readonly confirmEntry?: (snapshot: Candidate['snapshot']) => Promise<EntryConfirmation>
   /** Fresh scanner output. Empty is a valid answer and is alerted on. */
-  readonly scan: () => Promise<readonly Candidate[]>
+  readonly scan: (kind: 'full' | 'held') => Promise<readonly Candidate[]>
   /**
    * The LAST scan, re-ranked from the shelf. No network.
    *
@@ -143,7 +143,20 @@ export interface CycleConfig {
  * The asymmetry is the whole argument: a token you HOLD can rug in ten minutes,
  * while an opportunity missed by an hour is only a missed opportunity.
  */
-export type CycleKind = 'full' | 'watch'
+/**
+ * What a pass is allowed to spend.
+ *
+ * `full` discovers and examines everything. `held` re-examines only the book —
+ * the same gates, the same security call, the same sell quote, over about
+ * thirty tokens instead of five hundred. `watch` touches no network for the
+ * shortlist at all.
+ *
+ * The split exists because the full scan was doing two jobs at one rate: seeing
+ * whether our own positions have turned, and looking for new ones. The first is
+ * urgent and small, the second is patient and enormous — the asymmetry the
+ * cadences were built on, finally applied to the scan itself.
+ */
+export type CycleKind = 'full' | 'held' | 'watch'
 
 export interface CycleResult {
   readonly kind: CycleKind
@@ -323,7 +336,7 @@ export async function runCycle(
     // throttled discovery before anything could go in it — with candidates
     // already examined, already stored, already good. The fusion was never
     // necessary.
-    const found = kind === 'full' ? await deps.scan() : ((await deps.recall?.())?.candidates ?? [])
+    const found = kind === 'watch' ? ((await deps.recall?.())?.candidates ?? []) : await deps.scan(kind)
     const candidates = found
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 

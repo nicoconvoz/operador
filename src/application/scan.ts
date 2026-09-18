@@ -150,6 +150,13 @@ export interface ScanConfig {
   /** How stale the newest bar may be before a candidate is refused. */
   readonly maxBarAgeHours?: number
   /**
+   * False re-examines only what we HOLD and discovers nothing.
+   *
+   * Absent means the full sweep, which is what every caller did before this
+   * existed — a default that changes nothing is the only safe kind here.
+   */
+  readonly discover?: boolean
+  /**
    * How many tokens the engine can actually fund — the number of candle
    * downloads worth paying for.
    *
@@ -352,6 +359,21 @@ export async function scanOnce(
   // never be what decides whether our own position is looked at.
   const held = new Set(config.held ?? [])
   const universe = new Set<string>(held)
+  // ── A scan that only re-examines what we HOLD ─────────────────────────────
+  //
+  // The full scan does two jobs with very different urgencies, and it used to
+  // do them at the same rate: re-examining about thirty tokens that hold money,
+  // and discovering four hundred and fifty that might. The project's own rule
+  // for the cadences says they are not the same — *a token you HOLD can rug in
+  // ten minutes; an opportunity missed by an hour is only a missed
+  // opportunity* — and the scan did not know it.
+  //
+  // So the expensive half can be rare and the urgent half frequent. Skipping
+  // discovery leaves the universe as exactly the book, and everything after
+  // this point is unchanged: the same gates, the same security call, the same
+  // sell quote, the same candles. It is the same scan with a smaller universe,
+  // not a lesser one.
+  if (config.discover !== false) {
   if (deps.decimals.discover) {
     try {
       for (const address of await deps.decimals.discover()) universe.add(address)
@@ -370,6 +392,7 @@ export async function scanOnce(
   }
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
+  }
   // The cap bounds DISCOVERY, never what we hold. A book wider than the cap
   // would otherwise start dropping its own positions out of the scan, which is
   // the failure this whole ordering exists to prevent.

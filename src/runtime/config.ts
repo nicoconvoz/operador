@@ -52,6 +52,7 @@ export interface RuntimeConfig {
    * hour is a missed opportunity and nothing worse.
    */
   readonly scanIntervalMs: number
+  readonly heldScanIntervalMs: number
   /** How often the death watch re-probes the sell path of open positions. */
   readonly healthIntervalMs: number
   /**
@@ -241,6 +242,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     gasUsdPerSwap: number(env, 'OPERADOR_GAS_USD', 0.05),
     cycleIntervalMs: number(env, 'OPERADOR_CYCLE_MS', 5 * 60 * 1000),
     scanIntervalMs: number(env, 'OPERADOR_SCAN_MS', 60 * 60 * 1000),
+    // The urgent half of a scan, on its own clock: re-examine the BOOK without
+    // discovering anything. Twenty minutes against the full scan's hour,
+    // because a token holding money can rug in ten minutes while one that does
+    // not is only a missed opportunity.
+    heldScanIntervalMs: number(env, 'OPERADOR_HELD_SCAN_MS', 20 * 60 * 1000),
     healthIntervalMs: number(env, 'OPERADOR_HEALTH_MS', 10 * 60 * 1000),
     // Zero means "never — the daemon", and `number()` rejects zero. The
     // behaviour therefore existed only while the variable was UNSET: writing

@@ -430,7 +430,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // nobody should be spending from.
         maxAgeMs: 2 * config.scanIntervalMs,
       }),
-    scan: async () => {
+    scan: async (kind) => {
       const candidates: Candidate[] = []
       // What we already hold, per chain. Every universe source is a list of
       // what is POPULAR NOW, so a token bought six hours ago that has stopped
@@ -503,6 +503,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             },
             {
               chain,
+              // A HELD pass re-examines the book and discovers nothing: the
+              // same gates, the same security call, the same sell quote, over
+              // thirty tokens instead of five hundred. It is what lets the
+              // expensive sweep be rare without leaving our own positions
+              // unexamined for hours.
+              discover: kind === 'full',
               ranking: {
                 gates,
                 opportunity: DEFAULT_OPPORTUNITY_POLICY,
@@ -649,6 +655,7 @@ export async function main(ports: RuntimePorts): Promise<void> {
     // what is already open, which costs a candle request and a sell probe per
     // position instead of a scan.
     scanIntervalMs: config.scanIntervalMs,
+    heldScanIntervalMs: config.heldScanIntervalMs,
     stopSignal,
     // 0 means run forever. A scheduler sets 1 and gets a single cycle.
     ...(config.maxCycles > 0 ? { maxCycles: config.maxCycles } : {}),

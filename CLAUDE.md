@@ -1422,6 +1422,42 @@ recover → halt what cannot be trusted → tick what can →
 open new positions with what is left → checkpoint → heartbeat
 ```
 
+### Three cadences, because the scan was doing two jobs at one rate
+
+The operator asked the right question: *if we re-examine a few positions and
+keep replacing, what is the big scan for?* Two things, and neither is optional:
+
+- **Discovery.** The shelf only holds what a previous scan found. Refreshing it
+  says which of the tokens you already know is best NOW; it can never mention
+  one you do not know. And the shelf only ever shrinks — bought, condemned,
+  fallen — so without discovery it empties.
+- **Danger.** The refresh is DexScreener: price, liquidity, volume. It does not
+  ask GoPlus and does not quote a sell, so an LP that unlocks, an authority that
+  returns or a sell path that breaks is invisible to it — seven of the death
+  watch's eight signals, on the tokens holding the money.
+
+But the question exposed something real: those two jobs have very different
+urgencies and were sharing a schedule set by the expensive one.
+
+| Pass | Costs | Every |
+|---|---|---|
+| `watch` | nothing for the shortlist, one batched request to re-price the shelf | 5 min |
+| `held` | the full examination over **~30 tokens**, no discovery | **20 min** |
+| `full` | discovery plus everything, ~450 tokens | 1–2 h |
+
+`held` is the same scan over a smaller universe, not a lesser one: same gates,
+same security call, same sell quote, same candles. `ScanConfig.discover: false`
+leaves the universe as exactly the book, and `held` was already seeded first so
+the cap could never decide whether our own position got looked at.
+
+The result is MORE protection than before and LESS time scanning: what we hold
+is re-examined three times an hour instead of once, while the sweep that costs
+nine minutes a chain happens half as often.
+
+A full pass re-examines the book on its way past, so it resets the held clock
+too — otherwise the pass right after a full scan would immediately owe one for
+work just done.
+
 ### The shelf is priced NOW, for one batched request
 
 The operator's idea, and it came out cheaper than he asked for: instead of a

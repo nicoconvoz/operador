@@ -43,6 +43,14 @@ export interface LoopOptions {
    */
   readonly scanIntervalMs?: number
   /**
+   * How often a pass re-examines the BOOK without discovering anything.
+   *
+   * The urgent half of a scan, on its own clock. A token that holds money can
+   * rug in ten minutes; a token that does not is only a missed opportunity, and
+   * the two were sharing a schedule set by the expensive one.
+   */
+  readonly heldScanIntervalMs?: number
+  /**
    * Called after every pass that completed.
    *
    * A WATCH pass prints nothing of its own — it runs no scan, so there is no
@@ -87,6 +95,7 @@ export async function runLoop(
   // `recall` returns nothing when the shelf is missing or past its window, so
   // this stays null and the first pass scans, which is the right answer then.
   let lastScanAt: number | null = (await deps.recall?.())?.scannedAt ?? null
+  let lastHeldAt = -Infinity
   let failures = 0
   let consecutiveFailures = 0
   let lastResult: CycleResult | null = null
@@ -107,7 +116,9 @@ export async function runLoop(
       const kind: CycleKind =
         options.scanIntervalMs === undefined || lastScanAt === null || deps.now() - lastScanAt >= options.scanIntervalMs
           ? 'full'
-          : 'watch'
+          : options.heldScanIntervalMs !== undefined && deps.now() - lastHeldAt >= options.heldScanIntervalMs
+            ? 'held'
+            : 'watch'
 
       const startedAt = deps.now()
       lastResult = await runCycle(deps, config, throttle, kind)
@@ -117,6 +128,10 @@ export async function runLoop(
       // end of one scan and the start of the next, so a scan that took half an
       // hour does not immediately owe another one.
       if (kind === 'full') lastScanAt = deps.now()
+      // A FULL scan re-examines the book on its way past, so it resets this
+      // clock too. Otherwise the pass right after a full one would immediately
+      // owe a held scan for work that was just done.
+      if (kind === 'full' || kind === 'held') lastHeldAt = deps.now()
 
       if (consecutiveFailures > 0) {
         // Say when it comes back. An error with no resolution is an error the

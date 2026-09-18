@@ -173,7 +173,7 @@ describe('runLoop — watching runs faster than scanning', () => {
     const seen: string[] = []
     return {
       seen,
-      scan: async () => { seen.push('scan'); return [] },
+      scan: async (kind: 'full' | 'held') => { seen.push(kind); return [] },
       deps,
     }
   }
@@ -184,7 +184,7 @@ describe('runLoop — watching runs faster than scanning', () => {
 
     await runLoop(deps, config, new AlertThrottle(0), { intervalMs: 0, sleep: async () => {}, maxCycles: 1, scanIntervalMs: 60_000 })
 
-    expect(spy.seen).toEqual(['scan'])
+    expect(spy.seen).toEqual(['full'])
   })
 
   it('watches between scans instead of scanning every pass', async () => {
@@ -217,6 +217,46 @@ describe('runLoop — watching runs faster than scanning', () => {
     })
 
     expect(spy.seen).toHaveLength(2)
+  })
+
+  it('re-examines the BOOK between full scans, without discovering', async () => {
+    // The urgent half of a scan on its own clock. A token holding money can rug
+    // in ten minutes; one that does not is only a missed opportunity — and the
+    // two were sharing a schedule set by the expensive one.
+    const spy = kinds(rig().deps)
+    let clock = NOW
+    const { deps } = rig({ scan: spy.scan, now: () => clock })
+
+    // Passes five minutes apart, a full scan every twenty, the book every ten.
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0,
+      sleep: async () => { clock += 5 * 60_000 },
+      maxCycles: 5,
+      scanIntervalMs: 20 * 60_000,
+      heldScanIntervalMs: 10 * 60_000,
+    })
+
+    expect(spy.seen[0]).toBe('full')
+    expect(spy.seen).toContain('held')
+    expect(spy.seen.filter((k) => k === 'full')).toHaveLength(2)
+  })
+
+  it('does not owe a book pass the minute after a full scan did one', async () => {
+    // A full scan re-examines the book on its way past, so it resets that clock
+    // too — otherwise the very next pass would redo work just done.
+    const spy = kinds(rig().deps)
+    let clock = NOW
+    const { deps } = rig({ scan: spy.scan, now: () => clock })
+
+    await runLoop(deps, config, new AlertThrottle(0), {
+      intervalMs: 0,
+      sleep: async () => { clock += 60_000 },
+      maxCycles: 2,
+      scanIntervalMs: 60 * 60_000,
+      heldScanIntervalMs: 10 * 60_000,
+    })
+
+    expect(spy.seen).toEqual(['full'])
   })
 
   it('scans every pass when no scan interval is set — the old behaviour, unchanged', async () => {

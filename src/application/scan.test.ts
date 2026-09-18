@@ -703,3 +703,47 @@ describe('scanOnce — fills the slots, topping up from the next best score', ()
     expect(asked).toHaveLength(2)
   })
 })
+
+describe('scanOnce — the same scan, over a smaller universe', () => {
+  // The full scan did two jobs at one rate: re-examining ~30 tokens that hold
+  // money, and discovering ~450 that might. The project's own cadence rule says
+  // they are not the same urgency, and the scan did not know it.
+  //
+  // `discover: false` leaves the universe as exactly the book. Everything after
+  // is unchanged — same gates, same security call, same sell quote, same
+  // candles — so it is the same scan over fewer tokens, not a lesser one.
+  const table = {
+    [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'found' }] },
+    [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    // `stubHttp` matches by PREFIX, so the longer key has to come first or a
+    // request for two tokens is answered by the stub for one.
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/ours,found`]: { body: [pair('ours'), pair('found')] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/ours`]: { body: [pair('ours')] },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=ours`]: { body: { code: 1, message: 'ok', result: { ours: safe } } },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=found`]: { body: { code: 1, message: 'ok', result: { found: safe } } },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=ours`]: { body: goodQuote },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=found`]: { body: goodQuote },
+  }
+
+  it('looks at what we hold and asks no discovery source anything', async () => {
+    const { deps, http } = build(table)
+    const out = await scanOnce(deps, { ...config, held: ['ours'], discover: false })
+
+    expect(out.snapshots.map((s) => s.address)).toEqual(['ours'])
+    expect(http.calls.some((u) => u.includes('token-profiles') || u.includes('token-boosts'))).toBe(false)
+  })
+
+  it('still examines it properly — this is not a cheaper check', async () => {
+    const { deps } = build(table)
+    const out = await scanOnce(deps, { ...config, held: ['ours'], discover: false })
+    expect(out.snapshots[0]!.securityChecked).toBe(true)
+    expect(out.snapshots[0]!.security.honeypot).toBe(false)
+  })
+
+  it('discovers by default, so no existing caller changes behaviour', async () => {
+    const { deps } = build(table)
+    const out = await scanOnce(deps, { ...config, held: ['ours'] })
+    expect(out.snapshots.map((s) => s.address).sort()).toEqual(['found', 'ours'])
+  })
+})

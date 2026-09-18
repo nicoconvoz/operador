@@ -104,6 +104,11 @@ jobs:
           # A token you HOLD can rug in ten minutes; an opportunity missed by an
           # hour is only missed.
           OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '3600000' }}
+          # The URGENT half of a scan on its own clock: re-examine the book,
+          # discover nothing. A token holding money can rug in ten minutes; one
+          # that does not is only a missed opportunity, and the two were sharing
+          # a schedule set by the expensive one.
+          OPERADOR_HELD_SCAN_MS: ${{ vars.OPERADOR_HELD_SCAN_MS || '1200000' }}
           # Generous: with watch passes now cheap, the 350-minute job timeout is
           # what ends a run, not this. It is here so a pathological loop cannot
           # spin forever.
