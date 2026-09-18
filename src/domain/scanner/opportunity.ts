@@ -65,6 +65,20 @@ export interface OpportunityPolicy {
    * It began as `1 / (1 + run/100)` with a weight of 0.05, where a token up 10%
    * and one up 60% landed 1.27 points apart. That broke a tie and nothing more.
    */
+  /**
+   * The rise, in percent over the last hour, below which nothing is happening.
+   *
+   * The operator's number, and it closes a cliff: the direction branch was a
+   * hard edge at exactly 0%, so a token at +0.1% scored 0.984 — one hundredth
+   * of a percent from 0.000, which is the entire range of the component. A
+   * position oscillating there would be rotated out and bought back every half
+   * hour, paying its round trip each time.
+   *
+   * At 1% the edge sits on a move rather than on noise, and it still sits
+   * BELOW the measured median riser (+1.45%), so it ignores drift without
+   * refusing the ordinary climbing token.
+   */
+  readonly headroomMinRisePct: number
   readonly headroomKneePct: number
   readonly headroomFullyRunPct: number
   /**
@@ -193,6 +207,7 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   //
   // Below that a token is moving up with room left. Above it the move has
   // already happened and the next thing we would buy is its top.
+  headroomMinRisePct: 1,
   headroomKneePct: 4,
   headroomFullyRunPct: 25,
   worstRoundTripPct: 4,
@@ -359,7 +374,7 @@ export function scoreOpportunity(
   const headroom =
     recent === null || recent === undefined
       ? 0.5
-      : recent <= 0
+      : recent <= policy.headroomMinRisePct
         ? 0
         : logHeadroom(recent, policy)
 
