@@ -499,7 +499,38 @@ that moved.
 It counts as a SAFETY gate on the screen — red, not grey. Buying one is not a
 mediocre trade: it is capital converted into the wrong quantity of a token.
 
-### Patience belongs where the money is
+### A budget of TIME, not a count of tries
+
+The operator's rule: *do not put a fixed number on it. Wait until the data
+arrives and stop the instant it does — sometimes three seconds, sometimes forty
+— and give up only after a maximum of sixty with nothing.*
+
+A retry COUNT prices the wrong thing. Three tries is cheap against a provider
+that answers and ruinous against one that does not, and the number that actually
+matters — how long a scan takes — appears nowhere in it. `waitBudgetMs` (60s)
+states it outright, and the average of the real waits then becomes a measurement
+of the provider rather than an artefact of the cap.
+
+Two properties the counting version did not have:
+
+- **It stops the moment it HAS the data.** The budget is a ceiling, never a
+  quota to spend.
+- **It uses the whole budget when it must.** A doubling backoff that refuses to
+  start a wait it cannot finish leaves half of it unspent — and the unspent half
+  is exactly where a slow provider would have answered. The last wait is trimmed
+  to what remains instead.
+
+The doubling stays. It is the polite shape for a rate limit: ask again soon in
+case it was a blip, back off hard if it was not.
+
+**It also retired a split that had just been made.** Two clients had been given
+different retry counts — patient for the book, impatient for the scan — on the
+argument that a held token can rug in ten minutes while a missed opportunity is
+only missed. A deadline makes that unnecessary rather than wrong: a request that
+answers in three seconds costs three seconds whoever asked, so the book gets its
+patience without the scan paying a fixed toll for it.
+
+### Patience belongs where the money is — SUPERSEDED by the budget above
 
 A single retry policy served two questions that are not the same question, and
 the project already had the argument written down for the cadences: *a token you

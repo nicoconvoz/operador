@@ -59,8 +59,14 @@ interface PoolsResponse {
 }
 
 export interface GeckoTerminalOptions {
-  /** Retries on HTTP 429, with doubling backoff from `backoffMs`. */
-  readonly maxRetries?: number
+  /**
+   * The most time one request may spend WAITING on 429s before it gives up.
+   *
+   * A ceiling, not a quota: a request that gets its answer in three seconds
+   * costs three seconds. Defaults to sixty.
+   */
+  readonly waitBudgetMs?: number
+  /** First backoff; each retry doubles it until the budget is spent. */
   readonly backoffMs?: number
   readonly sleep?: (ms: number) => Promise<void>
   /** Injected so "has this bar closed yet?" is testable without the wall clock. */
@@ -68,7 +74,7 @@ export interface GeckoTerminalOptions {
 }
 
 export class GeckoTerminal {
-  private readonly maxRetries: number
+  private readonly waitBudgetMs: number
   private readonly backoffMs: number
   private readonly sleep: (ms: number) => Promise<void>
   private readonly now: () => number
@@ -79,21 +85,7 @@ export class GeckoTerminal {
     private readonly base: string = GECKOTERMINAL_BASE,
     options: GeckoTerminalOptions = {},
   ) {
-    // Two retries from two seconds — SIX seconds of waiting, not twenty-eight.
-    //
-    // Retrying is right when the queue is ours and we are merely early. This
-    // quota is not ours: GeckoTerminal limits by IP and a CI runner shares its
-    // address with thousands of unrelated jobs, so a 429 usually means somebody
-    // else spent it. Doubling from four seconds three times does not move us up
-    // that queue, it spends the cycle — measured cold on a runner, 33 minutes
-    // to examine 100 tokens, about 20 seconds each against a 2.5s throttle.
-    //
-    // And the wait bought nothing: `historyBars` answers null, the gate fires
-    // on evidence and stays silent, and the token passes exactly as it would
-    // have. What is lost by giving up sooner is the minority of 429s that clear
-    // on the third try; what is gained is twenty-two seconds on every one that
-    // never would.
-    this.maxRetries = options.maxRetries ?? 2
+    this.waitBudgetMs = options.waitBudgetMs ?? 60_000
     this.backoffMs = options.backoffMs ?? 2_000
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.now = options.now ?? (() => Date.now())
@@ -264,14 +256,42 @@ export class GeckoTerminal {
     }
   }
 
-  /** GET with a doubling backoff on 429 — the free tier limits around 30/min. */
+  /**
+   * GET, retrying a 429 until the data arrives or the TIME budget is spent.
+   *
+   * The operator's rule: do not put a fixed number on it. Wait until it answers
+   * and stop the instant it does — sometimes three seconds, sometimes forty —
+   * and give up only after a maximum of sixty with nothing.
+   *
+   * A retry COUNT prices the wrong thing. Three tries is cheap against a
+   * provider that answers and ruinous against one that does not, and the number
+   * that actually matters — how long a scan takes — appears nowhere in it. A
+   * deadline states it outright, and the average of the real waits then becomes
+   * a measurement of the provider rather than an artefact of the cap.
+   *
+   * Two properties the counting version did not have:
+   *
+   *  - **It stops the moment it HAS the data.** The budget is a ceiling, never
+   *    a quota to spend.
+   *  - **It uses the whole budget when it must.** A doubling backoff that
+   *    refuses to start a wait it cannot finish leaves half of it unspent — and
+   *    the unspent half is exactly where a slow provider would have answered.
+   *    The last wait is trimmed to what remains instead.
+   *
+   * The doubling itself stays. It is the polite shape for a rate limit: ask
+   * again soon in case it was a blip, and back off hard if it was not.
+   */
   private async getWithBackoff(url: string): Promise<unknown> {
+    let waited = 0
     for (let attempt = 0; ; attempt++) {
       await this.throttle.wait()
       const response = await this.http(url)
       if (response.status === 200) return response.json()
-      if (response.status === 429 && attempt < this.maxRetries) {
-        const wait = this.backoffMs * 2 ** attempt
+
+      const remaining = this.waitBudgetMs - waited
+      if (response.status === 429 && remaining > 0) {
+        const wait = Math.min(this.backoffMs * 2 ** attempt, remaining)
+        waited += wait
         this.rateLimit.hits += 1
         this.rateLimit.waitedMs += wait
         await this.sleep(wait)

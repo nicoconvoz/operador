@@ -89,12 +89,12 @@ describe('GeckoTerminal — candles', () => {
     expect(sleeps).toEqual([4_000, 8_000])
   })
 
-  it('gives up after maxRetries so a scan does not hang forever', async () => {
+  it('gives up once the wait budget is spent, so a scan does not hang forever', async () => {
     const sleeps: number[] = []
     const gt = new GeckoTerminal(stubHttp({ [url]: { status: 429, body: {} } }), undefined, undefined,
-      { maxRetries: 2, backoffMs: 1_000, sleep: async (ms) => { sleeps.push(ms) } })
+      { waitBudgetMs: 3_000, backoffMs: 1_000, sleep: async (ms) => { sleeps.push(ms) } })
     await expect(gt.candles('solana', POOL)).rejects.toMatchObject({ status: 429 })
-    expect(sleeps).toHaveLength(2)
+    expect(sleeps.reduce((a, b) => a + b, 0)).toBe(3_000)
   })
 })
 
@@ -163,7 +163,7 @@ describe('GeckoTerminal — a universe that works on any chain', () => {
       calls++
       return calls === 1 ? { status: 500, json: async () => ({}) } : { status: 200, json: async () => pools([['0xdef', 'poolC']]) }
     }
-    const gt = new GeckoTerminal(http, undefined, undefined, { maxRetries: 0 })
+    const gt = new GeckoTerminal(http, undefined, undefined, { waitBudgetMs: 0 })
     expect(await gt.discoverPools('bsc', 1)).toEqual([{ tokenAddress: '0xdef', poolAddress: 'poolC' }])
   })
 
@@ -289,34 +289,57 @@ describe('GeckoTerminal — counting history when one row is always discarded', 
   })
 })
 
-describe('GeckoTerminal — a quota that is not ours is not worth waiting for', () => {
-  // Measured on a GitHub runner, cold: **33 minutes to examine 100 tokens**,
-  // about 20 seconds each against a 2.5s throttle. The extra was backoff.
+describe('GeckoTerminal — a budget of TIME, not a count of tries', () => {
+  // The operator's rule: do not put a fixed number on it. Wait until the data
+  // arrives and stop the instant it does — sometimes three seconds, sometimes
+  // forty — and give up only after a MAXIMUM of sixty seconds with nothing.
   //
-  // At 3 retries doubling from 4s a rate-limited token waits 4 + 8 + 16 = **28
-  // seconds** and then gives up — and `historyBars` answers null, the gate
-  // stays silent, and the token passes anyway. Half a minute bought nothing.
-  //
-  // Retrying is right when the queue is OURS and we are early. GeckoTerminal
-  // limits by IP and a CI runner shares its address with thousands of
-  // unrelated jobs, so the quota is already spent by somebody else: waiting
-  // longer does not move us up a queue, it just spends the cycle. The
-  // project's own conclusion, written before this: *the only winning move is
-  // to ask less.*
-  const sleepsFor = async (options: Record<string, unknown>) => {
+  // A retry count prices the wrong thing. Three tries is cheap against a
+  // provider that answers and ruinous against one that does not, and the number
+  // that actually matters — how long a scan takes — is never stated anywhere.
+  // A deadline states it, and the average of the real waits is then a
+  // measurement rather than an artefact of the cap.
+  const sleepsUntil = async (failures: number, options: Record<string, unknown> = {}) => {
+    let calls = 0
     const sleeps: number[] = []
-    const gt = new GeckoTerminal(stubHttp({ [url]: { status: 429, body: {} } }), undefined, undefined,
-      { ...options, sleep: async (ms: number) => { sleeps.push(ms) } })
+    const gt = new GeckoTerminal(
+      async () => {
+        calls++
+        return calls <= failures ? { status: 429, json: async () => ({}) } : { status: 200, json: async () => live }
+      },
+      undefined, undefined,
+      { ...options, sleep: async (ms: number) => { sleeps.push(ms) } },
+    )
     await gt.candles('solana', POOL).catch(() => undefined)
     return sleeps
   }
 
-  it('gives up inside ten seconds by default, not thirty', async () => {
-    const sleeps = await sleepsFor({})
-    expect(sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10_000)
+  it('costs nothing when the answer is there', async () => {
+    expect(await sleepsUntil(0)).toEqual([])
   })
 
-  it('still retries, because a single 429 is usually just our turn coming', async () => {
-    expect((await sleepsFor({})).length).toBeGreaterThan(0)
+  it('stops the moment it HAS the data, however long that took', async () => {
+    // One 429 then success: it paid one wait and left. It did not keep going
+    // to fill a budget, because the budget is a ceiling and not a quota.
+    expect(await sleepsUntil(1)).toHaveLength(1)
+  })
+
+  it('spends up to sixty seconds on one that never answers, and not a second more', async () => {
+    const total = (await sleepsUntil(Infinity)).reduce((a, b) => a + b, 0)
+    expect(total).toBeLessThanOrEqual(60_000)
+    expect(total).toBeGreaterThan(55_000)
+  })
+
+  it('uses the whole budget rather than stopping short of it', async () => {
+    // A doubling backoff that refuses to start a wait it cannot finish leaves
+    // half the budget unspent — and the unspent half is exactly where a slow
+    // provider would have answered.
+    const sleeps = await sleepsUntil(Infinity)
+    expect(sleeps.length).toBeGreaterThan(4)
+  })
+
+  it('takes a smaller budget when one is given', async () => {
+    const total = (await sleepsUntil(Infinity, { waitBudgetMs: 10_000 })).reduce((a, b) => a + b, 0)
+    expect(total).toBeLessThanOrEqual(10_000)
   })
 })

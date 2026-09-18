@@ -77,27 +77,15 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const goplus = new GoPlus(http)
   const jupiter = new Jupiter(http, jupiterThrottle)
   const jupiterTokens = new JupiterTokens(http, jupiterThrottle)
-  // TWO clients, one quota, two different amounts of patience.
+  // ONE client, one rule: wait until it answers, give up after sixty seconds.
   //
-  // The operator's rule: *the ones we actually trade are few — give THOSE more
-  // time.* It is the asymmetry the two cadences already encode, finally applied
-  // to the retries: a token you HOLD can rug in ten minutes, an opportunity
-  // missed by an hour is only a missed opportunity.
-  //
-  // `gecko` asks about STRANGERS — two hundred of them per scan, once an hour.
-  // A 429 there costs one candidate, and waiting 28 seconds for each cost 33
-  // minutes to examine a hundred tokens, measured on a runner. It gives up in
-  // six.
-  //
-  // `geckoBook` asks about the money — twenty-nine positions, every five
-  // minutes. A 429 there blinds the death watch on something that might be
-  // dying, so it keeps the long patience: four retries doubling from four
-  // seconds.
-  //
-  // The THROTTLE is shared, because the quota is one quota and the IP is one
-  // IP. Only the giving-up differs.
+  // This replaced a pair of clients with different retry COUNTS — patient for
+  // the book, impatient for the scan. The operator's rule made the split
+  // unnecessary: a request that answers in three seconds costs three seconds
+  // whoever asked, so the book gets its patience without the scan paying a
+  // fixed toll for it. The ceiling is the same for everyone because the quota
+  // is the same quota.
   const gecko = new GeckoTerminal(http, geckoThrottle)
-  const geckoBook = new GeckoTerminal(http, geckoThrottle, undefined, { maxRetries: 3, backoffMs: 4_000 })
 
   // Counting a pool's bars is the heaviest GeckoTerminal call in a cycle and
   // it was 80% of the wall time in rate-limit backoff — measured, not guessed.
@@ -255,9 +243,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     probe: async () => (config.mode === 'paper' ? 'not-filled' : 'unknown'),
     candlesFor: async (position) => {
       try {
-        // The patient client: this is the book, and a position nobody could
-        // fetch bars for is a position the death watch cannot advance.
-        return await geckoBook.candles(position.chain, position.pairAddress, config.barSize, 1000)
+        return await gecko.candles(position.chain, position.pairAddress, config.barSize, 1000)
       } catch {
         return null
       }
