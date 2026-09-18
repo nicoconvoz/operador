@@ -235,6 +235,34 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         return null
       }
     },
+    // The SECOND opinion on what a held token is worth, so the engine can tell
+    // a token that collapsed from one whose price it cannot read. DexScreener,
+    // never GeckoTerminal: asking the candle feed to check the candle feed
+    // would agree with itself about a number that does not exist, which is
+    // exactly how ZCAT and USDF happened.
+    //
+    // One call per thirty addresses per chain, so the whole book costs a couple
+    // of requests a cycle against a limit of three hundred a minute. A chain
+    // that fails costs the others nothing, and a total failure returns an empty
+    // map — which the engine reads as silence, not as a mismatch.
+    marketPrices: async (positions) => {
+      const prices = new Map<string, number>()
+      const byChain = new Map<Chain, string[]>()
+      for (const p of positions) byChain.set(p.chain, [...(byChain.get(p.chain) ?? []), p.tokenAddress])
+      for (const [chain, addresses] of byChain) {
+        for (let i = 0; i < addresses.length; i += 30) {
+          try {
+            const pairs = await dex.tokens(chain, addresses.slice(i, i + 30))
+            for (const m of dex.toMarketSnapshots(chain, pairs)) {
+              if (m.priceUsd > 0) prices.set(`${chain}:${m.address}`, m.priceUsd)
+            }
+          } catch {
+            // Silence, not a verdict.
+          }
+        }
+      }
+      return prices
+    },
     healthFor: async (position, candles) => {
       try {
         // ── The scanner's verdict, folded in ONCE ──────────────────────────

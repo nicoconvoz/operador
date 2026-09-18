@@ -2211,6 +2211,50 @@ It reports as ONE `info` line per cycle, like the refusals. Nothing was bought
 and nothing was sold; the engine simply carried on from a number closer to the
 truth than the one it had.
 
+### A token it cannot PRICE is a token it does not trade
+
+The operator's rule, and it is wider than the bug that produced it: *if the two
+sources disagree about the price, do not work that coin at all.*
+
+`priceMismatch` already refuses such a token at the door — but it is only ever
+asked at the scan and at the entry, and the damage lands at the EXIT. From the
+tape:
+
+| USDF | |
+|---|---|
+| 04:45 buy | 0.030637 — $15.06 |
+| 06:45 sell `🏁 Exit` | 0.031247 — **+$0.30** |
+| 07:00 buy | 0.031564 — $15.06 |
+| 09:30 sell `❄️ Salida por congelamiento` | **0.0000021879 — $0.001** |
+
+**14,426×**, two and a half hours apart, in the same position. Not a rug and not
+a crash: a unit nobody agreed on, the second time after ZCAT's 10,846×.
+
+What let it through is a rule that is otherwise right. The no-loss guard
+deliberately exempts the two RISK exits — a death exit sells because the asset
+stopped being an asset, and holding out for a better price on something
+unsellable is how you hold it forever. But that turns *accept whatever price
+exists* into **accept any number at all**, and $15.06 became a tenth of a cent.
+
+So the check moved from the door to the tick, and from the exit to everything:
+`pricesDisagree(marketPrice, candleClose)` and the position does nothing —
+no entry, no DCA, no exit — until the two agree again.
+
+- **The observation never stops.** `AssetHealthObservation` is typed so no
+  price-shaped field can exist on it, so the death watch is unaffected and goes
+  on running. A feed that lost its decimal point is not a reason to look away
+  from a token that might be dying.
+- **Silence is not evidence.** No second opinion means no verdict, or a quiet
+  provider would halt the whole book.
+- **ONE definition**, `domain/market/price-agreement.ts`, used by the gate and
+  by the engine. Two implementations of "can this be priced" would eventually
+  disagree about which tokens are safe.
+- **The second opinion is never the candle feed.** Asking it to check itself
+  agrees perfectly about a number that does not exist — which is precisely how
+  both of these happened.
+- **CRITICAL and never throttled.** Only a person can tell a broken feed from a
+  real collapse, and until they do, real money is sitting still.
+
 ### Never exit at a loss — enforced where it actually leaks
 
 The rule was enforced at DECISION time, where price is above average cost by

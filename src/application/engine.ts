@@ -12,6 +12,8 @@ import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/
 import { deployableCapital, scaledParams } from './paper-run.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { type Candles } from './replay.js'
+import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { priceRatio, pricesDisagree } from '../domain/market/price-agreement.js'
 
 /**
  * One tick of the live engine, for one position.
@@ -34,12 +36,24 @@ export interface TickInput {
   readonly candles: Candles
   /** Latest health observation, or null when no monitor ran this tick. */
   readonly health: AssetHealthObservation | null
+  /**
+   * What the MARKET says this token is worth, from a source independent of the
+   * candles. Absent means nobody offered a second opinion, and the check then
+   * stays silent — silence is not evidence.
+   */
+  readonly marketPriceUsd?: number | null
   readonly broker: BrokerPort
 }
 
 export interface EngineConfig {
   readonly params: CascadeParams
   readonly deathPolicy?: DeathExitPolicy
+  /**
+   * How far the candle price and the market price may diverge before the engine
+   * refuses to trade the token at all. Defaults to the GATE's own band, so the
+   * screen and the machine cannot drift apart about which tokens are priceable.
+   */
+  readonly maxPriceRatio?: number
   /**
    * Sell the whole position the moment its ladder freezes.
    *
@@ -66,7 +80,7 @@ export interface TickResult {
   readonly orders: readonly Order[]
   /** Orders the strategy wanted that the death watch removed. */
   readonly vetoed: readonly Order[]
-  readonly skipped: 'already-processed' | 'no-bars' | null
+  readonly skipped: 'already-processed' | 'no-bars' | 'price-mismatch' | null
   /** Closed bars this tick advanced. One in the ordinary case, more after a slow cycle. */
   readonly barsAdvanced: number
 }
@@ -109,6 +123,46 @@ export async function tickPosition(
   const { candles, broker } = input
   const last = candles.time.length - 1
   if (last < 0) return { position: input.position, orders: [], vetoed: [], skipped: 'no-bars', barsAdvanced: 0 }
+
+  // ── A token it cannot PRICE is a token it does not trade ──────────────────
+  //
+  // The operator's rule, and it is broader than the bug that prompted it: if
+  // the two sources disagree about the price, do not work that coin at all.
+  //
+  // `priceMismatch` already refuses such a token at the door, but it is only
+  // ever asked at the scan and at the entry — and the damage lands at the EXIT.
+  // USDF was bought at 0.031564 and sold two and a half hours later by a freeze
+  // exit at 0.0000021879, **14,426x lower**, turning $15.06 into a tenth of a
+  // cent. The no-loss guard deliberately lets a risk exit fill below cost,
+  // which is right, and that turned "accept whatever price exists" into "accept
+  // any number at all".
+  //
+  // Refusing to act is the honest answer, not a timid one. Both of the two
+  // numbers cannot be right, and neither the strategy nor the death exit can be
+  // carried out correctly on a price nobody can confirm — the same rule
+  // recovery runs on: an unattended system is allowed to stop, it is not
+  // allowed to guess.
+  //
+  // It blocks the ORDERS, never the observation. The death watch is price-free
+  // by construction and goes on running: a position nobody is watching is the
+  // failure this engine has paid for more than once, and a feed that lost the
+  // decimal point is not a reason to look away from a token that might be dying.
+  if (pricesDisagree(input.marketPriceUsd, candles.close[last], config.maxPriceRatio ?? DEFAULT_GATE_POLICY.maxPriceRatio)) {
+    const watched = await assessHealth(input, config, store, alerts, throttle)
+    const ratio = priceRatio(input.marketPriceUsd!, candles.close[last]!)!
+    // CRITICAL, and never throttled. Only a person can tell a broken feed from
+    // a token that really collapsed, and until they do the position is frozen
+    // in place holding real money.
+    await alerts.send(alert(
+      'position-halted',
+      `🧮 ${input.position.symbol} — no se puede precificar`,
+      `El mercado dice $${input.marketPriceUsd} y las velas dicen $${candles.close[last]} — ${ratio.toFixed(0)}× de diferencia. `
+        + 'No se opera: ni compra ni venta, hasta que las dos fuentes vuelvan a coincidir. La vigilancia de muerte sigue corriendo.',
+      candles.time[last]!,
+      { position: input.position.id, ratio: ratio.toFixed(0) },
+    ))
+    return { position: watched, orders: [], vetoed: [], skipped: 'price-mismatch', barsAdvanced: 0 }
+  }
 
   const first = firstUnprocessedBar(candles.time, input.position.lastBarTime, last)
   if (first === null) {

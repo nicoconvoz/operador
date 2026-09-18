@@ -803,3 +803,54 @@ describe('tickPosition — an order the venue refused is never silent', () => {
     expect(alerts.sent.some((a) => a.kind === 'order-refused')).toBe(false)
   })
 })
+
+describe('tickPosition — a token it cannot price is a token it does not trade', () => {
+  // The operator's rule, and it is broader than the bug that prompted it: if the
+  // two sources disagree about the price, do not work that coin at all.
+  //
+  // USDF, from the tape: bought at 0.031564 and sold two and a half hours later
+  // by a freeze exit at 0.0000021879 — **14,426x** — turning $15.06 into a tenth
+  // of a cent. The `priceMismatch` gate already refuses such a token at the
+  // door, but it is only ever asked at the scan and at the entry. Nothing
+  // re-asked it while the position was open, and the exit is exactly where it
+  // costs the most: the no-loss guard deliberately lets a risk exit fill below
+  // cost, which turned "accept whatever price exists" into "accept any number".
+  const mismatched = { candles: extend(decline(300)), marketPriceUsd: 0.0001 }
+
+  it('does nothing at all — no orders, no fills, not one bar advanced', async () => {
+    const { result, store } = await tick(mismatched)
+    expect(result.skipped).toBe('price-mismatch')
+    expect(result.orders).toEqual([])
+    expect(result.barsAdvanced).toBe(0)
+    expect(await store.allFills()).toEqual([])
+  })
+
+  it('keeps WATCHING it, because a price it cannot read is not a reason to look away', async () => {
+    // The death watch is price-free by construction, and the one thing that
+    // must not stop is the observation. A position nobody is watching is the
+    // failure this engine has paid for more than once.
+    const r = rig()
+    const { result } = await tick({ ...mismatched, health: healthy({ observedAt: 5_000 }), position: position({ updatedAt: 0 }) }, r)
+    expect(result.position.updatedAt).toBe(5_000)
+  })
+
+  it('says so, and loudly, because only a person can tell a rug from a bad feed', async () => {
+    const { alerts } = await tick(mismatched)
+    const said = alerts.sent.find((a) => a.kind === 'position-halted')
+    expect(said).toBeDefined()
+    expect(said!.level).toBe('critical')
+  })
+
+  it('trades normally when the two agree', async () => {
+    const { result } = await tick({ candles: extend(decline(300)), marketPriceUsd: 0.65 })
+    expect(result.skipped).not.toBe('price-mismatch')
+  })
+
+  it('stays SILENT when nobody offered a second opinion', async () => {
+    // Silence is not evidence — the rule the whole scanner runs on. Reading an
+    // absent price as a mismatch would halt every position the feed happened to
+    // be quiet about.
+    const { result } = await tick({ candles: extend(decline(300)) })
+    expect(result.skipped).not.toBe('price-mismatch')
+  })
+})

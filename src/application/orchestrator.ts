@@ -39,6 +39,20 @@ export interface CycleDeps {
   readonly probe: OrderProbe
   /** Candles for a position, oldest first. Null when unavailable this cycle. */
   readonly candlesFor: (position: PersistedPosition) => Promise<Candles | null>
+  /**
+   * What the MARKET says every held token is worth, keyed `chain:address`.
+   *
+   * A SECOND opinion, from a source that is not the candle feed, so the engine
+   * can tell a token that collapsed from one whose price it simply cannot read.
+   * USDF was sold by a freeze exit at 14,426x below what it was bought for,
+   * which was neither a rug nor a crash but a unit nobody agreed on.
+   *
+   * Batched for the whole book rather than asked per position: it is one
+   * DexScreener call per thirty tokens, so the check costs a request or two a
+   * cycle. Optional — without it the engine stays silent rather than halting
+   * everything, because silence is not evidence.
+   */
+  readonly marketPrices?: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, number>>
   /** Latest health observation, or null when no monitor ran. */
   /**
    * Takes the CANDLES as well as the position, because the abandonment signal
@@ -240,6 +254,18 @@ export async function runCycle(
   // that the positions with real work to do then cannot get.
   const latestClosedBar = config.barMs === undefined ? null : Math.floor(at / config.barMs) * config.barMs - config.barMs
 
+  // One batched ask for the whole book, before the loop. A failure is not
+  // fatal and not evidence: an empty map leaves every position exactly as it
+  // was, which is the same rule the live prices on the screen already follow.
+  let marketPrices: ReadonlyMap<string, number> = new Map()
+  if (deps.marketPrices) {
+    try {
+      marketPrices = await deps.marketPrices(recovery.positions.map((r) => r.position))
+    } catch {
+      marketPrices = new Map()
+    }
+  }
+
   for (const recovered of recovery.positions) {
     if (latestClosedBar !== null && recovered.position.lastBarTime >= latestClosedBar) continue
 
@@ -261,7 +287,13 @@ export async function runCycle(
     }
 
     const result = await tickPosition(
-      { position: recovered.position, candles, health: await deps.healthFor(recovered.position, candles), broker: await deps.brokerFor(recovered.position) },
+      {
+        position: recovered.position,
+        candles,
+        health: await deps.healthFor(recovered.position, candles),
+        broker: await deps.brokerFor(recovered.position),
+        marketPriceUsd: marketPrices.get(`${recovered.position.chain}:${recovered.position.tokenAddress}`) ?? null,
+      },
       {
         params: config.params,
         ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
