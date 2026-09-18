@@ -50,7 +50,33 @@ let cached: {
  * quantity comes from here and barely moves, the price comes from the feed
  * every ten seconds, so the number goes on ticking exactly as before.
  */
-const CACHE_SCAN_MS = 900_000
+/**
+ * Fifteen minutes, and it became TWO.
+ *
+ * The long window was sized against a scan payload of ~490 KB, when `scans`
+ * held the whole universe as JSONB. `worthStoring` cut that to what the engine
+ * may act on — about 1% of it — and the whole view response measures 16.7 KB
+ * today. The number it was protecting no longer exists.
+ *
+ * What the long window COST is what the operator reported: *difieren siempre
+ * que lo abrís.* `cacheFor` is a module-level cache and Vercel runs many
+ * serverless instances, so there is no single module and no shared answer.
+ * With a 15-minute window against a 30-minute scan, two instances could hold
+ * DIFFERENT scans for half of every cycle — and the ten-second poll round
+ * robins between them. Measured: ten calls to the same URL seconds apart, nine
+ * returning three unscored tokens and one returning four scored ones.
+ *
+ * Two minutes narrows that to a fifteenth of the cycle. It does NOT close it,
+ * and nothing in this process can: an in-process cache cannot be shared across
+ * instances that do not share a process. Closing it properly means caching
+ * outside the lambda, which is a bill and a dependency for a screen that now
+ * disagrees with itself for two minutes an hour.
+ *
+ * Affordable, measured rather than assumed: at 16.7 KB a response and one read
+ * per two minutes, a polling viewer costs about 0.36 GB a month against Neon's
+ * 5 GB — and the reads are shared by every viewer on that instance.
+ */
+const CACHE_SCAN_MS = 120_000
 const CACHE_STATE_MS = 120_000
 
 export function openStore(): PostgresStore {

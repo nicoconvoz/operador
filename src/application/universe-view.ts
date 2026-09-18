@@ -95,6 +95,21 @@ export interface UniverseToken {
   /** Present only for held tokens. */
   readonly position: {
     readonly capitalUsd: number
+    /**
+     * Whether the slot actually holds tokens, read from the FILLS.
+     *
+     * A position with fills is a COMMITMENT whose slot cannot come back
+     * without selling; one without is a RESERVATION that costs nothing to
+     * cancel. The engine has always made that distinction — `idle-slots.ts`
+     * releases only the second kind — and the screen was collapsing it:
+     * three bodies drawn glowing and labelled "operando", every one with
+     * zero quantity against $1,250 of capital.
+     *
+     * NEVER from the cascade level. A machine can sit at level 1 believing it
+     * holds something the broker refused, and a reservation dressed as a
+     * position is exactly the case this must not misread.
+     */
+    readonly holdsTokens: boolean
     readonly filledDcas: number
     readonly deathStage: 'healthy' | 'frozen' | 'dead'
     /**
@@ -204,11 +219,23 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
   const opportunityPolicy = options.opportunity ?? DEFAULT_OPPORTUNITY_POLICY
   const spreadPct = options.spreadPct ?? 0.3
 
-  const [scans, positions, blacklisted] = await Promise.all([
+  const [scans, positions, blacklisted, fills] = await Promise.all([
     store.latestScansByChain(),
     store.loadPositions(),
     store.blacklisted(),
+    // Already cached for the operations view in the same build, so this costs
+    // no extra round trip — and it is the only honest source for "is there
+    // anything in this slot".
+    store.allFills(),
   ])
+
+  const holding = new Set<string>()
+  for (const position of positions) {
+    const qty = fills
+      .filter((fill) => fill.positionId === position.id)
+      .reduce((sum, fill) => sum + (fill.side === 'buy' ? fill.qty : -fill.qty), 0)
+    if (qty > 0) holding.add(position.id)
+  }
 
   const heldBy = new Map(positions.map((p) => [`${p.chain}:${p.tokenAddress}`, p]))
   // Every chain's newest scan, together. The universe is not one chain, and a
@@ -347,6 +374,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
       position: held
         ? {
             capitalUsd: held.capitalUsd,
+            holdsTokens: holding.has(held.id),
             filledDcas: held.cascade.level > 0 ? held.cascade.level - 1 : 0,
             deathStage: held.deathWatch.stage,
             deathSignals: latestSignals(held),
@@ -369,7 +397,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
   for (const position of positions) {
     const key = `${position.chain}:${position.tokenAddress}`
     if (drawn.has(key)) continue
-    tokens.push(fromPositionAlone(position))
+    tokens.push(fromPositionAlone(position, holding.has(position.id), live.get(key), opportunityPolicy, spreadPct))
   }
 
   const counts = Object.fromEntries(TIERS.map((tier) => [tier, tokens.filter((t) => t.tier === tier).length])) as Record<TokenTier, number>
@@ -400,7 +428,56 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
  * when it was opened and the last close the engine acted on. Both are real
  * measurements with a date on them, which is more than a placeholder would be.
  */
-function fromPositionAlone(position: PersistedPosition): UniverseToken {
+/**
+ * A position the last scan did not mention, drawn from what we know of it.
+ *
+ * It used to come back with `score: 0`, and that is what the operator saw: a
+ * body with NO RIPPLES beside others that had them, because the ripples ARE
+ * the score. Right after a reset — or for any held token a scan happened to
+ * miss — the screen said nothing about a token holding real money.
+ *
+ * The market half can still answer. The same batched response that prices the
+ * book carries volume, liquidity, the changes and the trade counts, which is
+ * everything `scoreOpportunity` reads; only the gates want security, and no
+ * gate runs here. So the score is computed from the live feed when there is
+ * one, and stays at zero when there is not — silence, not a verdict.
+ */
+/**
+ * Every security answer UNKNOWN.
+ *
+ * `scoreOpportunity` never reads one — the gates do, and no gate runs on this
+ * path. Spelling it out beats a cast: an all-unknown report fails every safety
+ * gate closed, which is the correct verdict for a token nobody examined, so if
+ * this shape ever reaches a gate it refuses rather than passes.
+ */
+const UNKNOWN_SECURITY: TokenSnapshot['security'] = {
+  honeypot: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null,
+  hasBlacklist: null, lpLockedPct: null, topHoldersPct: null, creatorPct: null,
+  verifiedSource: null, isProxy: null,
+}
+
+function fromPositionAlone(
+  position: PersistedPosition,
+  holdsTokens: boolean,
+  market: Omit<TokenSnapshot, 'security'> | undefined,
+  policy: OpportunityPolicy,
+  spreadPct: number,
+): UniverseToken {
+  const scored =
+    market === undefined
+      ? null
+      : scoreOpportunity(
+          { ...market, security: UNKNOWN_SECURITY },
+          policy,
+          null,
+          {
+            liquidityUsd: market.liquidityUsd,
+            spreadPct,
+            slippagePct: position.quality.slippagePct,
+            referenceUsd: position.quality.referenceUsd,
+            observedAt: market.observedAt,
+          },
+        )
   return {
     id: `${position.chain}:${position.tokenAddress}`,
     symbol: position.symbol,
@@ -409,17 +486,18 @@ function fromPositionAlone(position: PersistedPosition): UniverseToken {
     pairAddress: position.pairAddress,
     tier: 'held',
     turnedUnsafe: false,
-    score: 0,
-    components: {},
-    liquidityUsd: position.quality.liquidityUsd,
-    volume24hUsd: 0,
-    priceUsd: position.lastPriceUsd ?? 0,
-    change24hPct: null,
+    score: scored?.score ?? 0,
+    components: (scored?.components ?? {}) as unknown as Record<string, number>,
+    liquidityUsd: market?.liquidityUsd ?? position.quality.liquidityUsd,
+    volume24hUsd: market?.volumeUsd.h24 ?? 0,
+    priceUsd: market?.priceUsd ?? position.lastPriceUsd ?? 0,
+    change24hPct: market?.priceChangePct.h24 ?? null,
     ageHours: null,
     frictionPct: 2 * (position.quality.spreadPct + position.quality.slippagePct),
     blockers: ['el escáner no la encontró en este ciclo — los datos son los de la posición'],
     position: {
       capitalUsd: position.capitalUsd,
+      holdsTokens,
       filledDcas: position.cascade.level > 0 ? position.cascade.level - 1 : 0,
       deathStage: position.deathWatch.stage,
       deathSignals: latestSignals(position),

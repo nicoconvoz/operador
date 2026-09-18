@@ -514,3 +514,56 @@ describe('universe — what we HOLD is priced now, not an hour ago', () => {
     expect(view.tokens[0]!.liquidityUsd).toBe(200_000)
   })
 })
+
+describe('universe — a slot that holds nothing is a RESERVATION, not a trade', () => {
+  // Reported from the screen: three bodies drawn glowing and labelled
+  // "operando", every one of them with qty 0 and $0 deployed against $1,250 of
+  // capital each. Nothing had been bought.
+  //
+  // The distinction already exists in the engine and is load-bearing there — a
+  // position with fills is a COMMITMENT whose slot cannot come back without
+  // selling, and one without is a RESERVATION that costs nothing to cancel.
+  // `idle-slots.ts` releases only the second kind. The screen was collapsing
+  // the two, which is the engine-versus-canvas disagreement this read model
+  // exists to prevent.
+  //
+  // And it reads the FILLS, never the cascade level: a machine can sit at
+  // level 1 believing it holds something the broker refused, and a reservation
+  // dressed as a position is exactly the case this must not misread.
+
+  it('says a position with no fills is holding nothing', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position('A', { id: 'empty' }))
+    const view = await buildUniverse(store, { now: () => NOW })
+    expect(view.tokens[0]!.position?.holdsTokens).toBe(false)
+  })
+
+  it('says a position WITH a buy is holding something', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position('B', { id: 'full' }))
+    await store.recordFill({
+      positionId: 'full', orderId: 'Entry', idempotencyKey: 'k', side: 'buy',
+      qty: 100, price: 1, costUsd: 0.05, comment: 'Entry', time: NOW - 1000,
+    })
+    const view = await buildUniverse(store, { now: () => NOW })
+    expect(view.tokens[0]!.position?.holdsTokens).toBe(true)
+  })
+
+  it('goes back to holding nothing once it has been sold out', async () => {
+    // A position that took its profit and went flat is a reservation again:
+    // its slot is free, and drawing it as money at work would keep a body
+    // glowing over an empty slot.
+    const store = new MemoryStore()
+    await store.savePosition(position('C', { id: 'sold' }))
+    await store.recordFill({
+      positionId: 'sold', orderId: 'Entry', idempotencyKey: 'k1', side: 'buy',
+      qty: 100, price: 1, costUsd: 0.05, comment: 'Entry', time: NOW - 2000,
+    })
+    await store.recordFill({
+      positionId: 'sold', orderId: 'Entry', idempotencyKey: 'k2', side: 'sell',
+      qty: 100, price: 2, costUsd: 0.05, comment: '🏁 Exit', time: NOW - 1000,
+    })
+    const view = await buildUniverse(store, { now: () => NOW })
+    expect(view.tokens[0]!.position?.holdsTokens).toBe(false)
+  })
+})
