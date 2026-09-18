@@ -79,8 +79,22 @@ export class GeckoTerminal {
     private readonly base: string = GECKOTERMINAL_BASE,
     options: GeckoTerminalOptions = {},
   ) {
-    this.maxRetries = options.maxRetries ?? 3
-    this.backoffMs = options.backoffMs ?? 4_000
+    // Two retries from two seconds — SIX seconds of waiting, not twenty-eight.
+    //
+    // Retrying is right when the queue is ours and we are merely early. This
+    // quota is not ours: GeckoTerminal limits by IP and a CI runner shares its
+    // address with thousands of unrelated jobs, so a 429 usually means somebody
+    // else spent it. Doubling from four seconds three times does not move us up
+    // that queue, it spends the cycle — measured cold on a runner, 33 minutes
+    // to examine 100 tokens, about 20 seconds each against a 2.5s throttle.
+    //
+    // And the wait bought nothing: `historyBars` answers null, the gate fires
+    // on evidence and stays silent, and the token passes exactly as it would
+    // have. What is lost by giving up sooner is the minority of 429s that clear
+    // on the third try; what is gained is twenty-two seconds on every one that
+    // never would.
+    this.maxRetries = options.maxRetries ?? 2
+    this.backoffMs = options.backoffMs ?? 2_000
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.now = options.now ?? (() => Date.now())
   }

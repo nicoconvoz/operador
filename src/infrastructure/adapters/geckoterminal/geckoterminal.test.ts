@@ -288,3 +288,35 @@ describe('GeckoTerminal — counting history when one row is always discarded', 
     expect(await gt.historyBars('solana', POOL, ONE_HOUR, 100)).toBe(39)
   })
 })
+
+describe('GeckoTerminal — a quota that is not ours is not worth waiting for', () => {
+  // Measured on a GitHub runner, cold: **33 minutes to examine 100 tokens**,
+  // about 20 seconds each against a 2.5s throttle. The extra was backoff.
+  //
+  // At 3 retries doubling from 4s a rate-limited token waits 4 + 8 + 16 = **28
+  // seconds** and then gives up — and `historyBars` answers null, the gate
+  // stays silent, and the token passes anyway. Half a minute bought nothing.
+  //
+  // Retrying is right when the queue is OURS and we are early. GeckoTerminal
+  // limits by IP and a CI runner shares its address with thousands of
+  // unrelated jobs, so the quota is already spent by somebody else: waiting
+  // longer does not move us up a queue, it just spends the cycle. The
+  // project's own conclusion, written before this: *the only winning move is
+  // to ask less.*
+  const sleepsFor = async (options: Record<string, unknown>) => {
+    const sleeps: number[] = []
+    const gt = new GeckoTerminal(stubHttp({ [url]: { status: 429, body: {} } }), undefined, undefined,
+      { ...options, sleep: async (ms: number) => { sleeps.push(ms) } })
+    await gt.candles('solana', POOL).catch(() => undefined)
+    return sleeps
+  }
+
+  it('gives up inside ten seconds by default, not thirty', async () => {
+    const sleeps = await sleepsFor({})
+    expect(sleeps.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(10_000)
+  })
+
+  it('still retries, because a single 429 is usually just our turn coming', async () => {
+    expect((await sleepsFor({})).length).toBeGreaterThan(0)
+  })
+})
