@@ -569,12 +569,18 @@ function refusesToSellAtALoss(order: Order, avgPrice: number | null, fillPrice: 
   // A guard that held them would hold exactly the positions that most need to
   // get out.
   if (order.comment === DEATH_EXIT_COMMENT || order.comment === FROZEN_EXIT_COMMENT) return false
-  // The ALLOCATOR's exit, and the only one that leaves for a reason which is
-  // partly price: `momentum` is one of the floors that turns the switch off.
-  // Held to the no-loss rule it would do nothing in the one case it exists
-  // for, because a token whose switch went off is usually one that is down.
-  // The operator asked for it with the consequence stated: *aunque se pierda.*
-  if (order.comment === ROTATION_EXIT_COMMENT) return false
+  // The ALLOCATOR's exit is NOT exempt, and that is the operator's later
+  // decision: *las salidas nunca en pérdida, siempre en ganancias. Si algo
+  // está en ganancias y el interruptor marca off, cierra posición; si está en
+  // pérdida, lo deja.*
+  //
+  // It WAS exempt, asked for with *aunque se pierda*, and that exemption was
+  // the single thing making it a stop loss in disguise — the objection stated
+  // when it was built, since `momentum` is one of the floors and momentum is
+  // price. Subject to the guard it stops being one outright: the switch can
+  // only ever take a PROFIT, and no path in this engine sells because the
+  // price fell. The two RISK exits below remain the only exceptions, and both
+  // leave because the asset stopped being an asset.
   // Nothing held, so no cost basis and no loss to make.
   if (avgPrice === null) return false
   return fillPrice < avgPrice

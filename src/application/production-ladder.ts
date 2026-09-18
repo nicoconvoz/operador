@@ -43,8 +43,29 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
  *
  * Both are finding 2 of the capital floor arriving by different roads: scale
  * comes from more tokens, not more size per token.
+ * Then five became TWO, and two became ZERO — one entry, no ladder at all.
+ *
+ * The operator's structural change: *pone la profundidad en 0, solo un paso,
+ * una sola compra.* Every rebound lock, the separation gap, `confirmBars` and
+ * the whole cascade below level 1 are still in the machine and are now never
+ * reached, exactly as `maxLevels = 50` sits above `PYRAMIDING = 10` in the
+ * reference: the strategy signals, the venue caps.
+ *
+ * What it costs, stated rather than discovered later. The ladder was the only
+ * thing that could improve a position's basis, and it is gone at the same time
+ * as the no-loss rule was restored to every exit including the switch. So a
+ * position that goes under water has nothing that can rescue it: it cannot
+ * average down, the strategy exit wants `avg_cost + 2%`, and the switch now
+ * refuses to sell at a loss. Its capital is held until the price comes back
+ * over cost or the death watch condemns the token.
+ *
+ * The operator's argument for accepting that is the doors in front of it, and
+ * the arithmetic is on his side: a book of many small single-buy positions
+ * where the winners recycle at +2% and the losers wait costs far less per
+ * mistake than a deep ladder that keeps buying into one.
+ *
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 2
+export const DEFAULT_MAX_DCA_PER_TOKEN = 0
 
 /**
  * The drop from the 20-bar swing high the classic entry demands, in percent.
@@ -108,6 +129,12 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     return Number.isFinite(value) && value > 0 ? value : fallback
   }
 
+  /** Rungs: zero allowed, negatives and nonsense fall back. */
+  const rungs = (raw: string | undefined, fallback: number) => {
+    const value = Number(raw?.trim())
+    return raw?.trim() && Number.isFinite(value) && value >= 0 ? value : fallback
+  }
+
   // Zero is a REAL value here, not "unset", so this cannot use `positive`.
   // `maxPositions: 0` meaning one thing in one file and its opposite next door
   // cost this engine every position it could have opened.
@@ -118,7 +145,12 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
 
   return {
     maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, DEFAULT_MAX_USD_PER_LEVEL),
-    maxOpenEntries: positive(env.OPERADOR_MAX_DCA, DEFAULT_MAX_DCA_PER_TOKEN) + 1,
+    // ZERO is a real value: one entry and no ladder at all, which is the
+    // operator's structural change. Read through `positive` it would fall back
+    // to the default and silently run a three-rung ladder — his decision
+    // discarded while everything kept working, which is the failure mode that
+    // costs the most. `maxPositions: 0` and `dropInitPct` both taught this.
+    maxOpenEntries: rungs(env.OPERADOR_MAX_DCA, DEFAULT_MAX_DCA_PER_TOKEN) + 1,
     dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
     impatientProfitPct: positive(env.OPERADOR_IMPATIENT_PROFIT_PCT, DEFAULT_IMPATIENT_PROFIT_PCT),
     urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),

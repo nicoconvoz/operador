@@ -1343,7 +1343,9 @@ Both thresholds are `null` in `DEFAULT_PARAMS`, which is the reference exactly �
 impatience is composed in production beside the ladder cap and the entry drop,
 because the parity harness asserts those params are the backtest's own inputs.
 
-### Two DCA rungs, not nine
+### Two DCA rungs, not nine — SUPERSEDED
+
+> Zero now. See "One buy, a wide door, and the switch takes profits only".
 
 `OPERADOR_MAX_DCA` defaults to **2**, so the venue holds **three** entries open:
 the entry plus its ladder. It is NOT `PYRAMIDING`, which stays 10 because that
@@ -1801,6 +1803,69 @@ $9.46. **Depth outranks capital.**
 The concentration is the stated cost: one death goes from 3.2% of the book to
 12.5%. The operator's argument for accepting it is the first change — with those
 three floors in front, the tokens that reach a slot are not the ones that die.
+
+### One buy, a wide door, and the switch takes profits only
+
+The operator's structural change, three decisions that only make sense together:
+
+> *pone la profundidad en 0, solo un paso, una sola compra... baja el puntaje
+> permitido a 25, eso sí lo del filtro on/off del 30% se respeta a rajatabla...
+> pero las salidas nunca en pérdida, siempre en ganancias. Si algo está en
+> ganancias y el interruptor marca off, cierra posición; si está en pérdida, lo
+> deja.*
+
+| | Was | Is |
+|---|---|---|
+| DCA rungs per token | 2 | **0** — one entry, no ladder |
+| `DEFAULT_MIN_SCORE` | 70 | **25** |
+| the three 30% floors | strict | **strict** — unchanged |
+| the switch selling at a loss | allowed | **refused** |
+
+**The last row is the one that matters most, and it repairs the objection this
+engine shipped with.** The rotation exit was exempt from the no-loss guard
+because the operator asked for it with *aunque se pierda* — and that exemption
+was the single thing making it a stop loss in disguise, since `momentum` is one
+of the floors and momentum is price. Subject to the guard it stops being one
+outright: **the switch can only ever take a PROFIT**, and no path in this engine
+now sells because the price fell. The two RISK exits remain the only exceptions
+and both leave because the asset stopped being an asset.
+
+**Zero is a real value, and this is the third time.** `maxOpenEntries` read its
+input through a `positive` parser, so `OPERADOR_MAX_DCA=0` would have fallen
+back to 2 and quietly run a three-rung ladder — the operator's decision
+discarded while everything kept working, which is the failure mode that costs
+the most. `maxPositions: 0` and `dropInitPct` both taught this already.
+
+The cascade below level 1 — every rebound lock, the separation gap,
+`confirmBars` — is still in the machine and is now never reached, exactly as
+`maxLevels = 50` sits above `PYRAMIDING = 10` in the reference: the strategy
+signals, the venue caps.
+
+#### What it costs, stated rather than discovered later
+
+**A position that goes under water has nothing left that can rescue it.** The
+ladder was the only thing that could improve a basis and it is gone, at the
+same moment the no-loss rule was restored to every exit including the switch.
+So: it cannot average down, the strategy exit wants `avg_cost + 2%`, and the
+switch refuses to sell below cost. Its capital is held until the price comes
+back over cost, or until the death watch condemns the token outright.
+
+The operator's argument for accepting that is the arithmetic, and it is sound:
+a book of many small single-buy positions, where winners recycle at +2% and
+losers wait, costs far less per mistake than a deep ladder that keeps buying
+into one. `minScore` at 25 is what makes the book wide enough for that to work.
+
+#### The bug the rule exposed
+
+Writing the test for *si está en pérdida lo deja* found that the orchestrator
+**closed the position even when the sale was refused**. `settle` returns
+`exitRefused` and the rotation ignored it, so a position whose switch went off
+under water would have been retired from the book **while still holding
+tokens** — the quantity orphaned, neither realised nor unrealised, and the
+position gone from the screen that was supposed to be watching it.
+
+Found by the test written for the rule rather than in production, which is the
+only reason it is a paragraph here and not an incident.
 
 ### Two doors and a switch — the shortlist, rebuilt in one session
 

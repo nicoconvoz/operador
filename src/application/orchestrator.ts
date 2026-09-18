@@ -463,7 +463,7 @@ export async function runCycle(
       // The SAME `settle` the engine tick uses — the idempotency key, the
       // no-loss guard and the per-fill suffix all come from one place. A
       // second copy of that is how a retry sells twice.
-      await settle(
+      const refused = await settle(
         [{ kind: 'closeAll', comment: ROTATION_EXIT_COMMENT }],
         // Keyed by the bar the position last evaluated, not by the clock: a
         // re-run of this cycle then collides with itself instead of selling
@@ -475,6 +475,15 @@ export async function runCycle(
         broker,
         deps.store,
       )
+      // REFUSED means the no-loss guard held it: the switch is off but the
+      // position is under water, and the operator's rule is *si está en pérdida
+      // lo deja.* Closing it anyway would retire a slot that still holds
+      // tokens — the quantity orphaned, neither realised nor unrealised, and
+      // the position gone from the screen that was supposed to watch it.
+      //
+      // Found by the test written for the rule, not in production, which is
+      // the only reason it is a line here rather than a paragraph.
+      if (refused) continue
       await deps.store.closePosition(holder.id)
       rotatedIds.push(holder.id)
       const rotated = alert(

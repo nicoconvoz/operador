@@ -152,7 +152,7 @@ describe('minScore — a door on the score, not another weight in it', () => {
     // A door does not have that property. It reads the score after it is
     // computed and answers one question, so the scale it is read against is
     // the same scale yesterday's numbers were.
-    expect(loadConfig(valid).minScore).toBe(70)
+    expect(loadConfig(valid).minScore).toBe(25)
   })
 
   it('takes zero as a real value — it is "let everything through", not "unset"', () => {

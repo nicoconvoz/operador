@@ -1046,31 +1046,44 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     const { deps, store, throttle } = rig({
       brokerFor: seeded,
       switchedOff: () => [off('Held')],
-      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+      // ABOVE the cost of 1. It was 0.5 while the rotation was exempt from the
+      // no-loss guard; the operator withdrew that exemption, so a switch that
+      // goes off under water now leaves the position alone.
+      marketPrices: async () => new Map([['solana:Held', 1.5]]),
     })
     await withFills(store)
 
     await runCycle(deps, config, throttle)
 
-    // Sold at the LIVE price, below cost, and the position is gone.
+    // Sold at the LIVE price, ABOVE cost, and the position is gone. It was
+    // below cost when this was written, back when the rotation was exempt from
+    // the no-loss guard; the operator withdrew that exemption.
     const fills = await store.allFills()
     const sale = fills.find((f) => f.side === 'sell')
     expect(sale?.comment).toBe('🔁 Rotación')
     // 0.4975, not 0.5: the paper broker pays the venue spread on the way out,
     // as a real one would. An honest simulator is the whole premise of paper
     // mode, and a rotation is not exempt from what leaving actually costs.
-    expect(sale?.price).toBeLessThan(0.5)
-    expect(sale?.price).toBeCloseTo(0.5, 2)
+    expect(sale?.price).toBeLessThan(1.5)
+    expect(sale?.price).toBeCloseTo(1.5, 1)
     // The slot is gone from the book; the cycle then refills it from the
     // shortlist, which is the "redistribuir en un token nuevo" half.
     const left = await store.loadPositions()
     expect(left.find((x) => x.id === 'pos-1')).toBeUndefined()
   })
 
-  it('sells even though it is a LOSS — that is the point of it', async () => {
-    // Bought at 1, sold at 0.5. The no-loss guard holds the two strategy exits
-    // and must not hold this one, or it would do nothing in the only case it
-    // exists for: a token whose switch went off is usually one that is down.
+  it('REFUSES to sell at a loss, and leaves the position alone', async () => {
+    // REVERSED, and by the operator: *las salidas nunca en pérdida, siempre en
+    // ganancias. Si algo está en ganancias y el interruptor marca off, cierra
+    // posición; si está en pérdida, lo deja.*
+    //
+    // It was exempt from the no-loss guard when he asked for it with *aunque se
+    // pierda*, and that exemption was the one thing making this a stop loss in
+    // disguise — the objection stated when it was built. Subject to the guard
+    // it stops being one outright: the switch can only ever TAKE A PROFIT, and
+    // price can no longer cause a sale in any path this engine has.
+    //
+    // Bought at 1, the market is at 0.5, so nothing happens.
     const { deps, store, throttle } = rig({
       brokerFor: seeded,
       switchedOff: () => [off('Held')],
@@ -1078,8 +1091,24 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     })
     await withFills(store)
     await runCycle(deps, config, throttle)
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+    expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
+  })
+
+  it('sells when the switch is off AND the position is up', async () => {
+    // The other half of the same rule, and the case the switch now exists for:
+    // bought at 1, the market is at 1.5, so the profit is taken and the slot
+    // goes back to the allocator.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 1.5]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
     const sale = (await store.allFills()).find((f) => f.side === 'sell')
-    expect(sale!.price).toBeLessThan(1)
+    expect(sale?.comment).toBe('🔁 Rotación')
+    expect(sale!.price).toBeGreaterThan(1)
   })
 
   it('does NOT blacklist the token — a rotation is not a death', async () => {
@@ -1139,7 +1168,7 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     // act on, and the switch he called *ultranecesario* doing nothing.
     const { deps, store, throttle } = rig({
       brokerFor: seeded,
-      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+      marketPrices: async () => new Map([['solana:Held', 1.5]]),
       recall: async () => ({ candidates: [candidate('a', 90)], switchedOff: [off('Held')], scannedAt: NOW }),
     })
     await withFills(store)
@@ -1164,11 +1193,11 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
   })
 
-  it('alerts CRITICAL, because real money left at whatever price existed', async () => {
+  it('alerts CRITICAL, because real money left the position', async () => {
     const { deps, store, alerts, throttle } = rig({
       brokerFor: seeded,
       switchedOff: () => [off('Held', ['costEfficiency', 'momentum'])],
-      marketPrices: async () => new Map([['solana:Held', 0.5]]),
+      marketPrices: async () => new Map([['solana:Held', 1.5]]),
     })
     await withFills(store)
     await runCycle(deps, config, throttle)

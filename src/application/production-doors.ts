@@ -86,7 +86,7 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
  * before they were ever stored. The sample is biased against exactly what
  * this scale now rewards.
  */
-export const DEFAULT_MIN_SCORE = 70
+export const DEFAULT_MIN_SCORE = 25
 
 export interface ProductionDoors {
   /** The binary key. Below any floor the token is neither candidate nor reserve. */

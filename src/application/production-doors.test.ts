@@ -19,7 +19,7 @@ describe('productionDoors — one definition of what the book may buy', () => {
 
   it('shuts the score door at fifty', () => {
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
-    expect(DEFAULT_MIN_SCORE).toBe(70)
+    expect(DEFAULT_MIN_SCORE).toBe(25)
   })
 
   it('takes zero as "let everything through", never as unset', () => {

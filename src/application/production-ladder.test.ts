@@ -3,11 +3,11 @@ import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL 
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to a flat $15 ladder of two DCA rungs', () => {
+  it('defaults to a flat $15 ladder of ONE buy, no DCA', () => {
     // Two, not five: it halves what one token can ever cost and doubles the
     // book. Measured on $1,500 — fourteen positions at $95.09 becomes
     // twenty-nine at $47.57.
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 1, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -21,7 +21,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 1, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -62,5 +62,33 @@ describe('productionLadder — buying where the price IS', () => {
   it('never expresses itself by editing the backtest inputs', () => {
     // DEFAULT_PARAMS is what TradingView ran and the parity harness asserts it.
     expect(DEFAULT_PARAMS.dropInitPct).toBe(10)
+  })
+})
+
+describe('production ladder — depth ZERO is one buy and nothing after it', () => {
+  // The operator's structural change: *pone la profundidad en 0, solo un paso,
+  // una sola compra.* The DCA ladder stops existing — one entry per token and
+  // the position never averages down.
+  //
+  // Zero is a REAL value here, and this project has paid for that twice:
+  // `maxPositions: 0` meant "no ceiling" in one file and "zero slots" in the
+  // one next door, and `dropInitPct` had to learn the same lesson. Read
+  // through a `positive` parser, `OPERADOR_MAX_DCA=0` falls back to the
+  // default and silently runs a three-rung ladder — the operator's decision
+  // quietly discarded, which is the exact failure mode that costs the most
+  // because everything keeps working.
+
+  it('reads zero as zero, not as unset', () => {
+    expect(productionLadder({ OPERADOR_MAX_DCA: '0' }).maxOpenEntries).toBe(1)
+  })
+
+  it('still defaults to whatever the decision above says', () => {
+    expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
+  })
+
+  it('still refuses nonsense rather than taking it', () => {
+    expect(productionLadder({ OPERADOR_MAX_DCA: '-1' }).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
+    expect(productionLadder({ OPERADOR_MAX_DCA: 'dos' }).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
+    expect(productionLadder({ OPERADOR_MAX_DCA: '   ' }).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
   })
 })
