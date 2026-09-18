@@ -35,13 +35,32 @@ export interface DecimalsPort {
  * silent and the executor checks again before it trades. Supplying it here
  * just means a token with no indicators never reaches the shortlist.
  */
+/**
+ * Both methods REQUIRED, and that is the point rather than an oversight.
+ *
+ * They were optional, because not every chain has a pool index — and twice in
+ * one night a hand-built forwarding object in the composition root claimed to
+ * be this port while quietly missing a method. Jupiter's lists never reached
+ * the scan for the life of the project (130 tokens a cycle), and the pool
+ * market fallback reported `recovered: 0` on the very run that was meant to
+ * prove it, because `poolMarkets` was not on the object either.
+ *
+ * TypeScript could not see either one: an object without an OPTIONAL field is
+ * a perfectly valid object. Requiring them moves the whole class of mistake
+ * from "found weeks later by measuring production" to "does not compile",
+ * which is what CLAUDE.md means by enforcing a guarantee in the type system.
+ *
+ * The whole port stays optional — `history?: HistoryPort` — so a caller with
+ * no provider at all is still expressible. What is no longer expressible is
+ * HALF a provider.
+ */
 export interface HistoryPort {
   /**
    * Optional chain-agnostic universe. Matters most on chains with no native
    * token list: BSC's only other source is DexScreener's boosts, which are
    * paid promotions and returned NINE tokens when measured.
    */
-  discoverPools?(chain: Chain, pages?: number): Promise<{ tokenAddress: string; poolAddress: string }[]>
+  discoverPools(chain: Chain, pages?: number): Promise<{ tokenAddress: string; poolAddress: string }[]>
   /**
    * Market data for the pools the price provider cannot see.
    *
@@ -51,7 +70,7 @@ export interface HistoryPort {
    * book of ninety candidates and a book of eleven, and the data was already
    * in the discovery response we were throwing away.
    */
-  poolMarkets?(chain: Chain, poolAddresses: readonly string[]): Promise<MarketSnapshot[]>
+  poolMarkets(chain: Chain, poolAddresses: readonly string[]): Promise<MarketSnapshot[]>
 }
 
 export interface ScanDeps {
@@ -403,7 +422,7 @@ export async function scanOnce(
     }
   }
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'empezando', found: 0 })
-  if (deps.history?.discoverPools) {
+  if (deps.history) {
     try {
       for (const { tokenAddress, poolAddress } of await deps.history.discoverPools(config.chain)) {
         universe.add(tokenAddress)
@@ -474,7 +493,7 @@ export async function scanOnce(
   // pools per call, only for what is actually missing.
   const missing = addresses.filter((address) => !bestByAddress.has(address) && poolOf.has(address))
   let recovered = 0
-  if (deps.history?.poolMarkets && missing.length > 0) {
+  if (deps.history && missing.length > 0) {
     try {
       const fromPools = await deps.history.poolMarkets(config.chain, missing.map((a) => poolOf.get(a)!))
       for (const market of fromPools) {

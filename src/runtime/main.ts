@@ -128,8 +128,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // expires because new pools appear — but a pool younger than the window
   // cannot clear the history gate anyway, which wants 250 bars: 2.6 days at 15m.
   const cachedDiscovery = new CachedDiscovery(gecko, store, { now: () => Date.now() })
+  /**
+   * The pool provider, whole.
+   *
+   * Discovery goes through the cache — a list stands six hours and the sweep
+   * is thirty throttled calls — while the market fallback does NOT, because a
+   * price from six hours ago is not a price. They are different questions
+   * about the same pools and they get different freshness, deliberately.
+   */
   const history = {
     discoverPools: (chain: Parameters<typeof gecko.discoverPools>[0]) => cachedDiscovery.discoverPools(chain),
+    poolMarkets: (chain: Parameters<typeof gecko.poolMarkets>[0], pools: readonly string[]) =>
+      gecko.poolMarkets(chain, pools),
   }
 
   // One port, the right implementation PER CHAIN. BSC quotes PancakeSwap's
