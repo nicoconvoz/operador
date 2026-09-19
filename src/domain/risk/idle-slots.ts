@@ -70,6 +70,15 @@ export interface SlotHolder {
    */
   readonly frozen?: boolean
   /**
+   * Whether the death watch has CONDEMNED this token.
+   *
+   * Terminal in a way nothing else here is: the token is blacklisted and can
+   * never be opened again, by this slot or any other. So unlike every other
+   * case in this file, there is no version of the future where the incumbent
+   * makes use of what it is holding.
+   */
+  readonly dead?: boolean
+  /**
    * What the scanner thinks of this token RIGHT NOW, or null when it is not
    * among the candidates at all.
    *
@@ -100,11 +109,47 @@ export function releasableSlots(
   now: number,
   policy: IdleSlotPolicy = DEFAULT_IDLE_SLOT_POLICY,
 ): readonly SlotDecision[] {
-  if (waiting.length === 0) return []
+  const decisions: SlotDecision[] = []
+
+  // ── Slots nobody can ever use again ──────────────────────────────────────
+  //
+  // Decided BEFORE the empty-queue cap below, and the reason is that cap's own
+  // argument: a slot is only worth taking back when somebody is there to take
+  // it, because *the incumbent might yet enter*.
+  //
+  // For these two that is simply false. A DEAD token is blacklisted and can
+  // never be opened again by anyone. A FROZEN one cannot buy either — freezing
+  // blocks entries, which is the whole definition of stage one — and holds
+  // nothing to sell. Neither incumbent is going to enter, so nothing is lost
+  // by letting the row go, and what was lost by keeping it is a slot, a line
+  // on the screen and a notification about a position that will never act.
+  //
+  // Reported from the live book: *hay una que murió y una congelada, y aunque
+  // no tengo dinero en ellas quedaron atrapadas en mi lista sin poderlas
+  // sacar.* Both were stuck on `waiting.length === 0`.
+  for (const holder of holders) {
+    // Holding something ends the conversation here too, and a death exit does
+    // not suspend it: a slot with tokens in it cannot come back without
+    // selling, and selling is never the allocator's decision. A death exit
+    // that could not complete leaves exactly this state, and the position must
+    // stay visible rather than be quietly retired with the money still inside.
+    if (holder.openQty > 0) continue
+    if (holder.dead === true) {
+      decisions.push({ holder, reason: 'el token está muerto y vetado — la ranura no puede servirle a nada' })
+      continue
+    }
+    if (holder.frozen === true) {
+      decisions.push({ holder, reason: 'congelada sin haber comprado nada — no puede entrar ni tiene qué vender' })
+    }
+  }
+
+  // ── Everything else needs somebody waiting for the slot ──────────────────
+  if (waiting.length === 0) return decisions
   const best = Math.max(...waiting)
 
-  const decisions: SlotDecision[] = []
+  const terminal = new Set(decisions.map((d) => d.holder.id))
   for (const holder of holders) {
+    if (terminal.has(holder.id)) continue
     // Holding something is the end of the conversation. Everything below is
     // about slots with nothing in them.
     if (holder.openQty > 0) continue
@@ -123,11 +168,6 @@ export function releasableSlots(
     //
     // Six sat like that at once, each holding a slot and the capital for a
     // ladder that could never fire.
-    if (holder.frozen === true) {
-      decisions.push({ holder, reason: 'congelada sin haber comprado nada — no puede entrar ni tiene qué vender' })
-      continue
-    }
-
     const proven = holder.hasFills
     const waited = now - holder.openedAt >= policy.idleAfterMs
     if (!proven && !waited) continue

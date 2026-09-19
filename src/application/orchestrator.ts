@@ -523,7 +523,13 @@ export async function runCycle(
     // Only on a full pass. Taking a slot off one token and giving it to another
     // is a judgement about which is better RIGHT NOW, and it deserves data
     // gathered right now. Filling a slot that is already empty does not.
-    const release = kind !== 'full' ? [] : releasableSlots(
+    // On a WATCH pass the queue is passed empty, and that is not a shortcut —
+    // it is the exact meaning. Nobody is competing for a slot on a light pass,
+    // so `releasableSlots` returns only the TERMINAL cases: a dead token, and a
+    // frozen reservation holding nothing. Neither is a judgement about which
+    // token is better right now, so neither needs the data a full scan gathers,
+    // and making them wait up to an hour is what left them stuck on the screen.
+    const release = releasableSlots(
       recovery.positions.map((r) => ({
         id: r.position.id,
         chain: r.position.chain,
@@ -533,9 +539,10 @@ export async function runCycle(
         openQty: ledgers.get(r.position.id)?.qty ?? 0,
         hasFills: ledgers.get(r.position.id)?.hasFills ?? false,
         frozen: now(r.position.id, r.position).deathWatch.stage === 'frozen',
+        dead: now(r.position.id, r.position).deathWatch.stage === 'dead',
         score: scoreOf.get(`${r.position.chain}:${r.position.tokenAddress}`) ?? null,
       })),
-      waiting.map((c) => c.opportunity.score),
+      kind === 'full' ? waiting.map((c) => c.opportunity.score) : [],
       at,
       config.idleSlots ?? DEFAULT_IDLE_SLOT_POLICY,
     )

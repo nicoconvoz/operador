@@ -146,3 +146,54 @@ describe('releasableSlots — a frozen reservation is waiting for nothing', () =
     expect(decisions).toEqual([])
   })
 })
+
+describe('a slot nobody can ever use again', () => {
+  // The operator, reading his own list: *hay una que murió y una congelada, y
+  // aunque no tengo dinero en ellas quedaron atrapadas en mi lista sin poderlas
+  // sacar y con las notificaciones. Deberían ceder su ranura.*
+  //
+  // Both were stuck for the same reason, and it is this function's own opening
+  // line: `if (waiting.length === 0) return []`. That cap is argued — *freeing a
+  // slot into an empty queue is pure loss, since the incumbent might yet
+  // enter* — and the argument is simply FALSE for these two.
+  //
+  // A DEAD position is terminal: the token is blacklisted and can never be
+  // opened again, by anyone, ever. A FROZEN one cannot buy either, and this
+  // file says so twelve lines further down: *freezing blocks entries, so it
+  // cannot buy, and it holds nothing to sell.*
+  //
+  // So there is no incumbent that might yet enter, and nothing is lost by
+  // letting the row go. What was lost by keeping it: a slot, a line on the
+  // screen, and a notification about a position that will never do anything.
+
+  it('hands back a DEAD slot even when nothing is waiting', () => {
+    const [decision] = releasableSlots([holder({ dead: true, openQty: 0 })], [], NOW)
+    expect(decision?.holder.id).toBe('pos-1')
+  })
+
+  it('hands back a FROZEN slot even when nothing is waiting', () => {
+    const [decision] = releasableSlots([holder({ frozen: true, openQty: 0 })], [], NOW)
+    expect(decision?.holder.id).toBe('pos-1')
+  })
+
+  it('says WHY, because the alert is the only place the operator reads it', () => {
+    const [dead] = releasableSlots([holder({ dead: true, openQty: 0 })], [], NOW)
+    expect(dead?.reason).toContain('muerto')
+  })
+
+  it('still keeps a dead slot that is HOLDING something', () => {
+    // The invariant this file exists to protect, and a death exit does not
+    // suspend it: a slot with tokens in it cannot come back without selling,
+    // and selling is never the allocator's decision. A death exit that could
+    // not complete leaves exactly this state, and the position must stay
+    // visible rather than be quietly retired with the money still inside.
+    expect(releasableSlots([holder({ dead: true, openQty: 1_000 })], [], NOW)).toEqual([])
+  })
+
+  it('leaves an ordinary idle slot alone while nothing is waiting', () => {
+    // Unchanged, and the reason still holds: this one CAN still enter, so
+    // freeing it into an empty queue really would be pure loss.
+    const idle = holder({ openQty: 0, hasFills: false, openedAt: NOW - 9 * 3_600_000 })
+    expect(releasableSlots([idle], [], NOW)).toEqual([])
+  })
+})
