@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCycle, type CycleConfig, type CycleDeps } from './orchestrator.js'
+import { DEFAULT_STOP_LOSS_POLICY } from '../domain/risk/stop-loss.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
@@ -1327,5 +1328,115 @@ describe('runCycle — the exit cost reaches the guard, not just the function', 
 
   it('sells once the gain clears what leaving costs', async () => {
     expect(await barelyUp(1.05)).toBe(true)
+  })
+})
+
+describe('runCycle — the stop, which is the one path where a PRICE sells', () => {
+  // The operator's rule: *si por alguna causa perdemos más de un dólar nos
+  // retiramos de ese token... con stops proporcionales al % de crecimiento. Si
+  // es de 1000%, 50% de lo invertido, ese es el techo; si es 500%, 25%.*
+  //
+  // It is a real departure and it is named one. Every other exit in this engine
+  // leaves because the asset stopped being an asset, or because the strategy
+  // took a profit. This one leaves because the price fell, which is what a stop
+  // loss is — so it lives in its own file, it is OPT-IN, and it is nowhere near
+  // the death watch, whose observation type is built so no price-shaped field
+  // can exist on it.
+
+  const withStop: CycleConfig = { ...config, stopLoss: DEFAULT_STOP_LOSS_POLICY }
+
+  /** Bought at 1, holding, with a live price the cycle can read. */
+  const underWater = async (marketPrice: number, runAtEntryPct: number | null) => {
+    let store: MemoryStore
+    const { deps, store: st, alerts, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', marketPrice]]),
+      // The paper broker starts FLAT and the engine seeds it from the recorded
+      // fills — the same principle the whole engine runs on: the fills are the
+      // facts. Without it a closeAll sells nothing and the test would pass for
+      // the wrong reason.
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition({
+      ...position(),
+      runAtEntryPct,
+    })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, withStop, throttle)
+    return { store, alerts }
+  }
+
+  it('closes a calm token once it is five percent down', async () => {
+    const { store } = await underWater(0.94, 10)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell')
+    expect(sale?.comment).toBe('🛑 Stop')
+    expect(await store.loadPositions()).toEqual([])
+  })
+
+  it('gives a token that ran 1000% the whole fifty percent before cutting it', async () => {
+    // The point of making the stop proportional. A token moving like that
+    // covers five percent in seconds, and a tight stop there is not risk
+    // control, it is a coin flip that exits on noise.
+    const held = await underWater(0.6, 1000)
+    expect((await held.store.loadPositions()).map((x) => x.id)).toEqual(['pos-1'])
+
+    const cut = await underWater(0.49, 1000)
+    expect(await cut.store.loadPositions()).toEqual([])
+  })
+
+  it('sells BELOW cost, which the no-loss guard would otherwise refuse', async () => {
+    // The guard exempts it by design, beside the death and freeze exits: a stop
+    // that cannot sell at a loss is not a stop. It is the only one of the three
+    // that leaves because of a price.
+    const { store } = await underWater(0.5, 10)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell')
+    expect(sale).toBeDefined()
+    expect(sale!.price).toBeLessThan(1)
+  })
+
+  it('never fires without a live price — silence is not a fall', () => {
+    // Covered in the domain, and repeated here because the wiring is where it
+    // would actually leak: a $15.06 position once left at a tenth of a cent
+    // because two feeds disagreed about the unit.
+    return underWater(0, 10).then(async ({ store }) => {
+      expect((await store.loadPositions()).map((x) => x.id)).toEqual(['pos-1'])
+    })
+  })
+
+  it('does nothing at all when the stop is not configured', async () => {
+    // OPT-IN. A caller that says nothing gets the reference behaviour, and the
+    // parity harness keeps meaning what it meant.
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', 0.01]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, config, throttle)
+    expect((await store.loadPositions()).map((x) => x.id)).toEqual(['pos-1'])
+  })
+
+  it('shouts about it, because money left at a loss with nobody watching', async () => {
+    const { alerts } = await underWater(0.94, 10)
+    const sent = alerts.sent.find((a) => a.kind === 'token-stopped')
+    expect(sent?.level).toBe('critical')
   })
 })

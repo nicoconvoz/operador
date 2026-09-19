@@ -93,6 +93,18 @@ export interface StopLossPolicy {
   readonly maxStopPct: number
 }
 
+/**
+ * OFF, and it is the default the orchestrator falls back to.
+ *
+ * A stop is a real departure from the reference — the only path in this engine
+ * where a PRICE causes a sale — so it is composed in production beside the
+ * ladder cap and the entry drop rather than smuggled into the port. A caller
+ * that says nothing gets the reference behaviour, and the parity harness keeps
+ * meaning what it meant.
+ */
+export const NO_STOP_LOSS: StopLossPolicy = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0 }
+
+/** The operator rule: one twentieth of the run, floored at 5%, capped at 50%. */
 export const DEFAULT_STOP_LOSS_POLICY: StopLossPolicy = {
   shareOfRun: 0.05,
   minStopPct: 5,

@@ -12,6 +12,7 @@ import { orderKeyPart } from './recovery.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/economics/sizing.js'
 import { deployableCapital, scaledParams } from './paper-run.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
+import { STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
 import { type Candles } from './replay.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { priceRatio, pricesDisagree } from '../domain/market/price-agreement.js'
@@ -592,7 +593,18 @@ export function refusesToSellAtALoss(
   // both leave because the ASSET stopped working, not because the price fell.
   // A guard that held them would hold exactly the positions that most need to
   // get out.
-  if (order.comment === DEATH_EXIT_COMMENT || order.comment === FROZEN_EXIT_COMMENT) return false
+  // THREE risk exits now, and all three leave for the same kind of reason:
+  // something other than a price the strategy can wait out. The first two leave
+  // because the asset stopped being an asset; the stop leaves because the
+  // strategy that bought it says so, and a stop loss that cannot sell at a loss
+  // is not a stop loss.
+  if (
+    order.comment === DEATH_EXIT_COMMENT ||
+    order.comment === FROZEN_EXIT_COMMENT ||
+    order.comment === STOP_LOSS_COMMENT
+  ) {
+    return false
+  }
   // The ALLOCATOR's exit is NOT exempt, and that is the operator's later
   // decision: *las salidas nunca en pérdida, siempre en ganancias. Si algo
   // está en ganancias y el interruptor marca off, cierra posición; si está en

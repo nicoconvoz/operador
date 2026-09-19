@@ -71,6 +71,21 @@ export interface PersistedPosition {
    */
   readonly lastPriceUsd: number | null
   /**
+   * How far the token had already run when this position was opened, over the
+   * window the momentum rule reads, in percent.
+   *
+   * It sizes the STOP and nothing else: a token that had climbed 1000% moves
+   * fifty percent as ordinary business, and a stop tight enough for a calm one
+   * would sell it on noise. Frozen at entry rather than read live, because a
+   * stop that moves as the run changes is a stop that chases the position and
+   * can never be reached.
+   *
+   * Absent on every position opened before this existed, and absent is not
+   * zero: the stop falls back to its floor, which is the conservative answer —
+   * it risks an exit that was not needed, never a loss that was not bounded.
+   */
+  readonly runAtEntryPct?: number | null
+  /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *
    * This is the field that makes recovery safe. A process that dies between

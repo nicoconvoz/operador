@@ -21,6 +21,7 @@ export type AlertKind =
   | 'kill-switch'
   | 'token-retired'
   | 'token-rotated'
+  | 'token-stopped'
   // Operations
   | 'engine-started'
   | 'heartbeat'
@@ -66,6 +67,11 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   // whatever price existed, possibly at a loss — the operator asked for that
   // outcome and must still be told each time it happens.
   'token-rotated': 'critical',
+  // A stop is money leaving at a LOSS, decided by the engine with nobody
+  // watching. That is exactly the class of event the channel exists for, and
+  // the operator has to be able to see it happen rather than find it in the
+  // tape tomorrow.
+  'token-stopped': 'critical',
   'engine-started': 'info',
   heartbeat: 'info',
   'scan-empty': 'warn',

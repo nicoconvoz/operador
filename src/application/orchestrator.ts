@@ -10,6 +10,7 @@ import { type EntryConfirmation } from './confirm-entry.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
 import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
 import { commonFund, positionLedger, type PositionLedger } from './ledger.js'
@@ -146,6 +147,15 @@ export interface CycleConfig {
   readonly heartbeatMs: number
   /** When a reserved slot that never traded may be handed to somebody else. */
   readonly idleSlots?: IdleSlotPolicy
+  /**
+   * How far a position may fall below what was paid before it is closed.
+   *
+   * Absent means the default, which is the operator rule: one twentieth of the
+   * run, floored at 5% and capped at 50%. The whole stop is switched off by a
+   * zero share AND a zero floor, and both have to be said out loud — a
+   * strategy that never stops out is the reference behaviour, not an accident.
+   */
+  readonly stopLoss?: StopLossPolicy
 }
 
 /**
@@ -497,6 +507,67 @@ export async function runCycle(
     }
     const rotated = new Set(rotatedIds)
 
+    // ── 3a-ter. The stop ─────────────────────────────────────────────────────
+    //
+    // The operator's rule: *si por alguna causa perdemos más de un dólar nos
+    // retiramos de ese token... con stops proporcionales al % de crecimiento.*
+    //
+    // Here rather than in `tickPosition` because the tick only advances on a
+    // NEW BAR, and a stop that waits for a fifteen-minute candle is not a stop.
+    // This runs every cycle, on the live price the cycle already fetched.
+    //
+    // It is the third RISK exit and the only one caused by price. That is a
+    // real departure and it is named as one: `stop-loss.ts` says so in its
+    // first line, and it stays out of the death watch, whose observation type
+    // is built so no price-shaped field can exist on it. Routing this through
+    // there would break the single structural guarantee that keeps the death
+    // exit from becoming what this openly is.
+    const stopPolicy: StopLossPolicy = config.stopLoss ?? NO_STOP_LOSS
+    const stoppedIds: string[] = []
+    for (const recoveredPosition of recovery.positions) {
+      const position = now(recoveredPosition.position.id, recoveredPosition.position)
+      if (rotated.has(position.id) || releasedIds.includes(position.id)) continue
+      const ledger = ledgers.get(position.id)
+      const price = marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null
+      const input = {
+        // With `maxOpenEntries: 1` the average cost IS the entry price. The day
+        // a ladder comes back these diverge, and the domain takes the entry
+        // deliberately: an average falls as rungs fill, so a stop measured
+        // against it chases the position down and can never be reached.
+        entryPriceUsd: ledger?.avgCostUsd ?? 0,
+        marketPriceUsd: price,
+        openQty: ledger?.qty ?? 0,
+        runAtEntryPct: position.runAtEntryPct ?? null,
+      }
+      if (!shouldStopOut(input, stopPolicy)) continue
+
+      const broker = await deps.brokerFor(position)
+      // The SAME `settle` again — one idempotency key, one per-fill suffix. The
+      // no-loss guard lets this one through by design: a stop that cannot sell
+      // at a loss is not a stop.
+      await settle(
+        [{ kind: 'closeAll', comment: STOP_LOSS_COMMENT }],
+        position.lastBarTime,
+        price!,
+        at,
+        position,
+        broker,
+        deps.store,
+      )
+      await deps.store.closePosition(position.id)
+      stoppedIds.push(position.id)
+      const down = drawdownPct(input)
+      const stopped = alert(
+        'token-stopped',
+        `🛑 ${position.symbol} cortada por stop`,
+        `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, stopPolicy).toFixed(0)}% porque el token venía subiendo ${input.runAtEntryPct === null ? 'una cantidad no medida' : input.runAtEntryPct.toFixed(0) + '%'}. Se vendió todo a ${price}. El token NO queda vetado.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+      if (throttle.shouldSend(stopped, `stopped:${position.id}`)) await deps.alerts.send(stopped)
+    }
+    for (const id of stoppedIds) rotated.add(id)
+
     const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score]))
     const heldNow = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
     // What is QUEUING for a slot, which is not the same as what is on the list.
@@ -746,6 +817,9 @@ export async function runCycle(
           // null, not a stand-in, when the scanner has no price: the death
           // watch skips an observation it cannot size, and skipping is honest.
           lastPriceUsd: allocation.snapshot.priceUsd > 0 ? allocation.snapshot.priceUsd : null,
+          // What the token had already done when we arrived, kept because the
+          // stop is sized by it. Six hours is the window the entry rule reads.
+          runAtEntryPct: allocation.snapshot.priceChangePct?.h6 ?? null,
           pendingOrders: [],
           openedAt: at,
           updatedAt: at,
