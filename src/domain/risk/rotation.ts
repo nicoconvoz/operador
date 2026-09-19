@@ -65,7 +65,7 @@ export interface RotationHolder {
    */
   readonly switchOff: boolean | null
   /** Which floors failed, so the evidence travels with the decision. */
-  readonly failed: readonly (keyof OpportunityComponents)[]
+  readonly failed: readonly (keyof OpportunityComponents | 'rising')[]
 }
 
 export interface RotationDecision {

@@ -1,5 +1,6 @@
 import { type MarketQuality } from '../market/market-quality.js'
 import { evaluateGates, forgivableFailures, type GateFailure, type GatePolicy, type GateResult } from './gates.js'
+import { risingAcrossWindows } from './momentum.js'
 import { failedMinimums, scoreOpportunity, type ComponentFloors, type Opportunity, type OpportunityComponents, type OpportunityPolicy } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 
@@ -41,8 +42,13 @@ export interface Rejected {
 export interface SwitchedOff {
   readonly snapshot: TokenSnapshot
   readonly opportunity: Opportunity
-  /** Which floors it failed, so the evidence travels with the decision. */
-  readonly failed: readonly (keyof OpportunityComponents)[]
+  /**
+   * Why the switch is off, so the evidence travels with the decision.
+   *
+   * Usually a component floor. `'rising'` when the momentum door refused it,
+   * which is not a floor on a score but a condition on the token itself.
+   */
+  readonly failed: readonly (keyof OpportunityComponents | 'rising')[]
 }
 
 export interface ScanResult {
@@ -68,6 +74,28 @@ export interface RankingPolicy {
    * preference about the POOL, never a verdict about the opportunity.
    */
   readonly minComponents?: ComponentFloors
+  /**
+   * Require the token to be rising on every window the momentum rule reads.
+   *
+   * The operator's strategy: *sacá todos los filtros mientras haya liquidez;
+   * vamos a operar con la única condición de que haya subido... mirá las
+   * últimas 4 horas, que no haya bajado de 0% y que se haya incrementado en el
+   * total del tiempo hasta los 5m.*
+   *
+   * A token that fails it lands on `switchedOff`, NOT on `rejected`, and that
+   * placement is the design rather than a convenience. `switchedOff` feeds
+   * `rotateOnSwitchOff`, so a token WE HOLD that stops rising is sold — which
+   * is the exit this strategy needs. A rejection would only mean "do not buy
+   * it" and would leave the book holding tokens that had stopped doing the one
+   * thing they were bought for.
+   *
+   * Together with the stop it makes a complete pair: the switch takes the
+   * profit when the climb ends, the stop takes the loss when it reverses.
+   *
+   * Opt-in, so the reference behaviour survives untouched and the parity
+   * harness keeps meaning what it meant.
+   */
+  readonly requireRising?: boolean
   /**
    * The line between "fill the book with these" and "complete it with those".
    *
@@ -128,7 +156,18 @@ export function rankUniverse(
     // Not a candidate and not reserve. The reserve exists to put idle capital
     // into something SAFE that the gates merely did not prefer; a token that
     // fails a floor is one the operator said outright is not worth trading.
-    const failed = failedMinimums(opportunity.components, policy.minComponents)
+    // The momentum door, ahead of the component floors and beside them in the
+    // same verdict: both answer *is the switch on*, and a reader should not
+    // have to know which kind of reason turned it off to find out that it did.
+    //
+    // It never reaches the RESERVE either, and that is deliberate. The reserve
+    // exists to put idle capital into something SAFE that the gates merely did
+    // not prefer; a token that is not rising is not a matter of taste under
+    // this strategy, it is the whole condition.
+    const failed: (keyof OpportunityComponents | 'rising')[] = [
+      ...(policy.requireRising === true && !risingAcrossWindows(snapshot.priceChangePct) ? ['rising' as const] : []),
+      ...failedMinimums(opportunity.components, policy.minComponents),
+    ]
     if (failed.length > 0) {
       switchedOff.push({ snapshot, opportunity, failed })
       continue

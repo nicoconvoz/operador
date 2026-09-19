@@ -357,3 +357,73 @@ describe('ranking — an unbounded book gets an unbounded shortlist', () => {
     expect(rankUniverse(universe, new Map(), quality, uncapped).candidates).toHaveLength(10)
   })
 })
+
+describe('the momentum door — green all the way down, or the switch is off', () => {
+  // The operator's strategy change: *sacá todos los filtros mientras haya
+  // liquidez; vamos a operar con la única condición de que en los últimos 15
+  // minutos haya subido más del 1%... mirá las últimas 4 horas, que no haya
+  // bajado de 0% y que se haya incrementado en el total del tiempo hasta los 5m.*
+  //
+  // It lands on `switchedOff` rather than on `rejected`, and that placement is
+  // the design rather than a convenience. `switchedOff` is what feeds
+  // `rotateOnSwitchOff`, so a token WE HOLD that stops rising is sold — which
+  // is exactly the exit this strategy needs. A rejection would only mean "do
+  // not buy it", and would leave the book holding tokens that had stopped
+  // doing the one thing they were bought for.
+  //
+  // Together with the stop it makes a complete pair: the switch takes the
+  // profit when the climb ends, the stop takes the loss when it reverses.
+
+  const rising = { m5: 1, h1: 2, h6: 3, h24: 10 }
+  const rank = (universe: TokenSnapshot[], requireRising: boolean) =>
+    rankUniverse(universe, new Map(), quality, { ...policy, requireRising })
+
+  it('admits a token green on all three windows', () => {
+    const { candidates } = rank([token('A', { priceChangePct: rising })], true)
+    expect(candidates).toHaveLength(1)
+  })
+
+  it('switches OFF one that is falling in any window', () => {
+    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, h1: -0.5 } })], true)
+    expect(candidates).toEqual([])
+    expect(switchedOff).toHaveLength(1)
+    expect(switchedOff[0]!.failed).toContain('rising')
+  })
+
+  it('switches OFF one whose five minutes nobody reported', () => {
+    // There is no such thing as an unmeasured reason to BUY. Measured live, 36
+    // of 239 liquid tokens carried no m5 at all.
+    const { switchedOff } = rank([token('A', { priceChangePct: { h1: 2, h6: 3, h24: 10 } })], true)
+    expect(switchedOff[0]!.failed).toContain('rising')
+  })
+
+  it('never reaches the RESERVE — a fallback is not a way around the rule', () => {
+    // The reserve exists to put idle capital into something safe the gates
+    // merely did not prefer. A token that is not rising is not a matter of
+    // taste under this strategy; it is the whole condition.
+    // The reserve is merged into `candidates` on the way out, so proving it
+    // never entered means proving the token is absent from there AND present in
+    // `switchedOff` — which is where a refusal belongs rather than nowhere.
+    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, m5: -1 } })], true)
+    expect(candidates).toEqual([])
+    expect(switchedOff).toHaveLength(1)
+  })
+
+  it('still refuses a DANGEROUS token that happens to be rising', () => {
+    // Safety was never part of *sacá todos los filtros*, and the operator was
+    // emphatic in the other direction the same day: *si falla una compuerta de
+    // seguridad, restricción total, porque esas me han hecho perder mucho
+    // dinero.*
+    const honeypot = token('A', { priceChangePct: rising, security: { ...token('A').security, honeypot: true } })
+    const { candidates, rejected } = rank([honeypot], true)
+    expect(candidates).toEqual([])
+    expect(rejected).toHaveLength(1)
+  })
+
+  it('leaves every other token alone when the door is OFF', () => {
+    // The rule is opt-in, so the reference behaviour survives untouched and
+    // the parity harness keeps meaning what it meant.
+    const falling = token('A', { priceChangePct: { ...rising, h1: -0.5 } })
+    expect(rank([falling], false).candidates).toHaveLength(1)
+  })
+})
