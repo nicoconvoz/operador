@@ -706,11 +706,29 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(quiet, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('volume')
   })
 
-  it('no longer refuses a token for having fallen today', () => {
-    // The hour is what decides now, through the `headroom` floor at -3%. A
-    // daily threshold on top was belt and braces against the same accident.
-    const bled = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
-    expect(evaluateMarketGates(bled, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
+  it('refuses again a token that already collapsed TODAY — the hour cannot see it', () => {
+    // This test recorded turning the daily gate off, on the argument that the
+    // hour already decides through the `headroom` floor and a daily threshold
+    // was belt and braces against the same accident.
+    //
+    // PERK falsified it. They are not the same accident: the hour sees *falling
+    // right now*, the day sees *already collapsed before we arrived*, and a
+    // token can be calm this hour having lost almost everything since
+    // yesterday. The engine bought PERK when it was already down 92.6% on the
+    // day, and then lost another 43.6% of what it put in.
+    //
+    // Measured across 36 live positions: of the capital a >30% band would have
+    // refused, 18.5% was lost, against 3.4% for the book overall.
+    const collapsed = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
+    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
+  })
+
+  it('but still buys an ordinary bad day, which is what the ladder is for', () => {
+    // The line is at thirty and not lower on purpose. `fone` had already fallen
+    // 20.3% when the engine bought it and is UP; `CODEC` 15.6% and up. Those
+    // are the thesis working, and a tighter gate would eat them.
+    const dip = gentle({ priceChangePct: { h1: 1, h6: -8, h24: -20 } })
+    expect(evaluateMarketGates(dip, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
   })
 
   it('still refuses a pool the machine cannot compute an entry on', () => {
@@ -757,5 +775,66 @@ describe('gates — concentration at eighty, which is nearly open', () => {
     // GoPlus returns an empty holders array for most Solana tokens, and an
     // unknown concentration is an unanswered question rather than a low one.
     expect(failedGates(clean({}, { topHoldersPct: null }))).toEqual(['topHolders:unknown'])
+  })
+})
+
+describe('the day-long collapse, measured on the book that paid for it', () => {
+  // PRODUCTION policy, not the strict one. The gate's logic is pinned above
+  // against `STRICT_GATE_POLICY`; what this pins is the DECISION — the number
+  // the engine actually runs with, which had been sitting at 100 (off) while
+  // CLAUDE.md documented 15. A choice written down and not implemented is the
+  // failure mode this project names more than any other.
+  //
+  // The threshold is MEASURED, on 36 live positions, by reconstructing how far
+  // each token had already fallen when the engine bought it
+  // (`tools/freefall-what-if.ts`). Of the capital each band refused, this much
+  // was lost:
+  //
+  //     already down >50%   47.2%   ← PERK alone, $45.98 of a $134.11 book
+  //     already down >30%   18.5%
+  //     already down >20%    8.4%
+  //     already down >15%    6.0%
+  //     the book overall     3.4%
+  //
+  // So past 30% is catastrophe — five to fourteen times the book's own rate,
+  // bought for $271 of deployment not made. Between 5% and 30% it is an
+  // ordinary bad day at roughly twice the average, and tightening into it costs
+  // WINNERS: `fone` had already fallen 20.3% and is up, `CODEC` 15.6% and up.
+  //
+  // That is the strategy's own thesis, so the gate must not eat it. CASCADE DCA
+  // exists to buy weakness; this exists to refuse a collapse already in
+  // progress. Thirty is where the measurement puts the line between them.
+  const production = (over: Partial<TokenSnapshot>) =>
+    evaluateGates(clean(over), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)
+
+  it('refuses a token that already collapsed before we arrived — PERK, −92.6%', () => {
+    expect(production({ priceChangePct: { h1: -21.7, h6: -60, h24: -92.6 } })).toContain('freefall')
+  })
+
+  it('still buys the DIP, which is what the strategy is for — fone at −20.3%', () => {
+    // Refusing this one would cost a winner and contradict the premise: the
+    // ladder exists to enter weakness. Measured, it is up.
+    expect(production({ priceChangePct: { h1: 1, h6: -5, h24: -20.3 } })).not.toContain('freefall')
+  })
+
+  it('and CODEC at −15.6%, also up', () => {
+    expect(production({ priceChangePct: { h1: 1, h6: -4, h24: -15.6 } })).not.toContain('freefall')
+  })
+
+  it('draws the line at thirty, where the measurement puts it', () => {
+    expect(production({ priceChangePct: { h1: 0, h6: -10, h24: -31 } })).toContain('freefall')
+    expect(production({ priceChangePct: { h1: 0, h6: -10, h24: -29 } })).not.toContain('freefall')
+  })
+
+  it('never on a RISE, however violent', () => {
+    // A token up 300% on the day is a question for the score, not for a gate.
+    // The check is `change >= -limit`, so a rise cannot trip it.
+    expect(production({ priceChangePct: { h1: 50, h6: 120, h24: 300 } })).not.toContain('freefall')
+  })
+
+  it('stays quiet where the provider said nothing', () => {
+    // Unlike the SAFETY gates, which fail closed because unknown danger IS
+    // evidence, this one fires only on a number somebody measured.
+    expect(production({ priceChangePct: { h1: null, h6: null, h24: null } })).not.toContain('freefall')
   })
 })

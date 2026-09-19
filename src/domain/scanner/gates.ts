@@ -33,7 +33,7 @@ export interface GatePolicy {
    */
   readonly maxFallPct: number
   /**
-   * Same rule over a full day, and deliberately LOOSER.
+   * Same rule over a full day, and the STRICTEST of the three.
    *
    * The short windows catch a collapse; a day is long enough that the same
    * fall is a different event, and the ladder was built for bad days. The
@@ -208,7 +208,28 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // The hour decides a collapse now, through the `headroom` floor at -3%. A
   // daily threshold on top was belt and braces against the same accident.
   maxFallPct: 100,
-  maxDailyFallPct: 100,
+  // MEASURED, on 36 live positions, by reconstructing how far each token had
+  // already fallen when the engine bought it (`tools/freefall-what-if.ts`).
+  // Of the capital each band would have refused, this much was lost:
+  //
+  //     already down >50%   47.2%   ← PERK alone, $45.98 of a $134.11 book
+  //     already down >30%   18.5%
+  //     already down >20%    8.4%
+  //     the book overall     3.4%
+  //
+  // Past thirty is catastrophe — five to fourteen times the book own rate —
+  // and it costs $271 of deployment not made. Below it the damage is an
+  // ordinary bad day at roughly twice the average, and tightening further eats
+  // WINNERS: fone had already fallen 20.3% and is up, CODEC 15.6% and up.
+  //
+  // Which is the strategy own thesis, so the gate must not take it. CASCADE DCA
+  // exists to buy weakness; this exists to refuse a collapse already in
+  // progress. Thirty is where the measurement puts the line between them.
+  //
+  // It read 100 — off — while CLAUDE.md documented 15. A choice written down
+  // and not implemented is this project most expensive failure mode, and this
+  // is the fourth time.
+  maxDailyFallPct: 30,
   minTurnoverRatio: 0,
   minHourlyTxns: 4,
   maxTransferTaxPct: 5,
