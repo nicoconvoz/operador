@@ -1,4 +1,5 @@
 import { type LpStatus } from '../domain/risk/death-exit.js'
+import { evaluateSafetyGates, type GatePolicy } from '../domain/scanner/gates.js'
 import { lpModelOf } from '../domain/scanner/lp-model.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 
@@ -47,6 +48,21 @@ export interface ScannerHealth {
   readonly lpStatus: LpStatus
   readonly mintAuthorityActive: boolean | null
   readonly freezeAuthorityActive: boolean | null
+  /**
+   * Which SAFETY gates fail on this token now, or null when nobody examined it.
+   *
+   * The four fields above are the ones that map onto a named invalidation
+   * signal. Everything else the scan measures — a transfer tax appearing, a
+   * blacklist function appearing, concentration spiking, a contract turning
+   * into a proxy, an impersonated symbol — had nowhere to go, so a gate could
+   * turn on a token holding our money and the engine would never learn of it.
+   *
+   * ANSEM is the token that proved it: the screen drew it `turnedUnsafe` with
+   * its blockers listed while the engine reported `deathStage: healthy` over a
+   * live position. Two implementations of "is this dangerous" always drift, and
+   * the one on the screen is the one the operator believes.
+   */
+  readonly safetyFailed: readonly string[] | null
 }
 
 export const UNMEASURED: ScannerHealth = {
@@ -54,6 +70,7 @@ export const UNMEASURED: ScannerHealth = {
   lpStatus: 'unknown',
   mintAuthorityActive: null,
   freezeAuthorityActive: null,
+  safetyFailed: null,
 }
 
 /**
@@ -61,7 +78,8 @@ export const UNMEASURED: ScannerHealth = {
  * exactly what it means when the scanner refuses to open a position — one
  * definition, not two that drift.
  */
-export function healthFromSnapshot(snapshot: TokenSnapshot | null, minLpLockedPct: number): ScannerHealth {
+export function healthFromSnapshot(snapshot: TokenSnapshot | null, policy: GatePolicy): ScannerHealth {
+  const minLpLockedPct = policy.minLpLockedPct
   if (!snapshot) return UNMEASURED
 
   // An unexamined token carries UNKNOWN_SECURITY, and passing that through
@@ -71,6 +89,33 @@ export function healthFromSnapshot(snapshot: TokenSnapshot | null, minLpLockedPc
   if (snapshot.securityChecked === false) {
     return { ...UNMEASURED, liquidityUsd: snapshot.liquidityUsd }
   }
+
+  // The gate set's OWN verdict, not a second reading of the same facts.
+  //
+  // `evaluateSafetyGates` is exactly what `confirmEntry` asks at the door, so a
+  // token we hold is judged by the rule that would refuse to buy it today. The
+  // opportunity half is deliberately excluded: turnover, volume and market cap
+  // are preferences the reserve already forgives, and freezing a position over
+  // one would turn the shortlist's taste into a sell signal.
+  //
+  // Reached only past the `securityChecked` guard above, and that ordering is
+  // the safety. The safety gates fail CLOSED, so an unexamined token fails all
+  // of them by design — reporting that as "it turned" would freeze every
+  // position the security budget has not got to yet, and with `exitOnFreeze`
+  // on that is not a pause, it is the whole book sold.
+  // MEASURED failures only. The gates fail CLOSED on missing data, which is
+  // the right answer at the door — a token nobody can vouch for is not bought.
+  // It is the wrong answer here: a GoPlus rate limit leaves the whole report
+  // null while the scan still marks the token examined, so every gate would
+  // report a failure and `exitOnFreeze` would sell the book because we ran out
+  // of quota. Twenty-six positions once turned red for exactly that.
+  //
+  // The sell probe's rule, in the mirror: an RPC failure is never read as "no
+  // route" — one is inconclusive, the other is a death signal, and confusing
+  // them either liquidates a healthy position or holds a dead one.
+  const safetyFailed = evaluateSafetyGates(snapshot, policy)
+    .failures.filter((failure) => failure.reason === 'failed')
+    .map((failure) => failure.gate)
 
   // "Is the LP locked?" only means something where LP TOKENS EXIST. On Orca
   // whirlpools, Raydium CLMM and Meteora DLMM, positions are NFTs — there is
@@ -96,5 +141,6 @@ export function healthFromSnapshot(snapshot: TokenSnapshot | null, minLpLockedPc
     lpStatus: !hasLpTokens || locked === null ? 'unknown' : locked >= minLpLockedPct ? 'locked' : 'unlocked',
     mintAuthorityActive: snapshot.security.mintAuthorityActive,
     freezeAuthorityActive: snapshot.security.freezeAuthorityActive,
+    safetyFailed,
   }
 }

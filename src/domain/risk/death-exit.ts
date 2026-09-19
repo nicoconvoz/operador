@@ -49,6 +49,32 @@ export interface AssetHealthObservation extends PriceFree {
   readonly lpStatus: LpStatus
   readonly mintAuthorityActive: boolean | null
   readonly freezeAuthorityActive: boolean | null
+  /**
+   * Safety gates that FAILED on this token, or null when nobody examined it.
+   *
+   * The operator paid for this one: *si falla una compuerta de seguridad,
+   * filtrar y no dejar operar, restricción total, porque esas me han hecho
+   * perder mucho dinero.*
+   *
+   * The ENTRY path was already closed — a safety failure is never a candidate,
+   * cannot be forgiven into the reserve, and is re-asked at the door. The hole
+   * was on the other side. For a token already HELD, this watch saw four facts
+   * out of the scan — liquidity, the LP and the two authorities — and was
+   * blind to the rest: a transfer tax appearing at 30%, a blacklist function
+   * appearing in the contract, a concentration spike, a contract turning into
+   * a proxy. The screen painted the body red with `turnedUnsafe` and the
+   * engine carried on.
+   *
+   * NOT a price field, and it could not be: this type is built so no
+   * price-shaped value can exist on it, which is what keeps the death exit
+   * from degrading into a stop loss. A gate verdict is a fact about the
+   * INSTRUMENT.
+   *
+   * An empty array is "examined and clean". `null` is "nobody looked", and
+   * that must not freeze anything — the same rule the whole scanner runs on,
+   * and here it protects every position the security budget has not reached.
+   */
+  readonly safetyFailed: readonly string[] | null
   /** Transfers paused, or our wallet blacklisted. */
   readonly transfersBlocked: boolean | null
   /** Share of supply moved by top holders in the monitor's window, percent. */
@@ -99,6 +125,8 @@ export type SignalKind =
   | 'transfersBlocked'
   | 'holderDump'
   | 'abandonment'
+  /** A safety gate that passed at the door and fails now. */
+  | 'safetyTurned'
 
 export interface InvalidationSignal {
   readonly kind: SignalKind
@@ -146,6 +174,26 @@ export function evaluateSignals(
 
   if (obs.sellQuote === 'failed' || obs.sellQuote === 'implausible') {
     signals.push({ kind: 'sellPathBroken', stage: 2, detail: `sell quote ${obs.sellQuote}` })
+  }
+
+  // A safety gate that TURNED on a token we hold.
+  //
+  // Stage ONE, and the calibration is this file's own rule: *freeze is cheap,
+  // exit is not.* A freeze stops new capital, and with `exitOnFreeze` it sells
+  // the position — which is the total restriction the operator asked for —
+  // without the permanent blacklist a death verdict carries. A concentration
+  // spike is not proof the asset stopped being an asset, and a token whose
+  // holders spread out again deserves to come back.
+  //
+  // The gates that ARE terminal already have their own signals above and
+  // below: a broken sell path, an LP pulled, an authority reinstated. This
+  // catches everything else the scan can see and this watch could not.
+  if (obs.safetyFailed !== null && obs.safetyFailed.length > 0) {
+    signals.push({
+      kind: 'safetyTurned',
+      stage: 1,
+      detail: `falló ${obs.safetyFailed.join(', ')}`,
+    })
   }
 
   if (obs.lpStatus === 'removed' || obs.lpStatus === 'unlocked') {

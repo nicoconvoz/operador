@@ -25,6 +25,7 @@ const healthy = (over: Partial<AssetHealthObservation> = {}): AssetHealthObserva
   transfersBlocked: false,
   topHolderMovedPct: 0,
   hoursSinceLastTrade: 0,
+  safetyFailed: null,
   ...over,
 })
 
@@ -271,5 +272,57 @@ describe('applyDeathVerdict — a freeze that leaves instead of waiting', () => 
 
   it('a death still wins over a freeze exit', () => {
     expect(applyDeathVerdict([], 'dead', true, { exitOnFreeze: true })[0]!.comment).toBe(DEATH_EXIT_COMMENT)
+  })
+})
+
+describe('death watch — a SAFETY gate that turns on a token we hold', () => {
+  // The operator, and he paid for this one: *si falla una compuerta de
+  // seguridad, filtrar y no dejar operar, restricción total, porque esas me
+  // han hecho perder mucho dinero.*
+  //
+  // The entry path was already closed and verified — a safety failure is not a
+  // candidate, cannot be forgiven into the reserve, and is re-asked at the
+  // door. The hole was on the other side: for a token we already HOLD, this
+  // watch saw four facts out of the scan — liquidity, the LP, and the two
+  // authorities — and was blind to the rest.
+  //
+  // So a transfer tax appearing at 30%, a blacklist function appearing in the
+  // contract, a concentration spike, a contract becoming a proxy: the screen
+  // painted the body red with `turnedUnsafe` and the engine carried on.
+  //
+  // Stage ONE rather than two, and the calibration is this file's own rule:
+  // *freeze is cheap, exit is not.* A freeze stops new capital, and with
+  // `exitOnFreeze` on it sells the position — which IS the total restriction
+  // he asked for — without the permanent blacklist a death verdict carries. A
+  // concentration spike is not proof the asset stopped being an asset.
+
+  it('freezes on any safety gate that failed', () => {
+    const { state } = run([healthy({ safetyFailed: ['transferTax'] })])
+    expect(state.stage).toBe('frozen')
+  })
+
+  it('says WHICH gate, because only a person can tell a turn from a blip', () => {
+    const { state } = run([healthy({ safetyFailed: ['blacklist', 'topHolders'] })])
+    const detail = state.evidence.flatMap((record) => record.signals).map((signal) => signal.detail).join(' ')
+    expect(detail).toContain('blacklist')
+    expect(detail).toContain('topHolders')
+  })
+
+  it('does NOT condemn the token outright — a freeze is reversible and a death is not', () => {
+    const { state } = run([healthy({ safetyFailed: ['topHolders'] }), healthy({ safetyFailed: ['topHolders'] }), healthy({ safetyFailed: ['topHolders'] })])
+    expect(state.stage).not.toBe('dead')
+  })
+
+  it('leaves a healthy token alone when nothing failed', () => {
+    const { state } = run([healthy({ safetyFailed: [] })])
+    expect(state.stage).toBe('healthy')
+  })
+
+  it('treats an UNMEASURED verdict as silence, not as a failure', () => {
+    // The rule the whole scanner runs on. A scan that could not examine the
+    // token says nothing about it, and reading that as a turn would freeze
+    // every position the security budget had not reached.
+    const { state } = run([healthy({ safetyFailed: null })])
+    expect(state.stage).toBe('healthy')
   })
 })

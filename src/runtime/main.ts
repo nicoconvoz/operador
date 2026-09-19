@@ -311,7 +311,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         const scannedAt = scans.find((scan) => scan.chain === position.chain)?.scannedAt ?? 0
         const fresh = scannedAt > (foldedScanAt.get(position.id) ?? 0)
         if (fresh) foldedScanAt.set(position.id, scannedAt)
-        const scanner = fresh ? healthFromSnapshot(snapshot, DEFAULT_GATE_POLICY.minLpLockedPct) : UNMEASURED
+        const scanner = fresh ? healthFromSnapshot(snapshot, DEFAULT_GATE_POLICY) : UNMEASURED
 
         const decimals = await decimalsFor.decimals(position.chain, position.tokenAddress)
         // Without decimals or a price there is no way to size a meaningful

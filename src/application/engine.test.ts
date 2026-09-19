@@ -32,7 +32,7 @@ const decline = (bars: number): Candles => {
 const healthy = (over: Partial<AssetHealthObservation> = {}): AssetHealthObservation => ({
   observedAt: 0, source: 'test', sellQuote: 'ok', liquidityUsd: 1_000_000, lpStatus: 'burned',
   mintAuthorityActive: false, freezeAuthorityActive: false, transfersBlocked: false,
-  topHolderMovedPct: 0, hoursSinceLastTrade: 0, ...over,
+  topHolderMovedPct: 0, hoursSinceLastTrade: 0, safetyFailed: null, ...over,
 })
 
 const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => ({
