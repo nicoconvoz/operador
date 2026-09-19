@@ -41,7 +41,38 @@ const sql = {
 }
 
 const store = new PostgresStore(sql)
-const fills = await store.allFills()
+
+// A stack trace is the wrong thing to hand an operator at 3am. Every one of
+// these is something they can act on; anything else is printed as it came,
+// because a diagnostic that guesses is worse than one that admits it.
+let fills
+try {
+  fills = await store.allFills()
+} catch (error) {
+  const why = String((error as { code?: string }).code ?? error)
+  const shown = url.replace(/:[^:@/]*@/, ':***@')
+  console.error('')
+  console.error('  No pude leer la base. La URL que recibí es:')
+  console.error('    ' + shown)
+  console.error('')
+  if (why.includes('ECONNREFUSED') || why.includes('ENOTFOUND')) {
+    console.error('  No hay nadie en esa dirección. Suele ser una URL incompleta:')
+    console.error('  en PowerShell las comillas DOBLES interpretan el $ como variable,')
+    console.error('  así que si tu contraseña tiene uno, se borra sin avisar.')
+    console.error('  Usá comillas simples.')
+  } else if (why.includes('password') || why.includes('28P01')) {
+    console.error('  El servidor contestó y rechazó la contraseña.')
+  } else if (why.includes('SELF_SIGNED') || why.includes('certificate')) {
+    console.error('  Falta ?sslmode=require al final de la URL.')
+  } else if (why.includes('42P01')) {
+    console.error('  Esa base existe pero no tiene las tablas — ¿es la correcta?')
+  } else {
+    console.error('  ' + why)
+  }
+  console.error('')
+  await pool.end()
+  process.exit(1)
+}
 
 /** Average cost per position, walked in order — the ledger's own basis. */
 const basis = new Map<string, { qty: number; cost: number }>()
