@@ -16,6 +16,23 @@ export interface WindowedVolume {
 }
 
 export interface WindowedChangePct {
+  /**
+   * The last FIVE minutes, and the freshest thing any free provider reports.
+   *
+   * Every other window in this type is a lagging average: a token that ran at
+   * breakfast still shows it in `h24` long after it stopped, and `h1` keeps
+   * quoting a move that ended forty minutes ago. This one answers *is it
+   * moving RIGHT NOW*, which is the only question a momentum entry asks.
+   *
+   * DexScreener has reported it all along — for price, volume and the trade
+   * counts — and the adapter read h1/h6/h24 and dropped it on the floor.
+   *
+   * Optional, because GeckoTerminal's pool endpoint does not carry it and a
+   * snapshot built from that source genuinely does not know. Absent is not
+   * zero: a gate reading this must stay silent where nobody measured, the same
+   * rule the rest of the scanner runs on.
+   */
+  readonly m5?: number | null
   readonly h1: number | null
   readonly h6: number | null
   readonly h24: number | null

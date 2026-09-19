@@ -111,7 +111,10 @@ export class DexScreener {
       liquidityUsd: pair.liquidity?.usd ?? 0,
       fdvUsd: pair.fdv ?? null,
       volumeUsd: { h1: pair.volume.h1 ?? 0, h6: pair.volume.h6 ?? 0, h24: pair.volume.h24 ?? 0 },
-      priceChangePct: { h1: pc.h1 ?? null, h6: pc.h6 ?? null, h24: pc.h24 ?? null },
+      // `m5` was arriving in every response and being discarded — the freshest
+      // number any free provider gives, thrown away for the life of the
+      // project while the scanner ranked tokens on hour-old averages.
+      priceChangePct: { m5: pc.m5 ?? null, h1: pc.h1 ?? null, h6: pc.h6 ?? null, h24: pc.h24 ?? null },
       txns: { h1: tx('h1'), h24: tx('h24') },
       pairCreatedAt: pair.pairCreatedAt ?? null,
     }

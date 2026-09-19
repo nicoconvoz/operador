@@ -40,7 +40,9 @@ describe('DexScreener adapter — mapping', () => {
       liquidityUsd: 273239.21,
       fdvUsd: 241976399,
       volumeUsd: { h1: 9028.52, h6: 104969.84, h24: 488686.15 },
-      priceChangePct: { h1: 0.41, h6: -1.72, h24: -2.16 },
+      // m5 is the freshest window any free provider reports, and it was
+      // arriving in every response and being discarded.
+      priceChangePct: { m5: 0.37, h1: 0.41, h6: -1.72, h24: -2.16 },
       txns: { h1: { buys: 221, sells: 195 }, h24: { buys: 5289, sells: 7223 } },
       pairCreatedAt: 1671980424000,
     })
@@ -55,7 +57,7 @@ describe('DexScreener adapter — mapping', () => {
   it('tolerates missing optional fields with nulls and zeros', () => {
     const sparse: DexPair = { ...bonkOrca, priceChange: null, fdv: null, pairCreatedAt: null, volume: { h24: 10 }, txns: {} }
     const s = dex.toMarketSnapshot('solana', sparse)
-    expect(s.priceChangePct).toEqual({ h1: null, h6: null, h24: null })
+    expect(s.priceChangePct).toEqual({ m5: null, h1: null, h6: null, h24: null })
     expect(s.fdvUsd).toBeNull()
     expect(s.pairCreatedAt).toBeNull()
     expect(s.volumeUsd).toEqual({ h1: 0, h6: 0, h24: 10 })
