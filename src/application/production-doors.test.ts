@@ -2,19 +2,35 @@ import { describe, it, expect } from 'vitest'
 import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS } from './production-doors.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
-  it('is a binary key: trend at fifty, the other two at thirty', () => {
-    // The operator's words for it — *o está on o está off*. Below any of the
-    // three the coin is out; above all three it passes and the score is
-    // computed as it always was, with the check playing no part in it.
-    expect(productionDoors({}).minComponents).toEqual({ momentum: 0.5, headroom: 0.3, costEfficiency: 0.3 })
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ momentum: 0.5, headroom: 0.3, costEfficiency: 0.3 })
-    // `headroom` came BACK, and what changed is the window it reads rather
-    // than the mind of whoever set it. Over a DAY it refused every token up
-    // more than ~95%, which is the runner this book exists to catch. Over the
-    // HOUR it asks a different question — is this still climbing, and has the
-    // climb not already happened — and the 2000%-in-a-day token now passes it
-    // whenever its current hour is calm.
-    expect(DEFAULT_COMPONENT_FLOORS.headroom).toBe(0.3)
+  it('is ONE floor now: what the token charges to trade it', () => {
+    // `momentum` and `headroom` were removed after the operator relaunched with
+    // the momentum rule on and the engine opened THREE positions where the rule
+    // had thirty-seven candidates.
+    //
+    // Both asked the question the rule now asks, and asked it worse. The
+    // momentum component is BINARY — one when h24 or h1 cleared 1%, zero
+    // otherwise — so a floor of 0.5 meant "the hour must be at least one
+    // percent", while the rule requires the hour above ZERO. A token up 0.4% in
+    // the hour passed his rule and was killed by a floor set for a different
+    // strategy: not a stricter version of his decision, a silent override of it.
+    //
+    // `headroom` was worse. It is one for anything not falling 3% in the hour,
+    // so everything the rule admits passes it and the floor can never cut. A
+    // dead knob, and a dead knob is worse than a wrong one, because the next
+    // reader tunes it and nothing happens.
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3 })
+  })
+
+  it('keeps the TOLL, and that is not an oversight', () => {
+    // *Sacá todos los filtros* was about what makes a token interesting. This
+    // one answers what it CHARGES, which is a different question, and it
+    // matters MORE under a strategy whose positions turn over in minutes:
+    // every round trip pays it in full. PURR charged 15.55% a round trip and
+    // was bought anyway, because an average can always be carried by its other
+    // terms and a floor cannot.
+    expect(DEFAULT_COMPONENT_FLOORS.costEfficiency).toBe(0.3)
+    expect(DEFAULT_COMPONENT_FLOORS.momentum).toBeUndefined()
+    expect(DEFAULT_COMPONENT_FLOORS.headroom).toBeUndefined()
   })
 
   it('leaves the score door OPEN — the floors are the whole rule', () => {

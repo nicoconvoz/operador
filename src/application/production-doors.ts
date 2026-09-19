@@ -58,8 +58,35 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  * not a passing one.
  */
 export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
-  momentum: 0.5,
-  headroom: 0.3,
+  // `momentum` and `headroom` are GONE, and the reason is measured rather than
+  // preferred. The operator relaunched with the momentum rule on and the engine
+  // opened THREE positions where the rule had thirty-seven candidates.
+  //
+  // Both floors ask the question the rule now asks, and ask it worse:
+  //
+  //   momentum = (h24 >= 1% || h1 >= 1%) ? 1 : 0, floored at 0.5
+  //
+  // Binary, so a floor of 0.5 means "must be 1" — h1 at least ONE percent. The
+  // rule requires h1 above ZERO. So a token up 0.4% in the hour passed the
+  // operator's rule and was killed by a floor that had been set for a different
+  // strategy. It was not a stricter version of his decision; it was silently
+  // overriding it.
+  //
+  //   headroom = h1 < -3% ? 0 : 1, floored at 0.3
+  //
+  // Worse: anything the rule admits is rising, so headroom is always 1 and the
+  // floor can never cut. A dead knob, and a dead knob is worse than a wrong one
+  // because the next reader tunes it and nothing happens.
+  //
+  // The rule replaces both, across THREE windows instead of two, and it reads
+  // the five minutes that neither of them could see.
+  //
+  // `costEfficiency` STAYS, and it is not an oversight against *sacá todos los
+  // filtros*. It answers a different question — what the token charges to trade
+  // it, not whether it is moving — and it matters MORE under this strategy, not
+  // less: positions turn over in minutes and every round trip pays the toll in
+  // full. At 0.3 it admits anything under about a 2.8% round trip, and PURR
+  // charged 15.55%.
   costEfficiency: 0.3,
 }
 
