@@ -336,6 +336,18 @@ export class PostgresStore implements StatePort {
    * that once took this project offline for thirty-four hours.
    */
   async rememberTokens(tokens: readonly RememberedToken[]): Promise<void> {
+    // CHUNKED, and not for tidiness. Postgres allows 65,535 parameters in one
+    // statement and this carries nine per token: 564 is 5,076 and works, 7,282
+    // fails. It is caught by the caller, so the cycle would survive and the
+    // registry would simply stop growing — in silence, exactly once it had
+    // accumulated enough to be worth having.
+    //
+    // Two thousand is a round number well under the limit with room for the
+    // column count to change without anyone remembering this comment exists.
+    for (let i = 0; i < tokens.length; i += 2_000) await this.writeTokens(tokens.slice(i, i + 2_000))
+  }
+
+  private async writeTokens(tokens: readonly RememberedToken[]): Promise<void> {
     if (tokens.length === 0) return
     const values: unknown[] = []
     const rows = tokens.map((token, i) => {

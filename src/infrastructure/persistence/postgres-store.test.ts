@@ -140,3 +140,49 @@ describe('PostgresStore — a scan is the newest picture, not an archive', () =>
     expect(pruned.params[0]).toBe('bsc')
   })
 })
+
+describe('the registry writes in chunks, because a statement has a parameter limit', () => {
+  // Found by the operator asking whether writing it would slow the first cold
+  // scan down. It does not — but the question sent me back to the statement,
+  // and it carries NINE parameters per token in ONE insert.
+  //
+  // Postgres allows 65,535. At 564 tokens that is 5,076 and it works; at 7,282
+  // the statement fails. It is caught, so the cycle survives — and the
+  // registry would simply stop growing, in silence, exactly when it had
+  // accumulated enough to be worth having. A failure that only shows up once
+  // the thing starts working is the worst kind this project collects.
+
+  it('splits a write too large for one statement', async () => {
+    const statements: number[] = []
+    const sql = {
+      query: async (text: string, values?: unknown[]) => {
+        if (text.includes('solana_cache')) statements.push(values?.length ?? 0)
+        return { rows: [] }
+      },
+    }
+    const store = new PostgresStore(sql as never)
+    await store.rememberTokens(
+      Array.from({ length: 3_000 }, (_, i) => ({
+        contract: `c${i}`, token: `T${i}`, pool: null, price: 1, volume24h: 1,
+        liquidity: 1, marketCap: 1, txns: 1, lastUpdate: 1,
+      })),
+    )
+    expect(statements.length).toBeGreaterThan(1)
+    for (const count of statements) expect(count).toBeLessThan(65_535)
+  })
+
+  it('still writes a small one in a single statement', async () => {
+    const statements: number[] = []
+    const sql = {
+      query: async (text: string, values?: unknown[]) => {
+        if (text.includes('solana_cache')) statements.push(values?.length ?? 0)
+        return { rows: [] }
+      },
+    }
+    const store = new PostgresStore(sql as never)
+    await store.rememberTokens([
+      { contract: 'a', token: 'A', pool: null, price: 1, volume24h: 1, liquidity: 1, marketCap: 1, txns: 1, lastUpdate: 1 },
+    ])
+    expect(statements).toEqual([9])
+  })
+})
