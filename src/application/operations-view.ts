@@ -29,7 +29,6 @@ export interface LadderRung {
   /** True for the level the strategy is currently waiting on. */
   readonly pending: boolean
   /** Beyond what the venue will fill: signalled, never executed. */
-  readonly beyondPyramiding: boolean
 }
 
 /**
@@ -217,7 +216,19 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const inFlight = position.pendingOrders.find((order) => order.kind === 'entry')
     const waitingOn = inFlight?.level ?? position.cascade.level
 
-    const ladder: LadderRung[] = Array.from({ length: Math.min(params.maxLevels + 1, 12) }, (_, level) => {
+    // As many rungs as the VENUE will hold, never as many as the machine
+    // signals. The state machine advances to fifty levels and `PaperBroker`
+    // refuses every entry past `maxOpenEntries` — so drawing the difference was
+    // readable at ten fillable of fifty, and became eleven boxes of nothing the
+    // day the operator cut the ladder to a single buy.
+    //
+    // It cost more than noise: one of those boxes was painted as the rung being
+    // WAITED ON, with a line underneath explaining the price it had to reach.
+    // Nothing was waiting for it. A screen describing a trade the engine has
+    // already refused is this read model's own failure mode, with the sides
+    // swapped — usually the engine refuses what the screen offers.
+    const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
+    const ladder: LadderRung[] = Array.from({ length: fillable }, (_, level) => {
       const fill = filledByLevel.get(level)
       return {
         level,
@@ -227,8 +238,6 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
         fillPrice: fill?.price ?? null,
         fillUsd: fill ? fill.price * fill.qty : null,
         pending: level === waitingOn && !fill,
-        // The machine keeps signalling past whatever the venue will hold.
-        beyondPyramiding: level >= (options.maxOpenEntries ?? PYRAMIDING),
       }
     })
 

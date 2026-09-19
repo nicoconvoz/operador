@@ -3,7 +3,7 @@ import { buildOperations } from './operations-view.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
-import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type PersistedFill, type PersistedPosition } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
@@ -100,9 +100,13 @@ describe('buildOperations — the ladder, planned against actual', () => {
     expect(ladder[0]!.triggerPrice).toBeNull() // the entry has no trigger of its own
   })
 
-  it('flags the rungs the venue will never fill', async () => {
+  it('draws only the rungs the venue will actually hold', async () => {
+    // It used to draw twelve from `maxLevels` — what the MACHINE signals — and
+    // flag the ones past the venue cap. That was readable at ten fillable of
+    // fifty signalled. At ONE fillable it is eleven boxes of nothing, on a
+    // phone, times thirty-seven positions.
     const { ladder } = (await buildOperations(await seed([]), options)).positions[0]!
-    expect(ladder.filter((r) => r.beyondPyramiding).map((r) => r.level)).toEqual([10, 11])
+    expect(ladder.map((r) => r.level)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
   })
 
   it('carries the nominal size of each rung, so the plan is visible too', async () => {
@@ -335,21 +339,19 @@ describe('buildOperations — the locks between here and the next rung', () => {
   })
 })
 
-describe('buildOperations — the rungs the venue will never fill', () => {
-  it('marks everything past the production cap, not past the reference', async () => {
+describe('buildOperations — the ladder stops where the VENUE stops', () => {
+  it('takes the cap from production, never from the reference', async () => {
     const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)])
-    // Five DCAs: the entry plus its ladder is six, so rung 6 onward is signal
-    // only. Reading PYRAMIDING here would draw four rungs as reachable that
-    // the broker is going to refuse.
+    // Five DCAs: the entry plus its ladder is six. Reading PYRAMIDING here
+    // would draw four rungs the broker is going to refuse.
     const [view] = (await buildOperations(store, { now: () => NOW, maxOpenEntries: 6 })).positions
-
-    expect(view!.ladder.filter((r) => r.beyondPyramiding).map((r) => r.level)).toEqual([6, 7, 8, 9, 10, 11])
+    expect(view!.ladder.map((r) => r.level)).toEqual([0, 1, 2, 3, 4, 5])
   })
 
   it('falls back to the reference when production says nothing', async () => {
     const store = await seed([fill('Entry', 0.01, 1_000, NOW - 60 * MIN)])
     const [view] = (await buildOperations(store, { now: () => NOW })).positions
-    expect(view!.ladder.filter((r) => r.beyondPyramiding).map((r) => r.level)).toEqual([10, 11])
+    expect(view!.ladder).toHaveLength(PYRAMIDING)
   })
 })
 
@@ -471,5 +473,43 @@ describe('buildOperations — the unrealised figure at the LIVE price', () => {
       livePrices: async () => new Map([['solana:Mint1', 0.02]]),
     })
     expect(view.positions[0]!.ladder[0]!.fillPrice).toBe(0.01)
+  })
+})
+
+describe('a ladder the venue cannot climb is not a ladder', () => {
+  // The operator, counting his own screen: *además hay dos escalones por moneda,
+  // no uno como te había pedido.*
+  //
+  // The ENGINE was right — every card read `0 DCA` and every position held one
+  // buy. What had two rungs was the PICTURE: twelve boxes built from
+  // `maxLevels` (50, what the machine SIGNALS) with no reference to
+  // `maxOpenEntries` (1, what the broker will HOLD), and one of them painted as
+  // the rung being waited on, with a line underneath explaining the price it
+  // needed to reach.
+  //
+  // Nothing was ever waiting for it. `PaperBroker` refuses every entry past the
+  // cap, so that amber box was a promise the engine had already refused to
+  // keep. It is the screen-versus-engine disagreement this read model exists to
+  // prevent, with the sides swapped — usually the engine refuses what the screen
+  // offers; here the screen offered what the engine refuses.
+
+  const oneBuy = { ...options, maxOpenEntries: 1 }
+
+  it('draws exactly as many rungs as the venue will hold', async () => {
+    const { ladder } = (await buildOperations(await seed([]), oneBuy)).positions[0]!
+    expect(ladder).toHaveLength(1)
+  })
+
+  it('never says it is WAITING for a rung that can never fill', async () => {
+    // The fixture's machine sits at level 3 — it advances past the cap and goes
+    // on describing the next rung, while the broker throws every such order
+    // away. "Pending" has to mean an order that can arrive.
+    const { ladder } = (await buildOperations(await seed([]), oneBuy)).positions[0]!
+    expect(ladder.some((rung) => rung.pending)).toBe(false)
+  })
+
+  it('grows back the day the operator asks for a ladder again', async () => {
+    const { ladder } = (await buildOperations(await seed([]), { ...options, maxOpenEntries: 6 })).positions[0]!
+    expect(ladder).toHaveLength(6)
   })
 })

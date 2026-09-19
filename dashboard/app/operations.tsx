@@ -191,13 +191,11 @@ function Ladder({ rungs }: { rungs: readonly LadderRung[] }) {
               borderRadius: 3,
               border: `1px solid ${rung.filled ? UP : rung.pending ? '#ffd166' : '#21262d'}`,
               background: rung.filled ? 'rgba(99,230,165,0.35)' : rung.pending ? 'rgba(255,209,102,0.18)' : 'transparent',
-              opacity: rung.beyondPyramiding ? 0.25 : 1,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               fontSize: 9,
               color: rung.filled ? '#e6e6e6' : DIM,
-              textDecoration: rung.beyondPyramiding ? 'line-through' : 'none',
             }}
           >
             {rung.level}
