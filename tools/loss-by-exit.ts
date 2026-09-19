@@ -28,7 +28,19 @@ if (!url) {
   process.exit(1)
 }
 
-const store = new PostgresStore(url)
+// Built exactly as runtime/index.ts builds it — the only file that opens a real
+// connection. The driver is imported dynamically there for the same reason it is
+// here: the codebase stays installable and testable without Postgres present.
+const { default: pg } = await import('pg')
+const pool = new pg.Pool({ connectionString: url, max: 2 })
+const sql = {
+  query: async <T>(text: string, params?: readonly unknown[]) => {
+    const result = await pool.query(text, params as unknown[])
+    return { rows: result.rows as T[] }
+  },
+}
+
+const store = new PostgresStore(sql)
 const fills = await store.allFills()
 
 /** Average cost per position, walked in order — the ledger's own basis. */
@@ -101,4 +113,4 @@ if (openQty.length > 0) {
   console.log('')
 }
 
-await store.close?.()
+await pool.end()
