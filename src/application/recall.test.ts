@@ -25,7 +25,7 @@ const token = (address: string, over: Partial<TokenSnapshot> = {}): TokenSnapsho
 
 const options = {
   now: () => NOW,
-  ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 20, minScore: 0 },
+  ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 20, minScore: 0, requireRising: false },
   spreadPct: 0.3,
   referenceUsd: 100,
   maxAgeMs: 4 * HOUR,

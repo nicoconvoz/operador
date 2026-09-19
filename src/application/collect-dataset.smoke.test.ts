@@ -38,7 +38,7 @@ describe.skipIf(!SMOKE)('collect — live Solana dataset', () => {
       },
       {
         chain: 'solana',
-        ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 6, minScore: 0 },
+        ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 6, minScore: 0, requireRising: false },
         referenceUsd: 100,
         spreadPct: 0.3,
         maxTokens: 300,

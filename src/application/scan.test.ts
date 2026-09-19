@@ -63,7 +63,7 @@ const seriesAged = (hoursAgo: number | null, bars = 300) => ({
 
 const config: ScanConfig = {
   chain: 'solana',
-  ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 5, minScore: 0 },
+  ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 5, minScore: 0, requireRising: false },
   referenceUsd: 100,
   spreadPct: 0.5,
   maxTokens: 50,
@@ -805,7 +805,7 @@ describe('scanOnce — the door is asked BEFORE anything is paid for', () => {
       ...deps,
       goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
     }
-    await scanOnce(spy, { ...config, ranking: { ...config.ranking, minScore: 0 } })
+    await scanOnce(spy, { ...config, ranking: { ...config.ranking, minScore: 0, requireRising: false } })
     expect(paid).toEqual(['good'])
   })
 

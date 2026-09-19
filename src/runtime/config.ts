@@ -1,6 +1,7 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
+import { DEFAULT_STOP_LOSS_POLICY, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -139,6 +140,28 @@ export interface RuntimeConfig {
    * the capital those deep rungs reserve buys more by going to another token.
    */
   readonly maxDcaPerToken: number
+  /**
+   * Require every window the momentum rule reads to be GREEN before a token is
+   * a candidate: h6 > 0, h1 > 0 and m5 > 0.
+   *
+   * The operator's strategy: *sacá todos los filtros mientras haya liquidez...
+   * mirá las últimas 4 horas, que no haya bajado de 0% y que se haya
+   * incrementado en el total del tiempo hasta los 5m.*
+   *
+   * On by default, because it IS the strategy now. It is still a flag rather
+   * than a deletion: the reference behaviour is one value away, and the day
+   * this turns out to be worse than what it replaced, nobody has to rewrite
+   * the ranking to find out.
+   */
+  readonly requireRising: boolean
+  /**
+   * How far a position may fall below what was paid before it is closed, as a
+   * share of the run the token had already made.
+   *
+   * One twentieth, floored at 5% and capped at 50% — the operator's numbers:
+   * *si es de 1000%, 50% de lo invertido, ese es el techo; si es 500%, 25%.*
+   */
+  readonly stopLoss: StopLossPolicy
   /**
    * How many points better a waiting candidate must score to take a flat
    * position's slot.
@@ -299,6 +322,15 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     urgentProfitPct: productionLadder(env).urgentProfitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
+    // Only an explicit "0" or "false" turns these off. A misspelt value must
+    // not silently disable the strategy the engine is running, which is the
+    // failure `OPERADOR_MAX_DCA=0` taught this codebase twice.
+    requireRising: (env.OPERADOR_REQUIRE_RISING ?? '').trim() !== '0' && (env.OPERADOR_REQUIRE_RISING ?? '').trim().toLowerCase() !== 'false',
+    stopLoss: {
+      shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', DEFAULT_STOP_LOSS_POLICY.shareOfRun),
+      minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', DEFAULT_STOP_LOSS_POLICY.minStopPct),
+      maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', DEFAULT_STOP_LOSS_POLICY.maxStopPct),
+    },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',

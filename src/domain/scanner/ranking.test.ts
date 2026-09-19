@@ -39,6 +39,9 @@ const policy: RankingPolicy = {
   opportunity: DEFAULT_OPPORTUNITY_POLICY,
   watchSlots: 3,
   minScore: 10,
+  // Off here: these pin the gates and the scoring, not the strategy.
+  requireRising: false,
+  
 }
 
 describe('ranking — gates first, then score, then slots', () => {

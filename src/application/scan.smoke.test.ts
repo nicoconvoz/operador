@@ -27,7 +27,7 @@ describe.skipIf(!SMOKE)('scan — live smoke on Solana', () => {
       { dex: new DexScreener(http), goplus: new GoPlus(http), sellProbe: new Jupiter(http, jupiterThrottle), decimals: new JupiterTokens(http, jupiterThrottle) },
       {
         chain: 'solana',
-        ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 10, minScore: 0 },
+        ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 10, minScore: 0, requireRising: false },
         referenceUsd: 100,
         spreadPct: 0.5,
         maxTokens: 60,

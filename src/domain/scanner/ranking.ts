@@ -92,10 +92,13 @@ export interface RankingPolicy {
    * Together with the stop it makes a complete pair: the switch takes the
    * profit when the climb ends, the stop takes the loss when it reverses.
    *
-   * Opt-in, so the reference behaviour survives untouched and the parity
-   * harness keeps meaning what it meant.
+   * REQUIRED rather than optional, and that is the point. A mutation test
+   * showed the composition root could stop passing it and no test would die —
+   * which is the exact blind spot that hid a missing `discover`, a missing
+   * `poolMarkets` and a capital trim that wrote over the tick. Optional fields
+   * are where wiring bugs live in this codebase; `tsc` catches a required one.
    */
-  readonly requireRising?: boolean
+  readonly requireRising: boolean
   /**
    * The line between "fill the book with these" and "complete it with those".
    *

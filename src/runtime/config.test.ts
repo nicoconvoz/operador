@@ -166,3 +166,27 @@ describe('minScore — a door on the score, not another weight in it', () => {
     expect(loadConfig({ ...valid, OPERADOR_MIN_SCORE: '65' }).minScore).toBe(65)
   })
 })
+
+describe('the momentum strategy is ON, and turning it off has to be said', () => {
+  // It IS the strategy now, so the default is on. It stays a FLAG rather than a
+  // deletion: the reference behaviour is one value away, and the day this turns
+  // out worse than what it replaced, nobody has to rewrite the ranking to find
+  // out.
+
+  it('requires the rising windows when nothing is set', () => {
+    expect(loadConfig(valid).requireRising).toBe(true)
+  })
+
+  it('takes only an explicit 0 or false as off', () => {
+    // A misspelt value must not silently disable the strategy the engine is
+    // running. `OPERADOR_MAX_DCA=0` taught this codebase that twice.
+    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: '0' }).requireRising).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: 'false' }).requireRising).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: 'no' }).requireRising).toBe(true)
+  })
+
+  it('carries the stop the operator asked for', () => {
+    // One twentieth of the run, floored at 5 and capped at 50.
+    expect(loadConfig(valid).stopLoss).toEqual({ shareOfRun: 0.05, minStopPct: 5, maxStopPct: 50 })
+  })
+})

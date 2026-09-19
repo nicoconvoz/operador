@@ -479,6 +479,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // looser rules than the scan that filled it would quietly undo them
           // every five minutes.
           minComponents: DEFAULT_COMPONENT_FLOORS,
+          requireRising: config.requireRising,
         },
         // The shelf, priced NOW, for one batched request per thirty tokens.
         //
@@ -636,6 +637,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 // a floor is the only thing that says "this alone disqualifies
                 // you". Measured on a live book of 29: 8 survive.
                 minComponents: DEFAULT_COMPONENT_FLOORS,
+                requireRising: config.requireRising,
               },
               // How many candle downloads are worth paying for: the number of
               // positions the capital can actually fund.
@@ -757,6 +759,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       exitOnFreeze: config.exitOnFreeze,
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
+      // The stop, composed HERE rather than defaulted in the orchestrator —
+      // the same discipline the ladder cap and the entry drop follow. It is the
+      // only path in this engine where a PRICE sells, so a caller that says
+      // nothing must get the reference behaviour.
+      stopLoss: config.stopLoss,
       idleSlots: {
         idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,
         minScoreEdge: config.minScoreEdge,
