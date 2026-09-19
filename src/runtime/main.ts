@@ -34,7 +34,7 @@ import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js
 import { loadConfig, describeConfig, type RuntimeConfig } from './config.js'
 import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { recallCandidates } from '../application/recall.js'
-import { healthFromSnapshot, UNMEASURED } from '../application/health-from-scan.js'
+import { healthForCycle, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
@@ -211,6 +211,26 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   /** Which scan each position has already had folded into its evidence. */
   const foldedScanAt = new Map<string, number>()
 
+  /**
+   * The market half of every held token, as of THIS cycle.
+   *
+   * One fetch, two readers — the rule this project wrote down for the dashboard
+   * and never applied to the engine. `marketPrices` asks DexScreener for every
+   * position once a cycle and the response carries price, LIQUIDITY, volume and
+   * the counts; it kept the price and dropped the rest on the floor, while the
+   * death watch read liquidity out of a scan up to twenty minutes old.
+   *
+   * A pool empties faster than that, and `exitOnFreeze` sells into whatever is
+   * left — exempt from the no-loss guard, because a death exit has to be able
+   * to leave at any price. So the lateness was never a lag on a diagnostic; it
+   * was the difference between selling into a pool and selling into its remains.
+   *
+   * Filled before the ticks run — the orchestrator fetches prices first — and
+   * read by `healthFor`. Absent means no feed answered, which is silence and
+   * not a collapse.
+   */
+  const liveMarkets = new Map<string, LiveMarket>()
+
   let lastSwitchedOff: SwitchedOff[] = []
 
   const brokerFor = async (position: PersistedPosition) => {
@@ -280,6 +300,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             const pairs = await dex.tokens(chain, addresses.slice(i, i + 30))
             for (const m of dex.toMarketSnapshots(chain, pairs)) {
               if (m.priceUsd > 0) prices.set(`${chain}:${m.address}`, m.priceUsd)
+              // The whole market half, not only the price. It costs nothing —
+              // the bytes are already here — and it is what lets the death
+              // watch see a pool draining this cycle instead of next scan.
+              liveMarkets.set(`${chain}:${m.address}`, m)
             }
           } catch {
             // Silence, not a verdict.
@@ -311,7 +335,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         const scannedAt = scans.find((scan) => scan.chain === position.chain)?.scannedAt ?? 0
         const fresh = scannedAt > (foldedScanAt.get(position.id) ?? 0)
         if (fresh) foldedScanAt.set(position.id, scannedAt)
-        const scanner = fresh ? healthFromSnapshot(snapshot, DEFAULT_GATE_POLICY) : UNMEASURED
+        // TWO halves on two clocks, and keeping them apart IS the safety.
+        //
+        // The SCAN folds ONCE, unchanged. Its security verdict is what
+        // `exitConfirmations` counts, and replaying one reading every five
+        // minutes would turn a single answer into twelve confirmations — the
+        // exact false positive that rule exists to prevent, wearing its clothes.
+        //
+        // The LIVE liquidity is a NEW measurement every cycle, so handing it
+        // over every cycle is reporting rather than repeating. Three
+        // confirmations then come from three genuine readings fifteen minutes
+        // apart, which is what the rule always meant. It is also the only
+        // collapse a five-minute feed can carry, and the reason a freeze used
+        // to arrive after the pool had already emptied.
+        const live = liveMarkets.get(`${position.chain}:${position.tokenAddress}`)
+        const scanner = healthForCycle(snapshot, DEFAULT_GATE_POLICY, live, fresh)
 
         const decimals = await decimalsFor.decimals(position.chain, position.tokenAddress)
         // Without decimals or a price there is no way to size a meaningful

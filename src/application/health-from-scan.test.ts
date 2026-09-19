@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { healthFromSnapshot, UNMEASURED } from './health-from-scan.js'
+import { healthForCycle, healthFromSnapshot, UNMEASURED } from './health-from-scan.js'
+import { type LiveMarket } from '../domain/scanner/live-market.js'
 import { type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { DEFAULT_GATE_POLICY, evaluateGates, evaluateSafetyGates, type GatePolicy } from '../domain/scanner/gates.js'
 
@@ -25,11 +26,11 @@ const lp = (pct: number): GatePolicy => ({ ...DEFAULT_GATE_POLICY, minLpLockedPc
 
 describe('healthFromSnapshot — the scanner’s verdict, made actionable', () => {
   it('reports nothing when the scan has nothing to say', () => {
-    expect(healthFromSnapshot(null, lp(80))).toEqual(UNMEASURED)
+    expect(healthFromSnapshot(null, lp(80), undefined)).toEqual(UNMEASURED)
   })
 
   it('carries the readings the death watch was never given', () => {
-    const health = healthFromSnapshot(snapshot({}, { mintAuthorityActive: true, freezeAuthorityActive: true }), lp(80))
+    const health = healthFromSnapshot(snapshot({}, { mintAuthorityActive: true, freezeAuthorityActive: true }), lp(80), undefined)
     expect(health).toEqual({
       liquidityUsd: 250_000,
       lpStatus: 'locked',
@@ -42,15 +43,15 @@ describe('healthFromSnapshot — the scanner’s verdict, made actionable', () =
   it('calls the LP unlocked by the same threshold the gate refuses on', () => {
     // One definition, not two that drift. "Unlocked" here has to mean what it
     // means when the scanner declines to open a position at all.
-    expect(healthFromSnapshot(snapshot({}, { lpLockedPct: 79 }), lp(80)).lpStatus).toBe('unlocked')
-    expect(healthFromSnapshot(snapshot({}, { lpLockedPct: 80 }), lp(80)).lpStatus).toBe('locked')
+    expect(healthFromSnapshot(snapshot({}, { lpLockedPct: 79 }), lp(80), undefined).lpStatus).toBe('unlocked')
+    expect(healthFromSnapshot(snapshot({}, { lpLockedPct: 80 }), lp(80), undefined).lpStatus).toBe('locked')
   })
 
   it('will not claim burned or removed, which nothing measures', () => {
     // The providers report a locked percentage. Burned is indistinguishable
     // from locked in that number, and removed would need a withdrawal event
     // nobody watches for. Either claim would be a measurement we do not have.
-    const statuses = [0, 50, 100, null].map((pct) => healthFromSnapshot(snapshot({}, { lpLockedPct: pct }), lp(80)).lpStatus)
+    const statuses = [0, 50, 100, null].map((pct) => healthFromSnapshot(snapshot({}, { lpLockedPct: pct }), lp(80), undefined).lpStatus)
     expect(statuses).not.toContain('burned')
     expect(statuses).not.toContain('removed')
   })
@@ -58,13 +59,13 @@ describe('healthFromSnapshot — the scanner’s verdict, made actionable', () =
   it('says unknown when the provider said nothing, rather than unlocked', () => {
     // Silence is not a verdict. Reading null as "unlocked" would manufacture
     // stage-2 evidence out of a provider having a bad minute.
-    expect(healthFromSnapshot(snapshot({}, { lpLockedPct: null }), lp(80)).lpStatus).toBe('unknown')
+    expect(healthFromSnapshot(snapshot({}, { lpLockedPct: null }), lp(80), undefined).lpStatus).toBe('unknown')
   })
 
   it('keeps liquidity but no security reading from an unexamined token', () => {
     // Its report is UNKNOWN_SECURITY — the absence of a reading, not a reading
     // of absence. Liquidity came from the market pass and is real.
-    const health = healthFromSnapshot(snapshot({ securityChecked: false }), lp(80))
+    const health = healthFromSnapshot(snapshot({ securityChecked: false }), lp(80), undefined)
     expect(health.liquidityUsd).toBe(250_000)
     expect(health.mintAuthorityActive).toBeNull()
     expect(health.lpStatus).toBe('unknown')
@@ -76,21 +77,21 @@ describe('healthFromSnapshot — what it refuses to map', () => {
     // A token where ten wallets have always held 90% has moved nothing.
     // Reporting the level as a movement would fire the dev-dump signal on
     // every concentrated token in the book, permanently and wrongly.
-    const health = healthFromSnapshot(snapshot({}, { topHoldersPct: 90 }), lp(80))
+    const health = healthFromSnapshot(snapshot({}, { topHoldersPct: 90 }), lp(80), undefined)
     expect(health).not.toHaveProperty('topHolderMovedPct')
   })
 
   it('never turns "has a blacklist function" into "we are blocked"', () => {
     // The contract HAVING the function is not the same as it being used on us.
     // The sell probe answers the real question, and it already runs.
-    const health = healthFromSnapshot(snapshot({}, { hasBlacklist: true }), lp(80))
+    const health = healthFromSnapshot(snapshot({}, { hasBlacklist: true }), lp(80), undefined)
     expect(health).not.toHaveProperty('transfersBlocked')
   })
 
   it('never invents a last-trade time out of volume', () => {
     // We measure volume, not when the last trade happened. Deriving one from
     // the other hands the abandonment signal a number it treats as measured.
-    const health = healthFromSnapshot(snapshot({ volumeUsd: { h1: 0, h6: 0, h24: 0 } }), lp(80))
+    const health = healthFromSnapshot(snapshot({ volumeUsd: { h1: 0, h6: 0, h24: 0 } }), lp(80), undefined)
     expect(health).not.toHaveProperty('hoursSinceLastTrade')
   })
 })
@@ -113,7 +114,7 @@ describe('healthFromSnapshot — what it refuses to map', () => {
 
 describe('healthFromSnapshot — a venue with no LP token', () => {
   const concentrated = (dexId: string, dexLabels: string[] = []) =>
-    healthFromSnapshot(snapshot({ dexId, dexLabels }, { lpLockedPct: 0 }), lp(80)).lpStatus
+    healthFromSnapshot(snapshot({ dexId, dexLabels }, { lpLockedPct: 0 }), lp(80), undefined).lpStatus
 
   it('says unknown on an Orca whirlpool, not unlocked', () => {
     expect(concentrated('orca')).toBe('unknown')
@@ -130,8 +131,8 @@ describe('healthFromSnapshot — a venue with no LP token', () => {
   it('still reads the lock where LP tokens actually exist', () => {
     // Raydium's classic AMM does have them, and there the number means what it
     // says. Skipping it everywhere would be the opposite error.
-    expect(healthFromSnapshot(snapshot({ dexId: 'raydium' }, { lpLockedPct: 0 }), lp(80)).lpStatus).toBe('unlocked')
-    expect(healthFromSnapshot(snapshot({ dexId: 'pancakeswap' }, { lpLockedPct: 100 }), lp(80)).lpStatus).toBe('locked')
+    expect(healthFromSnapshot(snapshot({ dexId: 'raydium' }, { lpLockedPct: 0 }), lp(80), undefined).lpStatus).toBe('unlocked')
+    expect(healthFromSnapshot(snapshot({ dexId: 'pancakeswap' }, { lpLockedPct: 100 }), lp(80), undefined).lpStatus).toBe('locked')
   })
 
   it('agrees with the gate on the same token, which is the whole point', () => {
@@ -139,7 +140,7 @@ describe('healthFromSnapshot — a venue with no LP token', () => {
     // a system arguing with itself, and the reader has to pick a side.
     const whirlpool = snapshot({ dexId: 'orca' }, { lpLockedPct: 0 })
     expect(evaluateGates(whirlpool, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('lpLocked')
-    expect(healthFromSnapshot(whirlpool, lp(80)).lpStatus).not.toBe('unlocked')
+    expect(healthFromSnapshot(whirlpool, lp(80), undefined).lpStatus).not.toBe('unlocked')
   })
 })
 
@@ -161,11 +162,11 @@ describe('a safety gate that turns on a token we already hold', () => {
   // for more than once.
 
   it('says nothing failed when nothing failed', () => {
-    expect(healthFromSnapshot(snapshot(), lp(80)).safetyFailed).toEqual([])
+    expect(healthFromSnapshot(snapshot(), lp(80), undefined).safetyFailed).toEqual([])
   })
 
   it('names the gate, because only a person can tell a turn from a blip', () => {
-    const taxed = healthFromSnapshot(snapshot({}, { transferTaxPct: 30 }), lp(80))
+    const taxed = healthFromSnapshot(snapshot({}, { transferTaxPct: 30 }), lp(80), undefined)
     expect(taxed.safetyFailed).toContain('transferTax')
   })
 
@@ -175,6 +176,7 @@ describe('a safety gate that turns on a token we already hold', () => {
     const rotten = healthFromSnapshot(
       snapshot({}, { topHoldersPct: 99, hasBlacklist: true, creatorPct: 99 }),
       lp(80),
+      undefined,
     )
     expect(rotten.safetyFailed).toEqual(
       expect.arrayContaining(['topHolders', 'blacklist', 'creatorShare']),
@@ -186,8 +188,8 @@ describe('a safety gate that turns on a token we already hold', () => {
     // design. Reading that as "it turned" would freeze every position the
     // security budget has not reached yet — and with `exitOnFreeze` on, that
     // is not a pause, it is a liquidation of the whole book.
-    expect(healthFromSnapshot(snapshot({ securityChecked: false }), lp(80)).safetyFailed).toBeNull()
-    expect(healthFromSnapshot(null, lp(80)).safetyFailed).toBeNull()
+    expect(healthFromSnapshot(snapshot({ securityChecked: false }), lp(80), undefined).safetyFailed).toBeNull()
+    expect(healthFromSnapshot(null, lp(80), undefined).safetyFailed).toBeNull()
   })
 
   it('a provider that could not ANSWER has not condemned anything', () => {
@@ -203,6 +205,7 @@ describe('a safety gate that turns on a token we already hold', () => {
     const unanswered = healthFromSnapshot(
       snapshot({}, { honeypot: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null, hasBlacklist: null, topHoldersPct: null, creatorPct: null }),
       lp(80),
+      undefined,
     )
     expect(unanswered.safetyFailed).toEqual([])
   })
@@ -213,6 +216,7 @@ describe('a safety gate that turns on a token we already hold', () => {
     const mixed = healthFromSnapshot(
       snapshot({}, { transferTaxPct: 30, mintAuthorityActive: null, topHoldersPct: null }),
       lp(80),
+      undefined,
     )
     expect(mixed.safetyFailed).toEqual(['transferTax'])
   })
@@ -222,7 +226,7 @@ describe('a safety gate that turns on a token we already hold', () => {
     // reserve exists precisely to forgive those. Freezing a position over one
     // would turn the engine's own shortlist policy into a sell signal.
     const quiet = snapshot({ volumeUsd: { h1: 0, h6: 0, h24: 0 }, txns: { h1: { buys: 0, sells: 0 }, h24: { buys: 1, sells: 1 } } })
-    expect(healthFromSnapshot(quiet, lp(80)).safetyFailed).toEqual([])
+    expect(healthFromSnapshot(quiet, lp(80), undefined).safetyFailed).toEqual([])
   })
 
   it('is the SAME verdict the door uses, not a second opinion', () => {
@@ -230,8 +234,128 @@ describe('a safety gate that turns on a token we already hold', () => {
     // about which tokens are safe, and the one on the screen is the one the
     // operator would believe.
     const turned = snapshot({}, { transferTaxPct: 30, topHoldersPct: 99 })
-    expect(healthFromSnapshot(turned, DEFAULT_GATE_POLICY).safetyFailed).toEqual(
+    expect(healthFromSnapshot(turned, DEFAULT_GATE_POLICY, undefined).safetyFailed).toEqual(
       evaluateSafetyGates(turned, DEFAULT_GATE_POLICY).failures.map((failure) => failure.gate),
     )
+  })
+})
+
+describe('the pool is draining NOW, not twenty minutes ago', () => {
+  // The operator read it off the tape: *el problema no son las comisiones, son
+  // las congeladas... pierden muchísimo, debemos detectarlas antes.*
+  //
+  // He was right, and the cause is a request already being paid for. The engine
+  // asks DexScreener for every held token once a CYCLE (5 min) and the response
+  // carries the whole market half — price, LIQUIDITY, volume, counts. It kept
+  // one line of it and threw the rest away, while the death watch read liquidity
+  // from the stored SCAN, refreshed every twenty minutes in production.
+  //
+  // So a pool could drain for twenty minutes unseen, and `exitOnFreeze` would
+  // then sell into it — exempt from the no-loss guard, at whatever price was
+  // left. A blind window on the one signal whose entire purpose is to leave
+  // BEFORE leaving stops being possible.
+  //
+  // The same shape already fixed for the SCREEN and never for the engine, which
+  // is why the screen could watch a position drain while the engine held it.
+
+  const live = (over: Partial<LiveMarket> = {}): LiveMarket => {
+    const { security: _ignored, ...market } = snapshot()
+    return { ...market, ...over }
+  }
+
+  it('takes the liquidity from the live feed, not from the stored scan', () => {
+    const drained = healthFromSnapshot(snapshot(), lp(80), live({ liquidityUsd: 9_000 }))
+    expect(drained.liquidityUsd).toBe(9_000)
+  })
+
+  it('falls back to the scan when no feed answered — silence is not a collapse', () => {
+    // A provider having a bad minute must not read as a pool that emptied, or a
+    // rate limit would freeze and SELL the whole book. The rule this engine has
+    // already paid for twice.
+    expect(healthFromSnapshot(snapshot(), lp(80), undefined).liquidityUsd).toBe(250_000)
+  })
+
+  it('re-asks the LIQUIDITY gate on the live number, so the engine agrees with the screen', () => {
+    // The gate fires at `minLiquidityUsd`, and a pool that fell under it while
+    // we held it is the death watch's business — not something to learn at the
+    // next scan.
+    const drained = healthFromSnapshot(snapshot(), lp(80), live({ liquidityUsd: 100 }))
+    expect(drained.safetyFailed).toContain('liquidity')
+  })
+
+  it('never lets the feed touch the SECURITY half', () => {
+    // A market response knows nothing about authorities, the LP or a honeypot.
+    // Overlaying it whole would blank the evidence those gates fire on, and they
+    // fail CLOSED — the position would turn red for the crime of being
+    // refreshed, which is the failure `withLiveMarket` exists to prevent.
+    const turned = snapshot({}, { mintAuthorityActive: true })
+    const refreshed = healthFromSnapshot(turned, lp(80), live({ liquidityUsd: 900_000 }))
+    expect(refreshed.mintAuthorityActive).toBe(true)
+    expect(refreshed.safetyFailed).toContain('mintAuthority')
+  })
+
+  it('still reports NULL for a token nobody examined, however fresh the price is', () => {
+    // A live market does not make an unexamined token examined. The gates fail
+    // closed on a missing security report, and reading that as "it turned"
+    // would sell every position the security budget has not reached.
+    const fresh = healthFromSnapshot(snapshot({ securityChecked: false }), lp(80), live())
+    expect(fresh.safetyFailed).toBeNull()
+  })
+})
+
+describe('two halves on two clocks', () => {
+  // The guard that must survive: the scan's SECURITY verdict folds ONCE per
+  // scan, because `exitConfirmations` counts consecutive observations and
+  // replaying one reading every five minutes would manufacture twelve
+  // confirmations out of a single answer — the exact false positive the rule
+  // exists to prevent, wearing the rule's own clothes.
+  //
+  // The liquidity is not that. It is a NEW measurement every cycle, so passing
+  // it every cycle is reporting rather than repeating, and three confirmations
+  // then mean three genuine readings fifteen minutes apart.
+  //
+  // This lived in the composition root, which is where every wiring bug this
+  // project has paid for was hiding: a missing `discover`, a missing
+  // `poolMarkets`, a trim that wrote over the tick. A decision belongs where it
+  // can be tested; only the plumbing stays out there.
+
+  const live = (over: Partial<LiveMarket> = {}): LiveMarket => {
+    const { security: _ignored, ...market } = snapshot()
+    return { ...market, ...over }
+  }
+
+  it('gives the whole verdict when the scan is fresh', () => {
+    const health = healthForCycle(snapshot({}, { mintAuthorityActive: true }), lp(80), live(), true)
+    expect(health.mintAuthorityActive).toBe(true)
+    expect(health.safetyFailed).toContain('mintAuthority')
+  })
+
+  it('gives ONLY the live liquidity when the scan is not fresh', () => {
+    // Everything else must read as unmeasured, or the same scan would be
+    // counted again as a fresh confirmation.
+    const health = healthForCycle(snapshot({}, { mintAuthorityActive: true }), lp(80), live({ liquidityUsd: 4_000 }), false)
+    expect(health.liquidityUsd).toBe(4_000)
+    expect(health.mintAuthorityActive).toBeNull()
+    expect(health.safetyFailed).toBeNull()
+    expect(health.lpStatus).toBe('unknown')
+  })
+
+  it('reports nothing at all when neither the scan nor the feed is new', () => {
+    expect(healthForCycle(snapshot(), lp(80), undefined, false)).toEqual(UNMEASURED)
+  })
+
+  it('a stale scan can never re-confirm its own authority reading', () => {
+    // Twelve cycles between scans, and the authority must be reported once.
+    const stale = snapshot({}, { mintAuthorityActive: true })
+    const cycles = Array.from({ length: 12 }, (_, i) => healthForCycle(stale, lp(80), live(), i === 0))
+    expect(cycles.filter((c) => c.mintAuthorityActive === true)).toHaveLength(1)
+  })
+
+  it('but the LIQUIDITY is reported on every one of them', () => {
+    // Which is the whole point: a pool draining is seen at cycle cadence, not
+    // at scan cadence, so the freeze arrives before the pool is empty.
+    const stale = snapshot()
+    const cycles = Array.from({ length: 12 }, (_, i) => healthForCycle(stale, lp(80), live({ liquidityUsd: 7_000 }), i === 0))
+    expect(cycles.every((c) => c.liquidityUsd === 7_000)).toBe(true)
   })
 })

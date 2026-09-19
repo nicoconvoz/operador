@@ -1,5 +1,6 @@
 import { type LpStatus } from '../domain/risk/death-exit.js'
 import { evaluateSafetyGates, type GatePolicy } from '../domain/scanner/gates.js'
+import { withLiveMarket, type LiveMarket } from '../domain/scanner/live-market.js'
 import { lpModelOf } from '../domain/scanner/lp-model.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 
@@ -74,13 +75,74 @@ export const UNMEASURED: ScannerHealth = {
 }
 
 /**
+ * One cycle's worth of health, with the two halves on their own clocks.
+ *
+ * The SCAN's half — security, the LP, the authorities, the gate verdict — folds
+ * only when the scan is new. `exitConfirmations` counts CONSECUTIVE
+ * observations carrying stage-2 evidence, so handing the same hourly answer to
+ * every five-minute pass would turn one reading into twelve confirmations: the
+ * precise false positive that rule exists to prevent, wearing its clothes.
+ *
+ * The LIQUIDITY half is a fresh measurement every cycle, because the engine
+ * already fetches it for every held token and used to throw it away. Passing it
+ * on is reporting, not repeating — three confirmations then come from three
+ * genuine readings fifteen minutes apart, which is what the rule always meant.
+ *
+ * It matters because of what a freeze DOES. `exitOnFreeze` sells, and a freeze
+ * exit is exempt from the no-loss guard, so it takes whatever price is left. A
+ * pool can empty inside the twenty minutes between held scans, and the signal
+ * whose entire purpose is to leave BEFORE leaving is impossible was arriving
+ * after the pool had already gone.
+ *
+ * It lives here rather than in the composition root on purpose. Every wiring
+ * bug this project has paid for was out there — a missing `discover`, a missing
+ * `poolMarkets`, a capital trim that wrote over the tick — because nothing out
+ * there is tested. A decision belongs where it can be.
+ */
+export function healthForCycle(
+  stored: TokenSnapshot | null,
+  policy: GatePolicy,
+  live: LiveMarket | undefined,
+  scanIsFresh: boolean,
+): ScannerHealth {
+  if (scanIsFresh) return healthFromSnapshot(stored, policy, live)
+  // Silence on everything the scan owns, and the one number that is genuinely
+  // new. `null` where no feed answered: a quiet provider is not an empty pool.
+  return { ...UNMEASURED, liquidityUsd: live?.liquidityUsd ?? null }
+}
+
+/**
  * `minLpLockedPct` is the gate's own threshold, so "unlocked" here means
  * exactly what it means when the scanner refuses to open a position — one
  * definition, not two that drift.
  */
-export function healthFromSnapshot(snapshot: TokenSnapshot | null, policy: GatePolicy): ScannerHealth {
+export function healthFromSnapshot(
+  stored: TokenSnapshot | null,
+  policy: GatePolicy,
+  live: LiveMarket | undefined,
+): ScannerHealth {
   const minLpLockedPct = policy.minLpLockedPct
-  if (!snapshot) return UNMEASURED
+  if (!stored) return UNMEASURED
+
+  // The MARKET half, as of the last cycle rather than the last scan.
+  //
+  // The engine already asks DexScreener for every held token once a cycle and
+  // the response carries liquidity, volume and the counts — it kept the price
+  // and discarded the rest, while this read liquidity from a scan up to twenty
+  // minutes old. A pool can empty inside twenty minutes, and `exitOnFreeze`
+  // then sells into what is left of it, exempt from the no-loss guard. The one
+  // signal whose purpose is to leave BEFORE leaving is impossible was the one
+  // arriving late.
+  //
+  // `withLiveMarket` is the ONE definition of which half a feed may refresh,
+  // shared with the universe view and the recall — never a second copy. It
+  // leaves the security report, the history count and the candle measurements
+  // exactly as the scan left them, because a market response knows none of
+  // them and those gates fail CLOSED.
+  //
+  // `undefined` means no feed answered, and that changes nothing: silence is
+  // not a collapse, or one rate-limited minute would freeze and sell the book.
+  const snapshot = withLiveMarket(stored, live)
 
   // An unexamined token carries UNKNOWN_SECURITY, and passing that through
   // would report "mint authority is null" as a reading rather than as the
