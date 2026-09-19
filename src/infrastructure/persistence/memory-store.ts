@@ -8,7 +8,7 @@ import {
 } from '../../domain/persistence/store.js'
 import { type Alert } from '../../domain/notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.js'
-import { type CachedSecurity } from '../../domain/persistence/store.js'
+import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
 
 /**
  * In-memory StatePort — for tests, paper runs, and as the reference that
@@ -148,6 +148,27 @@ export class MemoryStore implements StatePort {
 
   async loadCheckpoint(): Promise<EngineCheckpoint | null> {
     return this.checkpoint ? { ...this.checkpoint } : null
+  }
+
+  /**
+   * The permanent registry. Never pruned, by instruction.
+   *
+   * Ordered by last-known 24h volume because a bounded read costs one price
+   * request per thirty rows — the first thirty had better be the thirty worth
+   * re-pricing. An unmeasured volume goes to the BACK rather than being
+   * dropped: the registry's whole job is remembering what the providers have
+   * forgotten, and silence is not a zero.
+   */
+  private readonly registry = new Map<string, RememberedToken>()
+
+  async rememberTokens(tokens: readonly RememberedToken[]): Promise<void> {
+    for (const token of tokens) this.registry.set(token.contract, token)
+  }
+
+  async knownTokens(limit: number): Promise<readonly RememberedToken[]> {
+    return [...this.registry.values()]
+      .sort((a, b) => (b.volume24h ?? -1) - (a.volume24h ?? -1))
+      .slice(0, limit)
   }
 
   async blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void> {

@@ -527,6 +527,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               sellProbe: sellProbeFor(chain),
               decimals: decimalsFor,
               history,
+              // The permanent registry. It is the memory the discovery
+              // providers do not have, and the operator's instruction about it
+              // was one line: never delete it.
+              store,
               // Remembers what has been examined, so the budget reaches the
               // whole list over a few cycles instead of re-checking the same
               // twenty forever.

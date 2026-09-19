@@ -152,3 +152,38 @@ CREATE TABLE IF NOT EXISTS token_security (
   measured_at  BIGINT NOT NULL,
   PRIMARY KEY (chain, address)
 );
+
+-- Every token this engine has ever priced, kept FOREVER.
+--
+-- The operator's idea, and it answers the constraint the whole scanner ran
+-- into: the free providers cap discovery at about 570 tokens a sweep, and no
+-- threshold can widen that. Ten pages is GeckoTerminal's ceiling (page eleven
+-- answers 401), Jupiter's lists cap at 100 each, and DexScreener's boosts are
+-- paid promotions. The only lever left is TIME — a registry accumulates what
+-- every sweep found, so a week of scans knows far more than any one of them.
+--
+-- NEVER PRUNED, and that is the operator's instruction in as many words. Every
+-- other cache in this file expires or is truncated because it is an
+-- optimisation; this one is the memory the discovery providers do not have.
+--
+-- The market columns are the snapshot as last seen. They are NOT read as
+-- current — every scan re-prices what it intends to examine — they are here so
+-- the registry can be ORDERED by last-known activity, because reading it whole
+-- would cost one DexScreener call per thirty rows and the point is to reach
+-- further, not to spend more.
+CREATE TABLE IF NOT EXISTS solana_cache (
+  contract     TEXT   NOT NULL PRIMARY KEY,
+  token        TEXT   NOT NULL,
+  pool         TEXT,
+  price        NUMERIC,
+  volume24h    NUMERIC,
+  liquidity    NUMERIC,
+  market_cap   NUMERIC,
+  txns         INTEGER,
+  last_update  BIGINT NOT NULL
+);
+
+-- Ordered by what was moving, so a bounded read reaches the ones worth
+-- re-pricing first rather than whichever row the table happens to return.
+CREATE INDEX IF NOT EXISTS solana_cache_activity ON solana_cache (volume24h DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS solana_cache_seen ON solana_cache (last_update DESC);

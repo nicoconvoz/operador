@@ -4,6 +4,7 @@ import { DexScreener, DEXSCREENER_BASE, type DexPair } from '../infrastructure/a
 import { GoPlus, GOPLUS_BASE, type GoPlusSolanaToken } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter, JUPITER_LITE_BASE } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { stubHttp } from '../infrastructure/http.js'
+import { type RememberedToken } from '../domain/persistence/store.js'
 import { evaluateGates, DEFAULT_GATE_POLICY, STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { type SecurityReport } from '../domain/scanner/snapshot.js'
@@ -913,5 +914,86 @@ describe('scanOnce — a token the price provider cannot see is asked at its own
       },
     }
     await expect(scanOnce(withPools, config)).resolves.toBeDefined()
+  })
+})
+
+describe('scanOnce — the registry is the memory the providers do not have', () => {
+  // The operator's idea, and his instruction about it was one line: *esto ojo
+  // nunca hay que borrarlo.*
+  //
+  // The free providers cap a sweep at about 570 tokens and no threshold widens
+  // that — ten pages is GeckoTerminal's ceiling, Jupiter's lists cap at 100
+  // each, DexScreener's boosts are paid promotions. The only lever left is
+  // TIME: a week of scans knows far more than any one of them, and a token
+  // that stopped trending is not a token that stopped existing.
+
+  const registry: RememberedToken[] = []
+  const store = {
+    rememberTokens: async (tokens: readonly RememberedToken[]) => { registry.push(...tokens) },
+    knownTokens: async () => registry,
+  }
+
+  const table = (address: string) => ({
+    [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: address }] },
+    [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/${address}`]: { body: [pair(address)] },
+    [`${GOPLUS_BASE}/solana/token_security?contract_addresses=${address}`]: { body: { code: 1, message: 'ok', result: { [address]: safe } } },
+    [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=${address}`]: { body: goodQuote },
+  })
+
+  it('remembers every token it priced, whatever happens to it afterwards', async () => {
+    registry.length = 0
+    const { deps } = build(table('seen'))
+    await scanOnce({ ...deps, store }, config)
+    expect(registry.map((t) => t.contract)).toEqual(['seen'])
+    expect(registry[0]!.pool).toBe('pair-seen')
+    expect(registry[0]!.volume24h).toBeGreaterThan(0)
+  })
+
+  it('remembers one a gate REFUSED, because tomorrow is a different day', async () => {
+    // A pool four hours old fails the age gate today and is worth knowing
+    // about tomorrow. Written before any gate runs, deliberately.
+    registry.length = 0
+    const { deps } = build({
+      ...table('newborn'),
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/newborn`]: { body: [pair('newborn', { pairCreatedAt: NOW - 3_600_000 })] },
+    })
+    const out = await scanOnce({ ...deps, store }, config)
+    expect(out.candidates).toEqual([])
+    expect(registry.map((t) => t.contract)).toEqual(['newborn'])
+  })
+
+  it('puts what it remembers back into the universe on the next scan', async () => {
+    registry.length = 0
+    registry.push({
+      contract: 'forgotten', token: 'FORGOTTEN', pool: 'pool-forgotten',
+      price: 0.01, volume24h: 500_000, liquidity: 150_000, marketCap: 2_000_000, txns: 900, lastUpdate: NOW - 3_600_000,
+    })
+    // Nobody discovers it any more: every list comes back empty.
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/forgotten`]: { body: [pair('forgotten')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=forgotten`]: { body: { code: 1, message: 'ok', result: { forgotten: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=forgotten`]: { body: goodQuote },
+    })
+    const out = await scanOnce({ ...deps, store }, config)
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['forgotten'])
+  })
+
+  it('carries on without a registry at all', async () => {
+    // It runs in tests and tools with no database, and a scanner that cannot
+    // run without one is a scanner nobody can debug.
+    const { deps } = build(table('alone'))
+    await expect(scanOnce(deps, config)).resolves.toBeDefined()
+  })
+
+  it('never lets a broken registry cost the cycle', async () => {
+    const { deps } = build(table('seen'))
+    const broken = { rememberTokens: async () => { throw new Error('down') }, knownTokens: async () => { throw new Error('down') } }
+    const out = await scanOnce({ ...deps, store: broken }, config)
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['seen'])
   })
 })

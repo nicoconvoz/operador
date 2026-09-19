@@ -1,4 +1,5 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
+import { type StatePort } from '../domain/persistence/store.js'
 import { type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
 import { evaluateMarketGates, forgivableFailures } from '../domain/scanner/gates.js'
@@ -54,6 +55,9 @@ export interface DecimalsPort {
  * no provider at all is still expressible. What is no longer expressible is
  * HALF a provider.
  */
+/** How many remembered tokens rejoin the universe when nobody says otherwise. */
+export const DEFAULT_REGISTRY_TOKENS = 600
+
 export interface HistoryPort {
   /**
    * Optional chain-agnostic universe. Matters most on chains with no native
@@ -80,6 +84,13 @@ export interface ScanDeps {
   readonly sellProbe?: SellProbePort
   readonly decimals: DecimalsPort
   readonly history?: HistoryPort
+  /**
+   * The permanent registry, if there is one.
+   *
+   * Optional because the scan runs in tests and tools without a database, and
+   * a scanner that cannot run without one would be a scanner nobody can debug.
+   */
+  readonly store?: Pick<StatePort, 'rememberTokens' | 'knownTokens'>
   readonly now?: () => number
   /** Optional. Injected rather than imported, so the domain never learns what a console is. */
   readonly onProgress?: (progress: ScanProgress) => void
@@ -144,6 +155,14 @@ export interface ScanConfig {
   readonly spreadPct: number
   /** Cap on tokens whose MARKET data is fetched. Cheap: 30 per request. */
   readonly maxTokens: number
+  /**
+   * How many remembered tokens rejoin the universe each scan.
+   *
+   * Every one costs a share of a price request, one per thirty, so this is
+   * what the registry's reach costs in requests. At 600 that is twenty extra
+   * calls to a provider that allows three hundred a minute.
+   */
+  readonly registryTokens?: number
   /**
    * Addresses we already hold on this chain. They are never candidates.
    *
@@ -437,6 +456,38 @@ export async function scanOnce(
   }
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
+
+  // ── And everything this engine has EVER priced ────────────────────────────
+  //
+  // The operator's idea, and it answers the constraint the whole scanner ran
+  // into: the free providers cap a sweep at about 570 and no threshold widens
+  // that. Ten pages is GeckoTerminal's ceiling — page eleven answers 401 —
+  // Jupiter's lists cap at 100 each, and DexScreener's boosts are paid
+  // promotions. The only lever left is TIME.
+  //
+  // So a registry accumulates what every sweep found and hands it back,
+  // ordered by last-known activity. A week of scans knows far more than any
+  // one of them, and a token that stopped trending is not a token that
+  // stopped existing.
+  //
+  // BOUNDED, and the bound is not timidity: every address here costs a share
+  // of a price request, one per thirty. The order is what makes the bound
+  // useful — the busiest first, so the ones worth re-pricing are the ones
+  // that get re-priced.
+  //
+  // Never fatal. A registry that cannot be read leaves the universe as
+  // whatever the providers just said, which is exactly what it was before.
+  if (deps.store?.knownTokens) {
+    try {
+      for (const known of await deps.store.knownTokens(config.registryTokens ?? DEFAULT_REGISTRY_TOKENS)) {
+        universe.add(known.contract)
+        if (known.pool && !poolOf.has(known.contract)) poolOf.set(known.contract, known.pool)
+      }
+      deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'registro', found: universe.size })
+    } catch (error) {
+      errors.push({ address: '*', stage: 'market', error: `registry: ${String(error)}` })
+    }
+  }
   }
   // The cap bounds DISCOVERY, never what we hold. A book wider than the cap
   // would otherwise start dropping its own positions out of the scan, which is
@@ -517,6 +568,33 @@ export async function scanOnce(
   // is blind to a third of the universe or the day was quiet — and that is
   // exactly the number nobody could see while the book starved: 323 discovered
   // became 173 priced and the 150 in between were invisible.
+  // Everything priced goes into the registry, whatever happens to it next.
+  //
+  // Deliberately BEFORE any gate: a token refused today for being four hours
+  // old is a token worth knowing about tomorrow, and the whole point is to
+  // remember what the providers forget. It is written once per scan rather
+  // than per token, because a free tier whose limit is network transfer once
+  // took this project offline for thirty-four hours.
+  if (deps.store?.rememberTokens) {
+    try {
+      await deps.store.rememberTokens(
+        markets.map((market) => ({
+          contract: market.address,
+          token: market.symbol,
+          pool: market.pairAddress ?? null,
+          price: market.priceUsd,
+          volume24h: market.volumeUsd.h24,
+          liquidity: market.liquidityUsd,
+          marketCap: market.fdvUsd,
+          txns: market.txns.h24.buys + market.txns.h24.sells,
+          lastUpdate: scannedAt,
+        })),
+      )
+    } catch (error) {
+      errors.push({ address: '*', stage: 'market', error: `registry write: ${String(error)}` })
+    }
+  }
+
   deps.onProgress?.({
     stage: 'market',
     chain: config.chain,

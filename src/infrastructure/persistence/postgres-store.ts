@@ -6,6 +6,7 @@ import {
   type StatePort,
   type StoredAlert,
   type CachedSecurity,
+  type RememberedToken,
 } from '../../domain/persistence/store.js'
 import { type Alert, type AlertKind, type AlertLevel } from '../../domain/notifications/alerts.js'
 import { type CascadeState } from '../../domain/strategy/state.js'
@@ -318,6 +319,74 @@ export class PostgresStore implements StatePort {
          SET security = EXCLUDED.security, slippage_pct = EXCLUDED.slippage_pct, measured_at = EXCLUDED.measured_at`,
       [chain, address, JSON.stringify(security), slippagePct, measuredAt],
     )
+  }
+
+  /**
+   * The permanent registry. NEVER pruned, and that is the point.
+   *
+   * Every other cache in this store expires or is truncated because it is an
+   * optimisation. This one is the memory the discovery providers do not have:
+   * they cap a sweep at about 570 tokens and no threshold widens that, so the
+   * only lever left is TIME — a week of scans knows far more than any one of
+   * them.
+   *
+   * Written in ONE statement rather than a loop. A scan remembers several
+   * hundred tokens and a round trip each would be several hundred round trips
+   * against a free tier whose limit is network transfer, which is the bill
+   * that once took this project offline for thirty-four hours.
+   */
+  async rememberTokens(tokens: readonly RememberedToken[]): Promise<void> {
+    if (tokens.length === 0) return
+    const values: unknown[] = []
+    const rows = tokens.map((token, i) => {
+      const at = i * 9
+      values.push(token.contract, token.token, token.pool, token.price, token.volume24h, token.liquidity, token.marketCap, token.txns, token.lastUpdate)
+      return `(${at + 1},${at + 2},${at + 3},${at + 4},${at + 5},${at + 6},${at + 7},${at + 8},${at + 9})`
+    })
+    await this.sql.query(
+      `INSERT INTO solana_cache (contract, token, pool, price, volume24h, liquidity, market_cap, txns, last_update)
+       VALUES ${rows.join(',')}
+       ON CONFLICT (contract) DO UPDATE SET
+         token = EXCLUDED.token,
+         -- A pool we already knew is kept when the new row has none: forgetting
+         -- where a token trades is the one thing this table exists to prevent.
+         pool = COALESCE(EXCLUDED.pool, solana_cache.pool),
+         price = EXCLUDED.price,
+         volume24h = EXCLUDED.volume24h,
+         liquidity = EXCLUDED.liquidity,
+         market_cap = EXCLUDED.market_cap,
+         txns = EXCLUDED.txns,
+         last_update = EXCLUDED.last_update`,
+      values,
+    )
+  }
+
+  /**
+   * Ordered by what was MOVING, bounded on purpose.
+   *
+   * Reading it whole would cost one price request per thirty rows, and the
+   * point of the registry is to reach further rather than to spend more. An
+   * unmeasured volume sorts LAST rather than being excluded — silence is not a
+   * zero, and the registry's job is remembering what the providers forgot.
+   */
+  async knownTokens(limit: number): Promise<readonly RememberedToken[]> {
+    const { rows } = await this.sql.query<Record<string, unknown>>(
+      `SELECT contract, token, pool, price, volume24h, liquidity, market_cap, txns, last_update
+       FROM solana_cache ORDER BY volume24h DESC NULLS LAST LIMIT $1`,
+      [limit],
+    )
+    const maybe = (value: unknown): number | null => (value === null || value === undefined ? null : Number(value))
+    return rows.map((row) => ({
+      contract: String(row.contract),
+      token: String(row.token),
+      pool: row.pool === null || row.pool === undefined ? null : String(row.pool),
+      price: maybe(row.price),
+      volume24h: maybe(row.volume24h),
+      liquidity: maybe(row.liquidity),
+      marketCap: maybe(row.market_cap),
+      txns: maybe(row.txns),
+      lastUpdate: num(row.last_update as string | number),
+    }))
   }
 
   async latestAlertSeq(): Promise<number> {

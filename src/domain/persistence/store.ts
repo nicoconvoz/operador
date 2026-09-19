@@ -1,6 +1,26 @@
 import { type Alert } from '../notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../scanner/snapshot.js'
 
+/**
+ * One row of the permanent registry, named as the operator named the columns.
+ *
+ * The market fields are the snapshot as LAST SEEN and are never read as
+ * current — every scan re-prices what it intends to examine. They exist so the
+ * registry can be ordered by activity, which is what makes a bounded read
+ * useful instead of arbitrary.
+ */
+export interface RememberedToken {
+  readonly contract: string
+  readonly token: string
+  readonly pool: string | null
+  readonly price: number | null
+  readonly volume24h: number | null
+  readonly liquidity: number | null
+  readonly marketCap: number | null
+  readonly txns: number | null
+  readonly lastUpdate: number
+}
+
 export interface CachedSecurity {
   readonly security: SecurityReport
   readonly slippagePct: number | null
@@ -192,6 +212,27 @@ export interface StatePort {
   /** The last security examination of a token, or null if never examined. */
   cachedSecurity(chain: Chain, address: string): Promise<CachedSecurity | null>
   recordSecurity(chain: Chain, address: string, security: SecurityReport, slippagePct: number | null, measuredAt: number): Promise<void>
+
+  /**
+   * Every token ever priced, kept FOREVER, ordered by what was moving.
+   *
+   * The operator's idea, and it answers the constraint the whole scanner ran
+   * into: the free providers cap discovery at about 570 a sweep and no
+   * threshold widens that. Ten pages is GeckoTerminal's ceiling, Jupiter's
+   * lists cap at 100 each, DexScreener's boosts are paid promotions. The only
+   * lever left is TIME — a registry accumulates what every sweep found, so a
+   * week of scans knows far more than any one of them.
+   *
+   * NEVER pruned. Every other cache in this store expires because it is an
+   * optimisation; this one is the memory the providers do not have.
+   *
+   * `limit` is not timidity: reading it whole would cost one DexScreener call
+   * per thirty rows, and the point is to reach further rather than to spend
+   * more. The order is last-known 24h volume, so a bounded read takes the ones
+   * worth re-pricing first.
+   */
+  rememberTokens(tokens: readonly RememberedToken[]): Promise<void>
+  knownTokens(limit: number): Promise<readonly RememberedToken[]>
 
   /** Tokens the death exit has condemned. Never traded again. */
   blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void>
