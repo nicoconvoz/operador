@@ -587,7 +587,19 @@ describe('minHistoryBars — enough to ENTER, not enough for every door', () => 
     // A young pool is therefore tradeable long before it can use both doors,
     // and an unconverged EMA is null, so the second door simply does not open
     // until the pool has matured. Safe by construction rather than by luck.
-    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeGreaterThanOrEqual(DEFAULT_PARAMS.bbLength * 2)
+    // ENOUGH for the basis to exist with room to spare, not twice it.
+    //
+    // Two times the Bollinger length was a margin rather than a requirement,
+    // and it was the second largest cut in the whole funnel: measured over 564
+    // live Solana tokens, `age` blocked 354 and was the SOLE cause for 40,
+    // because what these lists return is mostly pools born this morning.
+    //
+    // The basis needs `bbLength` bars to produce its first value and the swing
+    // high needs 20, so 60 leaves ten bars of converged Bollinger output to
+    // decide a lateral zone on. Thin, and the operator chose it knowing that:
+    // 25 hours of required pool age becomes 15.
+    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeGreaterThan(DEFAULT_PARAMS.bbLength)
+    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeGreaterThanOrEqual(DEFAULT_PARAMS.bbLength + 10)
     expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeLessThan(DEFAULT_PARAMS.trendEmaLength)
   })
 
@@ -595,7 +607,10 @@ describe('minHistoryBars — enough to ENTER, not enough for every door', () => 
     // 100 bars of 15m is 25 hours, against 62.5 for 250. The gate stays at its
     // own 24h floor, which answers a different question — a pool that has
     // existed for at least a day.
-    expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(25)
+    // 15 hours, down from 25: the age gate exists only to serve the bar count,
+    // so lowering one lowers the other by construction. Measured, that is 40
+    // tokens a scan that were refused for nothing but being born this morning.
+    expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(15)
   })
 })
 

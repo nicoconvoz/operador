@@ -271,7 +271,25 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   //
   // It carries the age gate down with it — 25 hours instead of 62.5 — because
   // `minAgeForHistory` only ever existed to serve this.
-  minHistoryBars: 100,
+  // SIXTY, and it was a hundred.
+  //
+  // Measured over 564 live Solana tokens, `age` — which is derived from this
+  // number — blocked 354 of them and was the SOLE cause for 40, the second
+  // largest cut in the entire funnel. What these lists return is mostly pools
+  // born this morning, and a hundred bars of 15 minutes demands 25 hours of
+  // them.
+  //
+  // What the strategy actually needs: the classic entry is a 20-bar swing high
+  // inside a lateral zone, and the longest lookback in that is the 50-bar
+  // Bollinger basis. Sixty leaves TEN bars of converged output to judge the
+  // zone on — thin, and the operator chose it knowing so, because 25 hours of
+  // required pool age becomes 15.
+  //
+  // The EMA-200 is untouched by this and always was: it feeds only
+  // `trendBullish`, which arms the TREND RE-ENTRY, and an unconverged EMA is
+  // `na` so that door simply does not open until the pool has matured. Safe by
+  // construction rather than by luck.
+  minHistoryBars: 60,
   maxBarAgeHours: 1,
   maxPriceRatio: 5,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
