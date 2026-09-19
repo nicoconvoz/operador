@@ -734,13 +734,100 @@ read at a loose **70%**.
 
 Then a token was bought at **−64% on the day and the position sat flat**: the
 collapse had happened entirely before the engine arrived, and it had joined it
-for nothing. `maxDailyFallPct` is **15** now — the STRICTEST of the three
-windows, which reverses the original reasoning outright. A token already down
-that far does not recover on our schedule; it stops falling with our money in it.
+for nothing. It was set to **15** — the STRICTEST of the three windows, which
+reversed the original reasoning outright.
 
-At fifteen, the short windows keep the one job the daily one cannot do: catch a
-pump that is **dumping inside the day**, where the day is still green and only
-the hour shows the exit in progress.
+Then it was turned OFF, to **100**, when the weights became doors. The argument
+was recorded in a test: *the hour is what decides now, through the `headroom`
+floor, and a daily threshold on top was belt and braces against the same
+accident.*
+
+#### It is THIRTY, and the number was measured on the book that paid for it
+
+PERK falsified that argument, and the way it did is the point: **the hour and
+the day are not the same accident.** The hour sees *falling right now*; the day
+sees *already collapsed before we arrived*. A token can be perfectly calm this
+hour having lost almost everything since yesterday.
+
+The engine bought PERK at 0.0000432 when it was **already down 92.6% on the
+day**, and then lost another 43.6% of what went in — **$45.98 of a $134.11
+book, from one token.** Every other signal said go: 43 trades in the last hour,
+7,724 over the day, $425,979 of volume, $15,366 of liquidity. It was not dying.
+It was alive, liquid, and in free fall, which is exactly the one thing no other
+gate looks for.
+
+The operator read it as a dead token and asked for a cut. It was not dead, and
+a cut on those numbers would have been a **stop loss** — the one thing the
+guardrail forbids. The hole was at the door, not at the exit.
+
+**The threshold is reconstructed, not chosen.** `tools/freefall-what-if.ts`
+recovers the number the gate WOULD have read at the moment of each purchase: a
+snapshot gives the price now and the change over 24h, so the price 24h ago is
+`now / (1 + change/100)`, and the fills give exactly what we paid. The
+difference is how far the token had already fallen when the engine arrived.
+
+Across 36 live positions, of the capital each band would have refused:
+
+| Already down | Of what it refused, lost | Capital not deployed |
+|---|---|---|
+| more than 50% | **47.2%** | $97 — PERK alone |
+| more than 30% | **18.5%** | $271 |
+| more than 20% | 8.4% | $580 |
+| more than 15% | 6.0% | $885 |
+| **the whole book** | **3.4%** | — |
+
+Past thirty is catastrophe — five to fourteen times the book's own rate — and
+it is bought for $271 of deployment not made. Below it the damage is an
+ordinary bad day at roughly twice the average.
+
+**And tightening further eats WINNERS, which is the argument for stopping at
+thirty.** `fone` had already fallen 20.3% when the engine bought it and is UP;
+`CODEC` 15.6% and up. Going from −30% to −20% doubles the capital refused and
+the saving FALLS, because one of the two tokens it adds is a winner.
+
+That is not bad luck, it is the thesis. CASCADE DCA exists to buy weakness. A
+gate at −15% cuts the strategy's own hand off at exactly the place it is meant
+to be working; this one exists to refuse a collapse already in progress, and
+thirty is where the measurement puts the line between those two things.
+
+**What it is worth, stated rather than implied.** $50.21 on this book — 37% of
+the open unrealised loss, 28% of the realised net, 1.3% of capital deployed. A
+real improvement, and not a fortune: the sample is 36 positions and **one token
+is 34% of the result**. It supports catching the extreme and very little else.
+Read nothing into the curve between −5% and −20%; there are two or three tokens
+and noise in there.
+
+**The short windows are OFF, and that is a gap rather than a decision.**
+`maxFallPct` reads 100 — it was disabled with the other taste gates and nobody
+has measured it since. The job it used to do is one the daily window genuinely
+cannot: catch a pump **dumping inside the day**, where the day is still green
+and only the hour shows the exit in progress. Restoring it needs the same
+treatment the daily one just got — reconstruct what it would have refused,
+count what that cost — and until then it is written down here as unmeasured
+rather than quietly implied to be working.
+
+#### What is actually ON, as of this writing
+
+The taste gates were turned off when the weights became doors, and the
+difference between "disabled" and "never existed" matters enough to tabulate.
+`STRICT_GATE_POLICY` keeps every original value so the gate LOGIC stays tested;
+`DEFAULT_GATE_POLICY` is what production runs.
+
+| Gate | Production | Strict | |
+|---|---|---|---|
+| `maxDailyFallPct` | **30** | 15 | measured this session |
+| `maxFallPct` — 1h/6h | **100 (off)** | 50 | **unmeasured gap** |
+| `minTurnoverRatio` | **0 (off)** | 1 | blocked 108 tokens alone |
+| `minVolume24hUsd` | **0 (off)** | 10,000 | |
+| `maxFdvUsd` | **null (off)** | 500M | |
+| `maxTopHoldersPct` | **80** | 40 | the operator's call: *nos vamos a arriesgar* |
+| `minHistoryBars` | **60** | 250 | the pools are born this morning |
+| `minLiquidityUsd` | 3,000 | 3,000 | a SAFETY gate, never disabled |
+
+Everything in the SAFETY half is untouched and still fails CLOSED. What was
+relaxed is taste, and the reason is written above: a preference is a reason to
+rank a token lower, never a reason to leave a slot empty while it is the only
+thing left.
 
 **Only downward, and never on a rise.** A token up 300% on the day is a question
 for `headroom`, which scores it near the bottom — not for a gate, which would
@@ -908,6 +995,7 @@ Evaluated continuously for every open position, independent of price.
 | Wallet blacklisted / transfers paused | 2 | Contract state or failed transfer simulation |
 | Dev or top-holder dump | 1 | Top-N holder moves a significant share of supply |
 | Abandonment | 1 → 2 | No trades for N hours — **freeze at 3, exit at 12** |
+| **A safety gate that turned** | **1** | Any SAFETY gate that passed at the door and fails now — see below |
 
 #### What the runtime actually observed — CORRECTED
 
@@ -1001,6 +1089,93 @@ allocator's hands in the same cycle.
    *first* confirmed signal, not to discover the exit is already closed.
 5. **Every death exit is logged with its full evidence chain** — which signal,
    which source, which observations. These become test fixtures.
+
+#### A safety gate that turns on a token we HOLD
+
+The operator's rule, and he named what it had cost him: *si falla una compuerta
+de seguridad, filtrar y no dejar operar, restricción total, porque esas me han
+hecho perder mucho dinero.*
+
+The ENTRY path was already closed. A safety failure is never ranked, never
+forgiven into the reserve, and `confirmEntry` re-asks the whole safety set at
+the door. **The hole was on the other side.** For a token already HELD, this
+watch saw four facts out of the scan — liquidity, the LP and the two
+authorities — and everything else the scan measures had nowhere to go: a
+transfer tax appearing, a blacklist function appearing, concentration spiking,
+a contract turning into a proxy, an impersonated symbol, a pool that stopped
+producing bars, two feeds disagreeing about the price.
+
+ANSEM proved it live. The screen drew it `turnedUnsafe` with its blockers
+listed while the engine reported `deathStage: healthy` over a funded position —
+two implementations of "is this dangerous", and the one on the screen is the
+one the operator believes.
+
+`AssetHealthObservation.safetyFailed` closes it, and it is `evaluateSafetyGates`
+— the door's own verdict, not a second reading of the same facts. It is a
+STAGE ONE signal, calibrated by this section's own rule: *freeze is cheap, exit
+is not.* A freeze stops new capital and, with `exitOnFreeze`, sells the
+position — the total restriction asked for — without the permanent blacklist a
+death verdict carries. A concentration spike is not proof the asset stopped
+being an asset, and a token whose holders spread out again deserves to come
+back.
+
+**It is NOT a price field, and it could not be.** The type is built so no
+price-shaped value can exist on it; a gate verdict is a fact about the
+INSTRUMENT.
+
+Two guards are the actual design, and both were written before the feature was:
+
+- **An unexamined token reports `null`, never a list.** The safety gates fail
+  CLOSED, so a token nobody looked at fails all of them by construction.
+  Reading that as "it turned" would freeze every position the security budget
+  has not reached — and with `exitOnFreeze` on, that is not a pause, it is the
+  whole book sold.
+- **Only `reason === 'failed'` counts, never `'unknown'`.** This is the sharp
+  one. A GoPlus rate limit leaves the report all-null while the scan still
+  marks the token examined, so every gate would report a failure and the book
+  would liquidate **because we ran out of quota**. Twenty-six positions once
+  turned red for exactly that. It is the sell probe's own rule in the mirror:
+  *an RPC failure is never read as "no route" — one is inconclusive, the other
+  is a death signal.*
+
+#### The pool is draining NOW, not twenty minutes ago
+
+The operator read it off the tape: the frozen exits are where the book bleeds,
+and they have to be seen earlier. He was right, and the cause was a request
+already being paid for.
+
+`marketPrices` asks DexScreener for every held token once a CYCLE, and the
+response carries the whole market half — price, **liquidity**, volume, the
+counts. It kept one line of it:
+
+```ts
+if (m.priceUsd > 0) prices.set(`${chain}:${m.address}`, m.priceUsd)
+```
+
+Meanwhile `healthFor` read liquidity out of the stored SCAN, refreshed every
+**twenty minutes** in production. So a pool could drain for twenty minutes
+unseen — and `exitOnFreeze` would then sell into what was left of it, exempt
+from the no-loss guard because a death exit has to be able to leave at any
+price. **A blind window on the one signal whose entire purpose is to leave
+BEFORE leaving stops being possible.**
+
+The same shape already fixed for the SCREEN and never for the engine, which is
+why the dashboard could watch a position drain while the engine held it.
+`withLiveMarket` stays the one definition of which half a feed may refresh;
+this is its fourth reader.
+
+**TWO CLOCKS, and keeping them apart is the safety:**
+
+| | Refreshed every | Why |
+|---|---|---|
+| security, LP, authorities, the gate verdict | **scan** (20 min) | it is ONE answer; replaying it every five minutes would turn a single reading into twelve confirmations — the exact false positive `exitConfirmations` exists to prevent, wearing its clothes |
+| **liquidity** | **cycle** (5 min) | it is a NEW measurement each time, so three confirmations mean three genuine readings fifteen minutes apart |
+
+The rule lives in `healthForCycle`, not in the composition root. **Every wiring
+bug this project has paid for was out there, untested** — a missing `discover`
+on the decimals port, a missing `poolMarkets` on the history port, a capital
+trim that wrote over the tick. A decision belongs where it can be tested; only
+the plumbing stays outside.
 
 #### Abandonment: the signal that had never fired
 
@@ -1391,6 +1566,48 @@ exists to prevent.
 A consequence worth stating: a thin pool is no longer REFUSED, it is SHRUNK.
 The budgets, not the floor, are what bound the risk — a $14 fill on a $3.8k
 pool costs the same 1% as a $750 fill on a deep one.
+
+## Where the money actually goes — measured, and it was not where we thought
+
+The operator read the tape and said it plainly: *el problema no son las
+comisiones, son las congeladas, pierden muchísimo.* The instinct located a real
+defect. The size was wrong, and the only reason we know is that we counted
+before acting — the rule this project has now paid for four separate times.
+
+`tools/loss-by-exit.ts` walks every fill and groups the realised result by
+WHICH EXIT took it. Four exits can close a position and they are not the same
+trade: two of them cannot fill below average cost, and two of them must be able
+to.
+
+| Exit | Sales | Realised | Per sale |
+|---|---|---|---|
+| ❄️ Salida por congelamiento | 7 | **−$29.96** | **−$4.28** |
+| 🔁 Rotación | 15 | +$55.16 | +$3.68 |
+| 🏁 Exit | 24 | +$272.13 | +$11.34 |
+| **gross** | 46 | **+$297.32** | |
+| **costs** | | **−$116.07** | |
+| **net** | | **+$181.26** | |
+
+**The commissions are four times the frozen exits.** $116.07 against $29.96,
+and they eat **39% of everything earned gross**. The hypothesis had the ranking
+exactly inverted.
+
+What the instinct got right, and it is not nothing: **the frozen exits are the
+only category in the red.** Nothing else loses. Per sale they are by far the
+worst trade in the book — −$4.28 against +$11.34 for an ordinary exit, with one
+at −$14.48. So the early-detection work above attacks the right thing. It is a
+$30 problem, not a $116 one, and the $116 has not been attacked at all.
+
+**And the largest number on the board is not in the realised column.** Thirty
+seven open positions holding **$3,960.94 of cost** — forty percent of
+everything ever bought. With one buy and no-loss exits, whatever is underwater
+there has nothing that can rescue it: it cannot average down, the strategy exit
+wants `avg_cost + 2%`, and the switch refuses to sell below cost. That is the
+gap between $181 realised and the $91 the screen shows.
+
+A caveat on the tool itself, because a diagnostic that misleads is worse than
+none: the per-exit **commissions** column counts the sell side only, while the
+TOTAL includes the buys. Two different things under one heading.
 
 ## Paper mode is the whole system, minus the spending
 
@@ -2385,6 +2602,34 @@ It runs on a phone, which forced four decisions:
 `/demo` renders the same view from synthetic data, labelled as such — a demo
 that passes for live is how people end up trusting a screenshot.
 
+### A ladder the venue cannot climb is not a ladder
+
+The operator, counting his own screen: *hay dos escalones por moneda, no uno
+como te había pedido.*
+
+The ENGINE was right. Every card read `0 DCA` and every position held a single
+buy — `OPERADOR_MAX_DCA` defaults to 0 and the parser handles the zero, so
+`maxOpenEntries` is 1 everywhere it is read.
+
+What had two rungs was the PICTURE. `buildOperations` sized the ladder from
+`maxLevels` — 50, what the machine SIGNALS — capped at twelve, and never
+consulted `maxOpenEntries`, which is what the broker will HOLD. So every card
+drew twelve boxes where exactly one could ever fill, and painted one of them as
+the rung being WAITED ON, with a line underneath explaining the price it had to
+reach and how many bars were left to confirm it.
+
+Nothing was ever waiting for it: `PaperBroker` refuses every entry past the
+cap. **A screen describing a trade the engine has already refused is this read
+model's own failure mode with the sides swapped** — usually the engine refuses
+what the screen offers.
+
+`beyondPyramiding` went with it. It existed to show the gap between a 50-level
+machine and a 10-entry venue, which was readable at ten fillable of fifty and
+became eleven struck-through boxes the day the ladder was cut to one buy.
+Nothing drawn is past the cap now, so the flag was always false — and a dead
+knob is worse than a wrong one, because the next reader tunes it and nothing
+happens.
+
 ### The profit moves, because it is valued at the live price
 
 The one number the system exists to produce sat still for fifteen minutes at a
@@ -3099,6 +3344,44 @@ Test first. Always. Non-negotiable for anything that can move money.
 - **Adapters**: integration tests against testnet/devnet.
 
 No network, no sleeps, no wall-clock dependencies in domain tests.
+
+## House rule: when it cannot be fixed by reading, build it at home and debug
+
+The operator's rule, asked for by name: *cuando no podamos arreglar algo en el
+sistema lo creamos desde casa y probamos con debug.*
+
+It exists because the alternative is a fifteen-minute round trip per
+hypothesis. The engine runs on a scheduler against live providers, so
+"push and see" prices every guess at a quarter of an hour — and this project
+has spent whole afternoons that way, twice, on hypotheses that turned out to be
+wrong in both directions.
+
+A debug tool is cheap, runs from a home IP with the real network, and answers
+in seconds. The ones that earned their place:
+
+| Tool | Answers |
+|---|---|
+| `tools/loss-by-exit.ts` | where the realised money went, grouped by which exit took it |
+| `tools/why-still-here.ts` | everything the engine knows about ONE position, and why it has not left |
+| `tools/freefall-what-if.ts` | what a threshold would have cost in candidates and saved in dollars |
+| `tools/gate-histogram.ts` | which gate is cutting the universe, and how much of it alone |
+| `tools/debug-funnel.ts` | the discovery → priced → affordable → candidate funnel, stage by stage |
+
+Three properties they all share, learned by getting each one wrong first:
+
+- **They read the real store and the real APIs.** A tool that mocks the thing
+  being diagnosed agrees with itself about a number that does not exist.
+- **They say what they could NOT measure**, separately from what passed. An
+  unmeasurable case reported as a passing one is how a diagnostic starts lying.
+- **They explain their own failure in the operator's language.** A stack trace
+  is the wrong thing to hand somebody at 3am; `loss-by-exit` prints the
+  connection string with the password masked and names the four things that
+  usually go wrong.
+
+A note that cost two round trips and is worth writing down: **the shells take
+different syntax.** PowerShell wants `$env:VAR='x'; cmd` and Git Bash wants
+`VAR='x' cmd` — and in PowerShell, DOUBLE quotes interpolate `$`, so a password
+containing one is silently deleted from the connection string.
 
 ## House rule: never invent a number the world will tell you
 
