@@ -87,7 +87,8 @@ for (const position of found) {
   console.log(`     liquidez a la entrada   $${n(watch.entryLiquidityUsd, 0)}`)
   const recent = [...watch.evidence].slice(-6).reverse()
   if (recent.length === 0) {
-    console.log('     sin observaciones registradas  ← el vigía nunca dijo nada')
+    console.log('     sin señales registradas — el vigía SÍ observó (mirá la racha limpia)')
+    console.log('     y no encontró nada; aquí solo se anota lo que produjo una señal')
   }
   for (const record of recent) {
     const signals = record.signals.map((s) => `[${s.stage}] ${s.kind}: ${s.detail}`).join(' | ')
