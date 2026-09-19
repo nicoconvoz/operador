@@ -162,6 +162,29 @@ describe('opportunity — the components still move the right way, weighed or no
 })
 
 describe('opportunity — direction, not only motion', () => {
+  it('treats the DAY and the HOUR as equals, which they were not', () => {
+    // The three tests that stood here asserted a weighting: 0.6 on the hour,
+    // 0.25 on six, 0.15 on the day, with the hour able to outvote the other
+    // two together. All of it is gone. The windows are symmetric now and
+    // either one answering yes is enough — the operator's rule, chosen from
+    // six measured readings, and the only one of the six that opened the book
+    // rather than closing it further.
+    const up = (h1: number | null, h24: number | null) =>
+      scoreOpportunity(base({ priceChangePct: { h1, h6: null, h24 } }), P, null, cheap).components.momentum
+    expect(up(5, null)).toBe(up(null, 5))
+    expect(up(5, -50)).toBe(1)
+    expect(up(-50, 5)).toBe(1)
+  })
+
+  it('asks for a full percent, because drift is not a rise', () => {
+    // It used to ask only WHETHER, at any size at all. These pools move 0.9%
+    // standing still, so a threshold is what separates a move from the noise.
+    const up = (h1: number) =>
+      scoreOpportunity(base({ priceChangePct: { h1, h6: null, h24: null } }), P, null, cheap).components.momentum
+    expect(up(0.9)).toBe(0)
+    expect(up(P.minRisePct)).toBe(1)
+  })
+
   const rising = { h1: 8, h6: 20, h24: 40 }
   const falling = { h1: -8, h6: -20, h24: -40 }
 
@@ -174,15 +197,6 @@ describe('opportunity — direction, not only motion', () => {
     expect(up.score).toBeGreaterThan(down.score)
   })
 
-  it('weights the RECENT hour above the day, because "lately" is the question', () => {
-    // Up today but falling this hour is a top rolling over; down today but
-    // rising this hour is a bottom turning. The second is the one worth buying,
-    // and only a windowed weighting can tell them apart.
-    const rollingOver = base({ priceChangePct: { h1: -8, h6: 5, h24: 40 } })
-    const turning = base({ priceChangePct: { h1: 8, h6: -5, h24: -40 } })
-    expect(scoreOpportunity(turning, P, null, cheap).components.momentum)
-      .toBeGreaterThan(scoreOpportunity(rollingOver, P, null, cheap).components.momentum)
-  })
 
   it('treats a FLAT token as not-up, which is not the same as bad', () => {
     // Zero movement is the absence of a reason either way. Scoring it as a
@@ -199,25 +213,7 @@ describe('opportunity — direction, not only motion', () => {
     expect(silent.components.momentum).toBe(0)
   })
 
-  it('asks only WHETHER it rose, never by how much', () => {
-    // The operator's correction, and it removes three invented numbers. There
-    // is no percentage at which a rise becomes "a rise" — a threshold there
-    // would be a guess wearing the clothes of a measurement. `volatility`
-    // already carries the magnitude; together they say "moving, and upward".
-    const gentle = scoreOpportunity(base({ priceChangePct: { h1: 0.4, h6: 0.4, h24: 0.4 } }), P, null, cheap)
-    const violent = scoreOpportunity(base({ priceChangePct: { h1: 90, h6: 90, h24: 90 } }), P, null, cheap)
-    expect(gentle.components.momentum).toBe(violent.components.momentum)
-    expect(gentle.components.momentum).toBe(1)
-  })
 
-  it('lets the recent hour outvote the two longer windows together', () => {
-    // Otherwise "lately" is decided by yesterday. A bottom turning up in the
-    // last hour must beat a top that is still green on the day.
-    const turning = base({ priceChangePct: { h1: 1, h6: -1, h24: -1 } })
-    const rollingOver = base({ priceChangePct: { h1: -1, h6: 1, h24: 1 } })
-    expect(scoreOpportunity(turning, P, null, cheap).components.momentum)
-      .toBeGreaterThan(scoreOpportunity(rollingOver, P, null, cheap).components.momentum)
-  })
 
   it('never exceeds its bounds, however violent the move', () => {
     const insane = scoreOpportunity(base({ priceChangePct: { h1: 900, h6: 900, h24: 900 } }), P, null, cheap)
@@ -650,48 +646,63 @@ describe('opportunity — the hour asks that it has NOT collapsed', () => {
   })
 })
 
-describe('opportunity — the trend is the HOUR, positive, and nothing else', () => {
-  // The operator, after three measurements of the alternative: *vas a tener en
-  // cuenta solo que en la última hora el % sea positivo, nada más. No importa
-  // si es 0.1 o 2000, el tema es que esté positivo.*
+describe('opportunity — up in the DAY or up in the HOUR', () => {
+  // The operator's rule, chosen from six measured readings of his own phrase:
+  // *que mire las últimas 24 horas y detecte que haya subido por lo menos 1%
+  // desde la última vela y la de la última hora.*
   //
-  // It used to weigh three windows — 0.6 on the hour, 0.25 on six, 0.15 on the
-  // day — and at a floor of 0.5 the hour already decided every case: the hour
-  // alone reaches 0.6, and the other two together only reach 0.40. The longer
-  // windows were doing nothing except catching five tokens with no hourly data
-  // that had fallen 95-99%, and those are now excluded anyway, because silence
-  // is not POSITIVE.
+  // Measured over 174 tokens the machine could actually operate:
   //
-  // Measured across 305 live Solana tokens from all three discovery sources:
-  // 132 have a positive hour, 91 of them are tokens the machine can actually
-  // operate. That is the whole rule.
+  //   hoy: la hora > 0                  64 = 37%
+  //   la hora >= 1%                     34 = 20%
+  //   el dia >= 1%                     120 = 69%
+  //   el dia >= 1% Y la hora > 0        42 = 24%
+  //   el dia >= 1% Y la hora >= 1%      20 = 11%
+  //   el dia >= 1% O la hora >= 1%     134 = 77%   <- this one
+  //
+  // The readings with AND close harder than the rule they replace; only the OR
+  // opens. More than double what the hour alone admitted.
+  //
+  // It also makes the two floors say different things for the first time.
+  // `momentum` asks whether it rose ANYWHERE, `headroom` whether it is not
+  // collapsing RIGHT NOW — a token up 5% on the day and down 10% in the hour
+  // passes the first and fails the second, which is exactly the case neither
+  // could express while both read the same window.
 
-  const trend = (h1: number | null, h6 = -50, h24 = -80) =>
-    scoreOpportunity(base({ priceChangePct: { h1, h6, h24 } }), P, null, cheap).components.momentum
+  const trend = (h1: number | null, h24: number | null) =>
+    scoreOpportunity(base({ priceChangePct: { h1, h6: null, h24 } }), P, null, cheap).components.momentum
 
-  it('is 1 whenever the hour is up, by any amount at all', () => {
-    for (const up of [0.01, 0.1, 2, 50, 2_000]) expect(trend(up)).toBe(1)
+  it('admits a token up on the DAY even when the hour is flat', () => {
+    expect(trend(0, 5)).toBe(1)
+    expect(trend(-0.5, 40)).toBe(1)
   })
 
-  it('is 0 when the hour is flat or down', () => {
-    expect(trend(0)).toBe(0)
-    expect(trend(-0.01)).toBe(0)
-    expect(trend(-60)).toBe(0)
+  it('admits a token up in the HOUR even when the day is down', () => {
+    // A bottom turning: the day is a record of what already happened and the
+    // hour is what is happening.
+    expect(trend(3, -20)).toBe(1)
   })
 
-  it('ignores the longer windows completely — they decided nothing and hid five corpses', () => {
-    // Same hour, opposite days. The six- and twenty-four-hour windows used to
-    // carry 0.40 between them, which could never rescue a falling hour and
-    // could only ever pad one that was already rising.
-    expect(trend(2, -99, -99)).toBe(trend(2, 99, 99))
-    expect(trend(-2, 99, 99)).toBe(0)
+  it('refuses one that rose in neither', () => {
+    expect(trend(0, 0)).toBe(0)
+    expect(trend(-5, -30)).toBe(0)
+    expect(trend(0.5, 0.5)).toBe(0)
   })
 
-  it('does NOT read an unreported hour as positive', () => {
-    // The one place this file departs from "silence is not evidence", and the
-    // operator's rule is what departs: nobody said it is up, so it is not up.
-    // Measured, it is 29 of 305 tokens — and the ones that surfaced were down
-    // 95-99% over the windows that DID report.
-    expect(trend(null)).toBe(0)
+  it('asks for a full percent in whichever window it uses', () => {
+    // Drift is not a rise. 0.9% either way is inside the noise these pools
+    // make standing still.
+    expect(trend(0.9, 0.9)).toBe(0)
+    expect(trend(1, 0)).toBe(1)
+    expect(trend(0, 1)).toBe(1)
+  })
+
+  it('does NOT read silence as a rise, in either window', () => {
+    // Nobody said it went up, so it did not. Unchanged from the hour-only
+    // rule, and the one place this file departs from "silence is not
+    // evidence" — the operator's rule is what departs.
+    expect(trend(null, null)).toBe(0)
+    expect(trend(null, 5)).toBe(1)
+    expect(trend(5, null)).toBe(1)
   })
 })

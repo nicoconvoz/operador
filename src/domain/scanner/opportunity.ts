@@ -68,6 +68,13 @@ export interface OpportunityPolicy {
    * snapshot of one instant and re-rolls every scan, but "is it not falling
    * out from under us", which is what a door is for.
    */
+  /**
+   * The rise, in percent, that counts as a rise at all.
+   *
+   * Asked of the DAY and of the HOUR, and either answering yes is enough.
+   * Below it the move is drift — these pools make that much standing still.
+   */
+  readonly minRisePct: number
   readonly headroomMaxFallPct: number
   /**
    * Round-trip cost, in percent, at which cost efficiency scores zero.
@@ -195,6 +202,7 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // across 72 live Solana pools over $50k of liquidity, the median riser moves
   // +1.45% in an hour and 36% are flat or falling — so one percent ignores the
   // drift without refusing the ordinary climbing token.
+  minRisePct: 1,
   headroomMaxFallPct: 3,
   worstRoundTripPct: 4,
 }
@@ -298,7 +306,31 @@ export function scoreOpportunity(
   // because an unreported hour is not a POSITIVE one — the single place this
   // file departs from "silence is not evidence", and the operator's rule is
   // what departs. Measured: 29 of 305 live tokens.
-  const momentum = priceChangePct.h1 !== null && priceChangePct.h1 !== undefined && priceChangePct.h1 > 0 ? 1 : 0
+  //
+  // UP IN THE DAY OR UP IN THE HOUR, by at least a full percent in whichever
+  // one it uses. The operator chose it from six measured readings of his own
+  // phrase, over 174 tokens the machine could actually operate:
+  //
+  //   the hour > 0 (what this replaces)   64 = 37%
+  //   the hour >= 1%                      34 = 20%
+  //   the day >= 1%                      120 = 69%
+  //   the day >= 1% AND the hour > 0      42 = 24%
+  //   the day >= 1% AND the hour >= 1%    20 = 11%
+  //   the day >= 1% OR the hour >= 1%    134 = 77%   <- this one
+  //
+  // Every reading with AND closes harder than the rule it replaces. Only the
+  // OR opens, and it opens to more than double.
+  //
+  // A full percent because drift is not a rise: 0.9% either way is inside the
+  // noise these pools make standing still.
+  //
+  // And it finally makes the two floors say different things. This asks
+  // whether the token rose ANYWHERE; `headroom` asks whether it is not
+  // collapsing RIGHT NOW. A token up 5% on the day and down 10% in the hour
+  // passes the first and fails the second — the case neither could express
+  // while both read the same window.
+  const rose = (pct: number | null | undefined) => pct !== null && pct !== undefined && pct >= policy.minRisePct
+  const momentum = rose(priceChangePct.h24) || rose(priceChangePct.h1) ? 1 : 0
 
   // HOW MUCH ROOM IS LEFT above it.
   //
