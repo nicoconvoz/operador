@@ -245,3 +245,66 @@ describe('planPortfolio — the concentration cap is a share of the BOOK, not of
     expect(plan.allocations[0]!.capitalUsd).toBeCloseTo(30, 2)
   })
 })
+
+describe('the capital is split among whoever qualified, and the size follows', () => {
+  // The operator's momentum strategy: *la cosa es repartir el dinero en cientos
+  // de órdenes pequeñas de como 15 dólares o 30, dependiendo en cuántos se
+  // repartan los 5000.*
+  //
+  // The mechanism already existed — it was built for the component floors, and
+  // the arithmetic is the same: hand each survivor an even share rather than a
+  // fixed amount, or capital sits idle whenever the shortlist is short.
+  //
+  // What makes it SAFE at any resulting size is the stop being a percentage
+  // rather than a dollar. Measured live, the momentum rule yields ~38
+  // candidates from a 239-token liquid universe, so $5,000 lands at about $131
+  // a slot today — and a fixed $1 stop there would be -0.7%, which is noise. A
+  // stop of one twentieth of the run is the same risk posture at $15 or $131,
+  // which is what lets the size float.
+
+  const many = (n: number) => Array.from({ length: n }, (_, i) => candidate(String(i).padStart(3, '0'), 100 - i))
+
+  const split = (candidates: AllocationCandidate[], totalCapitalUsd: number) =>
+    planPortfolio(candidates, DEFAULT_PARAMS, {
+      ...P,
+      totalCapitalUsd,
+      maxPositions: 0,
+      minPositionUsd: 15,
+      // No reserve here, so the arithmetic is readable. Production keeps its 5%
+      // and divides what is actually DEPLOYABLE — `free / eligible.length` —
+      // which is the same rule against a smaller number.
+      reservePct: 0,
+      targetPositionUsd: totalCapitalUsd / candidates.length,
+    })
+
+  it('gives every candidate an even share of the money', () => {
+    const plan = split(many(38), 5_000)
+    expect(plan.allocations).toHaveLength(38)
+    for (const a of plan.allocations) expect(a.capitalUsd).toBeCloseTo(5_000 / 38, 6)
+  })
+
+  it('makes the positions SMALLER as more tokens qualify, which is the point', () => {
+    // Same money, three times the shortlist, a third of the size each. The
+    // operator's *diversifico más*, expressed as arithmetic rather than as a
+    // number to tune.
+    const few = split(many(38), 5_000).allocations[0]!.capitalUsd
+    const lots = split(many(114), 5_000).allocations[0]!.capitalUsd
+    expect(lots).toBeCloseTo(few / 3, 6)
+  })
+
+  it('leaves almost nothing idle', () => {
+    // The failure this replaces: a fixed slot size hands back everything the
+    // shortlist could not absorb. Measured once at $1,120 idle out of $1,500.
+    const plan = split(many(38), 5_000)
+    expect(plan.idleUsd).toBeLessThan(1)
+  })
+
+  it('stops splitting at the floor rather than opening slots too small to trade', () => {
+    // Below the gas floor a position cannot pay for its own swaps, so the book
+    // gets narrower instead of thinner. Four hundred candidates and $5,000 want
+    // $12.50 each; the floor of $15 caps it at 333 positions.
+    const plan = split(many(400), 5_000)
+    expect(plan.allocations).toHaveLength(333)
+    for (const a of plan.allocations) expect(a.capitalUsd).toBeGreaterThanOrEqual(15)
+  })
+})
