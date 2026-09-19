@@ -112,11 +112,24 @@ jobs:
           # position — under a minute for five — so this is what decides how
           # quickly a closed 15m bar gets acted on.
           OPERADOR_CYCLE_MS: ${{ vars.OPERADOR_CYCLE_MS || '300000' }}
-          # Scan only when there is no scan from the last hour. Everything else
-          # is a watch pass over the positions that already have money in them.
-          # A token you HOLD can rug in ten minutes; an opportunity missed by an
-          # hour is only missed.
-          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '3600000' }}
+          # FIFTEEN MINUTES, and it follows from the entry rule rather than from
+          # taste. The momentum door reads a FIVE MINUTE window; an hourly scan
+          # hands the allocator a shortlist whose freshest fact is fifty minutes
+          # old, which is the same as not reading that window at all.
+          #
+          # The old hour was argued against a different strategy — *an
+          # opportunity missed by an hour is only missed* — and that is still
+          # true of a token you might buy tomorrow. It is false of one selected
+          # BECAUSE it is moving right now.
+          #
+          # Affordable because a steady-state scan is the paid stage alone,
+          # about four minutes: discovery is cached six hours and an examination
+          # stands for two, so a scan fifteen minutes after the last one finds
+          # almost everything already answered.
+          #
+          # What it costs, stated: the scan runs AFTER the tick, so every third
+          # cycle now waits for it instead of every twelfth.
+          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '900000' }}
           # The URGENT half of a scan on its own clock: re-examine the book,
           # discover nothing. A token holding money can rug in ten minutes; one
           # that does not is only a missed opportunity, and the two were sharing
