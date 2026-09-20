@@ -1,89 +1,77 @@
 import { type WindowedChangePct } from './snapshot.js'
 
 /**
- * The momentum entry: green all the way down, from six hours to five minutes.
+ * The rule: is it moving up RIGHT NOW.
  *
- * The operator's rule, in his words: *mirá las últimas 4 horas, que no haya
- * bajado de 0% y que se haya incrementado en el total del tiempo hasta los 5m.*
+ * The operator's words: *no mira el día, mira los últimos 15 minutos: si
+ * aumentó 1% para arriba queda, si no no.*
  *
- * Four hours is not a window any provider reports — they give m5, h1, h6 and
- * h24 — so the rule reads the two that bracket it, exactly as the freefall gate
- * does. Reading the windows that exist beats inventing the one you want.
+ * ## Five minutes, and why that is not a substitution
  *
- * ## Why every window and not just the freshest
+ * There is no fifteen-minute window in the market feed. DexScreener reports
+ * m5, h1, h6 and h24, so his window sits between two of them, and the only
+ * exact source is the CANDLES — one throttled request per token, and up to
+ * fifteen minutes stale by the time it is read, because the bar still being
+ * built is discarded.
  *
- * Each one answers a different question, and the conjunction is the whole idea:
+ * `m5` is free, batched thirty at a time, current to the minute, and STRICTER
+ * rather than looser: a token that moves 1% inside five minutes is moving
+ * harder than one that takes fifteen to do it. For an entry that exists to
+ * catch a move already under way, fresher is the whole point. Shown both, the
+ * operator chose it.
  *
- * - `h6`  — has this been going UP for hours, or is it a dead cat bouncing?
- * - `h1`  — is the climb still on, or did it top out forty minutes ago?
- * - `m5`  — is it moving RIGHT NOW, which is the only thing an entry can act on.
+ * ## One window, and the day is gone on purpose
  *
- * Measured live on 239 liquid Solana tokens: 119 were green over six hours, 85
- * over the hour, 100 over five minutes — and only **37** were green on all
- * three. The conjunction is doing real work; any single window admits three
- * times as many.
+ * The rule before this read the DAY (up more than 5%) and the HOUR (still
+ * positive). Both are gone, and the trade is explicit: a token that ran 40%
+ * yesterday morning and has sat still since passes a daily test while not
+ * moving at all, and one that started moving four minutes ago fails it and is
+ * exactly what this exists for.
  *
- * ## Silence is not a rise
+ * What the day bought was protection against noise — 1% over five minutes on a
+ * dead pool can be a single trade. That job now belongs entirely to the
+ * LIQUIDITY floor, which is $100,000. A pool that deep does not move one
+ * percent on one trade.
  *
- * An unreported window FAILS, and this is the one place in the scanner where
- * that is the right answer rather than the safe one. Everywhere else a missing
- * measurement leaves a gate silent, because the gate is looking for DANGER and
- * absence of evidence is not evidence of danger.
+ * ## Silence fails, and this is the one place where that is right
  *
- * Here the question is inverted. This is not asking *is there a reason to
- * refuse?* — it is asking *is there a reason to BUY?*, and there is no such
- * thing as an unmeasured reason to buy. A token whose five-minute window nobody
- * reported has not shown us a rise; it has shown us nothing.
- *
- * Measured: 36 of 239 carried no `m5` at all, most of them from pools priced
- * through GeckoTerminal, which does not report the window. Admitting those
- * would have meant buying on a provider's silence.
- *
- * ## What it deliberately does NOT ask
- *
- * How big the rise was. The operator's earlier instinct, and it has already
- * been argued once for `momentum`: there is no percentage at which a rise
- * becomes "a rise", so a threshold there is a guess wearing the clothes of a
- * measurement. Zero is not a guess — it is the line between up and down.
- *
- * It also does not ask how far the token has ALREADY run, and that is a real
- * cost stated rather than hidden. Measured in the same sweep, the strongest
- * candidate was up **1248% in five minutes**; this rule buys the top of a
- * vertical as happily as the start of a climb. What is supposed to answer that
- * is the exit, not the door.
+ * Everywhere else in this scanner a missing measurement leaves a gate silent,
+ * because the gate looks for DANGER and absence of evidence is not evidence of
+ * danger. Here the question is inverted — not *is there a reason to refuse*
+ * but *is there a reason to BUY* — and there is no such thing as an unmeasured
+ * reason to buy. Measured live, 36 of 239 liquid tokens carried no `m5` at
+ * all, mostly priced through GeckoTerminal, which does not report it.
+ * Admitting those would be buying on a provider's silence.
  */
 export function risingAcrossWindows(
   change: WindowedChangePct,
   policy: MomentumPolicy = DEFAULT_MOMENTUM_POLICY,
 ): boolean {
-  return up(change.h24, policy.minDayRisePct) && up(change.h1, 0)
+  const recent = change.m5
+  return recent !== null && recent !== undefined && recent >= policy.minRisePct
 }
 
 export interface MomentumPolicy {
   /**
-   * How far the token must be up over the DAY. The operator's number, and the
-   * only threshold in the rule.
+   * How far the token must be up over the freshest window, in percent.
+   *
+   * The operator's number, and the only threshold in the rule. At or above,
+   * not strictly above: *si aumentó 1% para arriba queda*.
    */
-  readonly minDayRisePct: number
+  readonly minRisePct: number
 }
 
-export const DEFAULT_MOMENTUM_POLICY: MomentumPolicy = { minDayRisePct: 5 }
-
-/** Measured, and above the line. An unreported window is neither. */
-const up = (pct: number | null | undefined, over: number): boolean =>
-  pct !== null && pct !== undefined && pct > over
+export const DEFAULT_MOMENTUM_POLICY: MomentumPolicy = { minRisePct: 1 }
 
 /**
- * Which of the three windows is missing, for the reader rather than the engine.
+ * Which window the rule reads was not reported, for the reader rather than the
+ * engine.
  *
- * A token refused because nobody reported its five minutes and one refused
- * because it fell are the same verdict and completely different facts, and the
- * screen has to be able to tell them apart — this project has paid for that
- * confusion more than once.
+ * A token refused because it FELL and one refused because a provider was quiet
+ * are the same verdict and completely different facts, and the screen has to be
+ * able to tell them apart — this project has paid for that confusion more than
+ * once.
  */
 export function unreportedWindows(change: WindowedChangePct): readonly string[] {
-  const missing: string[] = []
-  if (change.h24 === null || change.h24 === undefined) missing.push('h24')
-  if (change.h1 === null || change.h1 === undefined) missing.push('h1')
-  return missing
+  return change.m5 === null || change.m5 === undefined ? ['m5'] : []
 }

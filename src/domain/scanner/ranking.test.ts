@@ -363,7 +363,7 @@ describe('ranking — an unbounded book gets an unbounded shortlist', () => {
   })
 })
 
-describe('the momentum door — green all the way down, or the switch is off', () => {
+describe('the momentum door — moving up right now, or the switch is off', () => {
   // The operator's strategy change: *sacá todos los filtros mientras haya
   // liquidez; vamos a operar con la única condición de que en los últimos 15
   // minutos haya subido más del 1%... mirá las últimas 4 horas, que no haya
@@ -380,7 +380,8 @@ describe('the momentum door — green all the way down, or the switch is off', (
   // profit when the climb ends, the stop takes the loss when it reverses.
 
   // The operator rule: up more than 5% on the DAY, hour still positive.
-  const rising = { m5: 1, h1: 2, h6: 3, h24: 10 }
+  // Up 1% or more in the last five minutes, and nothing else matters.
+  const rising = { m5: 2, h1: 2, h6: 3, h24: 10 }
   const rank = (universe: TokenSnapshot[], requireRising: boolean) =>
     rankUniverse(universe, new Map(), quality, { ...policy, requireRising })
 
@@ -389,16 +390,16 @@ describe('the momentum door — green all the way down, or the switch is off', (
     expect(candidates).toHaveLength(1)
   })
 
-  it('switches OFF one that is falling in any window', () => {
-    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, h24: 1 } })], true)
+  it('switches OFF one that is not moving NOW', () => {
+    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, m5: 0.5 } })], true)
     expect(candidates).toEqual([])
     expect(switchedOff).toHaveLength(1)
     expect(switchedOff[0]!.failed).toContain('rising')
   })
 
-  it('switches OFF one whose DAY nobody reported', () => {
+  it('switches OFF one whose five minutes nobody reported', () => {
     // There is no such thing as an unmeasured reason to BUY.
-    const { switchedOff } = rank([token('A', { priceChangePct: { m5: 1, h1: 2, h6: 3, h24: null } })], true)
+    const { switchedOff } = rank([token('A', { priceChangePct: { m5: null, h1: 2, h6: 3, h24: 10 } })], true)
     expect(switchedOff[0]!.failed).toContain('rising')
   })
 
@@ -409,7 +410,7 @@ describe('the momentum door — green all the way down, or the switch is off', (
     // The reserve is merged into `candidates` on the way out, so proving it
     // never entered means proving the token is absent from there AND present in
     // `switchedOff` — which is where a refusal belongs rather than nowhere.
-    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, h1: -1 } })], true)
+    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, m5: -1 } })], true)
     expect(candidates).toEqual([])
     expect(switchedOff).toHaveLength(1)
   })
