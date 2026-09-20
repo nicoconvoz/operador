@@ -125,6 +125,23 @@ export function stepCascade(
     s.awaitReentry = false
   }
 
+  // ── Door 3: momentum — the scanner already decided, so just buy
+  //
+  // FIRST, and deliberately. Doors 1 and 2 both ask an indicator question, and
+  // on a token chosen for RISING the classic one answers no by construction:
+  // it refuses a bar making a new twenty-bar high, which is what a token up 5%
+  // on the day usually is. Putting this after them would mean the same
+  // condition decided the entry, just later.
+  //
+  // It asks nothing except that we are flat and the price is real. Everything
+  // that decides WHETHER to be in this token happened in the scanner — the day
+  // rose, the hour is still green, the pool is deep and cheap — and re-asking
+  // it here in the language of indicators is how the engine ended up choosing
+  // sixteen candidates and buying five.
+  if (params.useMomentumEntry && s.level === 0 && bar.close > 0 && !boughtThisBar) {
+    openPosition('🟢 Entry')
+  }
+
   // ── Door 1: classic entry — drop from swing high inside a lateral zone
   if (
     s.level === 0 &&

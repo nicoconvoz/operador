@@ -45,6 +45,27 @@ export interface CascadeParams {
 
   // 🚀 Trend Re-Entry
   readonly useTrendReentry: boolean
+  /**
+   * Buy as soon as the position is flat, with no indicator condition at all.
+   *
+   * The operator's momentum strategy needs it, and the reason is a
+   * contradiction rather than a preference. The scanner now selects tokens that
+   * are RISING — up more than 5% on the day and still positive in the hour —
+   * while door 1 requires `close <= swingHigh(20)`, which refuses a bar making
+   * a new twenty-bar high. A token that ran 5% today is usually making one.
+   *
+   * So the scanner was choosing exactly what the executor refuses, and the
+   * measured result was FIVE positions opened out of sixteen candidates.
+   *
+   * It carries no indicator, and that is what makes the `age` and `history`
+   * gates unnecessary for these tokens: there is nothing to warm up. The
+   * selection happened in the scanner; this door only executes it.
+   *
+   * OFF in `DEFAULT_PARAMS`, which is the reference exactly. The parity harness
+   * asserts those params are the backtest's own inputs, so this is composed in
+   * production beside the ladder cap and the entry drop.
+   */
+  readonly useMomentumEntry: boolean
   readonly trendAdxMin: number
   readonly trendEmaLength: number
   readonly trendSlopeBars: number
@@ -125,6 +146,7 @@ export const DEFAULT_PARAMS: CascadeParams = {
   breakevenArmPct: 1,
 
   useTrendReentry: true,
+  useMomentumEntry: false,
   trendAdxMin: 30,
   trendEmaLength: 200,
   trendSlopeBars: 1,

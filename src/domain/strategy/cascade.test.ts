@@ -393,3 +393,64 @@ describe('decayBarsFor — the more there is to lose, the less it waits', () => 
     }
   })
 })
+
+describe('door 3 — the scanner already decided, so just buy', () => {
+  // The operator's momentum strategy, and this door exists because of a
+  // CONTRADICTION rather than a preference.
+  //
+  // The scanner now selects tokens that are RISING: up more than 5% on the day
+  // and still positive in the hour. Door 1 requires `close <= swingHigh(20)`,
+  // which refuses a bar making a new twenty-bar high — and a token that ran 5%
+  // today usually is. So the scanner was choosing exactly what the executor
+  // refuses, and the measured result was FIVE positions opened out of sixteen
+  // candidates.
+  //
+  // It asks nothing but that we are flat and the price is real. Everything
+  // deciding WHETHER to be in this token happened in the scanner; re-asking it
+  // here in the language of indicators is what cost those eleven entries.
+
+  const momentum = { ...P, useMomentumEntry: true }
+
+  it('buys a token making a NEW HIGH, which door 1 refuses', () => {
+    // The exact case. The bar closes above the swing high, so the classic door
+    // says no; the momentum door does not ask.
+    
+    const out = stepCascade(initialState(), momentum, bar(119, 121, 118, 120), ctx({ swingHigh: 100 }), FLAT)
+    expect(out.orders.map((o) => o.comment)).toContain('🟢 Entry')
+  })
+
+  it('and door 1 alone would have refused exactly that bar', () => {
+    
+    const out = stepCascade(initialState(), P, bar(119, 121, 118, 120), ctx({ swingHigh: 100 }), FLAT)
+    expect(out.orders).toEqual([])
+  })
+
+  it('needs no indicators at all — a brand new pool can be bought', () => {
+    // Which is what makes the `age` and `history` gates unnecessary for these
+    // tokens: there is nothing to warm up. A swing high of null and no trend is
+    // the shape of a pool born this morning.
+    
+    const out = stepCascade(initialState(), momentum, bar(1, 1, 1, 1), ctx({ swingHigh: null, isLateral: false }), FLAT)
+    expect(out.orders.map((o) => o.comment)).toContain('🟢 Entry')
+  })
+
+  it('still only buys when FLAT', () => {
+    // One position per token. The door opens at level 0 and nowhere else.
+    const held = { ...initialState(), level: 1, ep1: 100, totalInvested: 15 }
+    
+    const out = stepCascade(held, momentum, bar(119, 121, 118, 120), ctx({ swingHigh: 100 }), FLAT)
+    expect(out.orders.filter((o) => o.comment === '🟢 Entry')).toEqual([])
+  })
+
+  it('refuses a price of zero, which is not a price', () => {
+    
+    const out = stepCascade(initialState(), momentum, bar(0, 0, 0, 0), ctx({ swingHigh: 100 }), FLAT)
+    expect(out.orders).toEqual([])
+  })
+
+  it('is OFF in the reference params, so the parity harness is untouched', () => {
+    // The harness asserts DEFAULT_PARAMS are the backtest's own inputs. This is
+    // composed in production beside the ladder cap and the entry drop.
+    expect(DEFAULT_PARAMS.useMomentumEntry).toBe(false)
+  })
+})
