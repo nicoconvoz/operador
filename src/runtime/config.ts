@@ -2,6 +2,16 @@ import { type Chain } from '../domain/scanner/snapshot.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
+
+/**
+ * Dollars a single token gets, before the pool impact budget shrinks it.
+ *
+ * The operator number. With a wide shortlist an even split of the capital
+ * would hand each of two hundred names a rung too small to pay its own gas;
+ * a fixed size makes the BOOK grow with the shortlist instead of the
+ * positions shrinking with it.
+ */
+export const DEFAULT_USD_PER_TOKEN = 15
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -154,6 +164,32 @@ export interface RuntimeConfig {
    * the ranking to find out.
    */
   readonly requireRising: boolean
+  /**
+   * Whether the executor buys as soon as a slot is handed to it, with no
+   * indicator condition.
+   *
+   * SEPARATE from `requireRising`, and it had to be pulled apart. The two were
+   * one switch because the momentum rule needed door 3 — the scanner selects
+   * risers and the classic door refuses a bar making a new high, so without it
+   * sixteen candidates produced five positions.
+   *
+   * They are different questions. This one asks HOW the executor enters; the
+   * other asks WHICH tokens are worth entering. Leaving them tied meant that
+   * turning the selection rule off also closed the only door those tokens can
+   * come through — the engine would have chosen a wide shortlist and bought
+   * none of it.
+   */
+  readonly buyOnSelection: boolean
+  /**
+   * Fixed dollars per token, or absent to split the capital among whoever
+   * qualified.
+   *
+   * The operator's instruction: *comprá solo 15 usd por moneda.* With a wide
+   * shortlist that is the sane shape — an even split across two hundred names
+   * would hand each one a rung too small to pay its own gas, and the count is
+   * no longer bounded by how strict the rules are.
+   */
+  readonly usdPerToken: number | null
   /**
    * How far a position may fall below what was paid before it is closed, as a
    * share of the run the token had already made.
@@ -325,7 +361,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // Only an explicit "0" or "false" turns these off. A misspelt value must
     // not silently disable the strategy the engine is running, which is the
     // failure `OPERADOR_MAX_DCA=0` taught this codebase twice.
-    requireRising: (env.OPERADOR_REQUIRE_RISING ?? '').trim() !== '0' && (env.OPERADOR_REQUIRE_RISING ?? '').trim().toLowerCase() !== 'false',
+    // OFF now: *dejá pasar todas las monedas que tengan más de 100k de
+    // liquidez y menos del 50% topholders.* Liquidity and concentration are
+    // the whole rule, and the momentum window is not part of it any more.
+    requireRising: (env.OPERADOR_REQUIRE_RISING ?? '0').trim() === '1',
+    // ON, and independently. Without it the executor's classic door decides,
+    // and it refuses exactly what a wide shortlist is full of.
+    buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
+    usdPerToken: number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN),
     stopLoss: {
       // OFF by default, at the operator request: *anulá el SL, solo dejá la de
       // la muerte o el congelamiento.*

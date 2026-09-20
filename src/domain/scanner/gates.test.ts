@@ -89,11 +89,15 @@ describe('gates — the shapes of real rugs', () => {
   })
 
   it('whale-heavy: top holders own almost everything', () => {
-    // 70% used to be the fixture, and 70% now PASSES: the operator raised the
-    // ceiling to 80 after this gate turned out to be the single largest cut on
-    // a market where high concentration is ordinary. What is still a rug shape
-    // is a supply nearly all in a few hands.
-    expect(failedGates(clean({}, { topHoldersPct: 70 }))).toEqual([])
+    // The ceiling has moved twice. It went to 80 when this gate was the single
+    // largest cut and the shortlist was starving — *subilo al 80% nos vamos a
+    // arriesgar* — and back to FIFTY now that it is one of only two rules left
+    // standing. Each of the two has to carry more.
+    //
+    // Ten wallets holding half the supply can end a token in one transaction,
+    // and a deep pool is no protection against that: it is what gets drained.
+    expect(failedGates(clean({}, { topHoldersPct: 49 }))).toEqual([])
+    expect(failedGates(clean({}, { topHoldersPct: 70 }))).toEqual(['topHolders:failed'])
     expect(failedGates(clean({}, { topHoldersPct: 95 }))).toEqual(['topHolders:failed'])
   })
 
@@ -743,7 +747,7 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
   })
 })
 
-describe('gates — concentration at eighty, which is nearly open', () => {
+describe('gates — concentration at FIFTY, which is now half the rule', () => {
   // The operator, with the trade stated in his own words: *subilo al 80%, nos
   // vamos a arriesgar.*
   //
@@ -763,11 +767,11 @@ describe('gates — concentration at eighty, which is nearly open', () => {
   it('admits the concentration this market actually has', () => {
     expect(failedGates(clean({}, { topHoldersPct: 26 }))).toEqual([])
     expect(failedGates(clean({}, { topHoldersPct: 45 }))).toEqual([])
-    expect(failedGates(clean({}, { topHoldersPct: 79 }))).toEqual([])
+    expect(failedGates(clean({}, { topHoldersPct: 49.9 }))).toEqual([])
   })
 
   it('still refuses the extreme', () => {
-    expect(failedGates(clean({}, { topHoldersPct: 81 }))).toEqual(['topHolders:failed'])
+    expect(failedGates(clean({}, { topHoldersPct: 51 }))).toEqual(['topHolders:failed'])
     expect(failedGates(clean({}, { topHoldersPct: 99 }))).toEqual(['topHolders:failed'])
   })
 

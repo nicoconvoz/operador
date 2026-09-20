@@ -156,6 +156,14 @@ export interface CycleConfig {
    * strategy that never stops out is the reference behaviour, not an accident.
    */
   readonly stopLoss?: StopLossPolicy
+  /**
+   * Fixed dollars per token, or absent to split the capital among whoever
+   * qualified.
+   *
+   * Absent is the old behaviour exactly, so a caller that does not know about
+   * this is not silently given a different rule.
+   */
+  readonly usdPerToken?: number | null
 }
 
 /**
@@ -762,7 +770,18 @@ export async function runCycle(
           //
           // The rung follows, in `tickPosition`: capital alone changes nothing
           // while a flat cap holds the ladder to $15 a step.
-          targetPositionUsd: eligible.length > 0 ? free / eligible.length : ladderNeeds,
+          // A FIXED size when one is configured, and the even split otherwise.
+          //
+          // The split was right while the rules were strict: eight survivors
+          // handed a nominal ladder each would have left $1,120 idle. It is
+          // wrong now that the shortlist is wide — an even split across two
+          // hundred names gives each a rung too small to pay its own gas, and
+          // the count is no longer bounded by how strict the rules are.
+          //
+          // Fixed, the BOOK grows with the shortlist instead of the positions
+          // shrinking with it. The operator asked for it in one line: *comprá
+          // solo 15 usd por moneda.*
+          targetPositionUsd: config.usdPerToken ?? (eligible.length > 0 ? free / eligible.length : ladderNeeds),
           minPositionUsd: slotFloorUsd(
             config.params,
             config.maxOpenEntries ?? PYRAMIDING,

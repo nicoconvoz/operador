@@ -1440,3 +1440,56 @@ describe('runCycle — the stop, which is the one path where a PRICE sells', () 
     expect(sent?.level).toBe('critical')
   })
 })
+
+describe('runCycle — a fixed size per token, so the BOOK grows instead of the positions shrinking', () => {
+  // *Comprá solo 15 usd por moneda.*
+  //
+  // The even split was right while the rules were strict: eight survivors each
+  // handed what a nominal ladder costs would have left $1,120 idle, and
+  // dividing the capital among them was the fix.
+  //
+  // It is wrong now that the shortlist is wide. Liquidity and concentration are
+  // the whole rule, so the count is no longer bounded by how strict the rules
+  // are, and an even split across two hundred names gives each a rung too small
+  // to pay its own gas.
+
+  const fixed: CycleConfig = {
+    ...config,
+    usdPerToken: 15,
+    // ONE entry, as production runs. Without it the floor is computed for an
+    // eleven-rung ladder and comes out at $53.18 — above the $15 asked for,
+    // and the floor WINS. That is correct behaviour rather than a bug: a
+    // position that cannot pay its own gas should not open. It is also
+    // invisible, so it is written here.
+    maxOpenEntries: 1,
+    portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: 5_000, maxPositions: 0 },
+  }
+
+  const openWith = async (candidates: number, cfg: CycleConfig) => {
+    const { deps, store, throttle } = rig({
+      scan: async () => Array.from({ length: candidates }, (_, i) => candidate(`t${i}`, 90 - i)),
+    })
+    await runCycle(deps, cfg, throttle)
+    return (await store.loadPositions()).map((p) => p.capitalUsd)
+  }
+
+  it('gives every token the same fifteen, however many there are', async () => {
+    const few = await openWith(3, fixed)
+    const many = await openWith(40, fixed)
+    expect(few.every((c) => c === 15)).toBe(true)
+    expect(many.every((c) => c === 15)).toBe(true)
+  })
+
+  it('opens MORE positions rather than bigger ones when capital allows', async () => {
+    const few = await openWith(3, fixed)
+    const many = await openWith(40, fixed)
+    expect(many.length).toBeGreaterThan(few.length)
+  })
+
+  it('still splits the capital evenly when no size is configured', async () => {
+    // Absent is the old behaviour exactly, so a caller that does not know about
+    // this is not silently given a different rule.
+    const split = await openWith(4, { ...fixed, usdPerToken: null })
+    expect(split.every((c) => c === 15)).toBe(false)
+  })
+})

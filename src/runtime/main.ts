@@ -742,7 +742,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // It is what the scanner change requires rather than an extra: the
         // shortlist is now chosen for RISING, and door 1 refuses a bar making a
         // new twenty-bar high. Sixteen candidates produced five positions.
-        useMomentumEntry: config.requireRising,
+        useMomentumEntry: config.buyOnSelection,
         maxUsdPerLevel: config.maxUsdPerLevel,
         dropInitPct: config.dropInitPct,
         impatientProfitPct: config.impatientProfitPct,
@@ -772,6 +772,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // only path in this engine where a PRICE sells, so a caller that says
       // nothing must get the reference behaviour.
       stopLoss: config.stopLoss,
+      usdPerToken: config.usdPerToken,
       idleSlots: {
         idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,
         minScoreEdge: config.minScoreEdge,

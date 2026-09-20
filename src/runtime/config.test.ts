@@ -167,29 +167,41 @@ describe('minScore — a door on the score, not another weight in it', () => {
   })
 })
 
-describe('the momentum strategy is ON, and turning it off has to be said', () => {
-  // It IS the strategy now, so the default is on. It stays a FLAG rather than a
-  // deletion: the reference behaviour is one value away, and the day this turns
-  // out worse than what it replaced, nobody has to rewrite the ranking to find
-  // out.
+describe('two rules stand, and the doors they need are separate switches', () => {
+  // *Dejá pasar todas las monedas que tengan más de 100k de liquidez y tengan
+  // menos del 50% topholders, y comprá solo 15 usd por moneda.*
 
-  it('requires the rising windows when nothing is set', () => {
-    expect(loadConfig(valid).requireRising).toBe(true)
+  it('does NOT require the momentum window any more', () => {
+    // Liquidity and concentration are the whole rule now. The window was the
+    // previous one and it is off unless asked for by name.
+    expect(loadConfig(valid).requireRising).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: '1' }).requireRising).toBe(true)
   })
 
-  it('takes only an explicit 0 or false as off', () => {
-    // A misspelt value must not silently disable the strategy the engine is
-    // running. `OPERADOR_MAX_DCA=0` taught this codebase that twice.
-    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: '0' }).requireRising).toBe(false)
-    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: 'false' }).requireRising).toBe(false)
-    expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: 'no' }).requireRising).toBe(true)
+  it('still BUYS on selection, and that is a separate switch', () => {
+    // The two were one, because the momentum rule needed door 3: the scanner
+    // selects risers and the classic door refuses a bar making a new high.
+    //
+    // They answer different questions — this one is HOW the executor enters,
+    // the other is WHICH tokens are worth entering. Tied together, turning the
+    // selection rule off would also close the only door those tokens can come
+    // through, and the engine would choose a wide shortlist and buy none of it.
+    expect(loadConfig(valid).buyOnSelection).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
+  })
+
+  it('gives every token the same fifteen dollars', () => {
+    // A fixed size makes the BOOK grow with the shortlist. An even split of the
+    // capital would do the opposite: two hundred names would each get a rung
+    // too small to pay its own gas.
+    expect(loadConfig(valid).usdPerToken).toBe(15)
+    expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
   })
 
   it('has NO stop unless one is asked for', () => {
-    // One twentieth of the run, floored at 5 and capped at 50.
-    // OFF, at his request: *anulá el SL, solo dejá la de la muerte o el
-    // congelamiento.* Those two are a different question — they leave because
-    // the ASSET stopped being an asset, never because the price fell.
+    // *Anulá el SL, solo dejá la de la muerte o el congelamiento.* Those two
+    // leave because the ASSET stopped being an asset, never because the price
+    // fell.
     expect(loadConfig(valid).stopLoss).toEqual({ shareOfRun: 0, minStopPct: 0, maxStopPct: 0 })
   })
 })

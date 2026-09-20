@@ -277,7 +277,18 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // What still does real work is the UNKNOWN branch, which is unchanged. GoPlus
   // returns an empty holders array for most Solana tokens, and an unmeasured
   // concentration is an unanswered question rather than a low one.
-  maxTopHoldersPct: 80,
+  // FIFTY, tightened from eighty at the operator's word: *menos del 50%
+  // topholders.*
+  //
+  // It went to eighty when the shortlist was starving and the gates were the
+  // suspect — *subilo al 80% nos vamos a arriesgar.* It comes back now because
+  // the shortlist is no longer the problem and this is one of only TWO rules
+  // left standing: with the momentum window gone, liquidity and concentration
+  // are the whole filter, so each has to carry more.
+  //
+  // Ten wallets holding half the supply can end a token in one transaction,
+  // and a deep pool does not protect against it — it is what gets drained.
+  maxTopHoldersPct: 50,
   maxCreatorPct: 10,
   // The CEILING, not the preference. $50M for months, which excluded every
   // established token outright — and measured on ten days of 15m candles, that
