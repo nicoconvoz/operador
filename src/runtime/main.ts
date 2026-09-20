@@ -598,7 +598,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 // and this is a new caller that bypasses it. Asking for exactly
                 // the threshold once produced 99 against a minimum of 100 and
                 // emptied the entire book.
-                gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, DEFAULT_GATE_POLICY.minHistoryBars * 3 + 1),
+                gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, POOL_CANDLES),
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),
@@ -785,6 +785,32 @@ export const schemaSql = (): string =>
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../infrastructure/persistence/schema.sql'), 'utf8')
 
 /** Entry point. Wired only when this file is executed directly. */
+/**
+ * How many candles the PAID stage downloads per examined pool.
+ *
+ * A FIXED number, and that is the whole point of it existing. It used to be
+ * `minHistoryBars * 3 + 1`, derived from the history gate — and the history
+ * gate went to ZERO when door 3 removed the need for indicators, so the
+ * request became one candle, the adapter discarded the bar still being built,
+ * and every examined pool came back with NONE.
+ *
+ * No bars is not silence: it is the strongest form of *this engine cannot
+ * watch this pool*, so `staleBars` refused the entire universe. One candidate
+ * survived a scan that had twenty.
+ *
+ * The comment on that call already warned about this exact shape — *asking for
+ * exactly the threshold once produced 99 against a minimum of 100 and emptied
+ * the entire book* — and the lesson generalises past the off-by-one: a
+ * DOWNLOAD SIZE must never be derived from a THRESHOLD, because a threshold is
+ * allowed to become zero and a download size is not.
+ *
+ * These candles serve `staleBars` and `priceMismatch`, which need the newest
+ * usable bar, and they report the history count for the screen. Sixty is
+ * fifteen hours at 15m: enough for the freshness answer to be solid and to
+ * saturate a count nobody gates on any more.
+ */
+const POOL_CANDLES = 60
+
 export async function main(ports: RuntimePorts): Promise<void> {
   const config = loadConfig()
   console.log('[boot]', JSON.stringify(describeConfig(config)))
