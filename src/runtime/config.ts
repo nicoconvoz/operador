@@ -1,7 +1,7 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
-import { DEFAULT_STOP_LOSS_POLICY, type StopLossPolicy } from '../domain/risk/stop-loss.js'
+import { NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -327,9 +327,25 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // failure `OPERADOR_MAX_DCA=0` taught this codebase twice.
     requireRising: (env.OPERADOR_REQUIRE_RISING ?? '').trim() !== '0' && (env.OPERADOR_REQUIRE_RISING ?? '').trim().toLowerCase() !== 'false',
     stopLoss: {
-      shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', DEFAULT_STOP_LOSS_POLICY.shareOfRun),
-      minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', DEFAULT_STOP_LOSS_POLICY.minStopPct),
-      maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', DEFAULT_STOP_LOSS_POLICY.maxStopPct),
+      // OFF by default, at the operator request: *anulá el SL, solo dejá la de
+      // la muerte o el congelamiento.*
+      //
+      // Those two remain, and they are a different question: they leave because
+      // the ASSET stopped being an asset, never because the price fell. With
+      // this off, no path in the engine sells on a price again — which is what
+      // the reference always said and what the stop was the single exception
+      // to.
+      //
+      // The cost, stated rather than discovered later: with one buy, no ladder
+      // and no stop, a position that goes under water has nothing that can act
+      // on it. It cannot average down, the strategy exit wants a profit, and
+      // the rotation switch refuses to sell below cost. It waits for the price
+      // to come back or for the death watch to condemn the token.
+      //
+      // `DEFAULT_STOP_LOSS_POLICY` is still there, tested, one variable away.
+      shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', NO_STOP_LOSS.shareOfRun),
+      minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', NO_STOP_LOSS.minStopPct),
+      maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', NO_STOP_LOSS.maxStopPct),
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,

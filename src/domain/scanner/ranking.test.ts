@@ -15,11 +15,13 @@ const token = (address: string, over: Partial<TokenSnapshot> = {}): TokenSnapsho
   pairAddress: `pair-${address}`,
   observedAt: NOW,
   priceUsd: 0.01,
-  // 4x turnover. The live median across 252 tokens is 3.5x; this fixture sat
-  // at 0.8x, which the turnover gate now reads as a pool standing still.
-  liquidityUsd: 30_000,
+  // 4x turnover, kept AFTER the liquidity floor rose to $100k: turnover is
+  // volume over depth, so deepening the pool without the volume would have
+  // turned this fixture into a token standing still and broken tests that are
+  // about something else entirely.
+  liquidityUsd: 300_000,
   fdvUsd: null,
-  volumeUsd: { h1: 5_000, h6: 30_000, h24: 120_000 },
+  volumeUsd: { h1: 50_000, h6: 300_000, h24: 1_200_000 },
   priceChangePct: { h1: 2, h6: -4, h24: 6 },
   txns: { h1: { buys: 40, sells: 30 }, h24: { buys: 900, sells: 850 } },
   pairCreatedAt: NOW - 10 * 24 * HOUR,
@@ -377,6 +379,7 @@ describe('the momentum door — green all the way down, or the switch is off', (
   // Together with the stop it makes a complete pair: the switch takes the
   // profit when the climb ends, the stop takes the loss when it reverses.
 
+  // The operator rule: up more than 5% on the DAY, hour still positive.
   const rising = { m5: 1, h1: 2, h6: 3, h24: 10 }
   const rank = (universe: TokenSnapshot[], requireRising: boolean) =>
     rankUniverse(universe, new Map(), quality, { ...policy, requireRising })
@@ -387,16 +390,15 @@ describe('the momentum door — green all the way down, or the switch is off', (
   })
 
   it('switches OFF one that is falling in any window', () => {
-    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, h1: -0.5 } })], true)
+    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, h24: 1 } })], true)
     expect(candidates).toEqual([])
     expect(switchedOff).toHaveLength(1)
     expect(switchedOff[0]!.failed).toContain('rising')
   })
 
-  it('switches OFF one whose five minutes nobody reported', () => {
-    // There is no such thing as an unmeasured reason to BUY. Measured live, 36
-    // of 239 liquid tokens carried no m5 at all.
-    const { switchedOff } = rank([token('A', { priceChangePct: { h1: 2, h6: 3, h24: 10 } })], true)
+  it('switches OFF one whose DAY nobody reported', () => {
+    // There is no such thing as an unmeasured reason to BUY.
+    const { switchedOff } = rank([token('A', { priceChangePct: { m5: 1, h1: 2, h6: 3, h24: null } })], true)
     expect(switchedOff[0]!.failed).toContain('rising')
   })
 
@@ -407,7 +409,7 @@ describe('the momentum door — green all the way down, or the switch is off', (
     // The reserve is merged into `candidates` on the way out, so proving it
     // never entered means proving the token is absent from there AND present in
     // `switchedOff` — which is where a refusal belongs rather than nowhere.
-    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, m5: -1 } })], true)
+    const { candidates, switchedOff } = rank([token('A', { priceChangePct: { ...rising, h1: -1 } })], true)
     expect(candidates).toEqual([])
     expect(switchedOff).toHaveLength(1)
   })

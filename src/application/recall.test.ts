@@ -104,14 +104,14 @@ describe('recallCandidates — a shelf priced NOW, for one batched request', () 
   // freshness — still stands until a real scan replaces it.
 
   it('ranks on the refreshed numbers, not the stored ones', async () => {
-    const store = await shelf([token('a', { liquidityUsd: 20_000 })])
+    const store = await shelf([token('a', { liquidityUsd: 200_000 })])
     const stale = await recallCandidates(store, options)
     const fresh = await recallCandidates(store, {
       ...options,
       liveMarkets: async () => new Map([['solana:a', { ...token('a'), liquidityUsd: 900_000, observedAt: NOW }]]),
     })
     expect(fresh!.candidates[0]!.snapshot.liquidityUsd).toBe(900_000)
-    expect(stale!.candidates[0]!.snapshot.liquidityUsd).toBe(20_000)
+    expect(stale!.candidates[0]!.snapshot.liquidityUsd).toBe(200_000)
   })
 
   it('keeps the shelf exactly as it was when the feed says nothing', async () => {

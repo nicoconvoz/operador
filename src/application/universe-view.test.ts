@@ -498,11 +498,11 @@ describe('universe — what we HOLD is priced now, not an hour ago', () => {
       await buildUniverse(store, {
         ...options,
         liveMarkets: async () =>
-          new Map([['solana:OURS', { ...stale, liquidityUsd: 60_000, priceChangePct: { h1: 9, h6: 14, h24: 22 } }]]),
+          new Map([['solana:OURS', { ...stale, liquidityUsd: 600_000, priceChangePct: { h1: 9, h6: 14, h24: 22 } }]]),
       })
     ).tokens[0]!
 
-    expect(after.liquidityUsd).toBe(60_000)
+    expect(after.liquidityUsd).toBe(600_000)
     expect(after.score).not.toBeCloseTo(before, 6)
   })
 
@@ -513,7 +513,7 @@ describe('universe — what we HOLD is priced now, not an hour ago', () => {
     const store = await withPosition([{ ...stale, securityChecked: true, historyBars: 1_000, lastTradeAgoHours: 0.2 }])
     const view = await buildUniverse(store, {
       ...options,
-      liveMarkets: async () => new Map([['solana:OURS', { ...stale, liquidityUsd: 60_000 }]]),
+      liveMarkets: async () => new Map([['solana:OURS', { ...stale, liquidityUsd: 600_000 }]]),
     })
     expect(view.tokens[0]!.tier).toBe('held')
     expect(view.tokens[0]!.blockers).toEqual([])
@@ -523,7 +523,7 @@ describe('universe — what we HOLD is priced now, not an hour ago', () => {
     const store = await seed([stale])
     const view = await buildUniverse(store, {
       ...options,
-      liveMarkets: async () => new Map([['solana:OURS', { ...stale, liquidityUsd: 60_000 }]]),
+      liveMarkets: async () => new Map([['solana:OURS', { ...stale, liquidityUsd: 600_000 }]]),
     })
     expect(view.tokens[0]!.liquidityUsd).toBe(200_000)
   })

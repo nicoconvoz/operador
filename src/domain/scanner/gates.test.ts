@@ -168,7 +168,11 @@ describe('gates — not a trade at all', () => {
 
 describe('gates — market thresholds', () => {
   it('thin liquidity', () => {
-    expect(failedGates(clean({ liquidityUsd: P.minLiquidityUsd - 1 }))).toEqual(['liquidity:failed'])
+    // Against STRICT, which is the policy `failedGates` reads. It used to say
+    // `P` — the production one — and the two agreed until production raised its
+    // floor to $100k, at which point the test was comparing one policy's
+    // threshold against another policy's gate.
+    expect(failedGates(clean({ liquidityUsd: STRICT_GATE_POLICY.minLiquidityUsd - 1 }))).toEqual(['liquidity:failed'])
   })
 
   it('too young: a 3-hour-old pair', () => {
@@ -571,46 +575,43 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
   })
 })
 
-describe('minHistoryBars — enough to ENTER, not enough for every door', () => {
-  it('asks for what the classic entry needs, not for what the second door needs', () => {
-    // Measured on a live universe: of 97 priced Solana tokens, 15 passed the
-    // free gates and AGE ALONE blocked another 16 — the single biggest cut, and
-    // it exists only to serve this number.
+describe('history is ZERO, because door 3 asks for no indicator', () => {
+  it('no longer demands bars the entry does not use', () => {
+    // `minHistoryBars` existed to guarantee the CLASSIC door's inputs: a 20-bar
+    // swing high inside a lateral zone, whose longest lookback is the Bollinger
+    // basis. It moved from 250 to 100 to 60 as that argument was refined, and
+    // it is now zero for a reason that retires the argument rather than
+    // refining it again.
     //
-    // 250 was calibrated for the whole indicator set, EMA-200 included. But the
-    // EMA feeds exactly one thing — `trendBullish`, which arms the TREND
-    // RE-ENTRY, the second door and one that only opens after a sell. Every new
-    // position comes through the CLASSIC door, and that needs the 20-bar swing
-    // high and the lateral zone, whose longest lookback is the 50-bar
-    // Bollinger basis.
-    //
-    // A young pool is therefore tradeable long before it can use both doors,
-    // and an unconverged EMA is null, so the second door simply does not open
-    // until the pool has matured. Safe by construction rather than by luck.
-    // ENOUGH for the basis to exist with room to spare, not twice it.
-    //
-    // Two times the Bollinger length was a margin rather than a requirement,
-    // and it was the second largest cut in the whole funnel: measured over 564
-    // live Solana tokens, `age` blocked 354 and was the SOLE cause for 40,
-    // because what these lists return is mostly pools born this morning.
-    //
-    // The basis needs `bbLength` bars to produce its first value and the swing
-    // high needs 20, so 60 leaves ten bars of converged Bollinger output to
-    // decide a lateral zone on. Thin, and the operator chose it knowing that:
-    // 25 hours of required pool age becomes 15.
-    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeGreaterThan(DEFAULT_PARAMS.bbLength)
-    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeGreaterThanOrEqual(DEFAULT_PARAMS.bbLength + 10)
-    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBeLessThan(DEFAULT_PARAMS.trendEmaLength)
+    // The momentum entry asks nothing. No swing high, no lateral zone, no EMA.
+    // Everything deciding WHETHER to be in this token happened in the scanner,
+    // so there is nothing to warm up and a pool born this morning is as
+    // tradeable as one with a thousand bars.
+    expect(DEFAULT_GATE_POLICY.minHistoryBars).toBe(0)
   })
 
-  it('and the age gate follows it down, because it only ever existed to serve it', () => {
-    // 100 bars of 15m is 25 hours, against 62.5 for 250. The gate stays at its
-    // own 24h floor, which answers a different question — a pool that has
-    // existed for at least a day.
-    // 15 hours, down from 25: the age gate exists only to serve the bar count,
-    // so lowering one lowers the other by construction. Measured, that is 40
-    // tokens a scan that were refused for nothing but being born this morning.
-    expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(15)
+  it('and the AGE gate survives, because it is not the same question', () => {
+    // *Anulá todos los filtros* did not reach this one, and the reason is the
+    // operator's own rule rather than an exception to it. He asks whether the
+    // token is up more than 5% over the DAY — and a pool that has not existed
+    // for a day has no such number. What the provider reports is the change
+    // since inception.
+    //
+    // That is exactly where the absurd readings come from. Measured in the
+    // sweep this rule was sized on: NTDA at 3,706,097%, WOTF at 1,569,644%,
+    // USDF at 1,443,687%. None of them a move; all of them a starting price
+    // near zero. USDF is the token that already cost this project money.
+    //
+    // You cannot read a 24-hour window on something younger than 24 hours.
+    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(24)
+    expect(failedGates(clean({ pairCreatedAt: NOW - 3 * HOUR }))).toEqual(['age:failed'])
+  })
+
+  it('and the derived floor no longer raises it, since no bars are required', () => {
+    // `minAgeForHistory` exists so a pool too young to HOLD the bars is refused
+    // by subtraction instead of by a thousand-row download. With no bars
+    // required there is nothing to subtract, and the standing 24h stands alone.
+    expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(0)
   })
 })
 

@@ -202,7 +202,32 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // being the SOLE cause for zero: it only ever fired alongside something else,
   // so it was never deciding anything — it was just making the universe look
   // smaller than the real constraints made it.
-  minLiquidityUsd: 3_000,
+  // ONE HUNDRED THOUSAND, and it is the largest single change in this policy.
+  //
+  // The operator asked for $300k and for more than thirty tokens operating, and
+  // measured on 558 discovered those two are in conflict:
+  //
+  //     >= $100,000    37 tokens
+  //     >= $200,000    27
+  //     >= $300,000    18
+  //
+  // He chose the thirty. It is still THIRTY-THREE TIMES the $3,000 this ran on,
+  // and at that depth a round trip costs about 0.7% — so his *costo bajo* rule
+  // is satisfied by the liquidity floor alone. Measured: of the 18 tokens above
+  // $300k, the cost filter cut ZERO.
+  minLiquidityUsd: 100_000,
+  // TWENTY-FOUR HOURS, and it survives *anulá todos los filtros* because it is
+  // not a filter on the token — it is what makes the operator own rule
+  // readable. The rule asks whether the token is up more than 5% over the DAY,
+  // and a pool that has not existed for a day has no such number: what the
+  // provider reports is the change since inception.
+  //
+  // That is where the absurd readings come from. Measured in the same sweep
+  // this rule was measured on: NTDA at 3,706,097%, WOTF at 1,569,644%, USDF at
+  // 1,443,687% — none of them moves, all of them a starting price near zero.
+  // USDF is the token that already cost this project money, at 14,426x.
+  //
+  // You cannot read a 24-hour window on something younger than 24 hours.
   minAgeHours: 24,
   minVolume24hUsd: 0,
   // The hour decides a collapse now, through the `headroom` floor at -3%. A
@@ -310,7 +335,18 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // `trendBullish`, which arms the TREND RE-ENTRY, and an unconverged EMA is
   // `na` so that door simply does not open until the pool has matured. Safe by
   // construction rather than by luck.
-  minHistoryBars: 60,
+  // ZERO, and it is door 3 that makes it possible rather than a relaxation of
+  // standards. `history` and `age` exist because CASCADE DCA needs EMA-200 and
+  // a 50-bar Bollinger basis; the momentum entry asks for no indicator at all,
+  // so there is nothing to warm up and a pool born this morning is as tradeable
+  // as one with a thousand bars.
+  //
+  // What still protects against a newborn pool is the SAFETY half, untouched:
+  // `priceMismatch` refuses a token whose market price and candle price
+  // disagree, which is exactly the shape of a reported daily change of
+  // 3,706,097% — a decimal in the wrong place, not a move. USDF cost this
+  // project real money that way.
+  minHistoryBars: 0,
   maxBarAgeHours: 1,
   maxPriceRatio: 5,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
@@ -338,6 +374,11 @@ export const STRICT_GATE_POLICY: GatePolicy = {
   maxDailyFallPct: 15,
   minTurnoverRatio: 1,
   maxFdvUsd: 500_000_000,
+  // Kept explicitly, because production set it to ZERO and this policy exists
+  // to keep the gate LOGIC tested after production stops using it. Spreading
+  // the default would have carried the zero here and quietly deleted the
+  // coverage along with the behaviour.
+  minHistoryBars: 60,
 }
 
 

@@ -52,12 +52,26 @@ import { type WindowedChangePct } from './snapshot.js'
  * vertical as happily as the start of a climb. What is supposed to answer that
  * is the exit, not the door.
  */
-export function risingAcrossWindows(change: WindowedChangePct): boolean {
-  return up(change.h6) && up(change.h1) && up(change.m5)
+export function risingAcrossWindows(
+  change: WindowedChangePct,
+  policy: MomentumPolicy = DEFAULT_MOMENTUM_POLICY,
+): boolean {
+  return up(change.h24, policy.minDayRisePct) && up(change.h1, 0)
 }
 
-/** Measured, and above zero. An unreported window is neither. */
-const up = (pct: number | null | undefined): boolean => pct !== null && pct !== undefined && pct > 0
+export interface MomentumPolicy {
+  /**
+   * How far the token must be up over the DAY. The operator's number, and the
+   * only threshold in the rule.
+   */
+  readonly minDayRisePct: number
+}
+
+export const DEFAULT_MOMENTUM_POLICY: MomentumPolicy = { minDayRisePct: 5 }
+
+/** Measured, and above the line. An unreported window is neither. */
+const up = (pct: number | null | undefined, over: number): boolean =>
+  pct !== null && pct !== undefined && pct > over
 
 /**
  * Which of the three windows is missing, for the reader rather than the engine.
@@ -69,8 +83,7 @@ const up = (pct: number | null | undefined): boolean => pct !== null && pct !== 
  */
 export function unreportedWindows(change: WindowedChangePct): readonly string[] {
   const missing: string[] = []
-  if (change.h6 === null || change.h6 === undefined) missing.push('h6')
+  if (change.h24 === null || change.h24 === undefined) missing.push('h24')
   if (change.h1 === null || change.h1 === undefined) missing.push('h1')
-  if (change.m5 === null || change.m5 === undefined) missing.push('m5')
   return missing
 }

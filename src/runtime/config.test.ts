@@ -185,8 +185,11 @@ describe('the momentum strategy is ON, and turning it off has to be said', () =>
     expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: 'no' }).requireRising).toBe(true)
   })
 
-  it('carries the stop the operator asked for', () => {
+  it('has NO stop unless one is asked for', () => {
     // One twentieth of the run, floored at 5 and capped at 50.
-    expect(loadConfig(valid).stopLoss).toEqual({ shareOfRun: 0.05, minStopPct: 5, maxStopPct: 50 })
+    // OFF, at his request: *anulá el SL, solo dejá la de la muerte o el
+    // congelamiento.* Those two are a different question — they leave because
+    // the ASSET stopped being an asset, never because the price fell.
+    expect(loadConfig(valid).stopLoss).toEqual({ shareOfRun: 0, minStopPct: 0, maxStopPct: 0 })
   })
 })

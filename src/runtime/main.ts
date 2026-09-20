@@ -735,6 +735,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // stopped being evidence.
       params: {
         ...DEFAULT_PARAMS,
+        // Door 3, composed HERE beside the ladder cap and the entry drop, never
+        // in DEFAULT_PARAMS — the parity harness asserts those are the
+        // backtest own inputs.
+        //
+        // It is what the scanner change requires rather than an extra: the
+        // shortlist is now chosen for RISING, and door 1 refuses a bar making a
+        // new twenty-bar high. Sixteen candidates produced five positions.
+        useMomentumEntry: config.requireRising,
         maxUsdPerLevel: config.maxUsdPerLevel,
         dropInitPct: config.dropInitPct,
         impatientProfitPct: config.impatientProfitPct,
