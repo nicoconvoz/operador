@@ -21,3 +21,8 @@ pass.txt
 *password*
 *credential*
 *.secret
+
+# Build artefact: incremental TypeScript state, regenerated on every build.
+# It was tracked, so it changed on every typecheck and blocked a stash pop
+# mid-diagnosis. Nothing reads it but tsc, and tsc rebuilds it.
+dashboard/tsconfig.tsbuildinfo

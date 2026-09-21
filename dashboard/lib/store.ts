@@ -79,6 +79,23 @@ let cached: {
 const CACHE_SCAN_MS = 120_000
 const CACHE_STATE_MS = 120_000
 
+/**
+ * When the fills behind the money figures were actually read.
+ *
+ * Null before the first read, and per INSTANCE — which is the whole reason it
+ * exists. `cacheFor` is a module cache and Vercel runs many instances, so two
+ * polls seconds apart land on different ones holding answers up to the TTL
+ * apart. Nothing inside this process can close that: a cache in memory is not
+ * shared by processes that do not share memory.
+ *
+ * So the figure says how old it is instead. The operator hit this twice and
+ * paid for it both times — once reading a cumulative profit as money
+ * vanishing, once as two totals that would not agree — and nothing was wrong
+ * either time. Stale and labelled beats absent, and beats stale and silent by
+ * a great deal more.
+ */
+export let lastFillsReadAt: () => number | null = () => null
+
 export function openStore(): PostgresStore {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set')
   pool ??= new Pool({ connectionString: process.env.DATABASE_URL, max: 2 })
@@ -106,6 +123,11 @@ export function openStore(): PostgresStore {
     checkpoint: cacheFor(() => store.loadCheckpoint(), CACHE_STATE_MS),
   }
   const memo = cached
+  // Exported so the view can say how old the money figures are. It is the
+  // FILLS that matter: everything on the screen with a dollar sign is built by
+  // walking them, and they are the only cached read whose staleness looks like
+  // money moving rather than like a list being short.
+  lastFillsReadAt = memo.fills.readAt
 
   return Object.assign(Object.create(Object.getPrototypeOf(store) as object), store, {
     latestScansByChain: memo.scans,

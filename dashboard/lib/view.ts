@@ -1,3 +1,4 @@
+import { lastFillsReadAt } from './store.js'
 import { buildDashboard } from '../../src/application/dashboard.js'
 import { buildUniverse } from '../../src/application/universe-view.js'
 import { buildOperations } from '../../src/application/operations-view.js'
@@ -87,7 +88,9 @@ export async function buildView(store: StatePort): Promise<ViewData> {
     }),
   ])
 
-  return { dashboard, universe, operations }
+  // How old the money is, read AFTER the builders so it reflects the value
+  // they actually walked rather than a refetch they triggered.
+  return { dashboard, universe, operations, moneyReadAt: lastFillsReadAt() }
 }
 
 /**

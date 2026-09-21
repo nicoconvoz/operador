@@ -24,15 +24,38 @@
  *    minute turns one bad moment into sixty seconds of a blank screen — the
  *    same rule the discovery and history caches already run on.
  */
+/**
+ * A cached read that can say WHEN its answer was taken.
+ *
+ * `readAt` is the instant the value came from the database, not the instant it
+ * was asked for. The difference is the whole point: a module cache is
+ * per-instance and Vercel runs many, so two polls seconds apart land on
+ * different instances holding answers up to the TTL apart.
+ *
+ * The operator hit it twice and paid for it both times — once reading a
+ * cumulative profit as money vanishing, once as two totals that would not
+ * agree. Nothing was wrong either time, and finding that out cost an
+ * afternoon. A figure that says how old it is turns the same flicker into a
+ * fact about the reading rather than a fact about the money.
+ *
+ * It is the rule this project already applies to the live price: stale and
+ * labelled beats absent, and beats stale and silent by more.
+ */
+export interface CachedRead<T> {
+  (): Promise<T>
+  /** When the current value was actually read, or null before the first read. */
+  readonly readAt: () => number | null
+}
+
 export function cacheFor<T>(
   read: () => Promise<T>,
   ttlMs: number,
   now: () => number = () => Date.now(),
-): () => Promise<T> {
+): CachedRead<T> {
   let pending: Promise<T> | null = null
   let value: { at: number; result: T } | null = null
 
-  return async () => {
+  const cached = async () => {
     if (value !== null && now() - value.at <= ttlMs) return value.result
     if (pending !== null) return pending
 
@@ -46,4 +69,9 @@ export function cacheFor<T>(
       })
     return pending
   }
+
+  // The age travels WITH the value rather than beside it. A caller that has
+  // the number can always ask when it was taken, and one that forgets to ask
+  // is no worse off than before.
+  return Object.assign(cached, { readAt: () => value?.at ?? null })
 }

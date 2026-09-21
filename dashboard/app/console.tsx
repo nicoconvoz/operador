@@ -25,6 +25,20 @@ export interface ConsoleData {
   readonly dashboard: DashboardView
   readonly universe: UniverseView
   readonly operations: OperationsView
+  /**
+   * When the fills behind every dollar figure were actually read, or null.
+   *
+   * It exists because the reading can be older than the request and the
+   * difference looks like money moving. `cacheFor` is a module cache and
+   * Vercel runs many instances, so a poll every ten seconds lands on different
+   * ones holding answers up to two minutes apart — and a cumulative profit
+   * that appears to drop is the most alarming shape a screen can take.
+   *
+   * Nothing in the process can close that gap; a cache in memory is not shared
+   * by processes that do not share memory. Saying the age turns the flicker
+   * from a fact about the MONEY into a fact about the READING.
+   */
+  readonly moneyReadAt?: number | null
 }
 
 // Ten seconds, not twenty. The profit figure follows the live market price
@@ -223,6 +237,14 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
           <span style={{ color: '#8b949e' }}>
             {operations.totals.buys} compra / {operations.totals.sells} venta
           </span>
+          {/* Shown only when the reading is OLD enough to explain a difference.
+              A timestamp on every frame would be noise; one that appears when
+              the number could disagree with itself is a diagnosis. */}
+          {data.moneyReadAt != null && Date.now() - data.moneyReadAt > 20_000 && (
+            <span style={{ color: '#8b949e' }} title="Las cifras salen de esta lectura. Si dos pantallas difieren, la más nueva es la buena.">
+              al {new Date(data.moneyReadAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
         </div>
       </section>
 
