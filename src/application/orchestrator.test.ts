@@ -101,8 +101,12 @@ describe('runCycle — order of operations is the safety property', () => {
     const { deps, store, throttle } = rig()
     await store.savePosition(position())
     const result = await runCycle(deps, config, throttle)
-    expect(result.ticks).toHaveLength(1)
-    expect(result.ticks[0]!.position.lastBarTime).toBe(flat().time.at(-1))
+    // By ID rather than by COUNT. A position opened this same cycle is ticked
+    // in it now — the first buy no longer waits for the next pass — so a bare
+    // length asserts something the test was never about.
+    const held = result.ticks.find((t) => t.position.id === 'pos-1')
+    expect(held).toBeDefined()
+    expect(held!.position.lastBarTime).toBe(flat().time.at(-1))
   })
 })
 
@@ -114,7 +118,10 @@ describe('runCycle — a halted position is contained, not ignored', () => {
     await store.savePosition(position({ pendingOrders: [pending] }))
     const result = await runCycle(deps, config, throttle)
     expect(result.haltedIds).toEqual(['pos-1'])
-    expect(result.ticks).toEqual([])
+    // By ID, not by count. Positions opened THIS cycle are ticked in it now,
+    // so an empty list asserts something this test was never about — what it
+    // means is that the HALTED one was left alone.
+    expect(result.ticks.map((t) => t.position.id)).not.toContain('pos-1')
     expect(alerts.sent.some((a) => a.kind === 'position-halted' && a.level === 'critical')).toBe(true)
   })
 
@@ -151,7 +158,7 @@ describe('runCycle — the kill switch', () => {
     expect(result.killSwitchEngaged).toBe(true)
     expect(result.opened).toEqual([])
     // Stopping new risk is not abandoning open risk.
-    expect(result.ticks).toHaveLength(1)
+    expect(result.ticks.map((t) => t.position.id)).toContain('pos-1')
     expect(alerts.sent.some((a) => a.kind === 'kill-switch' && a.level === 'critical')).toBe(true)
   })
 
@@ -294,9 +301,13 @@ describe('runCycle — the chosen token is re-examined before money moves', () =
 
 describe('runCycle — a new position is born knowing its price', () => {
   it('records the price the scanner measured, not a placeholder', async () => {
+    // Read from what the cycle REPORTS opening rather than from the store.
+    // The position is ticked in this same pass now, and the tick rightly
+    // replaces this with the bar close — which in the flat fixture is also 1,
+    // so reading it afterwards tests the fixture instead of the code.
     const { deps, throttle } = rig()
-    await runCycle(deps, config, throttle)
-    const [opened] = await deps.store.loadPositions()
+    const cycle = await runCycle(deps, config, throttle)
+    const [opened] = cycle.opened
 
     // It used to be 1. The death watch sizes its sell probe from this number,
     // so a placeholder asked "if I sell 285 units do I get $285 back?" of a
@@ -491,7 +502,9 @@ describe('runCycle — a watch pass looks after what is open, and nothing else',
     const result = await runCycle(deps, config, throttle, 'watch')
 
     expect(scans).toBe(0)
-    expect(result.ticks).toHaveLength(1)
+    // By ID rather than by count: a watch pass opens nothing, so the book is
+    // all there is to tick.
+    expect(result.ticks.map((t) => t.position.id)).toContain('pos-1')
     expect(result.opened).toEqual([])
   })
 
@@ -895,7 +908,7 @@ describe('runCycle — a position it could not refresh', () => {
     const result = await runCycle(deps, config, throttle)
 
     expect(result.unreachableIds).toHaveLength(1)
-    expect(result.ticks).toHaveLength(1)
+    expect(result.ticks.map((t) => t.position.id)).toContain('b')
   })
 })
 
@@ -919,7 +932,13 @@ describe('runCycle — it only fetches what a new bar would change', () => {
 
   it('skips the request for a position already on the latest closed bar', async () => {
     let asked = 0
-    const { deps, store, throttle } = rig({ candlesFor: async () => { asked++; return flat() } })
+    // Nothing on the shelf, so nothing is opened: a position born this cycle
+    // fetches its own candles to make its first buy, which would be counted
+    // here and has nothing to do with the economy being measured.
+    const { deps, store, throttle } = rig({
+      candlesFor: async () => { asked++; return flat() },
+      scan: async () => [],
+    })
     await store.savePosition(position({ lastBarTime: latestClosed }))
 
     await runCycle(deps, paced, throttle)
@@ -929,7 +948,10 @@ describe('runCycle — it only fetches what a new bar would change', () => {
 
   it('still asks once a bar has closed under it', async () => {
     let asked = 0
-    const { deps, store, throttle } = rig({ candlesFor: async () => { asked++; return flat() } })
+    const { deps, store, throttle } = rig({
+      candlesFor: async () => { asked++; return flat() },
+      scan: async () => [],
+    })
     await store.savePosition(position({ lastBarTime: latestClosed - FIFTEEN }))
 
     await runCycle(deps, paced, throttle)
@@ -950,7 +972,13 @@ describe('runCycle — it only fetches what a new bar would change', () => {
 
   it('asks for everything when no bar size is configured — the old behaviour', async () => {
     let asked = 0
-    const { deps, store, throttle } = rig({ candlesFor: async () => { asked++; return flat() } })
+    // Empty shelf: a position born this cycle fetches its own candles to make
+    // its first buy, and that has nothing to do with the economy measured here.
+    const { deps, store, throttle } = rig({
+      candlesFor: async () => { asked++; return flat() },
+      scan: async () => [],
+    })
+
     await store.savePosition(position({ lastBarTime: latestClosed }))
 
     await runCycle(deps, config, throttle)
@@ -1564,5 +1592,92 @@ describe('runCycle — a slot swapped for a better token SELLS before it closes'
     // judged again next pass, which is the honest answer to not knowing.
     const store = await underWater(0)
     expect((await store.loadPositions()).map((x) => x.id)).toContain('pos-1')
+  })
+})
+
+describe('runCycle — the first buy happens in the SAME cycle', () => {
+  // Door 3, as production runs it: the scanner already decided, so the entry
+  // asks for no indicator. Without it the reference door wants a 10% drop from
+  // a swing high and a flat fixture never offers one — the tick would run and
+  // correctly buy nothing, testing the door instead of the timing.
+  const buys: CycleConfig = { ...config, maxOpenEntries: 1, params: { ...config.params, useMomentumEntry: true, dropInitPct: 0 } }
+
+  /**
+   * A candidate priced where the candles actually are.
+   *
+   * The shared fixture quotes 0.01 while `flat()` closes at 1, and until the
+   * first buy moved into this cycle nothing compared them — the tick happened
+   * a pass later, against candles fetched then. Now they meet immediately and
+   * `pricesDisagree` refuses a hundredfold gap, which is exactly what it is
+   * for: a $15.06 position once left at a tenth of a cent because two feeds
+   * disagreed about the unit.
+   */
+  const priced = (address: string, score: number): Candidate => ({
+    ...candidate(address, score),
+    snapshot: { ...candidate(address, score).snapshot, priceUsd: 1 },
+  })
+  // *Si hay tokens elegidos no los cargues uno por uno, cargalos todos de una
+  // vez con la primer compra inmediatamente.*
+  //
+  // A position used to be created here and ticked on the NEXT pass, so it sat
+  // at zero for up to a cycle before it held anything. That was harmless while
+  // the selection rule read a DAY. It is not now that it reads FIVE MINUTES
+  // and the cycle is also five: the signal that chose the token could be spent
+  // before the money moved, and the engine would be buying on a reason that
+  // had already expired.
+
+  it('opens every chosen token and buys in the same pass', async () => {
+    const { deps, store, throttle } = rig({
+      scan: async () => [priced('a', 90), priced('b', 85), priced('c', 80)],
+    })
+
+    await runCycle(deps, buys, throttle)
+
+    const opened = await store.loadPositions()
+    expect(opened.length).toBeGreaterThan(1)
+    // Every one of them HOLDS something, rather than waiting for the next pass.
+    const fills = await store.allFills()
+    for (const position of opened) {
+      expect(fills.some((f) => f.positionId === position.id && f.side === 'buy')).toBe(true)
+    }
+  })
+
+  it('all of them at once, not one per cycle', async () => {
+    const { deps, store, throttle } = rig({
+      scan: async () => [priced('a', 90), priced('b', 85), priced('c', 80)],
+    })
+    await runCycle(deps, buys, throttle)
+    const bought = new Set((await store.allFills()).filter((f) => f.side === 'buy').map((f) => f.positionId))
+    expect(bought.size).toBe((await store.loadPositions()).length)
+  })
+
+  it('still refuses to buy a token it cannot PRICE consistently', async () => {
+    // The scanner quotes 0.01, the candles close at 1. That is not a move, it
+    // is a unit nobody agreed on — and buying it converts money into the wrong
+    // quantity of a token. ZCAT was 10,846x, USDF 14,426x.
+    //
+    // Worth its own test precisely because the buy is immediate now: the check
+    // used to happen a pass later against candles fetched then, and moving the
+    // trade forward could easily have moved it past this.
+    const { deps, store, throttle } = rig({ scan: async () => [candidate('a', 90)] })
+
+    await runCycle(deps, buys, throttle)
+
+    expect((await store.loadPositions()).length).toBeGreaterThan(0)
+    expect((await store.allFills()).some((f) => f.side === 'buy')).toBe(false)
+  })
+
+  it('a token whose candles fail costs only its own buy', async () => {
+    // The position is already SAVED, and the next pass ticks it exactly as
+    // before — so the worst case here is the behaviour this replaces.
+    let n = 0
+    const { deps, store, throttle } = rig({
+      scan: async () => [priced('a', 90), priced('b', 85)],
+      candlesFor: async () => (n++ === 0 ? null : flat()),
+    })
+
+    await runCycle(deps, buys, throttle)
+
+    expect((await store.loadPositions()).length).toBeGreaterThan(1)
   })
 })

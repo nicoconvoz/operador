@@ -299,6 +299,27 @@ export async function runCycle(
   }
 
   // ── 2. Advance every position that can be trusted ──────────────────────────
+  /**
+   * The rules a position runs under, assembled ONCE.
+   *
+   * Two tick sites read it now — the ordinary pass over the book, and the
+   * first tick of a position opened this same cycle. Two copies would
+   * eventually disagree about which rules a brand new position runs under,
+   * which is the drift this codebase has paid for at every seam it has.
+   */
+  const tickConfig = {
+    params: config.params,
+    ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
+    ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
+    ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
+    ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
+    // Absent means the reference exit target, so the parity harness keeps
+    // meaning what it meant. Present, the tick derives the target from what
+    // this pool actually charges to leave.
+    ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
+    ...(config.sizing ? { sizing: config.sizing } : {}),
+  }
+
   const ticks: TickResult[] = []
   const unreachableIds: string[] = []
   // Bars are stamped by their OPEN, so the newest CLOSED bar opened two bar
@@ -369,18 +390,7 @@ export async function runCycle(
         broker: await deps.brokerFor(recovered.position),
         marketPriceUsd: marketPrices.get(`${recovered.position.chain}:${recovered.position.tokenAddress}`) ?? null,
       },
-      {
-        params: config.params,
-        ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
-        ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
-        ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
-        ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
-        // Absent means the reference exit target, so the parity harness keeps
-        // meaning what it meant. Present, the tick derives the target from
-        // what this pool actually charges to leave.
-        ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
-        ...(config.sizing ? { sizing: config.sizing } : {}),
-      },
+      tickConfig,
       deps.store,
       deps.alerts,
       throttle,
@@ -390,6 +400,10 @@ export async function runCycle(
   }
 
   // ── 3. Open new positions with what is genuinely free ──────────────────────
+  //
+  // (`tickConfig` is assembled once above, because step 3b ticks the positions
+  // this step opens and two copies of it would eventually disagree about which
+  // rules a brand new position runs under.)
   const opened: PersistedPosition[] = []
   const releasedIds: string[] = []
   /** Entries the last look declined, summarised ONCE at the end of the cycle. */
@@ -896,6 +910,58 @@ export async function runCycle(
         await deps.store.savePosition(position)
         opened.push(position)
       }
+    }
+  }
+
+  // ── 3b. And they BUY now, not next cycle ──────────────────────────────────
+  //
+  // The operator: *si hay tokens elegidos no los cargues uno por uno, cargalos
+  // todos de una vez con la primer compra inmediatamente.*
+  //
+  // A position used to be created here and ticked on the NEXT pass, so it sat
+  // at zero for up to a cycle before it held anything. That was harmless while
+  // the selection rule read a day; it is not now that it reads FIVE MINUTES.
+  // The cycle is also five, so the signal that chose the token could be spent
+  // before the money moved — the engine buying on a reason that had expired.
+  //
+  // It is the same `tickPosition` and the same config, deliberately. A second
+  // path into the first buy would be a second set of rules for it, and door 3
+  // is what makes this cheap: it asks for no indicator, so a position can act
+  // on the bar it was born on.
+  //
+  // A failure here costs the BUY, never the position. It is already saved and
+  // the next pass ticks it exactly as before, which is the behaviour this
+  // replaces — so the worst case is the old one.
+  for (const position of opened) {
+    try {
+      const candles = await deps.candlesFor(position)
+      if (candles === null) continue
+      const result = await tickPosition(
+        {
+          position,
+          candles,
+          health: await deps.healthFor(position, candles),
+          broker: await deps.brokerFor(position),
+          // The SCANNER measured this one minutes ago, and the batched price
+          // fetch above ran over the book as it stood BEFORE these existed —
+          // so without this the newest position is the one with no live price,
+          // and its order waits for a bar it was created to get ahead of.
+          //
+          // It is a second source in exactly the sense `pricesDisagree` wants:
+          // DexScreener measured it, the candles come from GeckoTerminal, and
+          // the tick still refuses to trade when the two do not agree.
+          marketPriceUsd:
+            marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? position.lastPriceUsd,
+        },
+        tickConfig,
+        deps.store,
+        deps.alerts,
+        throttle,
+      )
+      ticks.push(result)
+      current.set(position.id, result.position)
+    } catch {
+      // One token that cannot be priced must not cost the others their entry.
     }
   }
 
