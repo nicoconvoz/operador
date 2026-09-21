@@ -12,6 +12,15 @@ import { NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
  * positions shrinking with it.
  */
 export const DEFAULT_USD_PER_TOKEN = 15
+
+/**
+ * The share of a winner gross gain the chain is allowed to take.
+ *
+ * A THIRD. At $15 a position that makes the exit ask 3.9% instead of 2%, and
+ * the net per winner goes from eleven cents to thirty-nine — because the round
+ * trip is about 1.3% and a 2% target was barely above it.
+ */
+export const DEFAULT_MAX_COST_SHARE_PCT = 33
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -191,6 +200,19 @@ export interface RuntimeConfig {
    */
   readonly usdPerToken: number | null
   /**
+   * How much of a winner gross gain the chain may eat, in percent.
+   *
+   * The exit target is DERIVED from it instead of being the flat 2 the
+   * reference runs: at a third, the target is three times the round trip and
+   * two thirds of every winner is ours.
+   *
+   * A third is the operator number in the shape this codebase states costs —
+   * the same form as `maxGasSharePct`, which asks how much of a fill gas may
+   * eat. Composed in production beside the ladder cap and the entry drop,
+   * because it is a real departure from the backtest.
+   */
+  readonly maxCostSharePct: number
+  /**
    * How far a position may fall below what was paid before it is closed, as a
    * share of the run the token had already made.
    *
@@ -369,6 +391,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // and it refuses exactly what a wide shortlist is full of.
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
     usdPerToken: number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN),
+    maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     stopLoss: {
       // OFF by default, at the operator request: *anulá el SL, solo dejá la de
       // la muerte o el congelamiento.*

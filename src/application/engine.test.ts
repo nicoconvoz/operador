@@ -1033,3 +1033,51 @@ describe('tickPosition — the no-loss rule must survive what LEAVING costs', ()
     expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🔁 Rotación' }, null, 0.1, 5)).toBe(false)
   })
 })
+
+describe('the exit target is derived from what leaving costs', () => {
+  // A flat 2% was below the economic floor on the book the operator was
+  // running: a $15 position pays about 1.3% to go in and out, so 2% left
+  // ELEVEN CENTS of gross per winner while the losers had no bound at all.
+  // Winners capped and losers open cannot work however good the selection is.
+  //
+  // The tick REPORTS the target it used, which is what makes this testable at
+  // all — a mutation showed the derivation could stop reaching the engine with
+  // no test dying, the same blind spot that hid a missing `discover` and a
+  // missing `poolMarkets`.
+
+  const cheapPool = { liquidityUsd: 5_000_000, spreadPct: 0.3, slippagePct: 0.01, referenceUsd: 100, observedAt: 0 }
+  const tiny = () => ({ ...position(), capitalUsd: 15, quality: cheapPool })
+
+  const targetFor = async (over: Record<string, unknown> = {}) => {
+    const r = rig()
+    const result = await tickPosition(
+      { position: tiny(), candles: decline(300), health: null, broker: r.broker },
+      { ...config, maxOpenEntries: 1, ...over },
+      r.store, r.alerts, r.throttle,
+    )
+    return result.minProfitPct
+  }
+
+  it('asks a fifteen-dollar position for far more than two percent', async () => {
+    // Gas is most of the round trip at that size, so the move has to be
+    // bigger for the trade to be worth making at all.
+    const derived = await targetFor({ maxCostSharePct: 33 })
+    expect(derived).toBeGreaterThan(3)
+  })
+
+  it('leaves the REFERENCE target untouched when no share is given', async () => {
+    // Absent means the backtest exactly. Left to its own default the
+    // derivation applied everywhere and the parity harness passed only by
+    // LUCK — its rungs are large enough that the derived target falls under
+    // the flat floor, and a departure surviving by coincidence is one nobody
+    // notices breaking.
+    expect(await targetFor()).toBe(config.params.minProfitPct)
+  })
+
+  it('never drops under the configured floor', async () => {
+    // A derived target that rounds to nothing would have the engine selling on
+    // noise and paying its round trip for a move that means nothing.
+    const onADeepPool = await targetFor({ maxCostSharePct: 99 })
+    expect(onADeepPool).toBeGreaterThanOrEqual(config.params.minProfitPct)
+  })
+})

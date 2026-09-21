@@ -772,6 +772,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // only path in this engine where a PRICE sells, so a caller that says
       // nothing must get the reference behaviour.
       stopLoss: config.stopLoss,
+      maxCostSharePct: config.maxCostSharePct,
       usdPerToken: config.usdPerToken,
       idleSlots: {
         idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,

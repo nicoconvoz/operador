@@ -11,6 +11,7 @@ import { type BrokerPort } from '../domain/execution/broker.js'
 import { orderKeyPart } from './recovery.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/economics/sizing.js'
 import { deployableCapital, scaledParams } from './paper-run.js'
+import { minProfitPctFor, roundTripCostPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
 import { type Candles } from './replay.js'
@@ -49,6 +50,14 @@ export interface TickInput {
 
 export interface EngineConfig {
   readonly params: CascadeParams
+  /**
+   * How much of a winner's gross gain the chain may eat, in percent.
+   *
+   * The exit target is derived from it: at a third, the target is three times
+   * the round trip and two thirds of every winner is ours. Absent leaves the
+   * reference behaviour, so the parity harness keeps meaning what it meant.
+   */
+  readonly maxCostSharePct?: number
   readonly deathPolicy?: DeathExitPolicy
   /**
    * How far the candle price and the market price may diverge before the engine
@@ -85,6 +94,20 @@ export interface TickResult {
   readonly skipped: 'already-processed' | 'no-bars' | 'price-mismatch' | null
   /** Closed bars this tick advanced. One in the ordinary case, more after a slow cycle. */
   readonly barsAdvanced: number
+  /**
+   * The profit the exit required on this bar, in percent.
+   *
+   * Reported because it is DERIVED and therefore not knowable from the
+   * configuration alone: it depends on the fill this pool would actually
+   * absorb, which the impact budget may have shrunk. Without it, *why did it
+   * not sell* is a question answerable only by rerunning the arithmetic by
+   * hand — and this project has paid for unanswerable screens before.
+   *
+   * It is also what makes the derivation TESTABLE. A mutation showed it could
+   * stop reaching the engine with no test dying, which is the blind spot that
+   * hid a missing `discover` and a missing `poolMarkets`.
+   */
+  readonly minProfitPct: number
 }
 
 /**
@@ -124,7 +147,7 @@ export async function tickPosition(
 ): Promise<TickResult> {
   const { candles, broker } = input
   const last = candles.time.length - 1
-  if (last < 0) return { position: input.position, orders: [], vetoed: [], skipped: 'no-bars', barsAdvanced: 0 }
+  if (last < 0) return { position: input.position, orders: [], vetoed: [], skipped: 'no-bars', barsAdvanced: 0, minProfitPct: config.params.minProfitPct }
 
   // ── A token it cannot PRICE is a token it does not trade ──────────────────
   //
@@ -163,7 +186,7 @@ export async function tickPosition(
       candles.time[last]!,
       { position: input.position.id, ratio: ratio.toFixed(0) },
     ))
-    return { position: watched, orders: [], vetoed: [], skipped: 'price-mismatch', barsAdvanced: 0 }
+    return { position: watched, orders: [], vetoed: [], skipped: 'price-mismatch', barsAdvanced: 0, minProfitPct: config.params.minProfitPct }
   }
 
   const first = firstUnprocessedBar(candles.time, input.position.lastBarTime, last)
@@ -182,7 +205,7 @@ export async function tickPosition(
     // continuously and INDEPENDENTLY of price; tying it to candles was the
     // mistake.
     const watched = await assessHealth(input, config, store, alerts, throttle)
-    return { position: watched, orders: [], vetoed: [], skipped: 'already-processed', barsAdvanced: 0 }
+    return { position: watched, orders: [], vetoed: [], skipped: 'already-processed', barsAdvanced: 0, minProfitPct: config.params.minProfitPct }
   }
 
   // ── Sized once, not per bar ────────────────────────────────────────────────
@@ -227,9 +250,47 @@ export async function tickPosition(
     config.sizing ?? DEFAULT_SIZING_POLICY,
     deployable,
   )
-  const params = sizing.tradeable
+  const sized = sizing.tradeable
     ? scaledParams({ ...config.params, maxUsdPerLevel: deployable / rungs }, sizing)
     : config.params
+
+  // The exit target, DERIVED from what leaving this pool actually costs.
+  //
+  // A flat 2% was below the economic floor on the book the operator was
+  // running. Measured on his numbers: a $15 position in a deep pool pays about
+  // 1.3% to go in and out — ten cents of gas and nine of spread — so a 2%
+  // target left ELEVEN CENTS of gross per winner while the losers had no bound
+  // at all. Winners capped and losers open cannot work however good the
+  // selection is.
+  //
+  // Derived, it adapts to the SIZE, because gas is fixed and its share is not:
+  // $15 needs 3.9%, $100 needs 2.2%, for the same net. That is the capital
+  // floor's own finding — *tiny positions are eaten by gas* — stated as a rule
+  // instead of rediscovered.
+  //
+  // It uses the rung the position will ACTUALLY fill, after the pool's impact
+  // budget has shrunk it, rather than the nominal one. Asking a $9.46 fill to
+  // clear the target computed for $15 would leave it below its own costs, and
+  // that is precisely the position least able to afford it.
+  // Absent means the REFERENCE exactly, and that is deliberate rather than a
+  // convenience. Left to its own default the derivation applied everywhere and
+  // the parity harness passed only by luck — its rungs are large enough that
+  // the derived target falls under the flat floor. A departure that survives
+  // by coincidence is one nobody will notice breaking.
+  const fillUsd = sizing.tradeable ? sized.maxUsdPerLevel : deployable / rungs
+  const params = config.maxCostSharePct === undefined ? sized : {
+    ...sized,
+    minProfitPct: minProfitPctFor(
+      roundTripCostPct(
+        fillUsd,
+        input.position.quality.spreadPct,
+        input.position.quality.slippagePct,
+        config.gasUsdPerSwap ?? 0.05,
+      ),
+      config.maxCostSharePct,
+      sized.minProfitPct,
+    ),
+  }
 
   // Indicators are causal — every one of them reads backwards only — so the
   // context at bar i is the same whether the series ends at i or at the end.
@@ -269,7 +330,7 @@ export async function tickPosition(
     vetoed = advanced.vetoed
   }
 
-  return { position, orders, vetoed, skipped: null, barsAdvanced: last - first + 1 }
+  return { position, orders, vetoed, skipped: null, barsAdvanced: last - first + 1, minProfitPct: params.minProfitPct }
 }
 
 /**

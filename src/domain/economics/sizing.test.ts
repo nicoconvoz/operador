@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder } from './sizing.js'
+import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor } from './sizing.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -181,5 +181,74 @@ describe('sizeLadder — how many rungs the venue will actually fill', () => {
     const ten = sizeLadder(DEFAULT_PARAMS, deep, P, 1_000_000)
     const six = sizeLadder(DEFAULT_PARAMS, deep, { ...P, maxOpenEntries: 6 }, 1_000_000)
     expect(six.nominalTotalUsd).toBeLessThan(ten.nominalTotalUsd)
+  })
+})
+
+describe('the profit target is DERIVED from what leaving costs', () => {
+  // `minProfitPct` was a flat 2, and on the operator's book that sat below the
+  // economic floor. Measured on his own numbers: a $15 position in a deep pool
+  // pays about 1.3% to go in and out — ten cents of gas and nine of spread —
+  // so a 2% target left ELEVEN CENTS of gross per winner while the losers had
+  // no bound at all.
+  //
+  // Winners capped, losers open. That shape cannot work however good the
+  // selection is, and no selection rule fixes it.
+
+  it('costs a round trip twice the spread and twice the gas share', () => {
+    // Gas is FIXED, so its share is the term that moves with size. At $0.05 a
+    // swap it is 0.67% of a $15 position and 0.20% of a $50 one, for the
+    // identical trade.
+    // Stated as ROUND TRIP shares, which is what the number is: the spread is
+    // 0.6% both ways on either size, and the gas share is what moves.
+    expect(roundTripCostPct(15, 0.3, 0, 0.05)).toBeCloseTo(0.6 + 0.667, 2)
+    expect(roundTripCostPct(50, 0.3, 0, 0.05)).toBeCloseTo(0.6 + 0.2, 2)
+    // Same trade, same spread: only the fixed gas changed its weight.
+    expect(roundTripCostPct(15, 0.3, 0, 0.05)).toBeGreaterThan(roundTripCostPct(50, 0.3, 0, 0.05))
+  })
+
+  it('leaves the chain no more than the share it is given', () => {
+    // A third means the target is three times the round trip, so two thirds of
+    // every winner is ours.
+    expect(minProfitPctFor(1.5, 33.3333)).toBeCloseTo(4.5, 3)
+    expect(minProfitPctFor(1.5, 50)).toBeCloseTo(3, 6)
+  })
+
+  it('asks a SMALLER position for a BIGGER move, which is the point', () => {
+    // Not a penalty invented here: it is the capital floor's own finding
+    // stated as a rule — tiny positions are eaten by gas, so they have to
+    // travel further to be worth the trip.
+    const small = minProfitPctFor(roundTripCostPct(15, 0.3, 0.01, 0.05))
+    const large = minProfitPctFor(roundTripCostPct(100, 0.3, 0.01, 0.05))
+    expect(small).toBeGreaterThan(large)
+    expect(small).toBeCloseTo(3.9, 1)
+    expect(large).toBeCloseTo(2.2, 1)
+  })
+
+  it('beats the flat two percent where it mattered', () => {
+    // $0.11 of gross became $0.39 on a $15 position. The target rose from 2%
+    // to 3.9%, which is the whole of the difference.
+    const target = minProfitPctFor(roundTripCostPct(15, 0.3, 0.01, 0.05))
+    const netAtDerived = (15 * target) / 100 - (15 * roundTripCostPct(15, 0.3, 0.01, 0.05)) / 100
+    const netAtTwo = (15 * 2) / 100 - (15 * roundTripCostPct(15, 0.3, 0.01, 0.05)) / 100
+    expect(netAtDerived).toBeGreaterThan(netAtTwo * 3)
+  })
+
+  it('never goes under the floor, however cheap the pool', () => {
+    // The case the arithmetic cannot see: a derived target that rounds to
+    // nothing has the engine selling on noise and paying its round trip for a
+    // move that means nothing.
+    expect(minProfitPctFor(0.001)).toBe(2)
+    expect(minProfitPctFor(0)).toBe(2)
+  })
+
+  it('refuses to divide by a share of zero', () => {
+    // Zero is a real value everywhere else in this codebase and it must not
+    // become Infinity here — a target nothing can ever reach is a position
+    // that never sells.
+    expect(minProfitPctFor(1.5, 0)).toBe(2)
+  })
+
+  it('treats a size of zero as unaffordable rather than free', () => {
+    expect(roundTripCostPct(0, 0.3, 0, 0.05)).toBe(100)
   })
 })

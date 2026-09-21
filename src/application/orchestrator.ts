@@ -164,6 +164,8 @@ export interface CycleConfig {
    * this is not silently given a different rule.
    */
   readonly usdPerToken?: number | null
+  /** Passed through to the tick, which derives the exit target from it. */
+  readonly maxCostSharePct?: number
 }
 
 /**
@@ -373,6 +375,10 @@ export async function runCycle(
         ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
         ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
         ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
+        // Absent means the reference exit target, so the parity harness keeps
+        // meaning what it meant. Present, the tick derives the target from
+        // what this pool actually charges to leave.
+        ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
         ...(config.sizing ? { sizing: config.sizing } : {}),
       },
       deps.store,

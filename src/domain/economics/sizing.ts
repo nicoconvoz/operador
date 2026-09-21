@@ -61,6 +61,66 @@ export interface SizingPolicy {
  *
  * @param maxGasSharePct how much of a fill gas may eat, in percent.
  */
+/**
+ * What a round trip actually costs, as a percentage of the money put in.
+ *
+ * Three terms, and the first is the one that surprises people: GAS IS FIXED,
+ * so its share is enormous on a small fill and negligible on a large one. At
+ * $0.05 a swap it is 0.67% of a $15 position and 0.20% of a $50 one, for the
+ * identical trade.
+ *
+ * The spread and the impact are percentages already and simply double: you pay
+ * them going in and coming out.
+ */
+export const roundTripCostPct = (
+  fillUsd: number,
+  spreadPct: number,
+  slippagePct: number,
+  gasUsdPerSwap: number,
+): number => (fillUsd > 0 ? 2 * (spreadPct + slippagePct + (100 * gasUsdPerSwap) / fillUsd) : 100)
+
+/**
+ * The profit a position must show before the exit may take it, DERIVED from
+ * what leaving actually costs rather than picked.
+ *
+ * `minProfitPct` was a flat 2, and on the book the operator was running that
+ * was below the economic floor. Measured on his own numbers: a $15 position in
+ * a deep pool pays about 1.27% to go in and out — $0.10 of gas and $0.09 of
+ * spread — so a 2% target left ELEVEN CENTS of gross per winner, while the
+ * losers had no bound at all. Winners capped, losers open: that shape cannot
+ * work however good the selection is.
+ *
+ * The parameter is a SHARE, not a multiple picked by feel: `maxCostSharePct`
+ * says how much of the gross gain the chain is allowed to eat. At a third, the
+ * target is three times the round trip, and two thirds of every winner is
+ * yours.
+ *
+ * ## It adapts to the position size, which is the point
+ *
+ * Because gas is fixed, a small position pays a larger percentage and is
+ * therefore asked for a larger move. That is not a penalty invented here — it
+ * is the capital floor's own finding stated as a rule: *tiny positions are
+ * eaten by gas.* A $15 position needs about 3.8%; a $50 one needs 2.4% for
+ * exactly the same net.
+ *
+ * ## What it COSTS, stated rather than discovered later
+ *
+ * A higher bar fires less often. A token that would have been sold at +2% is
+ * now held for more, and some of those give it back instead. The trade is a
+ * smaller number of trades that are each worth making, against a larger number
+ * that were not — and the eleven cents says which side of that line a 2%
+ * target on $15 was on.
+ *
+ * The FLOOR exists for the case the arithmetic cannot see: a pool so cheap the
+ * derived target rounds to almost nothing would have the engine selling on
+ * noise, paying its round trip for a move that means nothing.
+ */
+export const minProfitPctFor = (
+  roundTripPct: number,
+  maxCostSharePct = 33,
+  floorPct = 2,
+): number => (maxCostSharePct > 0 ? Math.max(floorPct, (roundTripPct * 100) / maxCostSharePct) : floorPct)
+
 export const gasFloorUsd = (gasUsdPerSwap: number, maxGasSharePct = 1): number =>
   maxGasSharePct > 0 ? (gasUsdPerSwap * 100) / maxGasSharePct : Infinity
 
