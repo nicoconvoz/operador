@@ -9,7 +9,7 @@ import { type Candles } from './replay.js'
 import { type EntryConfirmation } from './confirm-entry.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
-import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
@@ -614,6 +614,9 @@ export async function runCycle(
     // frozen reservation holding nothing. Neither is a judgement about which
     // token is better right now, so neither needs the data a full scan gathers,
     // and making them wait up to an hour is what left them stuck on the screen.
+    // The toll, read once so the decision and the sale cannot disagree about
+    // how much a move is allowed to cost.
+    const swapTolerance = (config.idleSlots ?? DEFAULT_IDLE_SLOT_POLICY).maxSwapLossPct ?? 0
     const release = releasableSlots(
       recovery.positions.map((r) => ({
         id: r.position.id,
@@ -626,6 +629,14 @@ export async function runCycle(
         frozen: now(r.position.id, r.position).deathWatch.stage === 'frozen',
         dead: now(r.position.id, r.position).deathWatch.stage === 'dead',
         score: scoreOf.get(`${r.position.chain}:${r.position.tokenAddress}`) ?? null,
+        // Where it stands against what was paid, live. Null without a price,
+        // and the swap rule then declines to judge it.
+        unrealisedPct: (() => {
+          const ledger = ledgers.get(r.position.id)
+          const price = marketPrices.get(`${r.position.chain}:${r.position.tokenAddress}`)
+          if (!ledger || ledger.avgCostUsd === null || price === undefined || price <= 0) return null
+          return (price / ledger.avgCostUsd - 1) * 100
+        })(),
       })),
       kind === 'full' ? waiting.map((c) => c.opportunity.score) : [],
       at,
@@ -633,6 +644,39 @@ export async function runCycle(
     )
 
     for (const { holder, reason } of release) {
+      // A slot HOLDING something has to be SOLD before it is closed, and this
+      // is the line that makes the operator's swap rule safe rather than
+      // catastrophic.
+      //
+      // Until now this loop only ever received empty slots, so closing was the
+      // whole job. A slot with tokens closed the same way would orphan the
+      // quantity — neither realised nor unrealised, and gone from the screen
+      // that was supposed to be watching it. That is the exact shape of the
+      // bug the rotation step already carries a paragraph about.
+      if (holder.openQty > 0) {
+        const found = recovery.positions.find((r) => r.position.id === holder.id)
+        const position = found === undefined ? undefined : now(holder.id, found.position)
+        const price = marketPrices.get(`${holder.chain}:${holder.tokenAddress}`)
+        // No live price, no sale, no close. The slot keeps its token and gets
+        // judged again next pass, which is the honest answer to not knowing.
+        if (position === undefined || price === undefined || price <= 0) continue
+        const broker = await deps.brokerFor(position)
+        const refused = await settle(
+          [{ kind: 'closeAll', comment: SWAP_EXIT_COMMENT }],
+          position.lastBarTime,
+          price,
+          at,
+          position,
+          broker,
+          deps.store,
+          swapTolerance,
+        )
+        // REFUSED means the loss is deeper than the toll allows, which the
+        // domain already checked — but it checks against a price from the
+        // start of the cycle and this fills at one fetched since. Closing
+        // anyway would retire a slot that still holds tokens.
+        if (refused) continue
+      }
       await deps.store.closePosition(holder.id)
       releasedIds.push(holder.id)
       const handed = alert(

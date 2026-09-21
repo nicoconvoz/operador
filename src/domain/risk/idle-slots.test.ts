@@ -197,3 +197,79 @@ describe('a slot nobody can ever use again', () => {
     expect(releasableSlots([idle], [], NOW)).toEqual([])
   })
 })
+
+describe('swapping a slot that is barely under water for a better token', () => {
+  // The operator: *si el token ha perdido menos del 1.2% y la moneda está en
+  // un puntaje bajo, cambiarla por una mejor y asumir esa pequeña pérdida.*
+  //
+  // A TOLL, not a trigger. A stop loss exits because the PRICE fell; this
+  // exits because the token stopped being the best use of the slot, and the
+  // percentage is the most the move may COST. No amount of falling makes it
+  // fire on its own, which is what keeps it out of the path the death watch's
+  // type system protects.
+  //
+  // It is also the first thing in this file allowed to touch a slot with
+  // tokens in it. That refusal was argued — a position with fills is a
+  // COMMITMENT and selling is the strategy's decision, never the allocator's —
+  // and the operator has now made it the allocator's, bounded.
+
+  const swap = { idleAfterMs: 3 * HOUR, minScoreEdge: 10, maxSwapLossPct: 1.2 }
+  const holding = (over: Partial<SlotHolder> = {}) =>
+    holder({ openQty: 1_000, hasFills: true, score: 40, unrealisedPct: -0.5, ...over })
+
+  it('swaps one barely down for a candidate that is clearly better', () => {
+    expect(symbols(releasableSlots([holding()], [80], NOW, swap))).toEqual(['IDLE'])
+  })
+
+  it('refuses when the loss is deeper than the toll', () => {
+    // 1.2% is what the move may cost. Past it the slot keeps its token and the
+    // position goes on being the strategy's business.
+    expect(releasableSlots([holding({ unrealisedPct: -1.3 })], [80], NOW, swap)).toEqual([])
+  })
+
+  it('takes the boundary itself', () => {
+    expect(symbols(releasableSlots([holding({ unrealisedPct: -1.2 })], [80], NOW, swap))).toEqual(['IDLE'])
+  })
+
+  it('does NOT sell a position that is UP — that is the switch\'s case', () => {
+    // A position in profit that stopped ranking is the rotation switch's, and
+    // it takes the gain rather than accepting a toll it does not owe.
+    expect(releasableSlots([holding({ unrealisedPct: 0.4 })], [80], NOW, swap)).toEqual([])
+  })
+
+  it('does NOT sell when nothing better is waiting', () => {
+    // Both halves are required and neither is sufficient. It is a SWAP, and a
+    // swap needs somewhere for the money to go.
+    expect(releasableSlots([holding()], [45], NOW, swap)).toEqual([])
+  })
+
+  it('does NOT sell for a candidate that is barely ahead', () => {
+    // The margin is not timidity: without it the book trades against its own
+    // noise and pays a toll each time.
+    expect(releasableSlots([holding({ score: 75 })], [80], NOW, swap)).toEqual([])
+  })
+
+  it('never fires without a live price to judge by', () => {
+    // Selling on a number no second source confirmed is how a $15 position
+    // once left at a tenth of a cent.
+    expect(releasableSlots([holding({ unrealisedPct: null })], [80], NOW, swap)).toEqual([])
+  })
+
+  it('is OFF unless a toll is configured', () => {
+    // Absent means the allocator may accept NO loss, which is this file's
+    // behaviour as it stood: a slot holding something is never touched.
+    const noToll = { idleAfterMs: 3 * HOUR, minScoreEdge: 10 }
+    expect(releasableSlots([holding()], [80], NOW, noToll)).toEqual([])
+  })
+
+  it('swaps one the scanner has dropped entirely', () => {
+    // A null score is not a low score, it is no score — and a token that fell
+    // off the list has already lost the comparison.
+    expect(symbols(releasableSlots([holding({ score: null })], [80], NOW, swap))).toEqual(['IDLE'])
+  })
+
+  it('says how much the move cost, because the alert is where it is read', () => {
+    const [decision] = releasableSlots([holding()], [80], NOW, swap)
+    expect(decision?.reason).toContain('0.50%')
+  })
+})

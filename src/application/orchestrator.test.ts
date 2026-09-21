@@ -1493,3 +1493,76 @@ describe('runCycle — a fixed size per token, so the BOOK grows instead of the 
     expect(split.every((c) => c === 15)).toBe(false)
   })
 })
+
+describe('runCycle — a slot swapped for a better token SELLS before it closes', () => {
+  // *Si el token ha perdido menos del 1.2% y la moneda está en un puntaje
+  // bajo, cambiarla por una mejor y asumir esa pequeña pérdida.*
+  //
+  // The line this pins is the most dangerous one in that change. The release
+  // loop only ever received EMPTY slots before, so closing was the whole job.
+  // A slot with tokens closed the same way orphans the quantity — neither
+  // realised nor unrealised, and gone from the screen that was watching it.
+  //
+  // A mutation proved it could go back to closing blind with no test dying,
+  // which is exactly how this class of bug has survived here before.
+
+  const swapCfg: CycleConfig = {
+    ...config,
+    maxOpenEntries: 1,
+    idleSlots: { idleAfterMs: 3 * HOUR, minScoreEdge: 10, maxSwapLossPct: 1.2 },
+    portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: 2_000, maxPositions: 0 },
+  }
+
+  /** Bought a hundred units at 1, now worth slightly less, with a rival waiting. */
+  const underWater = async (marketPrice: number) => {
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      // Nothing on the shelf for THIS token, and a strong candidate outside.
+      scan: async () => [candidate('rival', 95)],
+      marketPrices: async () => new Map([['solana:Held', marketPrice]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, swapCfg, throttle)
+    return store
+  }
+
+  it('records a SALE, not just a disappearance', async () => {
+    const store = await underWater(0.995)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell')
+    expect(sale?.comment).toBe('🔄 Cambio')
+    expect(sale?.qty).toBeCloseTo(100, 6)
+  })
+
+  it('and only then lets the slot go', async () => {
+    // The cycle REFILLS the freed slot in the same pass, which is the point of
+    // the swap — so what matters is that the old one is gone, not that the
+    // book is empty.
+    const store = await underWater(0.995)
+    expect((await store.loadPositions()).map((x) => x.id)).not.toContain('pos-1')
+  })
+
+  it('leaves the slot ALONE when the loss is deeper than the toll', async () => {
+    // Past the toll it stops being a move and becomes a loss taken for a
+    // ranking that changes bar to bar.
+    const store = await underWater(0.9)
+    expect((await store.loadPositions()).map((x) => x.id)).toContain('pos-1')
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+  })
+
+  it('never closes a slot whose sale could not be priced', async () => {
+    // No live price, no sale, no close. The slot keeps its token and gets
+    // judged again next pass, which is the honest answer to not knowing.
+    const store = await underWater(0)
+    expect((await store.loadPositions()).map((x) => x.id)).toContain('pos-1')
+  })
+})

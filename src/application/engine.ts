@@ -14,6 +14,7 @@ import { deployableCapital, scaledParams } from './paper-run.js'
 import { minProfitPctFor, roundTripCostPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
+import { SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { type Candles } from './replay.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { priceRatio, pricesDisagree } from '../domain/market/price-agreement.js'
@@ -590,6 +591,8 @@ export async function settle(
   position: PersistedPosition,
   broker: BrokerPort,
   store: StatePort,
+  /** How much of a loss a SWAP exit may pay. Nothing else reads it. */
+  swapTolerancePct = 0,
 ): Promise<boolean> {
   let exitRefused = false
   for (const order of orders) {
@@ -601,7 +604,7 @@ export async function settle(
     // The position's own measured quality: the venue spread plus the impact
     // its size causes. This is what the sale will actually cost to make.
     const exitCostPct = position.quality.spreadPct + position.quality.slippagePct
-    if (refusesToSellAtALoss(order, broker.snapshot(price).avgPrice, price, exitCostPct)) {
+    if (refusesToSellAtALoss(order, broker.snapshot(price).avgPrice, price, exitCostPct, swapTolerancePct)) {
       exitRefused = true
       continue
     }
@@ -648,6 +651,7 @@ export function refusesToSellAtALoss(
   avgPrice: number | null,
   fillPrice: number,
   exitCostPct = 0,
+  swapTolerancePct = 0,
 ): boolean {
   if (order.kind !== 'closeAll') return false
   // Neither exit may be blocked by the no-loss rule, and for the same reason:
@@ -680,6 +684,13 @@ export function refusesToSellAtALoss(
   // leave because the asset stopped being an asset.
   // Nothing held, so no cost basis and no loss to make.
   if (avgPrice === null) return false
+  // The SWAP exit pays a bounded toll to move a slot somewhere better. It is
+  // not exempt like the two risk exits: it has a ceiling, and past that
+  // ceiling it is refused exactly like the others. A toll with no limit is
+  // just a stop loss that nobody named.
+  if (order.comment === SWAP_EXIT_COMMENT) {
+    return fillPrice * (1 - exitCostPct / 100) < avgPrice * (1 - swapTolerancePct / 100)
+  }
   // What the position RECEIVES, not what the screen quotes.
   return fillPrice * (1 - exitCostPct / 100) < avgPrice
 }

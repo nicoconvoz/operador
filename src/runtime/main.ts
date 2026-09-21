@@ -775,6 +775,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       maxCostSharePct: config.maxCostSharePct,
       usdPerToken: config.usdPerToken,
       idleSlots: {
+        // *Si el token ha perdido menos del 1.2% y la moneda está en un puntaje
+        // bajo, cambiarla por una mejor y asumir esa pequeña pérdida.*
+        //
+        // A TOLL, not a trigger: no amount of falling makes it fire, only a
+        // better candidate does. Composed here because it is the first thing
+        // allowed to sell a position the allocator did not have to sell.
+        maxSwapLossPct: config.maxSwapLossPct,
         idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,
         minScoreEdge: config.minScoreEdge,
       },

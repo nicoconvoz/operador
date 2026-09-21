@@ -43,6 +43,17 @@ import { type OpportunityComponents } from '../scanner/opportunity.js'
 /** Its own comment, so the no-loss guard and the tape can tell it from a death exit. */
 export const ROTATION_EXIT_COMMENT = '🔁 Rotación' as const
 
+/**
+ * A slot handed to a better token, paying a small loss for the move.
+ *
+ * Its OWN comment rather than the rotation's, because the rule is different
+ * and the tape has to be able to tell them apart. The rotation switch takes a
+ * profit and refuses a loss of any size; this one accepts a bounded one — and
+ * a reader looking at a red line under `🔁` would have no way to know which
+ * rule allowed it.
+ */
+export const SWAP_EXIT_COMMENT = '🔄 Cambio' as const
+
 export interface RotationHolder {
   readonly id: string
   readonly symbol: string

@@ -43,9 +43,44 @@ export interface IdleSlotPolicy {
    * privilege.
    */
   readonly minScoreEdge: number
+  /**
+   * How much of a loss the allocator may accept to move a slot to a better
+   * token, in percent. Absent means it may accept none.
+   *
+   * The operator's rule: *si el token ha perdido menos del 1.2% y la moneda
+   * está en un puntaje bajo, cambiarla por una mejor y asumir esa pequeña
+   * pérdida.*
+   *
+   * ## It is a TOLL, not a trigger, and the difference is the whole design
+   *
+   * A stop loss exits because the PRICE fell. This exits because the token
+   * stopped being the best use of the slot — a ranking decision — and the
+   * percentage is the most the move is allowed to COST, never the reason for
+   * making it. A position down 1% that still ranks well is not touched, and no
+   * amount of falling makes this fire on its own.
+   *
+   * That distinction is what keeps it out of the path the death watch's type
+   * system protects. A price cannot cause this sale; a better candidate can.
+   *
+   * ## What it changes, stated rather than discovered later
+   *
+   * This file has refused to touch a slot holding tokens since it was written,
+   * for a reason worth repeating: a position with fills is a COMMITMENT, the
+   * slot cannot come back without selling, and selling is the strategy's
+   * decision and never the allocator's.
+   *
+   * The operator has now made it the allocator's, bounded. The bound is what
+   * makes it survivable: at 1.2% the worst a churn can cost is 1.2% a move,
+   * where an unbounded version would let the allocator realise any loss it
+   * liked in pursuit of a score that moves bar to bar.
+   */
+  readonly maxSwapLossPct?: number
 }
 
 /** Three hours: twelve bars at 15m, most of the 20-bar swing-high window. */
+/** The operator number: a move may cost at most this much. */
+export const DEFAULT_MAX_SWAP_LOSS_PCT = 1.2
+
 export const DEFAULT_IDLE_SLOT_POLICY: IdleSlotPolicy = { idleAfterMs: 3 * 3_600_000, minScoreEdge: 10 }
 
 export interface SlotHolder {
@@ -78,6 +113,14 @@ export interface SlotHolder {
    * makes use of what it is holding.
    */
   readonly dead?: boolean
+  /**
+   * Where the position stands against what was paid, in percent. Negative is
+   * under water. Null when there is no live price to judge it by.
+   *
+   * It exists for one case and is read nowhere else: a slot HOLDING something
+   * that is no longer the best use of the money. See `maxSwapLossPct`.
+   */
+  readonly unrealisedPct?: number | null
   /**
    * What the scanner thinks of this token RIGHT NOW, or null when it is not
    * among the candidates at all.
@@ -148,8 +191,41 @@ export function releasableSlots(
   const best = Math.max(...waiting)
 
   const terminal = new Set(decisions.map((d) => d.holder.id))
+  // ── Slots HOLDING something, which is the operator's later exception ─────
+  //
+  // Everything below this refuses a slot with tokens in it. This does not, and
+  // it is the one case he asked for: a position barely under water in a token
+  // that no longer ranks, while something better waits outside.
+  //
+  // Both halves are required and neither is sufficient. A low score alone does
+  // not sell — the slot keeps its token. A small loss alone does not sell —
+  // there has to be somewhere better for the money to go. It is a swap, and a
+  // swap needs both ends.
+  const tolerance = policy.maxSwapLossPct ?? 0
   for (const holder of holders) {
-    if (terminal.has(holder.id)) continue
+    if (terminal.has(holder.id) || holder.openQty <= 0) continue
+    if (tolerance <= 0) continue
+    // No live price, no verdict. Selling on a number no second source
+    // confirmed is how a $15 position once left at a tenth of a cent.
+    const standing = holder.unrealisedPct
+    if (standing === null || standing === undefined) continue
+    // Above water is not this rule's business: a position in profit that has
+    // stopped ranking is the ROTATION switch's case, and it takes the gain.
+    if (standing > 0) continue
+    if (standing < -tolerance) continue
+    if (holder.score !== null && best < holder.score + policy.minScoreEdge) continue
+    decisions.push({
+      holder,
+      reason:
+        holder.score === null
+          ? `ya no está entre los candidatos y pierde solo ${Math.abs(standing).toFixed(2)}% — se cambia por una mejor`
+          : `hay un candidato ${(best - holder.score).toFixed(0)} puntos mejor y esta pierde solo ${Math.abs(standing).toFixed(2)}%`,
+    })
+  }
+  const swapped = new Set(decisions.map((d) => d.holder.id))
+
+  for (const holder of holders) {
+    if (terminal.has(holder.id) || swapped.has(holder.id)) continue
     // Holding something is the end of the conversation. Everything below is
     // about slots with nothing in them.
     if (holder.openQty > 0) continue

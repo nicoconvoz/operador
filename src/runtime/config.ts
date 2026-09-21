@@ -2,6 +2,7 @@ import { type Chain } from '../domain/scanner/snapshot.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
+import { DEFAULT_MAX_SWAP_LOSS_PCT } from '../domain/risk/idle-slots.js'
 
 /**
  * Dollars a single token gets, before the pool impact budget shrinks it.
@@ -213,6 +214,14 @@ export interface RuntimeConfig {
    */
   readonly maxCostSharePct: number
   /**
+   * How much of a loss the allocator may pay to move a slot to a better token.
+   *
+   * Zero disables it, and zero is a REAL value here: it restores the rule this
+   * engine ran on for months — a slot holding tokens is never the allocator to
+   * sell.
+   */
+  readonly maxSwapLossPct: number
+  /**
    * How far a position may fall below what was paid before it is closed, as a
    * share of the run the token had already made.
    *
@@ -392,6 +401,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
     usdPerToken: number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN),
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
+    maxSwapLossPct: number(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', DEFAULT_MAX_SWAP_LOSS_PCT),
     stopLoss: {
       // OFF by default, at the operator request: *anulá el SL, solo dejá la de
       // la muerte o el congelamiento.*
