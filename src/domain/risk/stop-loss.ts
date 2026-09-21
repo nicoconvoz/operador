@@ -104,6 +104,49 @@ export interface StopLossPolicy {
  */
 export const NO_STOP_LOSS: StopLossPolicy = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0 }
 
+/**
+ * FLAT one percent — what production runs, and the operator's current
+ * experiment rather than a settled rule.
+ *
+ * *Si alguno llega a bajar 1% SL, revisá tick a tick, no quiero quedarme con
+ * ninguna posición que baje eso, y rotás a otra moneda.*
+ *
+ * ## Flat, which contradicts this file's own argument — on purpose
+ *
+ * Everything above argues that a fixed percentage assumes every token is
+ * equally jumpy and that these are not. That argument is not withdrawn. What
+ * changed is the QUESTION: the proportional stop asks *how much of this run am
+ * I willing to give back*, and this one asks *is this token going the wrong
+ * way at all.* At one percent there is no run to be proportional to — the
+ * position is barely older than its own spread.
+ *
+ * **Floor and ceiling are EQUAL, and that is what makes it flat** —
+ * `stopLossPctFor` clamps into `[minStopPct, maxStopPct]`, so the interval
+ * collapses to a point and no run, however large, can widen it.
+ * `shareOfRun: 0` short-circuits the proportional arithmetic before that,
+ * which is the clearer statement of intent but not the guarantee. Both were
+ * mutated: raising either bound kills a test, so neither can drift.
+ *
+ * ## What it costs, stated before it ran rather than after
+ *
+ * A round trip on a $15 fill costs about **1.29%** — which is why
+ * `minProfitPctFor` derives a 3.90% exit target from it. So this stop cuts
+ * BELOW the cost of the trade that opened it:
+ *
+ * | | Net of costs |
+ * |---|---|
+ * | a winner reaching the derived target | **+2.6%** |
+ * | a position stopped out here | **−2.29%** |
+ *
+ * That is roughly symmetric, not the 1:4 the raw numbers suggest, so the rule
+ * needs a win rate near half just to break even — and a micro-cap on 15m bars
+ * dips one percent as ordinary noise. It is shipped anyway because the engine
+ * is in PAPER and the operator said so plainly: *no hay plata de por medio,
+ * estas son pruebas.* Running it and counting is the only way to learn the
+ * win rate, and `tools/loss-by-exit.ts` already groups the answer by exit.
+ */
+export const FLAT_ONE_PCT_STOP: StopLossPolicy = { shareOfRun: 0, minStopPct: 1, maxStopPct: 1 }
+
 /** The operator rule: one twentieth of the run, floored at 5%, capped at 50%. */
 export const DEFAULT_STOP_LOSS_POLICY: StopLossPolicy = {
   shareOfRun: 0.05,

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { OperationsView } from '../../src/application/operations-view.js'
+import type { CloseAllOrder } from '../../src/domain/strategy/state.js'
 
 /**
  * The tape, in a room of its own.
@@ -33,8 +34,23 @@ const price = (n: number) => n.toPrecision(5)
  * identifiers stay English while the interface is Spanish, and this is exactly
  * the seam between them.
  */
-const SPANISH: Record<string, string> = {
-  '🟢 Entry': '🟢 Entrada',
+/**
+ * Keyed by the TYPED union, not by `string`, and that is a wiring guarantee
+ * rather than tidiness.
+ *
+ * As `Record<string, string>` the table was free to be incomplete, and it
+ * was: `🛑 Stop` and `🔄 Cambio` had both been added to
+ * `CloseAllOrder['comment']` and neither reached here, so the one screen the
+ * operator reads was about to print English at him on what is now the most
+ * frequent exit in the book. Nothing failed — a missing key simply falls
+ * through to the raw comment, which is the right behaviour for an UNKNOWN
+ * string and exactly the wrong one for a known member of a closed union.
+ *
+ * Now `tsc` refuses the omission. The same rule the engine already runs on:
+ * a required field catches what a test cannot, because nobody writes the test
+ * for the case they forgot existed.
+ */
+const SPANISH: Record<CloseAllOrder['comment'], string> = {
   '🏁 Exit': '🏁 Salida',
   '⚖️ BE Exit': '⚖️ Salida a la par',
   '☠️ Death Exit': '☠️ Salida por muerte',
@@ -42,11 +58,20 @@ const SPANISH: Record<string, string> = {
   // The allocator's, and it says WHY in the word: the coin stopped qualifying
   // and the money went to one that does. Not a death — it is not blacklisted.
   '🔁 Rotación': '🔁 Rotación por filtros',
+  // The only exit in the engine caused by a PRICE. It says "de más" because
+  // the reader's next question is always *how much did it fall* — and the
+  // answer is that it barely did, which is the whole point of the rule.
+  '🛑 Stop': '🛑 Corte por caída',
+  // The bounded swap: barely under water, and something better was waiting.
+  '🔄 Cambio': '🔄 Cambio por una mejor',
 }
-// A DCA rung arrives as "➕ DCA-2" and needs no translating; anything unknown is
+// A DCA rung arrives as "➕ DCA-2" and an entry as "🟢 Entry" — neither is a
+// `closeAll` comment, so neither is in the union above. Anything unknown is
 // shown as it came rather than blanked, because an unrecognised comment is
 // still the truth about what the engine did.
-const spanish = (comment: string) => SPANISH[comment] ?? comment
+const OTHER: Record<string, string> = { '🟢 Entry': '🟢 Entrada' }
+const spanish = (comment: string) =>
+  SPANISH[comment as CloseAllOrder['comment']] ?? OTHER[comment] ?? comment
 
 /**
  * The rung of the ladder, as a rung.

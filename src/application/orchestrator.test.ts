@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { runCycle, type CycleConfig, type CycleDeps } from './orchestrator.js'
-import { DEFAULT_STOP_LOSS_POLICY } from '../domain/risk/stop-loss.js'
+import { DEFAULT_STOP_LOSS_POLICY, FLAT_ONE_PCT_STOP } from '../domain/risk/stop-loss.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
 import { AlertThrottle } from '../domain/notifications/alerts.js'
@@ -1372,6 +1372,8 @@ describe('runCycle — the stop, which is the one path where a PRICE sells', () 
   // can exist on it.
 
   const withStop: CycleConfig = { ...config, stopLoss: DEFAULT_STOP_LOSS_POLICY }
+  /** What production runs: flat one percent, floor and ceiling equal. */
+  const withFlatStop: CycleConfig = { ...config, stopLoss: FLAT_ONE_PCT_STOP }
 
   /** Bought at 1, holding, with a live price the cycle can read. */
   const underWater = async (marketPrice: number, runAtEntryPct: number | null) => {
@@ -1466,6 +1468,122 @@ describe('runCycle — the stop, which is the one path where a PRICE sells', () 
     const { alerts } = await underWater(0.94, 10)
     const sent = alerts.sent.find((a) => a.kind === 'token-stopped')
     expect(sent?.level).toBe('critical')
+  })
+
+  it('cuts a position that was ALREADY past the line when the stop was switched on', async () => {
+    // *Asegurate que si hay monedas que han superado el 1% de umbral igualmente
+    // roten, porque vamos a mantener el sistema funcionando y le vamos a
+    // agregar este cambio en caliente.*
+    //
+    // A hot change means every open position was born before the rule existed,
+    // and the field the stop is SIZED by — `runAtEntryPct` — did not exist
+    // either. It is optional for exactly that reason, so on all 42 of them it
+    // is absent.
+    //
+    // Absent is the case worth pinning, and the flat policy is what makes it
+    // safe: `stopLossPctFor` returns the floor when `shareOfRun` is zero, and
+    // floor and ceiling are both 1 — so a position with no recorded run is cut
+    // at the same one percent as a position with one. The proportional policy
+    // would have done the same thing here by falling back to its floor, but at
+    // FIVE percent, which is a different rule wearing the same name.
+    //
+    // Nothing waits for a new bar either: the stop lives in the cycle and not
+    // in `tickPosition`, so these are cut on the FIRST pass after the deploy
+    // rather than whenever each pool prints its next 15-minute candle.
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => [],
+      // 2% under water: past the new line, nowhere near the old 5% one.
+      marketPrices: async () => new Map([['solana:Held', 0.98]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    // Exactly as the live book has them: the field is simply not there.
+    const old = position()
+    expect('runAtEntryPct' in old ? old.runAtEntryPct : undefined).toBeUndefined()
+    await store.savePosition(old)
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runCycle(deps, withFlatStop, throttle)
+
+    expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('🛑 Stop')
+    expect(await store.loadPositions()).toEqual([])
+  })
+
+  it('leaves one that has NOT crossed the line, even on the pass that switches it on', async () => {
+    // The other half of the same guarantee. A hot change that cut everything
+    // holding anything would not be a stop, it would be a liquidation.
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', 0.995]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runCycle(deps, withFlatStop, throttle)
+
+    expect((await store.loadPositions()).map((x) => x.id)).toEqual(['pos-1'])
+  })
+
+  it('does NOT buy back the token it just stopped, in the same breath', async () => {
+    // *Y rotás a OTRA moneda.* The word doing the work is "otra".
+    //
+    // The release path has carried this lock since it was written — *a token
+    // that just gave up its slot must not win it straight back: that is not a
+    // reallocation, it is a round trip through the database.* The stop did not
+    // inherit it, and nothing noticed while the stop was OFF.
+    //
+    // It stops being theoretical at a flat one percent. That threshold cuts
+    // BELOW the round trip that opened the position (~1.29% on a $15 fill),
+    // and a 1% dip is ordinary noise on a 15m micro-cap — so a token sitting
+    // near the line would be sold and re-bought every cycle, paying the full
+    // toll each time, for ever. It is the most expensive loop available to
+    // this engine and the rule would have walked straight into it.
+    //
+    // Nothing is blacklisted: the token failed no gate, it merely fell. It is
+    // an ordinary candidate again on the NEXT pass.
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      // Still on the shelf, still scoring well — the price dipped, and
+      // liquidity and concentration do not move on a one percent dip.
+      scan: async () => [candidate('Held', 90)],
+      marketPrices: async () => new Map([['solana:Held', 0.94]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition({ ...position(), runAtEntryPct: 10 })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runCycle(deps, withStop, throttle)
+
+    // It was cut...
+    expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('🛑 Stop')
+    // ...and the book is EMPTY. A re-opened Held would arrive under a new id.
+    expect(await store.loadPositions()).toEqual([])
   })
 })
 

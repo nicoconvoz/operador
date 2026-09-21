@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ConfigError, describeConfig, loadConfig } from './config.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { stopLossPctFor } from '../domain/risk/stop-loss.js'
 
 const valid = {
   DATABASE_URL: 'postgres://user:secret@host:5432/db',
@@ -198,10 +199,27 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
   })
 
-  it('has NO stop unless one is asked for', () => {
-    // *Anulá el SL, solo dejá la de la muerte o el congelamiento.* Those two
-    // leave because the ASSET stopped being an asset, never because the price
-    // fell.
-    expect(loadConfig(valid).stopLoss).toEqual({ shareOfRun: 0, minStopPct: 0, maxStopPct: 0 })
+  it('cuts at one percent, FLAT, whatever the token has already done', () => {
+    // The operator: *si alguno llega a bajar 1% SL, revisá tick a tick, no
+    // quiero quedarme con ninguna posición que baje eso, y rotás a otra
+    // moneda.* Paper mode, so the rule IS the experiment.
+    const stop = loadConfig(valid).stopLoss
+    expect(stop).toEqual({ shareOfRun: 0, minStopPct: 1, maxStopPct: 1 })
+
+    // FLAT is the property, not the literal above. `shareOfRun: 0` turns the
+    // proportional rule off at its source, so a token up 1000% is cut at the
+    // same 1% as a calm one — which is exactly what was asked for and the
+    // opposite of what `DEFAULT_STOP_LOSS_POLICY` does.
+    expect(stopLossPctFor(1000, stop)).toBe(1)
+    expect(stopLossPctFor(0, stop)).toBe(1)
+    // And an unmeasured run cannot widen it either.
+    expect(stopLossPctFor(null, stop)).toBe(1)
+  })
+
+  it('still takes a wider stop when one is asked for', () => {
+    // The proportional policy is one variable away and stays tested, because
+    // the number above is an experiment and experiments get revised.
+    const stop = loadConfig({ ...valid, OPERADOR_STOP_SHARE_OF_RUN: '0.05', OPERADOR_STOP_MAX_PCT: '50' }).stopLoss
+    expect(stopLossPctFor(1000, stop)).toBe(50)
   })
 })

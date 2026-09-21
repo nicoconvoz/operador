@@ -552,6 +552,9 @@ export async function runCycle(
     // exit from becoming what this openly is.
     const stopPolicy: StopLossPolicy = config.stopLoss ?? NO_STOP_LOSS
     const stoppedIds: string[] = []
+    // The TOKEN, not the position: a re-entry arrives under a brand new
+    // position id, so an id cannot recognise it. See `justFreed` below.
+    const stoppedTokens: string[] = []
     for (const recoveredPosition of recovery.positions) {
       const position = now(recoveredPosition.position.id, recoveredPosition.position)
       if (rotated.has(position.id) || releasedIds.includes(position.id)) continue
@@ -584,6 +587,7 @@ export async function runCycle(
       )
       await deps.store.closePosition(position.id)
       stoppedIds.push(position.id)
+      stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)
       const down = drawdownPct(input)
       const stopped = alert(
         'token-stopped',
@@ -787,10 +791,29 @@ export async function runCycle(
     // A token that just gave up its slot must not win it straight back in the
     // same breath: that is not a reallocation, it is a round trip through the
     // database. It is eligible again next cycle.
-    const justReleased = new Set(release.map((d) => `${d.holder.chain}:${d.holder.tokenAddress}`))
+    //
+    // **The STOP is in here too, and it is the case that makes the lock pay
+    // for itself.** A released slot was empty, so re-opening it merely wasted
+    // a scan; a stopped one just SOLD, so re-opening it pays the whole round
+    // trip. And the stop is the one exit whose cause leaves the token still
+    // qualifying — liquidity and concentration do not move on a one percent
+    // dip, so the coin the engine just cut is still near the top of the same
+    // shortlist, every cycle, for as long as it hovers near the line.
+    //
+    // At a flat 1% the stop cuts BELOW that round trip (~1.29% on a $15 fill),
+    // so each lap of the loop would lose more than the fall that triggered it.
+    // The operator asked for *rotás a OTRA moneda*, and this is the word
+    // "otra" being enforced rather than assumed.
+    //
+    // Nothing is blacklisted, here or in the release path: the token failed no
+    // gate, it merely fell. It is an ordinary candidate again next pass.
+    const justFreed = new Set([
+      ...release.map((d) => `${d.holder.chain}:${d.holder.tokenAddress}`),
+      ...stoppedTokens,
+    ])
     const eligible = candidates
       .filter((c) => !held.has(`${c.snapshot.chain}:${c.snapshot.address}`))
-      .filter((c) => !justReleased.has(`${c.snapshot.chain}:${c.snapshot.address}`))
+      .filter((c) => !justFreed.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
     if (slotsLeft > 0 && free > 0) {
       const plan = planPortfolio(

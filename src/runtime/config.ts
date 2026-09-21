@@ -1,7 +1,7 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
-import { NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
+import { FLAT_ONE_PCT_STOP, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { DEFAULT_MAX_SWAP_LOSS_PCT } from '../domain/risk/idle-slots.js'
 
 /**
@@ -403,25 +403,28 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     maxSwapLossPct: number(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', DEFAULT_MAX_SWAP_LOSS_PCT),
     stopLoss: {
-      // OFF by default, at the operator request: *anulá el SL, solo dejá la de
-      // la muerte o el congelamiento.*
+      // ON, FLAT, at one percent — the operator's experiment: *si alguno llega
+      // a bajar 1% SL, revisá tick a tick, no quiero quedarme con ninguna
+      // posición que baje eso, y rotás a otra moneda.*
       //
-      // Those two remain, and they are a different question: they leave because
-      // the ASSET stopped being an asset, never because the price fell. With
-      // this off, no path in the engine sells on a price again — which is what
-      // the reference always said and what the stop was the single exception
-      // to.
+      // It reverses *anulá el SL* from the same week, and the reversal is the
+      // operator's to make: the engine is in PAPER, so the cost of being wrong
+      // is a measurement rather than money — *no hay plata de por medio, estas
+      // son pruebas.*
       //
-      // The cost, stated rather than discovered later: with one buy, no ladder
-      // and no stop, a position that goes under water has nothing that can act
-      // on it. It cannot average down, the strategy exit wants a profit, and
-      // the rotation switch refuses to sell below cost. It waits for the price
-      // to come back or for the death watch to condemn the token.
+      // This is the ONLY path in the engine where a PRICE causes a sale. The
+      // death watch stays out of it and its observation type still refuses any
+      // price-shaped field, which is the structural guarantee that keeps the
+      // two apart. `FLAT_ONE_PCT_STOP` carries the arithmetic of what this
+      // costs — it cuts below the round trip that opened the position — and
+      // that is the number to read the results against.
       //
-      // `DEFAULT_STOP_LOSS_POLICY` is still there, tested, one variable away.
-      shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', NO_STOP_LOSS.shareOfRun),
-      minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', NO_STOP_LOSS.minStopPct),
-      maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', NO_STOP_LOSS.maxStopPct),
+      // Both other policies stay tested and one variable away:
+      // `OPERADOR_STOP_SHARE_OF_RUN=0.05` restores the proportional rule,
+      // `OPERADOR_STOP_MIN_PCT=0` turns the stop off entirely.
+      shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', FLAT_ONE_PCT_STOP.shareOfRun),
+      minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', FLAT_ONE_PCT_STOP.minStopPct),
+      maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', FLAT_ONE_PCT_STOP.maxStopPct),
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
