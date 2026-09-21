@@ -125,3 +125,39 @@ describe('realisedBySell — what a single sale actually made', () => {
     expect(made.get('p1:sell:3')).toBeCloseTo(2, 6)
   })
 })
+
+describe('the walk cannot be reordered into a different answer', () => {
+  // The operator, twice: *a veces me sale 75 de cobrado y a veces 55.*
+  //
+  // Realised profit is computed by walking a position's fills and pricing each
+  // sale against the basis the buys before it built. That makes the ORDER part
+  // of the answer — and the order was coming from `ORDER BY time` with no
+  // tiebreaker, while every fill settled in one cycle carries the same time.
+  // Ties were the normal case, and SQL leaves tied rows wherever the plan puts
+  // them, so two instances could report different profit from identical data.
+  //
+  // The query now sorts buys before sells within an instant, which is both
+  // deterministic and true: you cannot sell what you have not bought. This
+  // pins the consequence — that a sale walked before its own buy is not a
+  // trade that made nothing.
+
+  it('prices a sale against the buy that came first, whatever order they arrive in', () => {
+    const buy = fill('p', 'buy', 1, 100, NOW)
+    const sell = fill('p', 'sell', 1.1, 100, NOW)
+
+    const correct = positionLedger([buy, sell])
+    expect(correct.realisedUsd).toBeCloseTo(10, 9)
+  })
+
+  it('a sale walked BEFORE its buy reports having made nothing — the bug this prevents', () => {
+    // Not a hypothetical: it is what the missing tiebreaker produced. Kept as
+    // a test so the shape is recognisable if it ever comes back by another
+    // door, and so the fix is measured against the damage rather than against
+    // an idea of it.
+    const buy = fill('p', 'buy', 1, 100, NOW)
+    const sell = fill('p', 'sell', 1.1, 100, NOW)
+
+    const scrambled = positionLedger([sell, buy])
+    expect(scrambled.realisedUsd).not.toBeCloseTo(10, 9)
+  })
+})

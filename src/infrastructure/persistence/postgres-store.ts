@@ -134,13 +134,39 @@ export class PostgresStore implements StatePort {
 
   async fillsFor(positionId: string): Promise<readonly PersistedFill[]> {
     const { rows } = await this.sql.query<Record<string, string | number>>(
-      'SELECT * FROM fills WHERE position_id = $1 ORDER BY time', [positionId],
+      `SELECT * FROM fills WHERE position_id = $1 ORDER BY time, CASE side WHEN 'buy' THEN 0 ELSE 1 END, idempotency_key`, [positionId],
     )
     return rows.map(toFill)
   }
 
+  /**
+   * Every fill, in an order that is DETERMINISTIC and economically correct.
+   *
+   * It was `ORDER BY time` alone, and both halves of that were wrong.
+   *
+   * NOT DETERMINISTIC: every fill settled in one cycle carries the same
+   * `time` — the cycle's clock — so ties are the normal case rather than the
+   * exception, and SQL leaves tied rows in whatever order the plan produces.
+   * Two Vercel instances reading the same table could therefore walk the same
+   * fills in different orders and report DIFFERENT realised profit. The
+   * operator saw exactly that: *a veces me sale 75 de cobrado y a veces 55.*
+   *
+   * NOT CORRECT: realised profit is computed by walking a position's fills and
+   * pricing each sale against the basis built by the buys before it. A sale
+   * walked ahead of its own buy finds no basis at all, and the walk quietly
+   * prices it against itself — a real trade reported as having made nothing.
+   *
+   * So buys come first within an instant. You cannot sell what you have not
+   * bought, and now the query cannot claim otherwise. `idempotency_key` is
+   * unique, so the third term makes the rest total.
+   *
+   * The FIGURE this protects is the one the whole system exists to produce,
+   * and it was non-reproducible from the same data.
+   */
   async allFills(): Promise<readonly PersistedFill[]> {
-    const { rows } = await this.sql.query<Record<string, string | number>>('SELECT * FROM fills ORDER BY time')
+    const { rows } = await this.sql.query<Record<string, string | number>>(
+      `SELECT * FROM fills ORDER BY time, CASE side WHEN 'buy' THEN 0 ELSE 1 END, idempotency_key`,
+    )
     return rows.map(toFill)
   }
 

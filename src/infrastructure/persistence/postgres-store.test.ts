@@ -186,3 +186,29 @@ describe('the registry writes in chunks, because a statement has a parameter lim
     expect(statements).toEqual([9])
   })
 })
+
+describe('the fill queries ask for a deterministic order', () => {
+  // The figure this protects is the one the whole system exists to produce,
+  // and it was not reproducible from the same data.
+
+  it('sorts buys before sells within the same instant', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).allFills()
+    expect(calls[0]!.sql).toContain('ORDER BY time')
+    expect(calls[0]!.sql).toContain("CASE side WHEN 'buy' THEN 0 ELSE 1 END")
+  })
+
+  it('breaks the remaining ties on a unique column', async () => {
+    // Without a total order two instances can still disagree, just less often
+    // — which is worse than disagreeing loudly, because it looks like it works.
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).allFills()
+    expect(calls[0]!.sql).toContain('idempotency_key')
+  })
+
+  it('asks the same of a single position', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).fillsFor('pos-1')
+    expect(calls[0]!.sql).toContain("CASE side WHEN 'buy' THEN 0 ELSE 1 END")
+  })
+})
