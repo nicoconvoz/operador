@@ -37,7 +37,11 @@ export class MemoryStore implements StatePort {
   }
 
   async savePosition(position: PersistedPosition): Promise<void> {
-    this.positions.set(position.id, structuredClone(position))
+    // The break-even ratchet, kept exactly as the SQL keeps it. A reference
+    // store looser than production would let the tests pass on a rule the real
+    // one enforces and this one does not.
+    const armed = this.positions.get(position.id)?.breakEvenArmed === true || position.breakEvenArmed === true
+    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed }))
   }
 
   async closePosition(positionId: string): Promise<void> {

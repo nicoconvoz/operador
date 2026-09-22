@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS positions (
 
 CREATE INDEX IF NOT EXISTS positions_token_idx ON positions (chain, token_address);
 
+-- The break-even ratchet: this position has been at its profit target, so it
+-- may never close at a loss again. Added to a table that already holds money,
+-- hence ADD COLUMN IF NOT EXISTS rather than a column in the CREATE above —
+-- it has to land on a live database without a truncate, and run as a no-op on
+-- every boot after that. The upsert keeps it with OR, so once true it stays.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS break_even_armed BOOLEAN NOT NULL DEFAULT false;
+
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure
 -- safe: the second write collides instead of buying twice.

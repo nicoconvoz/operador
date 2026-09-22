@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, stopPolicyFor, STOP_SWEEP_MS } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -180,6 +180,13 @@ export interface CycleConfig {
    * `stopLoss`, which is already on this config — a ratio needs a risk.
    */
   readonly rewardRiskRatio?: number
+  /**
+   * A position that reached its target may never close at a loss: it leaves
+   * at break-even instead of riding back down to the stop. The operator's
+   * choice over a hard target, because a hard target would also have cut the
+   * runner that went to +28%.
+   */
+  readonly breakEven?: boolean
 }
 
 /**
@@ -438,15 +445,8 @@ export async function runCycle(
    * derived from the target rather than the target from the stop, which is the
    * reverse of what shipped an hour ago and is the operator's correction.
    */
-  const stopSizing = (position: PersistedPosition): StopLossPolicy =>
-    stopPolicyFor(
-      position,
-      stopPolicy,
-      config.rewardRiskRatio,
-      config.maxCostSharePct,
-      config.gasUsdPerSwap ?? 0.05,
-      config.params.minProfitPct,
-    )
+  const sizing = exitSizingFrom(config)
+  const stopSizing = (position: PersistedPosition) => exitLevelsFor(position, sizing)
   const stoppedIds: string[] = []
   // The TOKEN, not the position: a re-entry arrives under a brand new
   // position id, so an id cannot recognise it. See `justFreed` below.
@@ -1141,3 +1141,19 @@ export async function runCycle(
   }
 }
 
+/**
+ * What the stop, the target and the ratchet are sized from — built in ONE
+ * place because two callers need it: the cycle, and the loop between cycles.
+ * Two copies of "where may this position live" would eventually disagree, and
+ * one of them would be holding money.
+ */
+export function exitSizingFrom(config: CycleConfig): ExitSizing {
+  return {
+    stop: config.stopLoss ?? NO_STOP_LOSS,
+    rewardRiskRatio: config.rewardRiskRatio,
+    maxCostSharePct: config.maxCostSharePct,
+    gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
+    floorPct: config.params.minProfitPct,
+    breakEven: config.breakEven === true,
+  }
+}

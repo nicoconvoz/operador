@@ -779,6 +779,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       stopLoss: config.stopLoss,
       maxCostSharePct: config.maxCostSharePct,
       rewardRiskRatio: config.rewardRiskRatio,
+      breakEven: config.breakEven,
       usdPerToken: config.usdPerToken,
       idleSlots: {
         // *Si el token ha perdido menos del 1.2% y la moneda está en un puntaje

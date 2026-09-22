@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { MemoryStore } from './memory-store.js'
 import { type RememberedToken } from '../../domain/persistence/store.js'
+import { initialState } from '../../domain/strategy/state.js'
+import { startDeathWatch } from '../../domain/risk/death-exit.js'
 
 
 describe('the permanent registry — the memory the providers do not have', () => {
@@ -63,3 +65,23 @@ describe('the permanent registry — the memory the providers do not have', () =
     expect((await store.knownTokens(10)).map((t) => t.contract)).toEqual(['known', 'unknown'])
   })
 })
+
+describe('MemoryStore — the break-even ratchet', () => {
+  // The same rule as the SQL one, because the tests run on this store and a
+  // reference implementation that is looser than production proves nothing.
+  it('a later save cannot un-arm a position', async () => {
+    const store = new MemoryStore()
+    const base = {
+      id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+      cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+      quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+      capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+    }
+    await store.savePosition({ ...base, breakEvenArmed: true })
+    await store.savePosition({ ...base, lastBarTime: 1 })
+    const [loaded] = await store.loadPositions()
+    expect(loaded!.breakEvenArmed).toBe(true)
+    expect(loaded!.lastBarTime).toBe(1)
+  })
+})
+

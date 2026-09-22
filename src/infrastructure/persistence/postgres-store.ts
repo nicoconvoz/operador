@@ -62,6 +62,7 @@ interface PositionRow {
   pending_orders: PersistedPosition['pendingOrders']
   opened_at: string | number
   updated_at: string | number
+  break_even_armed?: boolean | null
 }
 
 /**
@@ -96,14 +97,16 @@ export class PostgresStore implements StatePort {
       pendingOrders: row.pending_orders,
       openedAt: num(row.opened_at),
       updatedAt: num(row.updated_at),
+      breakEvenArmed: row.break_even_armed === true,
     }))
   }
 
   async savePosition(p: PersistedPosition): Promise<void> {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
-                              capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                              capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
+                              break_even_armed)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -112,9 +115,13 @@ export class PostgresStore implements StatePort {
          last_bar_time = EXCLUDED.last_bar_time,
          last_price_usd = EXCLUDED.last_price_usd,
          pending_orders = EXCLUDED.pending_orders,
-         updated_at = EXCLUDED.updated_at`,
+         updated_at = EXCLUDED.updated_at,
+         -- The RATCHET. Every step of the cycle writes the whole row, and a
+         -- stale snapshot must never be able to turn this back off.
+         break_even_armed = positions.break_even_armed OR EXCLUDED.break_even_armed`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
-       JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt],
+       JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
+       p.breakEvenArmed === true],
     )
   }
 

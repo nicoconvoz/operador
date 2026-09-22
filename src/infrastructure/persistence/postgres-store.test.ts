@@ -212,3 +212,41 @@ describe('the fill queries ask for a deterministic order', () => {
     expect(calls[0]!.sql).toContain("CASE side WHEN 'buy' THEN 0 ELSE 1 END")
   })
 })
+
+describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
+  // *Hay monedas que estaban ganando un montón, retrocedieron hasta perder, y
+  // cerraron en pérdida porque no tomaron la ganancia cuando pudieron.*
+  // Measured: four losers had been above the target first, two of them on a
+  // bar CLOSE, $5.57 lost between them.
+  //
+  // The fix is a ratchet — once a position reaches the target it may never
+  // close at a loss — and a ratchet that any save can undo is not one. Every
+  // step of the cycle writes the WHOLE row: the tick, the trim, the rotation.
+  // This project already paid once for a step writing a stale snapshot over
+  // what the tick had just decided. So the rule lives where no caller can
+  // forget it: armed = what was stored OR what is being written.
+
+  it('never lets a save turn an armed position back off', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition({ ...position, breakEvenArmed: true })
+    expect(calls[0]!.sql).toContain('break_even_armed = positions.break_even_armed OR EXCLUDED.break_even_armed')
+  })
+
+  it('writes the flag, and absent is false rather than null', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition(position)
+    expect(calls[0]!.params).toContain(false)
+  })
+
+  it('reads it back', async () => {
+    const { client } = fakeSql([[{
+      id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
+      cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
+      capital_usd: '500', last_bar_time: '1', last_price_usd: '1', pending_orders: [],
+      opened_at: '1', updated_at: '1', break_even_armed: true,
+    }]])
+    const [loaded] = await new PostgresStore(client).loadPositions()
+    expect(loaded!.breakEvenArmed).toBe(true)
+  })
+})
+

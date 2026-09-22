@@ -2067,3 +2067,92 @@ describe('the stop will not sell at a price no second source confirms', () => {
     expect(await soldAt(0.5, null)).toBeNull()
   })
 })
+
+describe('the break-even ratchet — a winner may never close at a loss', () => {
+  // *Hay monedas que estaban ganando un montón, retrocedieron hasta perder, y
+  // cerraron en pérdida porque no tomaron la ganancia cuando pudieron?*
+  //
+  // Yes, and it was measured against real candles rather than argued. Of the
+  // positions closed that day, four LOSERS had been above the profit target
+  // first — GTBxUiw peaked at +27.58% and left at −12.50% — and two of them had
+  // CLOSED a bar above it. $5.57 lost between the four, where taking the
+  // target would have made about $1.43.
+  //
+  // The strategy exit wants `inProfit && (impulseDead || stBearFlip)`: being
+  // above the target is not enough, the impulse has to be seen to stall. A
+  // violent reversal goes straight through the target without producing that
+  // signal while it is still above it. And the stop now watches the live price
+  // every thirty seconds while the exit watches a bar close every fifteen
+  // minutes — losers cut fast, winners left to evaporate.
+  //
+  // The operator chose a ratchet over a hard target, and the reason is in the
+  // same table: DvdmEnz ran to +28% and left at +15.23%. A hard exit at the
+  // target would have cut it at +2%. The ratchet lets it run and still makes
+  // the four above impossible.
+  //
+  // The fixture's numbers: a $300 slot on a 0.25% spread and 0.05% impact
+  // pays a 0.63% round trip, so the target is the 2% floor. Arms at +2%,
+  // leaves at +0.63%.
+
+  const be: CycleConfig = { ...config, maxOpenEntries: 1, maxCostSharePct: 33, stopLoss: FLAT_ONE_PCT_STOP, breakEven: true }
+
+  const run = async (price: number, armed: boolean, cfg: CycleConfig = be) => {
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', price]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition({ ...position(), breakEvenArmed: armed })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, cfg, throttle)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell') ?? null
+    const [left] = await store.loadPositions()
+    return { sale, left }
+  }
+
+  it('arms the moment the price reaches the target, and does NOT sell', async () => {
+    const { sale, left } = await run(1.05, false)
+    expect(sale).toBeNull()
+    expect(left?.breakEvenArmed).toBe(true)
+  })
+
+  it('sells an ARMED position the moment it falls back to break-even', async () => {
+    const { sale } = await run(1.004, true)
+    expect(sale?.comment).toBe('🔒 Break-even')
+  })
+
+  it('leaves an UNARMED position alone at the very same price', async () => {
+    // Break-even is only a floor for something that already won. A position
+    // that never reached the target is an ordinary one, and +0.4% is not a
+    // reason to sell it.
+    const { sale, left } = await run(1.004, false)
+    expect(sale).toBeNull()
+    expect(left).toBeDefined()
+  })
+
+  it('stays armed through the tick that runs in the same cycle', async () => {
+    // The ratchet's whole reason to live in the store. The sweep arms it, then
+    // the tick loop saves the position from its OWN snapshot — taken before the
+    // sweep, without the flag — and a plain overwrite would disarm it on the
+    // very pass that armed it. This is the trim-over-tick bug's exact shape,
+    // and the store's OR is what makes it impossible.
+    const { left } = await run(1.05, false)
+    expect(left?.breakEvenArmed).toBe(true)
+  })
+
+  it('does nothing at all when the operator turns it off', async () => {
+    const { sale, left } = await run(1.004, true, { ...be, breakEven: false })
+    expect(sale).toBeNull()
+    expect(left).toBeDefined()
+  })
+})
+

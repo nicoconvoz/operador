@@ -64,6 +64,9 @@ const SPANISH: Record<CloseAllOrder['comment'], string> = {
   '🛑 Stop': '🛑 Corte por caída',
   // The bounded swap: barely under water, and something better was waiting.
   '🔄 Cambio': '🔄 Cambio por una mejor',
+  // A position that reached its target and was on its way to a loss. It left
+  // at zero instead of at the stop, which is the whole reason it exists.
+  '🔒 Break-even': '🔒 Salida en break-even',
 }
 // A DCA rung arrives as "➕ DCA-2" and an entry as "🟢 Entry" — neither is a
 // `closeAll` comment, so neither is in the union above. Anything unknown is

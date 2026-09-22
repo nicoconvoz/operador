@@ -71,6 +71,18 @@ import { type CloseAllOrder } from '../strategy/state.js'
 
 export const STOP_LOSS_COMMENT = '🛑 Stop' as CloseAllOrder['comment']
 
+/**
+ * A winner giving its gain back, stopped at zero.
+ *
+ * Its own name rather than the stop's, because the tape has to tell them apart:
+ * one is a position that never worked, the other is one that DID and was about
+ * to be turned into a loss. Counting them together would hide exactly the
+ * number the operator asked about. Not `⚖️ BE Exit` either — that is the
+ * reference's rescue breakeven, which arms on DCA depth and is parity-tested
+ * evidence, not a name to borrow.
+ */
+export const BREAK_EVEN_COMMENT = '🔒 Break-even' as CloseAllOrder['comment']
+
 export interface StopLossPolicy {
   /**
    * Share of the token's own run that we are willing to give back, as a

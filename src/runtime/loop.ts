@@ -1,6 +1,6 @@
-import { sweepStops, stopPolicyFor, STOP_SWEEP_MS } from '../application/stop-sweep.js'
+import { sweepStops, exitLevelsFor, STOP_SWEEP_MS } from '../application/stop-sweep.js'
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
-import { type CycleConfig, type CycleDeps, type CycleKind, type CycleResult, runCycle } from '../application/orchestrator.js'
+import { type CycleConfig, type CycleDeps, type CycleKind, type CycleResult, runCycle, exitSizingFrom } from '../application/orchestrator.js'
 
 /**
  * The supervised loop.
@@ -101,8 +101,9 @@ export async function runLoop(
    */
   const guardStops = async () => {
     const policy = config.stopLoss
-    // Absent or zero means the operator turned it off. Do not invent one.
-    if (policy === undefined || policy.minStopPct <= 0) return
+    // Nothing to watch for when BOTH the stop and the ratchet are off. Either
+    // one alone is reason enough to look.
+    if ((policy === undefined || policy.minStopPct <= 0) && config.breakEven !== true) return
     if (deps.marketPrices === undefined) return
     // The kill switch as the last pass found it. Its documented asymmetry is
     // that it stops OPENING and keeps protecting, so this would arguably run
@@ -117,15 +118,7 @@ export async function runLoop(
         // The SAME derivation the cycle uses. Two answers to "how far may this
         // fall" would eventually disagree, and one of them would be holding
         // money.
-        (position) =>
-          stopPolicyFor(
-            position,
-            policy,
-            config.rewardRiskRatio,
-            config.maxCostSharePct,
-            config.gasUsdPerSwap ?? 0.05,
-            config.params.minProfitPct,
-          ),
+        (position) => exitLevelsFor(position, exitSizingFrom(config)),
         throttle,
         book,
         await deps.marketPrices(book),

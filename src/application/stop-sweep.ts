@@ -11,6 +11,7 @@ import {
   stopLossPctFor,
   drawdownPct,
   STOP_LOSS_COMMENT,
+  BREAK_EVEN_COMMENT,
   type StopLossPolicy,
 } from '../domain/risk/stop-loss.js'
 
@@ -72,37 +73,65 @@ export const STOP_SWEEP_MS = 30_000
  * without a store. Only the first is a fact about persistence, so only the
  * first is here.
  */
+/** What the cycle and the loop both hand the sweep. ONE shape, so they cannot drift. */
+export interface ExitSizing {
+  readonly stop: StopLossPolicy
+  readonly rewardRiskRatio: number | undefined
+  readonly maxCostSharePct: number | undefined
+  readonly gasUsdPerSwap: number
+  readonly floorPct: number
+  readonly breakEven: boolean
+}
+
+/** The three lines a position lives between, in percent of its average cost. */
+export interface ExitLevels {
+  /** How far it may fall before it is cut. */
+  readonly stop: StopLossPolicy
+  /** How far it must rise for the break-even ratchet to arm; null means never. */
+  readonly armAtPct: number | null
+  /**
+   * Where an ARMED position leaves: its average cost plus the round trip, so
+   * the sale nets about zero rather than about minus the toll.
+   */
+  readonly breakEvenPct: number
+}
+
 /**
- * How far THIS position may fall, so that N winners pay for one loser.
+ * Every line a position lives between, sized from THIS pool.
  *
- * Per position, because every term in it is: the toll depends on the pool's
- * spread and depth and on how much the slot deploys, and the target is derived
- * from the toll. A single number composed at boot would be right for the
- * average pool and wrong for every actual one.
+ * Per position, because every term is: the toll depends on the pool's spread
+ * and depth and on how much the slot deploys, the target is derived from the
+ * toll, and both the stop and the ratchet are derived from the target. One
+ * number composed at boot would be right for the average pool and wrong for
+ * every actual one.
  *
- * With no ratio asked for it hands back the policy it was given, so the flat
- * stop and the proportional one both keep working exactly as before.
+ * The ratchet arms at the TARGET — the same number the strategy exit wants —
+ * because "it could have taken the profit" means exactly that: it was where
+ * the exit would have been happy to sell.
  */
-export const stopPolicyFor = (
-  position: PersistedPosition,
-  base: StopLossPolicy,
-  ratio: number | undefined,
-  maxCostSharePct: number | undefined,
-  gasUsdPerSwap: number,
-  floorPct: number,
-): StopLossPolicy => {
-  if (ratio === undefined || ratio <= 0 || maxCostSharePct === undefined) return base
+export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): ExitLevels => {
   const roundTrip = roundTripCostPct(
     position.capitalUsd,
     position.quality.spreadPct,
     position.quality.slippagePct,
-    gasUsdPerSwap,
+    sizing.gasUsdPerSwap,
   )
-  const pct = stopForRatio(minProfitPctFor(roundTrip, maxCostSharePct, floorPct), roundTrip, ratio)
-  // Zero means the pair is impossible on this pool — the target does not clear
-  // the toll by enough for any stop to make the ratio work. Fall back rather
-  // than invent: the base policy is the operator's own number.
-  return pct > 0 ? { shareOfRun: 0, minStopPct: pct, maxStopPct: pct } : base
+  const target =
+    sizing.maxCostSharePct === undefined ? null : minProfitPctFor(roundTrip, sizing.maxCostSharePct, sizing.floorPct)
+
+  let stop = sizing.stop
+  if (target !== null && sizing.rewardRiskRatio !== undefined && sizing.rewardRiskRatio > 0) {
+    const pct = stopForRatio(target, roundTrip, sizing.rewardRiskRatio)
+    // Zero means the pair is impossible on this pool. Fall back rather than
+    // invent: the base policy is the operator's own number.
+    if (pct > 0) stop = { shareOfRun: 0, minStopPct: pct, maxStopPct: pct }
+  }
+
+  return {
+    stop,
+    armAtPct: sizing.breakEven && target !== null ? target : null,
+    breakEvenPct: roundTrip,
+  }
 }
 
 export interface StopSweepDeps {
@@ -114,8 +143,8 @@ export interface StopSweepDeps {
 
 export async function sweepStops(
   deps: StopSweepDeps,
-  /** Per POSITION, because the stop is derived from that pool's own toll. */
-  policyFor: (position: PersistedPosition) => StopLossPolicy,
+  /** Per POSITION, because every line is derived from that pool's own toll. */
+  levelsFor: (position: PersistedPosition) => ExitLevels,
   throttle: AlertThrottle,
   positions: readonly PersistedPosition[],
   prices: ReadonlyMap<string, number>,
@@ -190,7 +219,62 @@ export async function sweepStops(
       continue
     }
 
-    const policy = policyFor(position)
+    const levels = levelsFor(position)
+    const policy = levels.stop
+    const avg = input.entryPriceUsd
+    const held = input.openQty > 0 && avg > 0 && price !== null && price > 0
+
+    /**
+     * THE RATCHET. *Estaban ganando un montón, retrocedieron hasta perder, y
+     * cerraron en pérdida porque no tomaron la ganancia cuando pudieron.*
+     *
+     * Measured against real candles: four losers had been above the target
+     * first, two on a bar CLOSE — GTBxUiw peaked at +27.58% and left at
+     * −12.50%. The strategy exit wants the impulse to be seen to STALL, and a
+     * violent reversal goes straight through the target without producing
+     * that signal while still above it.
+     *
+     * So once a position has been at its target it may never close at a loss.
+     * Here, on the live price every thirty seconds — the same cadence as the
+     * stop, which is the point: the asymmetry was a stop that looked twice a
+     * minute and an exit that looked four times an hour.
+     *
+     * Arming is SAVED, and the store keeps it with OR. Every step of the cycle
+     * writes the whole row, so a flag held anywhere weaker would be cleared by
+     * the first stale snapshot written over it.
+     */
+    let armed = levels.armAtPct !== null && position.breakEvenArmed === true
+    if (!armed && levels.armAtPct !== null && held && price! >= avg * (1 + levels.armAtPct / 100)) {
+      await deps.store.savePosition({ ...position, breakEvenArmed: true })
+      armed = true
+    }
+    if (armed && held && price! <= avg * (1 + levels.breakEvenPct / 100)) {
+      const broker = await deps.brokerFor(position)
+      await settle(
+        [{ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }],
+        position.lastBarTime,
+        price!,
+        at,
+        position,
+        broker,
+        deps.store,
+      )
+      await deps.store.closePosition(position.id)
+      // In the same list as the stops, on purpose: the caller locks the token
+      // out of the same cycle's allocation, and buying straight back what was
+      // just sold is a round trip, not a rotation.
+      stopped.push(position.id)
+      const kept = alert(
+        'position-closed',
+        `🔒 ${position.symbol} salió en break-even`,
+        `Había llegado al objetivo y volvió hasta el precio de compra. Se vendió a ${price} en vez de esperar al stop: una posición que ganó no cierra en pérdida.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+      if (throttle.shouldSend(kept, `break-even:${position.id}`)) await deps.alerts.send(kept)
+      continue
+    }
+
     if (!shouldStopOut(input, policy)) continue
 
     const broker = await deps.brokerFor(position)

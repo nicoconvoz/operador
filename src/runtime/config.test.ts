@@ -216,6 +216,14 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(stopLossPctFor(null, stop)).toBe(1)
   })
 
+  it('keeps a winner from closing at a loss unless told not to', () => {
+    // *Un break even.* Four losers had been above their target first — $5.57
+    // between them — and a ratchet is what makes that impossible. On by
+    // default, because it is the operator's decision; one variable to undo.
+    expect(loadConfig(valid).breakEven).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: '0' }).breakEven).toBe(false)
+  })
+
   it('still takes a wider stop when one is asked for', () => {
     // The proportional policy is one variable away and stays tested, because
     // the number above is an experiment and experiments get revised.

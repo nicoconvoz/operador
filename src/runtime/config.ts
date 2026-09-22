@@ -214,6 +214,7 @@ export interface RuntimeConfig {
    */
   readonly maxCostSharePct: number
   readonly rewardRiskRatio: number
+  readonly breakEven: boolean
   /**
    * How much of a loss the allocator may pay to move a slot to a better token.
    *
@@ -408,6 +409,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     //
     // Zero turns it off and the cost floor decides alone, exactly as before.
     rewardRiskRatio: number(env, 'OPERADOR_REWARD_RISK', 4),
+    // *Un break even.* A position that reached its target may never close at a
+    // loss. Measured before it was built: four losers had been above the target
+    // first, $5.57 between them. OPERADOR_BREAK_EVEN=0 turns it off.
+    breakEven: onUnless(env, 'OPERADOR_BREAK_EVEN'),
     maxSwapLossPct: number(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', DEFAULT_MAX_SWAP_LOSS_PCT),
     stopLoss: {
       // ON, FLAT, at one percent — the operator's experiment: *si alguno llega

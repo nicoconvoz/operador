@@ -1,5 +1,5 @@
 import { roundTripCostPct } from '../domain/economics/sizing.js'
-import { FLAT_ONE_PCT_STOP, NO_STOP_LOSS } from '../domain/risk/stop-loss.js'
+import { FLAT_ONE_PCT_STOP, NO_STOP_LOSS, BREAK_EVEN_COMMENT } from '../domain/risk/stop-loss.js'
 import { describe, it, expect } from 'vitest'
 import { entryAlertLabel, MAX_CATCH_UP_BARS, refusesToSellAtALoss, tickPosition, type EngineConfig, type TickInput } from './engine.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
@@ -1085,3 +1085,21 @@ describe('the exit target is derived from what leaving costs', () => {
 
 
 })
+
+describe('refusesToSellAtALoss — the break-even exit is a RISK exit', () => {
+  // It aims at zero, and a fill a few basis points under average cost is still
+  // the point: the alternative is riding the same position down to the stop.
+  // A no-loss guard that refused it would re-open the exact hole it closes —
+  // a winner turned into a loss because the exit meant to prevent that was
+  // not allowed to fire.
+  it('lets a break-even sale through even a hair under average cost', () => {
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }, 1, 0.999)).toBe(false)
+  })
+
+  it('while the strategy exit at the same price is still refused', () => {
+    // The guard itself is untouched. Only the exits that leave for a reason
+    // other than "the strategy is happy" are exempt from it.
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🏁 Exit' }, 1, 0.999)).toBe(true)
+  })
+})
+

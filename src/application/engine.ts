@@ -13,7 +13,7 @@ import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/
 import { deployableCapital, scaledParams } from './paper-run.js'
 import { minProfitPctFor, roundTripCostPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
-import { STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
+import { BREAK_EVEN_COMMENT, STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
 import { SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { type Candles } from './replay.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
@@ -668,7 +668,11 @@ export function refusesToSellAtALoss(
   if (
     order.comment === DEATH_EXIT_COMMENT ||
     order.comment === FROZEN_EXIT_COMMENT ||
-    order.comment === STOP_LOSS_COMMENT
+    order.comment === STOP_LOSS_COMMENT ||
+    // It aims at zero, and a fill a few basis points under is still the
+    // point: the alternative is riding the same position down to the stop.
+    // A guard that refused it would re-open the exact hole it closes.
+    order.comment === BREAK_EVEN_COMMENT
   ) {
     return false
   }

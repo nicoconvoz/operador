@@ -86,6 +86,23 @@ export interface PersistedPosition {
    */
   readonly runAtEntryPct?: number | null
   /**
+   * The position has been at its profit target at least once, so it may never
+   * close at a loss again: its floor is break-even, net of the round trip.
+   *
+   * The operator's question, from the tape: *hay monedas que estaban ganando un
+   * montón, retrocedieron hasta perder, y cerraron en pérdida porque no tomaron
+   * la ganancia cuando pudieron?* Yes — four losers had been above the target
+   * first, two of them on a bar CLOSE, $5.57 between them. The strategy exit
+   * waits for the impulse to stall, and a sharp reversal goes straight through
+   * the target without producing that signal while still above it.
+   *
+   * A RATCHET, and only the store can make one. Every step of the cycle writes
+   * the whole row — the tick, the trim, the rotation — and a flag any of them
+   * could clear with a stale snapshot is a flag that clears. So both stores
+   * keep it with OR: once true, no save turns it off. Absent means false.
+   */
+  readonly breakEvenArmed?: boolean
+  /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *
    * This is the field that makes recovery safe. A process that dies between
