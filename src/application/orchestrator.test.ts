@@ -1470,6 +1470,51 @@ describe('runCycle — the stop, which is the one path where a PRICE sells', () 
     expect(sent?.level).toBe('critical')
   })
 
+  it('cuts before the TICK loop, which is the OTHER wait that grows with the book', async () => {
+    // The second half of the same lesson, and it needed a second measurement.
+    //
+    // Moving the stop above the scan was right and not enough. The tick loop
+    // is ALSO one network call per position — a candle download and a sell
+    // probe each, in series, throttled — and the stop sat below it. From the
+    // operator's own CSV: eight positions bought at 22:00:00 and all eight cut
+    // at 22:24:34.021, the same millisecond, the very next look. They had
+    // fallen between 1.50% and 6.13% by then, and every one qualified at 1%.
+    //
+    // Cutting on time would have cost $2.76. Cutting 25 minutes late cost
+    // $6.05. The LATENESS was $3.29 — more than half the damage, and more
+    // than the threshold itself is worth arguing about.
+    //
+    // So the assertion is the ORDER against the first candle fetch. A second,
+    // healthy position is what makes 'candles' appear at all: the stopped one
+    // is closed and rightly skipped.
+    const order: string[] = []
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => [],
+      candlesFor: async () => { order.push('candles'); return flat() },
+      alerts: { send: async (a) => { order.push(a.kind) } },
+      marketPrices: async () => new Map([['solana:Held', 0.94]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition(position())
+    await store.savePosition(position({ id: 'pos-2', tokenAddress: 'Other', symbol: 'OTHER' }))
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runCycle(deps, withFlatStop, throttle)
+
+    expect(order).toContain('candles')
+    expect(order).toContain('token-stopped')
+    expect(order.indexOf('token-stopped')).toBeLessThan(order.indexOf('candles'))
+  })
+
   it('cuts BEFORE the scan runs, because the scan is the longest wait in the cycle', async () => {
     // Found in production, from the tape, and it is the reason the stop looked
     // switched off: SQUIRE sat at −2.5% with six others past the line while
