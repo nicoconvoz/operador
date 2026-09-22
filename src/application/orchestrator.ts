@@ -175,6 +175,11 @@ export interface CycleConfig {
   readonly usdPerToken?: number | null
   /** Passed through to the tick, which derives the exit target from it. */
   readonly maxCostSharePct?: number
+  /**
+   * How many times the stop a winner must make, net of costs. Travels with
+   * `stopLoss`, which is already on this config — a ratio needs a risk.
+   */
+  readonly rewardRiskRatio?: number
 }
 
 /**
@@ -326,6 +331,11 @@ export async function runCycle(
     // meaning what it meant. Present, the tick derives the target from what
     // this pool actually charges to leave.
     ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
+    // Both or neither: the target is derived from the stop, so handing the
+    // engine one without the other would silently drop the ratio.
+    ...(config.rewardRiskRatio !== undefined && config.stopLoss !== undefined
+      ? { rewardRiskRatio: config.rewardRiskRatio, stopLoss: config.stopLoss }
+      : {}),
     ...(config.sizing ? { sizing: config.sizing } : {}),
   }
 

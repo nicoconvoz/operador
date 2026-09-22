@@ -213,6 +213,7 @@ export interface RuntimeConfig {
    * because it is a real departure from the backtest.
    */
   readonly maxCostSharePct: number
+  readonly rewardRiskRatio: number
   /**
    * How much of a loss the allocator may pay to move a slot to a better token.
    *
@@ -401,6 +402,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
     usdPerToken: number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN),
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
+    // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
+    // stop, NET of the round trip — which on a $15 fill is 1.38% and lands on
+    // both sides of the trade, so the advertised 1:3.9 was really 1:1.06.
+    //
+    // Zero turns it off and the cost floor decides alone, exactly as before.
+    rewardRiskRatio: number(env, 'OPERADOR_REWARD_RISK', 4),
     maxSwapLossPct: number(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', DEFAULT_MAX_SWAP_LOSS_PCT),
     stopLoss: {
       // ON, FLAT, at one percent — the operator's experiment: *si alguno llega

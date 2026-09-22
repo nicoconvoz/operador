@@ -1955,3 +1955,44 @@ describe('runCycle — the first buy happens in the SAME cycle', () => {
     expect((await store.loadPositions()).length).toBeGreaterThan(1)
   })
 })
+
+describe('runCycle — the reward-to-risk ratio reaches the tick', () => {
+  // A wiring test, and it exists because a mutation proved it had to: the
+  // orchestrator could stop handing `rewardRiskRatio` and `stopLoss` to
+  // `tickConfig` and 128 tests still passed. Every gap this project has paid
+  // for was exactly that shape — a missing `discover` on the decimals port, a
+  // missing `poolMarkets` on the history port, a capital trim that wrote over
+  // the tick. Correct on both sides of a wire nobody joined.
+
+  const targetOf = async (over: Partial<CycleConfig>) => {
+    const { deps, store, throttle } = rig({
+      scan: async () => [],
+      // Healthy, so the STOP does not fire and close the position out from
+      // under the thing being measured.
+      marketPrices: async () => new Map([['solana:Held', 1]]),
+    })
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    const result = await runCycle(deps, { ...config, maxOpenEntries: 1, maxCostSharePct: 33, ...over }, throttle)
+    return result.ticks.find((t) => t.position.id === 'pos-1')?.minProfitPct
+  }
+
+  it('asks for more once a ratio and a stop travel together', async () => {
+    const withRatio = await targetOf({ rewardRiskRatio: 4, stopLoss: FLAT_ONE_PCT_STOP })
+    const costOnly = await targetOf({})
+    expect(withRatio).toBeDefined()
+    expect(costOnly).toBeDefined()
+    expect(withRatio!).toBeGreaterThan(costOnly!)
+  })
+
+  it('needs BOTH: a ratio with no stop changes nothing', async () => {
+    // A ratio needs a risk to be a ratio to. Handing the engine one without
+    // the other would silently drop the operator's rule while everything went
+    // on working, which is the failure mode that costs the most.
+    const ratioAlone = await targetOf({ rewardRiskRatio: 4 })
+    expect(ratioAlone).toBe(await targetOf({}))
+  })
+})

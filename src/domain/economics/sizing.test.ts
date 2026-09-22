@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor } from './sizing.js'
+import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, minProfitForRatio } from './sizing.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -250,5 +250,55 @@ describe('the profit target is DERIVED from what leaving costs', () => {
 
   it('treats a size of zero as unaffordable rather than free', () => {
     expect(roundTripCostPct(0, 0.3, 0, 0.05)).toBe(100)
+  })
+})
+
+describe('minProfitForRatio — the target is what the STOP makes it worth', () => {
+  // The operator, after being shown that a 1% stop against a 3.90% target is
+  // not the 1:4 it looks like: *hacé la relación 1:4, quiero ver si aguanta
+  // mejor.*
+  //
+  // The gap between the two readings is the ROUND TRIP, and it is not small on
+  // a $15 fill. Measured on his own CSV export — $0.20 of cost on $14.50 of
+  // basis, 1.38% — it lands on BOTH sides of the trade:
+  //
+  //   a stop-out loses  stop + roundTrip
+  //   a winner makes    target − roundTrip
+  //
+  // So the advertised 1:3.9 was really 1:1.06, and the whole apparent edge was
+  // the toll. This computes the target that makes the ratio true.
+
+  it('derives the target from the stop, the toll and the ratio asked for', () => {
+    // 4 × (1 + 1.38) + 1.38
+    expect(minProfitForRatio(1, 1.38, 4)).toBeCloseTo(10.9, 2)
+    expect(minProfitForRatio(1, 1.38, 3)).toBeCloseTo(8.52, 2)
+    expect(minProfitForRatio(1, 1.38, 2)).toBeCloseTo(6.14, 2)
+  })
+
+  it('actually produces the ratio it was asked for', () => {
+    // The property, not the arithmetic: read the result back as a trader would.
+    for (const ratio of [1, 2, 4, 6]) {
+      for (const [stop, toll] of [[1, 1.38], [2, 0.5], [0.5, 3]] as const) {
+        const target = minProfitForRatio(stop, toll, ratio)
+        expect((target - toll) / (stop + toll)).toBeCloseTo(ratio, 6)
+      }
+    }
+  })
+
+  it('charges for the toll TWICE, because the trade pays it twice', () => {
+    // Once on the way in and once on the way out, and the naive version that
+    // forgets the second is the whole reason 1:3.9 read as 1:4.
+    //
+    // With no toll at all the two collapse into each other, which is the only
+    // case where the advertised ratio and the real one agree.
+    expect(minProfitForRatio(1, 0, 4)).toBe(4)
+  })
+
+  it('has no opinion when there is no stop', () => {
+    // A ratio needs something to be a ratio TO. With the stop off the target
+    // goes back to being whatever the cost floor says, so this returns zero
+    // and the caller's `Math.max` leaves it alone.
+    expect(minProfitForRatio(0, 1.38, 4)).toBe(0)
+    expect(minProfitForRatio(1, 1.38, 0)).toBe(0)
   })
 })
