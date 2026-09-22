@@ -9,6 +9,9 @@ import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
 import { type Candles } from '../application/replay.js'
+import { FLAT_ONE_PCT_STOP } from '../domain/risk/stop-loss.js'
+import { initialState } from '../domain/strategy/state.js'
+import { startDeathWatch } from '../domain/risk/death-exit.js'
 
 const NOW = 1_800_000_000_000
 const quality: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: NOW }
@@ -348,5 +351,100 @@ describe('runLoop — it says what it did, every pass', () => {
     })
 
     expect(passes).toEqual([])
+  })
+})
+
+describe('runLoop — the stop does not clock off between cycles', () => {
+  // The gap three commits of reordering could not close, because it is not in
+  // the cycle at all.
+  //
+  // Positions are opened in step 3, near the END of a pass. So no sweep is
+  // left in that cycle to catch them, and the next one cannot look until the
+  // sleep is over and recovery has run. From the tape: twenty-three positions
+  // opened at the end of one cold cycle, six of them ALREADY past the line,
+  // and not a single stop alert in forty-three minutes.
+  //
+  // That window is the first half hour of a position's life, which on these
+  // tokens is when it moves most. A cycle cannot protect a book after it has
+  // stopped running, so the rule had to leave the cycle.
+
+  it('sells a position that goes under water while the loop is sleeping', async () => {
+    let clock = NOW
+    let asked = 0
+    const store = new MemoryStore()
+    const { deps } = rig({
+      store,
+      now: () => clock,
+      // HEALTHY while the cycle runs, sunk only once it is sleeping. Nothing
+      // inside the pass could have caught this one.
+      marketPrices: async () => new Map([['solana:Held', asked++ === 0 ? 1 : 0.9]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 500, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    await store.savePosition({
+      id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+      cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 15,
+      lastBarTime: -1, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+    })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 3_600_000,
+      price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runLoop(
+      deps,
+      { ...config, stopLoss: FLAT_ONE_PCT_STOP },
+      new AlertThrottle(60_000),
+      // One cycle, then a long sleep. The sleep is where the cut must happen:
+      // with maxCycles at 1 there is no second pass to fall back on.
+      { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+    )
+
+    expect((await store.allFills()).find((f: { side: string; comment: string }) => f.side === 'sell')?.comment).toBe('🛑 Stop')
+    expect(await store.loadPositions()).toEqual([])
+  })
+
+  it('leaves a position with orders in flight alone, because that is a HALT', async () => {
+    // Recovery could not answer whether the fill happened. An unattended system
+    // is allowed to stop; it is never allowed to guess, and selling on top of
+    // an unresolved order is how a spot book goes short.
+    let clock = NOW
+    const store = new MemoryStore()
+    const { deps } = rig({
+      store,
+      now: () => clock,
+      probe: async () => 'unknown',
+      marketPrices: async () => new Map([['solana:Held', 0.9]]),
+      // Seeded from the recorded fills. The paper broker starts FLAT, so an
+      // unseeded one sells nothing and this would pass without the guard.
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 500, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    await store.savePosition({
+      id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+      cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 15,
+      lastBarTime: NOW, lastPriceUsd: 1,
+      pendingOrders: [{ kind: 'entry', id: 'Entry', level: 1, qty: 15, usd: 15, comment: '🟢 Entry' }],
+      openedAt: NOW, updatedAt: NOW,
+    })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 3_600_000,
+      price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runLoop(
+      deps,
+      { ...config, stopLoss: FLAT_ONE_PCT_STOP },
+      new AlertThrottle(60_000),
+      { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+    )
+
+    expect((await store.allFills()).some((f: { side: string }) => f.side === 'sell')).toBe(false)
   })
 })

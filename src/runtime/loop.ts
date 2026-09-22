@@ -1,3 +1,4 @@
+import { sweepStops, STOP_SWEEP_MS } from '../application/stop-sweep.js'
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { type CycleConfig, type CycleDeps, type CycleKind, type CycleResult, runCycle } from '../application/orchestrator.js'
 
@@ -82,6 +83,72 @@ export async function runLoop(
   let stop = false
   options.stopSignal?.then(() => { stop = true })
 
+  /**
+   * The stop, while the loop is asleep.
+   *
+   * A cycle cannot protect a book after it has stopped running, and that is
+   * not a detail — positions are OPENED in step 3, near the end of a pass, so
+   * no sweep is left in that cycle to catch them. Measured on the tape:
+   * twenty-three positions opened at the end of one cold cycle, six already
+   * past the line, and not one stop alert in forty-three minutes.
+   *
+   * The window is the first half hour of a position's life, which on these
+   * tokens is when it moves most.
+   *
+   * It is the SAME `sweepStops` the cycle calls. Two implementations of
+   * "should this be sold" would eventually disagree, and one of them would be
+   * holding money.
+   */
+  const guardStops = async () => {
+    const policy = config.stopLoss
+    // Absent or zero means the operator turned it off. Do not invent one.
+    if (policy === undefined || policy.minStopPct <= 0) return
+    if (deps.marketPrices === undefined) return
+    // The kill switch as the last pass found it. Its documented asymmetry is
+    // that it stops OPENING and keeps protecting, so this would arguably run
+    // anyway — but the cycle's own stop is guarded by it, and two answers to
+    // one question is worse than either answer.
+    if (lastResult?.recovery.killSwitchEngaged === true) return
+    try {
+      const book = await deps.store.loadPositions()
+      if (book.length === 0) return
+      await sweepStops(deps, policy, throttle, book, await deps.marketPrices(book), deps.now())
+    } catch {
+      // A provider having a bad minute is not a reason to stop the engine.
+    }
+  }
+
+  /**
+   * Sleep, but look up every `STOP_SWEEP_MS`.
+   *
+   * One batched request for the whole book against three hundred a minute, so
+   * twice a minute spends under one percent of the allowance — the same
+   * ceiling the scan's own sweeps run under, and for the same reason.
+   */
+  const sleepWatching = async (ms: number) => {
+    // Counted in CHUNKS, never against the clock. An injected `sleep` that
+    // returns instantly — which is every test in this file — would leave a
+    // clock-driven version spinning for ever, waiting for time that only moves
+    // when something sleeps. A loop whose exit depends on the thing it stubs
+    // out is a loop that hangs the suite rather than failing it.
+    // And ALWAYS at least once, even for a zero interval. The old line was an
+    // unconditional `await sleep(ms)`, and callers depend on that call
+    // happening rather than on its duration — two tests drive their own clock
+    // from inside the stub, so skipping a zero-length sleep freezes time and
+    // the pass after it never believes its interval elapsed.
+    let left = ms
+    let first = true
+    while ((first || left > 0) && !stop) {
+      first = false
+      const chunk = Math.min(STOP_SWEEP_MS, Math.max(left, 0))
+      await sleep(chunk)
+      // Never zero, or a zero interval would spin here for ever.
+      left -= Math.max(chunk, 1)
+      if (stop) return
+      await guardStops()
+    }
+  }
+
   let cycles = 0
   // A shelf fresh enough to ALLOCATE from is fresh enough to START from.
   //
@@ -155,7 +222,7 @@ export async function runLoop(
     // Checked again after the cycle so a stop during a long cycle takes effect
     // immediately rather than after another full interval of sleeping.
     if (stop) break
-    await sleep(options.intervalMs)
+    await sleepWatching(options.intervalMs)
   }
 
   await deps.alerts.send(alert('engine-started', '🛑 Motor detenido', `${cycles} ciclo(s), ${failures} fallo(s).`, deps.now()))

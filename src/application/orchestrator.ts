@@ -1,13 +1,6 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
+import { sweepStops, STOP_SWEEP_MS } from './stop-sweep.js'
 
-/**
- * How often the stop may re-ask while a long scan is running.
- *
- * Bounded by the provider, not chosen: one batched DexScreener request covers
- * the whole book (thirty addresses a call) against three hundred a minute, so
- * twice a minute spends under one percent of the allowance.
- */
-const STOP_SWEEP_MS = 30_000
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
 import { planPortfolio, type PortfolioPolicy } from '../domain/risk/portfolio.js'
@@ -447,54 +440,28 @@ export async function runCycle(
    * sells, so reading them once at the top would let a later pass act on a
    * position it had already closed.
    */
-  const sweepStops = async (prices: ReadonlyMap<string, number>) => {
-    for (const recoveredPosition of recovery.positions) {
-      if (stopped.has(recoveredPosition.position.id)) continue
-      const position = now(recoveredPosition.position.id, recoveredPosition.position)
-      const ledger = positionLedger(await deps.store.fillsFor(position.id))
-      const price = prices.get(`${position.chain}:${position.tokenAddress}`) ?? null
-    const input = {
-      // With `maxOpenEntries: 1` the average cost IS the entry price. The day
-      // a ladder comes back these diverge, and the domain takes the entry
-      // deliberately: an average falls as rungs fill, so a stop measured
-      // against it chases the position down and can never be reached.
-      entryPriceUsd: ledger?.avgCostUsd ?? 0,
-      marketPriceUsd: price,
-      openQty: ledger?.qty ?? 0,
-      runAtEntryPct: position.runAtEntryPct ?? null,
-    }
-    if (!shouldStopOut(input, stopPolicy)) continue
-
-    const broker = await deps.brokerFor(position)
-    // The SAME `settle` again — one idempotency key, one per-fill suffix. The
-    // no-loss guard lets this one through by design: a stop that cannot sell
-    // at a loss is not a stop.
-    await settle(
-      [{ kind: 'closeAll', comment: STOP_LOSS_COMMENT }],
-      position.lastBarTime,
-      price!,
-      at,
-      position,
-      broker,
-      deps.store,
-    )
-    await deps.store.closePosition(position.id)
-    stoppedIds.push(position.id)
-    stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)
-    stopped.add(position.id)
-    const down = drawdownPct(input)
-    const cut = alert(
-      'token-stopped',
-      `🛑 ${position.symbol} cortada por stop`,
-      `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, stopPolicy).toFixed(0)}% porque el token venía subiendo ${input.runAtEntryPct === null ? 'una cantidad no medida' : input.runAtEntryPct.toFixed(0) + '%'}. Se vendió todo a ${price}. El token NO queda vetado.`,
-      at,
-      { position: position.id, token: position.tokenAddress },
-    )
-      if (throttle.shouldSend(cut, `stopped:${position.id}`)) await deps.alerts.send(cut)
+  /**
+   * One pass of the stop over the book, at the prices given.
+   *
+   * The RULE lives in `stop-sweep.ts` because `runLoop` calls it too, between
+   * cycles. A position opened in step 3 is opened near the END of a pass, so
+   * no sweep is left in that cycle to catch it — and that window is the first
+   * half hour of its life, which on these tokens is when it moves most.
+   */
+  const sweep = async (prices: ReadonlyMap<string, number>) => {
+    // The live book, not the start-of-cycle snapshot: positions opened by this
+    // very cycle have to be reachable, and `loadPositions` is one query with
+    // no network in it.
+    const book = (await deps.store.loadPositions()).filter((p) => !stopped.has(p.id))
+    for (const id of await sweepStops(deps, stopPolicy, throttle, book, prices, at)) {
+      const position = book.find((p) => p.id === id)!
+      stoppedIds.push(id)
+      stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)
+      stopped.add(id)
     }
   }
 
-  await sweepStops(marketPrices)
+  await sweep(marketPrices)
 
   /**
    * The same sweep, handed to the scan so a long sweep cannot hold the book
@@ -522,7 +489,7 @@ export async function runCycle(
     const open = recovery.positions.filter((r) => !stopped.has(r.position.id)).map((r) => r.position)
     if (open.length === 0) return
     try {
-      await sweepStops(await deps.marketPrices(open))
+      await sweep(await deps.marketPrices(open))
     } catch {
       // A provider having a bad minute is not a reason to abandon the scan.
     }
