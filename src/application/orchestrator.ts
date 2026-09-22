@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, STOP_SWEEP_MS } from './stop-sweep.js'
+import { sweepStops, stopPolicyFor, STOP_SWEEP_MS } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -331,11 +331,7 @@ export async function runCycle(
     // meaning what it meant. Present, the tick derives the target from what
     // this pool actually charges to leave.
     ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
-    // Both or neither: the target is derived from the stop, so handing the
-    // engine one without the other would silently drop the ratio.
-    ...(config.rewardRiskRatio !== undefined && config.stopLoss !== undefined
-      ? { rewardRiskRatio: config.rewardRiskRatio, stopLoss: config.stopLoss }
-      : {}),
+
     ...(config.sizing ? { sizing: config.sizing } : {}),
   }
 
@@ -434,6 +430,23 @@ export async function runCycle(
   // there would break the single structural guarantee that keeps the death
   // exit from becoming what this openly is.
   const stopPolicy: StopLossPolicy = config.stopLoss ?? NO_STOP_LOSS
+  /**
+   * The stop, sized from what THIS pool charges.
+   *
+   * *Una relación 1:4 es que en un lado tengas tp 3.9 y el otro sl en 9.52.*
+   * Small target, wide stop, one loss for every four wins — so the stop is
+   * derived from the target rather than the target from the stop, which is the
+   * reverse of what shipped an hour ago and is the operator's correction.
+   */
+  const stopSizing = (position: PersistedPosition): StopLossPolicy =>
+    stopPolicyFor(
+      position,
+      stopPolicy,
+      config.rewardRiskRatio,
+      config.maxCostSharePct,
+      config.gasUsdPerSwap ?? 0.05,
+      config.params.minProfitPct,
+    )
   const stoppedIds: string[] = []
   // The TOKEN, not the position: a re-entry arrives under a brand new
   // position id, so an id cannot recognise it. See `justFreed` below.
@@ -463,7 +476,7 @@ export async function runCycle(
     // very cycle have to be reachable, and `loadPositions` is one query with
     // no network in it.
     const book = (await deps.store.loadPositions()).filter((p) => !stopped.has(p.id))
-    for (const id of await sweepStops(deps, stopPolicy, throttle, book, prices, at)) {
+    for (const id of await sweepStops(deps, stopSizing, throttle, book, prices, at)) {
       const position = book.find((p) => p.id === id)!
       stoppedIds.push(id)
       stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)

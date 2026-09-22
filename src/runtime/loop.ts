@@ -1,4 +1,4 @@
-import { sweepStops, STOP_SWEEP_MS } from '../application/stop-sweep.js'
+import { sweepStops, stopPolicyFor, STOP_SWEEP_MS } from '../application/stop-sweep.js'
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { type CycleConfig, type CycleDeps, type CycleKind, type CycleResult, runCycle } from '../application/orchestrator.js'
 
@@ -112,7 +112,25 @@ export async function runLoop(
     try {
       const book = await deps.store.loadPositions()
       if (book.length === 0) return
-      await sweepStops(deps, policy, throttle, book, await deps.marketPrices(book), deps.now())
+      await sweepStops(
+        deps,
+        // The SAME derivation the cycle uses. Two answers to "how far may this
+        // fall" would eventually disagree, and one of them would be holding
+        // money.
+        (position) =>
+          stopPolicyFor(
+            position,
+            policy,
+            config.rewardRiskRatio,
+            config.maxCostSharePct,
+            config.gasUsdPerSwap ?? 0.05,
+            config.params.minProfitPct,
+          ),
+        throttle,
+        book,
+        await deps.marketPrices(book),
+        deps.now(),
+      )
     } catch {
       // A provider having a bad minute is not a reason to stop the engine.
     }

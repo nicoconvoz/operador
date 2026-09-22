@@ -1,5 +1,6 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { positionLedger } from './ledger.js'
+import { minProfitPctFor, roundTripCostPct, stopForRatio } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import type { BrokerPort } from '../domain/execution/broker.js'
 import type { PersistedPosition, StatePort } from '../domain/persistence/store.js'
@@ -69,6 +70,39 @@ export const STOP_SWEEP_MS = 30_000
  * without a store. Only the first is a fact about persistence, so only the
  * first is here.
  */
+/**
+ * How far THIS position may fall, so that N winners pay for one loser.
+ *
+ * Per position, because every term in it is: the toll depends on the pool's
+ * spread and depth and on how much the slot deploys, and the target is derived
+ * from the toll. A single number composed at boot would be right for the
+ * average pool and wrong for every actual one.
+ *
+ * With no ratio asked for it hands back the policy it was given, so the flat
+ * stop and the proportional one both keep working exactly as before.
+ */
+export const stopPolicyFor = (
+  position: PersistedPosition,
+  base: StopLossPolicy,
+  ratio: number | undefined,
+  maxCostSharePct: number | undefined,
+  gasUsdPerSwap: number,
+  floorPct: number,
+): StopLossPolicy => {
+  if (ratio === undefined || ratio <= 0 || maxCostSharePct === undefined) return base
+  const roundTrip = roundTripCostPct(
+    position.capitalUsd,
+    position.quality.spreadPct,
+    position.quality.slippagePct,
+    gasUsdPerSwap,
+  )
+  const pct = stopForRatio(minProfitPctFor(roundTrip, maxCostSharePct, floorPct), roundTrip, ratio)
+  // Zero means the pair is impossible on this pool — the target does not clear
+  // the toll by enough for any stop to make the ratio work. Fall back rather
+  // than invent: the base policy is the operator's own number.
+  return pct > 0 ? { shareOfRun: 0, minStopPct: pct, maxStopPct: pct } : base
+}
+
 export interface StopSweepDeps {
   readonly store: StatePort
   readonly alerts: AlertPort
@@ -78,7 +112,8 @@ export interface StopSweepDeps {
 
 export async function sweepStops(
   deps: StopSweepDeps,
-  policy: StopLossPolicy,
+  /** Per POSITION, because the stop is derived from that pool's own toll. */
+  policyFor: (position: PersistedPosition) => StopLossPolicy,
   throttle: AlertThrottle,
   positions: readonly PersistedPosition[],
   prices: ReadonlyMap<string, number>,
@@ -105,6 +140,7 @@ export async function sweepStops(
       openQty: ledger?.qty ?? 0,
       runAtEntryPct: position.runAtEntryPct ?? null,
     }
+    const policy = policyFor(position)
     if (!shouldStopOut(input, policy)) continue
 
     const broker = await deps.brokerFor(position)

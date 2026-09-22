@@ -11,9 +11,9 @@ import { type BrokerPort } from '../domain/execution/broker.js'
 import { orderKeyPart } from './recovery.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/economics/sizing.js'
 import { deployableCapital, scaledParams } from './paper-run.js'
-import { minProfitPctFor, minProfitForRatio, roundTripCostPct } from '../domain/economics/sizing.js'
+import { minProfitPctFor, roundTripCostPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
-import { STOP_LOSS_COMMENT, stopLossPctFor, type StopLossPolicy } from '../domain/risk/stop-loss.js'
+import { STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
 import { SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { type Candles } from './replay.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
@@ -59,17 +59,6 @@ export interface EngineConfig {
    * reference behaviour, so the parity harness keeps meaning what it meant.
    */
   readonly maxCostSharePct?: number
-  /**
-   * How many times the STOP a winner has to make, net of the round trip, for
-   * the exit target to be worth the risk. The operator asked for four.
-   *
-   * It needs the stop policy beside it, because a ratio needs a risk to be a
-   * ratio TO — and the stop is sized per token, so the target is too. Absent
-   * means the cost floor decides alone, which is what the parity harness runs
-   * under.
-   */
-  readonly rewardRiskRatio?: number
-  readonly stopLoss?: StopLossPolicy
   readonly deathPolicy?: DeathExitPolicy
   /**
    * How far the candle price and the market price may diverge before the engine
@@ -296,36 +285,14 @@ export async function tickPosition(
     input.position.quality.slippagePct,
     config.gasUsdPerSwap ?? 0.05,
   )
-  /**
-   * TWO floors, and the target is whichever is higher.
-   *
-   * The first asks *does a winner cover what leaving costs, with room to
-   * spare.* The second asks *is a winner worth what a loser costs* — and they
-   * are different questions, so neither can stand in for the other. With the
-   * stop off the second returns zero and the first decides alone, which is
-   * exactly the behaviour before the stop existed.
-   *
-   * On the production numbers the second dominates by a mile: a 1% stop and a
-   * 1.38% toll want 10.90% for a true 1:4, against the cost floor's 3.90%.
-   * That gap IS the finding — the target that merely covered costs was selling
-   * winners at a size the stop could undo in one trade.
-   */
-  const ratioFloor =
-    config.rewardRiskRatio === undefined || config.stopLoss === undefined
-      ? 0
-      : minProfitForRatio(
-          stopLossPctFor(input.position.runAtEntryPct ?? null, config.stopLoss),
-          roundTrip,
-          config.rewardRiskRatio,
-        )
-  const params = config.maxCostSharePct === undefined && ratioFloor <= 0 ? sized : {
+  // The target answers ONE question — does a winner cover what leaving costs,
+  // with room to spare. What a LOSER costs is the stop's question, and the
+  // stop is derived from this number rather than the other way round: see
+  // `stopForRatio`. The operator's reversal, and it is the bet that matches
+  // *aguanta mejor* — small target taken often, wide stop, one loss in four.
+  const params = config.maxCostSharePct === undefined ? sized : {
     ...sized,
-    minProfitPct: Math.max(
-      config.maxCostSharePct === undefined
-        ? sized.minProfitPct
-        : minProfitPctFor(roundTrip, config.maxCostSharePct, sized.minProfitPct),
-      ratioFloor,
-    ),
+    minProfitPct: minProfitPctFor(roundTrip, config.maxCostSharePct, sized.minProfitPct),
   }
 
   // Indicators are causal — every one of them reads backwards only — so the

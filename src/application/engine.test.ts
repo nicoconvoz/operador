@@ -1083,37 +1083,5 @@ describe('the exit target is derived from what leaving costs', () => {
     expect(onADeepPool).toBeGreaterThanOrEqual(config.params.minProfitPct)
   })
 
-  it('asks for FOUR TIMES the stop once a ratio is given', async () => {
-    // *Hacé la relación 1:4, quiero ver si aguanta mejor.*
-    //
-    // The cost floor answers *does a winner cover what leaving costs*; this
-    // answers *is a winner worth what a loser costs*, and they are different
-    // questions. A 1% stop against the cost floor's target was advertised as
-    // 1:3.9 and was really **1:1.06**, because the round trip is subtracted
-    // from the winner AND added to the loser.
-    const target = await targetFor({
-      maxCostSharePct: 33,
-      rewardRiskRatio: 4,
-      stopLoss: FLAT_ONE_PCT_STOP,
-    })
 
-    // The toll is RECOVERED from the engine's own other answer rather than
-    // recomputed here. The cost floor is `toll * 100 / share`, so at a 33%
-    // share the toll is that target's third — and using the engine's number
-    // means the test cannot drift from the fill size it actually chose, which
-    // is `deployable / rungs` and not the position's nominal fifteen.
-    const costFloor = await targetFor({ maxCostSharePct: 33 })
-    const toll = (costFloor * 33) / 100
-    expect((target - toll) / (1 + toll)).toBeCloseTo(4, 6)
-    // And it DOMINATES the cost floor, which is the whole point of adding it.
-    expect(target).toBeGreaterThan(await targetFor({ maxCostSharePct: 33 }))
-  })
-
-  it('ignores the ratio when there is no stop to ratio against', async () => {
-    // A ratio needs a risk. With the stop off the cost floor decides alone,
-    // which is the behaviour from before the stop existed — and the parity
-    // harness runs under it.
-    const withRatio = await targetFor({ maxCostSharePct: 33, rewardRiskRatio: 4, stopLoss: NO_STOP_LOSS })
-    expect(withRatio).toBe(await targetFor({ maxCostSharePct: 33 }))
-  })
 })

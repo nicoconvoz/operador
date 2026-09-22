@@ -1956,43 +1956,46 @@ describe('runCycle — the first buy happens in the SAME cycle', () => {
   })
 })
 
-describe('runCycle — the reward-to-risk ratio reaches the tick', () => {
-  // A wiring test, and it exists because a mutation proved it had to: the
-  // orchestrator could stop handing `rewardRiskRatio` and `stopLoss` to
-  // `tickConfig` and 128 tests still passed. Every gap this project has paid
-  // for was exactly that shape — a missing `discover` on the decimals port, a
-  // missing `poolMarkets` on the history port, a capital trim that wrote over
-  // the tick. Correct on both sides of a wire nobody joined.
+describe('runCycle — the ratio sizes the STOP, not the target', () => {
+  // *Una relación 1:4 es que en un lado tengas tp 3.9 y el otro sl en 9.52.*
+  //
+  // The operator correcting the direction an hour after the first version
+  // shipped. Small target taken often, WIDE stop, one loss for every four
+  // wins — the opposite bet to deriving the target from a tight stop, and the
+  // one that matches *aguanta mejor*. At a flat 1% the tape showed twelve
+  // positions cut at an average of −3.01%: a book stopped out by noise.
+  //
+  // A wiring test, because a mutation proved it had to be: the derivation can
+  // stop reaching the sweep and everything still passes.
 
-  const targetOf = async (over: Partial<CycleConfig>) => {
+  const survives = async (down: number, over: Partial<CycleConfig>) => {
     const { deps, store, throttle } = rig({
       scan: async () => [],
-      // Healthy, so the STOP does not fire and close the position out from
-      // under the thing being measured.
-      marketPrices: async () => new Map([['solana:Held', 1]]),
+      marketPrices: async () => new Map([['solana:Held', 1 - down]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
     })
-    await store.savePosition(position())
+    await store.savePosition({ ...position(), capitalUsd: 15 })
     await store.recordFill({
       positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
       price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
     })
-    const result = await runCycle(deps, { ...config, maxOpenEntries: 1, maxCostSharePct: 33, ...over }, throttle)
-    return result.ticks.find((t) => t.position.id === 'pos-1')?.minProfitPct
+    await runCycle(deps, { ...config, maxOpenEntries: 1, maxCostSharePct: 33, stopLoss: FLAT_ONE_PCT_STOP, ...over }, throttle)
+    return (await store.loadPositions()).length > 0
   }
 
-  it('asks for more once a ratio and a stop travel together', async () => {
-    const withRatio = await targetOf({ rewardRiskRatio: 4, stopLoss: FLAT_ONE_PCT_STOP })
-    const costOnly = await targetOf({})
-    expect(withRatio).toBeDefined()
-    expect(costOnly).toBeDefined()
-    expect(withRatio!).toBeGreaterThan(costOnly!)
+  it('lets a position ride four percent down, where the flat stop would cut it', async () => {
+    // The whole point of the reversal: 4% is ordinary noise on these tokens
+    // and the flat 1% was selling into it.
+    expect(await survives(0.04, { rewardRiskRatio: 4 })).toBe(true)
+    expect(await survives(0.04, {})).toBe(false)
   })
 
-  it('needs BOTH: a ratio with no stop changes nothing', async () => {
-    // A ratio needs a risk to be a ratio to. Handing the engine one without
-    // the other would silently drop the operator's rule while everything went
-    // on working, which is the failure mode that costs the most.
-    const ratioAlone = await targetOf({ rewardRiskRatio: 4 })
-    expect(ratioAlone).toBe(await targetOf({}))
+  it('still cuts once the derived stop is genuinely passed', async () => {
+    // Wide is not absent. Past the derived line it leaves, exactly as before.
+    expect(await survives(0.25, { rewardRiskRatio: 4 })).toBe(false)
   })
 })

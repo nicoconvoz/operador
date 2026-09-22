@@ -122,45 +122,61 @@ export const minProfitPctFor = (
 ): number => (maxCostSharePct > 0 ? Math.max(floorPct, (roundTripPct * 100) / maxCostSharePct) : floorPct)
 
 /**
- * The exit target that makes a stop worth taking — a real reward-to-risk
- * ratio, net of what the chain charges.
+ * How far a position is allowed to fall, so that N winners pay for one loser.
  *
- * The operator asked for 1:4 after being shown that the 1% stop against the
- * derived 3.90% target was not the 1:4 it looked like. The gap between the two
- * readings is the ROUND TRIP, and on a $15 fill it is not small: measured on
- * his own tape, $0.20 of cost against $14.50 of basis, **1.38%**.
+ * ## It replaces the mirror of itself, and the reversal is the operator's
  *
- * It lands on BOTH sides, which is what makes the naive reading wrong in the
- * expensive direction:
+ * The first version derived the TARGET from the stop: hold the stop at 1% and
+ * raise the exit until a winner was worth four losers. He read it and said
+ * plainly what he had meant — *una relación 1:4 es que en un lado tengas tp
+ * 3.9 y el otro sl en 9.52.* Small target, WIDE stop. One loss for every four
+ * wins, not one win worth four losses.
+ *
+ * Both are coherent and they are opposite bets. His is the one that matches
+ * *aguanta mejor*, and the tape had already argued for it: at a 1% stop twelve
+ * positions were cut at an average of −3.01%, which is a book being stopped
+ * out by ordinary noise before anything has time to work.
+ *
+ * ## The toll is on both sides, which is why the obvious number is wrong
  *
  *     a stop-out loses    stop   + roundTrip
  *     a winner makes      target − roundTrip
  *
- * So the advertised 1:3.9 was really **1:1.06** — the whole apparent edge was
- * the toll, and a rule that needs a coin-flip win rate is not a rule, it is a
- * coin flip with extra steps.
+ * At the measured 1.38% and a 3.90% target, a winner nets 2.52%. Four of them
+ * pay 10.08%, so the stop is **8.70%** — not the 9.52% the operator reached
+ * for, which was the NET figure from the previous derivation and asks for 4.33
+ * winners rather than 4.
  *
- * | ratio asked | target, at a 1% stop and a 1.38% toll |
- * |---|---|
- * | 1:2 | 6.14% |
- * | 1:3 | 8.52% |
- * | **1:4** | **10.90%** |
+ * | stop | net loss | winners per loser | win rate to break even |
+ * |---|---|---|---|
+ * | 5% | 6.38% | 2.53 | 71.7% |
+ * | **8.70%** | **10.08%** | **4.00** | **80.0%** |
+ * | 9.52% | 10.90% | 4.33 | 81.2% |
+ * | 15% | 16.38% | 6.50 | 86.7% |
  *
- * The cost of asking for four, stated rather than discovered later: a 10.9%
- * winner is a far rarer event than a 3.9% one, so the book will hold losers to
- * the stop and winners much longer. That IS the trade — it is what "aguanta
- * mejor" means — and whether it pays is a question about the win rate, which
- * only running it can answer. `tools/loss-by-exit.ts` counts it by exit.
+ * **Eighty percent is the number to judge the experiment against**, and it is
+ * high. It is also the whole shape of the bet: take a small profit often,
+ * accept a rare large loss, and give the position room to get there. Whether
+ * these tokens deliver four winners per loser is a question only the tape
+ * answers — `tools/loss-by-exit.ts` counts it by exit.
  *
- * **Zero when there is nothing to ratio against.** With the stop off, or no
- * ratio asked for, this has no opinion and returns 0 so the caller's floor
- * decides alone. A ratio needs a risk to be a ratio TO.
+ * **Zero when there is no net win to ratio against.** A target at or under the
+ * round trip has nothing left after costs, so no stop can make it pay and this
+ * declines to invent one — the caller's own policy decides instead.
  */
-export const minProfitForRatio = (
-  stopPct: number,
+export const stopForRatio = (
+  targetPct: number,
   roundTripPct: number,
   ratio: number,
-): number => (stopPct > 0 && ratio > 0 ? ratio * (stopPct + roundTripPct) + roundTripPct : 0)
+): number => {
+  const netWin = targetPct - roundTripPct
+  if (!(netWin > 0) || !(ratio > 0)) return 0
+  // The stop is what is left of the allowed net loss once the toll is paid,
+  // and it can come out NEGATIVE on a cheap target with a tight ratio — which
+  // means no stop is wide enough to make that pair work. Zero, not a negative
+  // stop that would sell everything instantly.
+  return Math.max(0, ratio * netWin - roundTripPct)
+}
 
 export const gasFloorUsd = (gasUsdPerSwap: number, maxGasSharePct = 1): number =>
   maxGasSharePct > 0 ? (gasUsdPerSwap * 100) / maxGasSharePct : Infinity
