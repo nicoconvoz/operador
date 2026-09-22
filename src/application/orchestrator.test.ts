@@ -1470,6 +1470,48 @@ describe('runCycle — the stop, which is the one path where a PRICE sells', () 
     expect(sent?.level).toBe('critical')
   })
 
+  it('cuts BEFORE the scan runs, because the scan is the longest wait in the cycle', async () => {
+    // Found in production, from the tape, and it is the reason the stop looked
+    // switched off: SQUIRE sat at −2.5% with six others past the line while
+    // nothing had been updated for twenty-four minutes. The engine was fine.
+    // It was inside `deps.scan()` — a cold discovery sweep after a truncate —
+    // and the stop sat AFTER it in the same block.
+    //
+    // The file already argued the principle and then broke it one step later:
+    // *a stop that waits for a fifteen-minute candle is not a stop.* Neither is
+    // one that waits for three hundred throttled provider calls, and that wait
+    // is unbounded because the rate limit belongs to somebody else.
+    //
+    // The stop needs NOTHING the scan produces — a position, its ledger, a
+    // live price, a policy — so this asserts the ORDER rather than the outcome.
+    // Ninety-seven tests passed with the stop on the wrong side of the scan;
+    // every one of them checked that it fires, and none that it fires in time.
+    const order: string[] = []
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => { order.push('scan'); return [] },
+      alerts: { send: async (a) => { order.push(a.kind) } },
+      marketPrices: async () => new Map([['solana:Held', 0.94]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runCycle(deps, withFlatStop, throttle)
+
+    expect(order).toContain('scan')
+    expect(order).toContain('token-stopped')
+    expect(order.indexOf('token-stopped')).toBeLessThan(order.indexOf('scan'))
+  })
+
   it('cuts a position that was ALREADY past the line when the stop was switched on', async () => {
     // *Asegurate que si hay monedas que han superado el 1% de umbral igualmente
     // roten, porque vamos a mantener el sistema funcionando y le vamos a

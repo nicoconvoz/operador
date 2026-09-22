@@ -417,6 +417,102 @@ export async function runCycle(
     // throttled discovery before anything could go in it — with candidates
     // already examined, already stored, already good. The fusion was never
     // necessary.
+    // ── 3a. Every position's ledger, read once ───────────────────────────────
+    //
+    // Four decisions below need the same answer — what does this position
+    // hold, and what has it made — and any two of them disagreeing is how a
+    // book starts double-spending. One walk over the fills, shared.
+    //
+    // Above the scan because the STOP is above the scan and needs it. It costs
+    // no network call: the fills are already in the database.
+    const ledgers = new Map<string, PositionLedger>()
+    for (const recovered of recovery.positions) {
+      ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
+    }
+
+    // ── 3a-bis. The stop, BEFORE anything that costs a network call ─────────
+    //
+    // The operator's rule: *si por alguna causa perdemos más de un dólar nos
+    // retiramos de ese token... con stops proporcionales al % de crecimiento.*
+    //
+    // Here rather than in `tickPosition` because the tick only advances on a
+    // NEW BAR, and a stop that waits for a fifteen-minute candle is not a stop.
+    //
+    // **And FIRST inside the cycle, ahead of the scan, which is the harder
+    // half of that same sentence.** It sat after `deps.scan()` and was
+    // therefore blocked by it — measured live, and the operator found it from
+    // the tape: SQUIRE sat at −2.5% with six others past the line while the
+    // engine spent twenty-four minutes inside a cold discovery sweep. A stop
+    // that waits for a candle is not a stop; one that waits for three hundred
+    // throttled provider calls is worse, and the wait is unbounded because it
+    // belongs to somebody else's rate limit.
+    //
+    // It needs NOTHING the scan produces. A position, its ledger, a live price
+    // and a policy — all of them already in hand — which is what makes the
+    // move a reordering rather than a redesign. The rotation and the release
+    // genuinely do need candidates, so they stay where they are and skip what
+    // this already sold.
+    //
+    // Everything it reads was fetched before the scan: `marketPrices` is one
+    // batched request made at the top of the cycle, and `ledgers` is a walk
+    // over fills already in the database.
+    //
+    // It is the third RISK exit and the only one caused by price. That is a
+    // real departure and it is named as one: `stop-loss.ts` says so in its
+    // first line, and it stays out of the death watch, whose observation type
+    // is built so no price-shaped field can exist on it. Routing this through
+    // there would break the single structural guarantee that keeps the death
+    // exit from becoming what this openly is.
+    const stopPolicy: StopLossPolicy = config.stopLoss ?? NO_STOP_LOSS
+    const stoppedIds: string[] = []
+    // The TOKEN, not the position: a re-entry arrives under a brand new
+    // position id, so an id cannot recognise it. See `justFreed` below.
+    const stoppedTokens: string[] = []
+    for (const recoveredPosition of recovery.positions) {
+      const position = now(recoveredPosition.position.id, recoveredPosition.position)
+      const ledger = ledgers.get(position.id)
+      const price = marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null
+      const input = {
+        // With `maxOpenEntries: 1` the average cost IS the entry price. The day
+        // a ladder comes back these diverge, and the domain takes the entry
+        // deliberately: an average falls as rungs fill, so a stop measured
+        // against it chases the position down and can never be reached.
+        entryPriceUsd: ledger?.avgCostUsd ?? 0,
+        marketPriceUsd: price,
+        openQty: ledger?.qty ?? 0,
+        runAtEntryPct: position.runAtEntryPct ?? null,
+      }
+      if (!shouldStopOut(input, stopPolicy)) continue
+
+      const broker = await deps.brokerFor(position)
+      // The SAME `settle` again — one idempotency key, one per-fill suffix. The
+      // no-loss guard lets this one through by design: a stop that cannot sell
+      // at a loss is not a stop.
+      await settle(
+        [{ kind: 'closeAll', comment: STOP_LOSS_COMMENT }],
+        position.lastBarTime,
+        price!,
+        at,
+        position,
+        broker,
+        deps.store,
+      )
+      await deps.store.closePosition(position.id)
+      stoppedIds.push(position.id)
+      stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)
+      const down = drawdownPct(input)
+      const stopped = alert(
+        'token-stopped',
+        `🛑 ${position.symbol} cortada por stop`,
+        `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, stopPolicy).toFixed(0)}% porque el token venía subiendo ${input.runAtEntryPct === null ? 'una cantidad no medida' : input.runAtEntryPct.toFixed(0) + '%'}. Se vendió todo a ${price}. El token NO queda vetado.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+      if (throttle.shouldSend(stopped, `stopped:${position.id}`)) await deps.alerts.send(stopped)
+    }
+    /** Sold by the stop already — the rotation and the release must not re-sell it. */
+    const stopped = new Set(stoppedIds)
+
     const recalled = kind === 'watch' ? await deps.recall?.() : null
     const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind)
     const candidates = found
@@ -427,17 +523,9 @@ export async function runCycle(
       if (throttle.shouldSend(empty)) await deps.alerts.send(empty)
     }
 
-    // ── 3a. Every position's ledger, read once ───────────────────────────────
-    //
-    // Three decisions below need the same answer — what does this position
-    // hold, and what has it made — and any two of them disagreeing is how a
-    // book starts double-spending. One walk over the fills, shared.
-    const ledgers = new Map<string, PositionLedger>()
-    for (const recovered of recovery.positions) {
-      ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
-    }
 
-    // ── 3a-bis. The switch went off on a position holding money ─────────────
+
+    // ── 3a-ter. The switch went off on a position holding money ─────────────
     //
     // The operator's rule, and the largest departure from the reference in
     // this file: *si el interruptor on/off se desactiva en vivo y en directo,
@@ -491,6 +579,9 @@ export async function runCycle(
 
     const rotatedIds: string[] = []
     for (const { holder, reason } of rotations) {
+      // Already sold by the stop, moments ago and above. Selling twice is how
+      // a book goes short on a spot engine.
+      if (stopped.has(holder.id)) continue
       const found = recovery.positions.find((r) => r.position.id === holder.id)
       const recovered = found === undefined ? undefined : { ...found, position: now(holder.id, found.position) }
       const price = marketPrices.get(`${holder.chain}:${holder.tokenAddress}`)
@@ -533,72 +624,7 @@ export async function runCycle(
       )
       if (throttle.shouldSend(rotated, `rotated:${holder.id}`)) await deps.alerts.send(rotated)
     }
-    const rotated = new Set(rotatedIds)
-
-    // ── 3a-ter. The stop ─────────────────────────────────────────────────────
-    //
-    // The operator's rule: *si por alguna causa perdemos más de un dólar nos
-    // retiramos de ese token... con stops proporcionales al % de crecimiento.*
-    //
-    // Here rather than in `tickPosition` because the tick only advances on a
-    // NEW BAR, and a stop that waits for a fifteen-minute candle is not a stop.
-    // This runs every cycle, on the live price the cycle already fetched.
-    //
-    // It is the third RISK exit and the only one caused by price. That is a
-    // real departure and it is named as one: `stop-loss.ts` says so in its
-    // first line, and it stays out of the death watch, whose observation type
-    // is built so no price-shaped field can exist on it. Routing this through
-    // there would break the single structural guarantee that keeps the death
-    // exit from becoming what this openly is.
-    const stopPolicy: StopLossPolicy = config.stopLoss ?? NO_STOP_LOSS
-    const stoppedIds: string[] = []
-    // The TOKEN, not the position: a re-entry arrives under a brand new
-    // position id, so an id cannot recognise it. See `justFreed` below.
-    const stoppedTokens: string[] = []
-    for (const recoveredPosition of recovery.positions) {
-      const position = now(recoveredPosition.position.id, recoveredPosition.position)
-      if (rotated.has(position.id) || releasedIds.includes(position.id)) continue
-      const ledger = ledgers.get(position.id)
-      const price = marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null
-      const input = {
-        // With `maxOpenEntries: 1` the average cost IS the entry price. The day
-        // a ladder comes back these diverge, and the domain takes the entry
-        // deliberately: an average falls as rungs fill, so a stop measured
-        // against it chases the position down and can never be reached.
-        entryPriceUsd: ledger?.avgCostUsd ?? 0,
-        marketPriceUsd: price,
-        openQty: ledger?.qty ?? 0,
-        runAtEntryPct: position.runAtEntryPct ?? null,
-      }
-      if (!shouldStopOut(input, stopPolicy)) continue
-
-      const broker = await deps.brokerFor(position)
-      // The SAME `settle` again — one idempotency key, one per-fill suffix. The
-      // no-loss guard lets this one through by design: a stop that cannot sell
-      // at a loss is not a stop.
-      await settle(
-        [{ kind: 'closeAll', comment: STOP_LOSS_COMMENT }],
-        position.lastBarTime,
-        price!,
-        at,
-        position,
-        broker,
-        deps.store,
-      )
-      await deps.store.closePosition(position.id)
-      stoppedIds.push(position.id)
-      stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)
-      const down = drawdownPct(input)
-      const stopped = alert(
-        'token-stopped',
-        `🛑 ${position.symbol} cortada por stop`,
-        `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, stopPolicy).toFixed(0)}% porque el token venía subiendo ${input.runAtEntryPct === null ? 'una cantidad no medida' : input.runAtEntryPct.toFixed(0) + '%'}. Se vendió todo a ${price}. El token NO queda vetado.`,
-        at,
-        { position: position.id, token: position.tokenAddress },
-      )
-      if (throttle.shouldSend(stopped, `stopped:${position.id}`)) await deps.alerts.send(stopped)
-    }
-    for (const id of stoppedIds) rotated.add(id)
+    const rotated = new Set([...rotatedIds, ...stoppedIds])
 
     const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score]))
     const heldNow = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
@@ -936,7 +962,7 @@ export async function runCycle(
     }
   }
 
-  // ── 3b. And they BUY now, not next cycle ──────────────────────────────────
+  // ── 3e. And they BUY now, not next cycle ──────────────────────────────────
   //
   // The operator: *si hay tokens elegidos no los cargues uno por uno, cargalos
   // todos de una vez con la primer compra inmediatamente.*
