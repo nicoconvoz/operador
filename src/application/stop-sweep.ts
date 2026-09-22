@@ -1,5 +1,7 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { positionLedger } from './ledger.js'
+import { pricesDisagree } from '../domain/market/price-agreement.js'
+import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostPct, stopForRatio } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import type { BrokerPort } from '../domain/execution/broker.js'
@@ -118,6 +120,8 @@ export async function sweepStops(
   positions: readonly PersistedPosition[],
   prices: ReadonlyMap<string, number>,
   at: number,
+  /** The gate's own band, so the screen and the machine cannot drift apart. */
+  maxPriceRatio: number = DEFAULT_GATE_POLICY.maxPriceRatio,
 ): Promise<readonly string[]> {
   const stopped: string[] = []
 
@@ -140,6 +144,52 @@ export async function sweepStops(
       openQty: ledger?.qty ?? 0,
       runAtEntryPct: position.runAtEntryPct ?? null,
     }
+    /**
+     * A SECOND SOURCE, or no sale.
+     *
+     * CWZ6Bs was bought at 0.016621382749584405 and sold here at
+     * 0.000000092202559947 — **180,270×** — for one hundredth of a cent, the
+     * whole $14.49 position. The token was fine: trading at 0.01556 minutes
+     * later, sixteen point eight million dollars deep, UP 37.9% on the day.
+     * Not a rug and not a crash, a unit nobody agreed on — the third time
+     * after ZCAT (10,846×) and USDF (14,426×).
+     *
+     * Every other path already refused it and this one did not. `tickPosition`
+     * compares the market price against the candle close and does nothing at
+     * all until they agree; the rotation will not sell without a live price.
+     * This sweep compared against nothing and sold into the first absurd
+     * number it was handed, which is a defect I introduced when I moved the
+     * stop out of the cycle and left its guards behind.
+     *
+     * `lastPriceUsd` is the close the engine last ACTED on, and it comes from
+     * the candle feed — a different provider from the batched market call.
+     * That is exactly the independence this check wants, and it costs no
+     * request because it is already on the position.
+     *
+     * **Silence refuses here, where everywhere else it permits.** The tick
+     * keeps trading through a quiet provider because halting on silence would
+     * stop the whole book; the only act on offer here is an irreversible sale.
+     * A stop that waits one more sweep costs thirty seconds. A stop that sells
+     * at an unconfirmed number costs the position.
+     */
+    if (position.lastPriceUsd === null || position.lastPriceUsd === undefined) continue
+    if (pricesDisagree(price, position.lastPriceUsd, maxPriceRatio)) {
+      const clash = alert(
+        // The SAME kind the tick uses for the same fact. Two names for one
+        // condition is how a screen and a machine start disagreeing about
+        // which tokens are safe.
+        'position-halted',
+        `⚠️ ${position.symbol} cotiza a dos precios distintos`,
+        `El mercado dice ${price} y la última vela ${position.lastPriceUsd}. No se toca la posición hasta que coincidan: una venta a un número que nadie confirma es cómo se pierde una posición entera por una unidad mal leída.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+      // Never throttled, by its own level: only a person can tell a broken
+      // feed from a real collapse, and until they do, real money is still.
+      await deps.alerts.send(clash)
+      continue
+    }
+
     const policy = policyFor(position)
     if (!shouldStopOut(input, policy)) continue
 

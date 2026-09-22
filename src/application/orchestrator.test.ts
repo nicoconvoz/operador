@@ -1999,3 +1999,71 @@ describe('runCycle — the ratio sizes the STOP, not the target', () => {
     expect(await survives(0.25, { rewardRiskRatio: 4 })).toBe(false)
   })
 })
+
+describe('the stop will not sell at a price no second source confirms', () => {
+  // CWZ6Bs. Bought at 0.016621382749584405, sold by the stop at
+  // 0.000000092202559947 — **180,270×** — for one hundredth of a cent. The
+  // realised line reads −$14.49, the whole position, and more than everything
+  // the book had earned that day.
+  //
+  // The token was FINE. Checked against DexScreener minutes later: trading at
+  // 0.01556, sixteen point eight MILLION dollars of liquidity, up 37.9% on the
+  // day. Not a rug, not a crash — a unit nobody agreed on, the third time
+  // after ZCAT (10,846×) and USDF (14,426×).
+  //
+  // Every other path in this engine already refused this. `tickPosition`
+  // compares the market price against the candle close and does NOTHING — no
+  // entry, no DCA, no exit — until they agree. The rotation refuses to sell
+  // without a live price. The stop sweep, which I wrote, compared against
+  // nothing at all and sold into the first absurd number it was handed.
+  //
+  // The second source is `lastPriceUsd`: the close the engine last ACTED on,
+  // which comes from the candle feed — a different provider from the batched
+  // market call. That is exactly the independence `pricesDisagree` wants, and
+  // it costs no request because it is already on the position.
+
+  const stops: CycleConfig = { ...config, stopLoss: FLAT_ONE_PCT_STOP }
+
+  const soldAt = async (marketPrice: number, lastPriceUsd: number | null) => {
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', marketPrice]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition({ ...position(), lastPriceUsd })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, stops, throttle)
+    return (await store.allFills()).find((f) => f.side === 'sell') ?? null
+  }
+
+  it('refuses the sale when the two prices are orders of magnitude apart', async () => {
+    // The real ratio, scaled: the position was bought at 1 and the feed says a
+    // hundred-thousandth of that.
+    expect(await soldAt(0.00001, 1)).toBeNull()
+  })
+
+  it('still sells on an ordinary fall, which is the whole point of the stop', async () => {
+    // The band catches a wrong UNIT, never a price that moved. A token can
+    // halve between two looks and this must not stand in the way.
+    const sale = await soldAt(0.5, 1)
+    expect(sale?.comment).toBe('🛑 Stop')
+  })
+
+  it('refuses when there is NO second source at all', async () => {
+    // The asymmetry decides the silent case, and it points the other way from
+    // the tick's. There, refusing to trade on a quiet provider would halt the
+    // book; here, the only act on offer is an irreversible sale. A stop that
+    // waits one more sweep costs thirty seconds. A stop that sells at an
+    // unconfirmed number costs the position — $14.49 of one, once.
+    expect(await soldAt(0.5, null)).toBeNull()
+  })
+})
