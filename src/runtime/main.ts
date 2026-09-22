@@ -527,7 +527,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // Reset per scan, never accumulated. A verdict from the pass before last
     // is not a verdict about now, and this one can SELL.
     switchedOff: () => lastSwitchedOff,
-    scan: async (kind) => {
+    scan: async (kind, betweenSteps) => {
       lastSwitchedOff = []
       const candidates: Candidate[] = []
       // What we already hold, per chain. Every universe source is a list of
@@ -562,6 +562,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           const result = await scanOnce(
             {
               dex,
+              // The thread, handed back between units of work. The cycle puts
+              // the STOP in here — this is the wire that makes it reach
+              // production, and without it the whole thing is an offline
+              // rehearsal. Every gap this project has paid for was out here.
+              ...(betweenSteps ? { betweenSteps } : {}),
               goplus,
               sellProbe: sellProbeFor(chain),
               decimals: decimalsFor,

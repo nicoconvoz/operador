@@ -82,6 +82,32 @@ const build = (table: Parameters<typeof stubHttp>[0], decimals: Record<string, n
 }
 
 describe('scanOnce — discover → market → security → probe → rank', () => {
+  it('hands the thread back between units of work', async () => {
+    // A scan is the longest thing this engine does and `runLoop` is one
+    // thread, so for as long as it runs nothing else can. That was fine while
+    // the cycle only DECIDED things; it stopped being fine when the stop
+    // arrived. Measured live: twelve positions cut at an average of −3.01%
+    // against a −1% line, because the engine could only look once per cycle
+    // and a cold cycle is twenty minutes. $3.47 of pure lateness on one batch.
+    //
+    // `betweenSteps` is the thread being handed back. The scanner does not
+    // know what the caller does with it — the orchestrator is where "and the
+    // stop runs" lives — so all this asserts is that it is CALLED, repeatedly,
+    // inside the long stages. That is the scanner's whole half of the bargain.
+    let yields = 0
+    const { deps, http } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+    })
+
+    await scanOnce({ ...deps, betweenSteps: async () => { yields += 1 } }, config)
+
+    expect(yields).toBeGreaterThan(0)
+    void http
+  })
+
   it('ranks a clean token and rejects a mintable one, with the sell probe deciding honeypot on Solana', async () => {
     const { deps, http } = build({
       [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }, { chainId: 'solana', tokenAddress: 'bad' }] },

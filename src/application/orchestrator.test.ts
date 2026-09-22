@@ -1470,6 +1470,75 @@ describe('runCycle — the stop, which is the one path where a PRICE sells', () 
     expect(sent?.level).toBe('critical')
   })
 
+  it('cuts DURING a long scan, not only at the top of the cycle', async () => {
+    // The finding that ordering could not fix, and it took three commits to
+    // see: the stop was already the FIRST thing in the cycle and still fired
+    // twenty-three minutes late, because its cadence was the CYCLE's. Measured
+    // live — twelve positions cut at an average of −3.01% against a −1% line,
+    // $3.47 of pure lateness on one batch.
+    //
+    // `runLoop` is single-threaded, so the only way to look more often is for
+    // the long loop to hand the thread back. `betweenSteps` is that, and this
+    // is the test that says so: the position is HEALTHY when the cycle starts
+    // and only goes under water while the scan is running. Nothing at the top
+    // of the cycle could have caught it.
+    let clock = NOW
+    let asked = 0
+    let store: MemoryStore
+    const { deps, store: st, throttle } = rig({
+      now: () => clock,
+      // Healthy on the first ask, sunk on every one after it.
+      marketPrices: async () => new Map([['solana:Held', asked++ === 0 ? 1 : 0.94]]),
+      // A scan long enough that the sweep's own ceiling lets it run.
+      scan: async (_kind, betweenSteps) => {
+        clock += 60_000
+        await betweenSteps?.()
+        return []
+      },
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runCycle(deps, withFlatStop, throttle)
+
+    expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('🛑 Stop')
+    expect(await store.loadPositions()).toEqual([])
+  })
+
+  it('does not re-ask faster than the provider allows, however often the scan yields', async () => {
+    // The ceiling is what makes it safe to call from inside a loop that runs
+    // hundreds of times. One batched request per pass against three hundred a
+    // minute: twice a minute is under one percent of the allowance, and
+    // without a bound a three-hundred-token sweep would ask three hundred
+    // times for an answer that had not moved.
+    let clock = NOW
+    let asked = 0
+    const { deps, store, throttle } = rig({
+      now: () => clock,
+      marketPrices: async () => { asked++; return new Map([['solana:Held', 1]]) },
+      scan: async (_kind, betweenSteps) => {
+        // Ten yields inside ten seconds: one sweep window, not ten.
+        for (let i = 0; i < 10; i++) { clock += 1_000; await betweenSteps?.() }
+        return []
+      },
+    })
+    await store.savePosition(position())
+
+    await runCycle(deps, withFlatStop, throttle)
+
+    // One at the top of the cycle, and NOT ten more inside the scan.
+    expect(asked).toBe(1)
+  })
+
   it('cuts before the TICK loop, which is the OTHER wait that grows with the book', async () => {
     // The second half of the same lesson, and it needed a second measurement.
     //

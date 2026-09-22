@@ -95,6 +95,34 @@ export interface ScanDeps {
   /** Optional. Injected rather than imported, so the domain never learns what a console is. */
   readonly onProgress?: (progress: ScanProgress) => void
   /**
+   * A chance to do something else between units of work, AWAITED.
+   *
+   * A scan is the longest thing this engine does — minutes of throttled
+   * provider calls, and the wait belongs to somebody else's rate limit — and
+   * `runLoop` is single-threaded, so for as long as it runs nothing else can
+   * happen. That was tolerable while the cycle only DECIDED things. It stopped
+   * being tolerable when the stop arrived: measured live, twelve positions
+   * were cut at an average of −3.01% against a −1% threshold, because the
+   * engine could only look once per cycle and a cold cycle is twenty minutes.
+   * The lateness cost $3.47 on one batch — more than the threshold itself is
+   * worth arguing about.
+   *
+   * Reordering could not fix that. The stop was already the FIRST thing in the
+   * cycle; its cadence was still the cycle's. The only way to check more often
+   * on one thread is for the long loop to hand the thread back, which is what
+   * this is.
+   *
+   * **The scanner does not know what the caller does with it**, and must not.
+   * It knows it is in a long loop and that pausing is allowed. The orchestrator
+   * is where "and the stop runs" lives.
+   *
+   * Deliberately NOT `onProgress`. That one is fire-and-forget and exists so
+   * the domain never learns what a console is; this one is awaited and can
+   * sell a position. Overloading the first with the second would mean a logger
+   * that moves money.
+   */
+  readonly betweenSteps?: () => Promise<void>
+  /**
    * Remembers which tokens have already been examined, and when.
    *
    * Without it the budget is spent on the same highest-scoring tokens every
@@ -443,6 +471,7 @@ export async function scanOnce(
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'empezando', found: 0 })
   if (deps.history) {
     try {
+      await deps.betweenSteps?.()
       for (const { tokenAddress, poolAddress } of await deps.history.discoverPools(config.chain)) {
         universe.add(tokenAddress)
         // Kept so a token the price provider cannot see can still be asked
@@ -454,6 +483,7 @@ export async function scanOnce(
       errors.push({ address: '*', stage: 'market', error: `pool universe: ${String(error)}` })
     }
   }
+  await deps.betweenSteps?.()
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
 
@@ -520,6 +550,7 @@ export async function scanOnce(
     const batch = addresses.slice(i, i + 30)
     try {
       const pairs = await deps.dex.tokens(config.chain, batch)
+      await deps.betweenSteps?.()
       for (const market of deps.dex.toMarketSnapshots(config.chain, pairs)) {
         const current = bestByAddress.get(market.address)
         if (!current || market.liquidityUsd > current.liquidityUsd) bestByAddress.set(market.address, market)
@@ -755,6 +786,8 @@ export async function scanOnce(
   let done = 0
   for (const market of ordered.slice(0, budget)) {
     done += 1
+    // Before the token, not after, so the FIRST one does not get a free pass.
+    await deps.betweenSteps?.()
     // Every tenth, not every one: a log that scrolls is a log nobody reads.
     if (done % 10 === 0) {
       deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: Math.min(budget, unexamined.length) })

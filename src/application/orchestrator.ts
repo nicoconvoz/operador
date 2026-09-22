@@ -1,4 +1,13 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
+
+/**
+ * How often the stop may re-ask while a long scan is running.
+ *
+ * Bounded by the provider, not chosen: one batched DexScreener request covers
+ * the whole book (thirty addresses a call) against three hundred a minute, so
+ * twice a minute spends under one percent of the allowance.
+ */
+const STOP_SWEEP_MS = 30_000
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
 import { planPortfolio, type PortfolioPolicy } from '../domain/risk/portfolio.js'
@@ -93,7 +102,14 @@ export interface CycleDeps {
    */
   readonly confirmEntry?: (snapshot: Candidate['snapshot']) => Promise<EntryConfirmation>
   /** Fresh scanner output. Empty is a valid answer and is alerted on. */
-  readonly scan: (kind: 'full' | 'held') => Promise<readonly Candidate[]>
+  readonly scan: (
+    kind: 'full' | 'held',
+    /**
+     * Handed to the scanner so it can give the thread back between units of
+     * work. The cycle puts the STOP in here; the scanner is not told that.
+     */
+    betweenSteps?: () => Promise<void>,
+  ) => Promise<readonly Candidate[]>
   /**
    * The LAST scan, re-ranked from the shelf. No network.
    *
@@ -362,18 +378,6 @@ export async function runCycle(
   const current = new Map<string, PersistedPosition>(recovery.positions.map((r) => [r.position.id, r.position]))
   const now = (id: string, fallback: PersistedPosition) => current.get(id) ?? fallback
 
-  // ── 1c. Every position's ledger, read once ───────────────────────────────
-  //
-  // Four decisions below need the same answer — what does this position
-  // hold, and what has it made — and any two of them disagreeing is how a
-  // book starts double-spending. One walk over the fills, shared.
-  //
-  // Here, at the top, because the STOP is here and needs it. It costs no
-  // network call: the fills are already in the database.
-  const ledgers = new Map<string, PositionLedger>()
-  for (const recovered of recovery.positions) {
-    ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
-  }
 
   // ── 1d. The stop, before anything that costs a call PER POSITION ────────
   //
@@ -431,10 +435,24 @@ export async function runCycle(
   // The TOKEN, not the position: a re-entry arrives under a brand new
   // position id, so an id cannot recognise it. See `justFreed` below.
   const stoppedTokens: string[] = []
-  for (const recoveredPosition of recovery.positions) {
-    const position = now(recoveredPosition.position.id, recoveredPosition.position)
-    const ledger = ledgers.get(position.id)
-    const price = marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null
+  /** Sold by the stop already — nothing downstream may re-sell or re-tick it. */
+  const stopped = new Set<string>()
+
+  /**
+   * One pass of the stop over the whole book, against the prices given.
+   *
+   * A FUNCTION rather than a block because it runs many times in a cycle now:
+   * once here, and again whenever the scan hands the thread back. Its own
+   * ledger read is what makes that safe — the fills move underneath it as it
+   * sells, so reading them once at the top would let a later pass act on a
+   * position it had already closed.
+   */
+  const sweepStops = async (prices: ReadonlyMap<string, number>) => {
+    for (const recoveredPosition of recovery.positions) {
+      if (stopped.has(recoveredPosition.position.id)) continue
+      const position = now(recoveredPosition.position.id, recoveredPosition.position)
+      const ledger = positionLedger(await deps.store.fillsFor(position.id))
+      const price = prices.get(`${position.chain}:${position.tokenAddress}`) ?? null
     const input = {
       // With `maxOpenEntries: 1` the average cost IS the entry price. The day
       // a ladder comes back these diverge, and the domain takes the entry
@@ -463,18 +481,52 @@ export async function runCycle(
     await deps.store.closePosition(position.id)
     stoppedIds.push(position.id)
     stoppedTokens.push(`${position.chain}:${position.tokenAddress}`)
+    stopped.add(position.id)
     const down = drawdownPct(input)
-    const stopped = alert(
+    const cut = alert(
       'token-stopped',
       `🛑 ${position.symbol} cortada por stop`,
       `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, stopPolicy).toFixed(0)}% porque el token venía subiendo ${input.runAtEntryPct === null ? 'una cantidad no medida' : input.runAtEntryPct.toFixed(0) + '%'}. Se vendió todo a ${price}. El token NO queda vetado.`,
       at,
       { position: position.id, token: position.tokenAddress },
     )
-    if (throttle.shouldSend(stopped, `stopped:${position.id}`)) await deps.alerts.send(stopped)
+      if (throttle.shouldSend(cut, `stopped:${position.id}`)) await deps.alerts.send(cut)
+    }
   }
-  /** Sold by the stop already — the rotation and the release must not re-sell it. */
-  const stopped = new Set(stoppedIds)
+
+  await sweepStops(marketPrices)
+
+  /**
+   * The same sweep, handed to the scan so a long sweep cannot hold the book
+   * hostage — and RATE LIMITED, because it is not free.
+   *
+   * Each pass costs ONE batched DexScreener request for the whole book (thirty
+   * addresses per call) against a limit of three hundred a minute, so twice a
+   * minute spends under one percent of the allowance. The ceiling is what
+   * makes this safe to call from inside a loop that runs hundreds of times.
+   *
+   * Thirty seconds is the cadence, and it is bounded by the provider rather
+   * than chosen: closer together would re-ask a question whose answer has not
+   * had time to change, further apart would reintroduce the latency this
+   * exists to remove. Against a twenty-minute cycle it is forty checks where
+   * there was one.
+   *
+   * A failure is not evidence, exactly as at the top of the cycle: an empty
+   * map leaves every position alone rather than selling it on silence.
+   */
+  let lastSweepAt = at
+  const betweenSteps = async () => {
+    if (deps.now() - lastSweepAt < STOP_SWEEP_MS) return
+    lastSweepAt = deps.now()
+    if (!deps.marketPrices) return
+    const open = recovery.positions.filter((r) => !stopped.has(r.position.id)).map((r) => r.position)
+    if (open.length === 0) return
+    try {
+      await sweepStops(await deps.marketPrices(open))
+    } catch {
+      // A provider having a bad minute is not a reason to abandon the scan.
+    }
+  }
 
   for (const recovered of recovery.positions) {
     if (latestClosedBar !== null && recovered.position.lastBarTime >= latestClosedBar) continue
@@ -536,7 +588,7 @@ export async function runCycle(
     // already examined, already stored, already good. The fusion was never
     // necessary.
     const recalled = kind === 'watch' ? await deps.recall?.() : null
-    const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind)
+    const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind, betweenSteps)
     const candidates = found
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
@@ -546,6 +598,23 @@ export async function runCycle(
     }
 
 
+
+    // ── 3a. Every position's ledger, read once ───────────────────────────────
+    //
+    // Three decisions below need the same answer — what does this position
+    // hold, and what has it made — and any two of them disagreeing is how a
+    // book starts double-spending. One walk over the fills, shared.
+    //
+    // Read HERE rather than beside the stop's, and the duplication is the
+    // point: the stop runs before the tick and again during the scan, so its
+    // view is deliberately the one from before either. These three want what
+    // is true after both. One map serving both clocks would be wrong for one
+    // of them, silently.
+    const ledgers = new Map<string, PositionLedger>()
+    for (const recovered of recovery.positions) {
+      if (stopped.has(recovered.position.id)) continue
+      ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
+    }
 
     // ── 3a-ter. The switch went off on a position holding money ─────────────
     //
