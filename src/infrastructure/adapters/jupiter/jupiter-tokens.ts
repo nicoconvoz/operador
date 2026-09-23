@@ -1,6 +1,7 @@
 import { NO_THROTTLE, type HttpGet, type Throttle } from '../../http.js'
 import { type Chain, type SecurityReport } from '../../../domain/scanner/snapshot.js'
 import { type DecimalsPort } from '../../../application/scan.js'
+import { type MarketSnapshot } from '../dexscreener/dexscreener.js'
 import { JUPITER_LITE_BASE } from './jupiter.js'
 
 /**
@@ -25,12 +26,77 @@ export interface JupiterTokenInfo {
   readonly liquidity?: number
   readonly mcap?: number
   readonly tokenProgram?: string
+  readonly usdPrice?: number
+  readonly fdv?: number
+  readonly firstPool?: { readonly id?: string; readonly createdAt?: string }
+  readonly stats5m?: JupiterWindow
+  readonly stats1h?: JupiterWindow
+  readonly stats6h?: JupiterWindow
+  readonly stats24h?: JupiterWindow
   readonly audit?: {
     readonly mintAuthorityDisabled?: boolean
     readonly freezeAuthorityDisabled?: boolean
     readonly topHoldersPercentage?: number
     readonly devBalancePercentage?: number
     readonly devMints?: number
+  }
+}
+
+/** One of Jupiter's rolling windows, as its token API reports it. */
+export interface JupiterWindow {
+  readonly priceChange?: number
+  readonly buyVolume?: number
+  readonly sellVolume?: number
+  readonly numBuys?: number
+  readonly numSells?: number
+}
+
+const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
+const change = (w: JupiterWindow | undefined): number | null =>
+  typeof w?.priceChange === 'number' && Number.isFinite(w.priceChange) ? w.priceChange : null
+
+/**
+ * The market half of a snapshot, from Jupiter — the same shape DexScreener's
+ * pair produced, so every gate and the death watch read it unchanged.
+ *
+ * It moved with the candles, which are Jupiter's and per MINT now. Two things
+ * had to agree with them, measured on 183 tokens: the death watch compares
+ * LIVE liquidity against the liquidity recorded at entry, and Jupiter (every
+ * pool of the mint) and DexScreener (one pair) differ by 0.48x at p10 and 5.11x
+ * at p90 — a ratio across the two would detect nothing; and the idle gate asks
+ * whether anyone trades the token, which the candles now answer for the mint.
+ * Prices agree: median 0.9999, 80% within 2%.
+ *
+ * A token with no price has no market — not a zero, which would read as a
+ * collapse. An unreported window is UNKNOWN, never flat: zero is a measurement
+ * and silence is not. Transaction counts cannot be null in the type, so a
+ * missing one is zero, exactly as DexScreener's mapper always did — which makes
+ * the idle gate refuse it, the conservative answer for an entry.
+ *
+ * `pairAddress` is the mint's first pool. Nothing trades by it any more on
+ * Solana — candles and prices are per mint — and it is only the address the
+ * GeckoTerminal fallback asks when Jupiter's chart cannot answer.
+ */
+export function jupiterMarket(info: JupiterTokenInfo, observedAt: number): MarketSnapshot | null {
+  if (!(typeof info.usdPrice === 'number' && info.usdPrice > 0)) return null
+  const volume = (w: JupiterWindow | undefined) => num(w?.buyVolume) + num(w?.sellVolume)
+  const created = info.firstPool?.createdAt ? Date.parse(info.firstPool.createdAt) : NaN
+  return {
+    chain: 'solana',
+    address: info.id,
+    symbol: info.symbol,
+    pairAddress: info.firstPool?.id ?? info.id,
+    observedAt,
+    priceUsd: info.usdPrice,
+    liquidityUsd: num(info.liquidity),
+    fdvUsd: typeof info.fdv === 'number' && Number.isFinite(info.fdv) ? info.fdv : null,
+    volumeUsd: { h1: volume(info.stats1h), h6: volume(info.stats6h), h24: volume(info.stats24h) },
+    priceChangePct: { m5: change(info.stats5m), h1: change(info.stats1h), h6: change(info.stats6h), h24: change(info.stats24h) },
+    txns: {
+      h1: { buys: num(info.stats1h?.numBuys), sells: num(info.stats1h?.numSells) },
+      h24: { buys: num(info.stats24h?.numBuys), sells: num(info.stats24h?.numSells) },
+    },
+    pairCreatedAt: Number.isFinite(created) ? created : null,
   }
 }
 
@@ -69,8 +135,9 @@ export class JupiterTokens implements DecimalsPort {
    * asking one at a time. What `discover` already brought is skipped: the
    * universe's own lists arrive with everything this would fetch.
    */
-  async prefetch(mints: readonly string[]): Promise<void> {
-    const missing = [...new Set(mints)].filter((m) => this.fresh(m) === undefined)
+  async prefetch(mints: readonly string[], options: { readonly refresh?: boolean } = {}): Promise<void> {
+    const unique = [...new Set(mints)]
+    const missing = options.refresh === true ? unique : unique.filter((m) => this.fresh(m) === undefined)
     for (let i = 0; i < missing.length; i += 100) {
       const batch = missing.slice(i, i + 100)
       await this.throttle.wait()
@@ -86,6 +153,33 @@ export class JupiterTokens implements DecimalsPort {
       // return is remembered as unknown rather than re-asked one by one.
       for (const mint of batch) this.remember(mint, found.get(mint) ?? null)
     }
+  }
+
+  /**
+   * The market half for many mints, a hundred per request — the scan's market
+   * pass and the engine's live prices both read it, so the price the book is
+   * valued at and the liquidity its death watch compares come from one place.
+   */
+  async markets(
+    chain: Chain,
+    addresses: readonly string[],
+    /**
+     * `refresh` asks again whatever the cache holds. The ENGINE's live prices
+     * need it: the stop re-prices the book every thirty seconds, and a price
+     * served from a minute-old cache would cut a position on where it was.
+     */
+    options: { readonly refresh?: boolean } = {},
+  ): Promise<MarketSnapshot[]> {
+    if (chain !== 'solana') return []
+    await this.prefetch(addresses, options)
+    const at = this.now()
+    const out: MarketSnapshot[] = []
+    for (const address of new Set(addresses)) {
+      const info = this.fresh(address)?.info
+      const market = info ? jupiterMarket(info, at) : null
+      if (market) out.push(market)
+    }
+    return out
   }
 
   async info(mint: string): Promise<JupiterTokenInfo | null> {

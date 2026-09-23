@@ -99,6 +99,13 @@ export interface ScanDeps {
    * token is still asked on its own, and fails closed if it must.
    */
   readonly prefetch?: (chain: Chain, addresses: readonly string[]) => Promise<void>
+  /**
+   * Where the universe gets its market half — price, liquidity, volumes, the
+   * changes, the counts, the age. Absent means DexScreener, a pair at a time.
+   * On Solana it is Jupiter, per MINT, because the candles are, and the death
+   * watch's liquidity baseline and its live reading must be one provider's.
+   */
+  readonly markets?: (chain: Chain, addresses: readonly string[]) => Promise<MarketSnapshot[]>
   /** Chain-appropriate sell probe. Without one, honeypot stays unknown and the gates fail closed. */
   readonly sellProbe?: SellProbePort
   readonly decimals: DecimalsPort
@@ -562,7 +569,22 @@ export async function scanOnce(
   // the universe twice, was examined twice, and was counted twice on screen.
   const bestByAddress = new Map<string, (typeof markets)[number]>()
   const markets: ReturnType<typeof deps.dex.toMarketSnapshots> = []
-  for (let i = 0; i < addresses.length; i += 30) {
+  if (deps.markets) {
+    // An injected market source replaces DexScreener outright. On Solana it is
+    // Jupiter, per MINT — the same source as the candles, so the liquidity the
+    // death watch records at entry and the liquidity it reads live are one
+    // provider's numbers, and a ratio between them means something.
+    try {
+      await deps.betweenSteps?.()
+      for (const market of await deps.markets(config.chain, addresses)) {
+        const current = bestByAddress.get(market.address)
+        if (!current || market.liquidityUsd > current.liquidityUsd) bestByAddress.set(market.address, market)
+      }
+    } catch (error) {
+      for (const address of addresses) errors.push({ address, stage: 'market', error: String(error) })
+    }
+  }
+  for (let i = 0; !deps.markets && i < addresses.length; i += 30) {
     const batch = addresses.slice(i, i + 30)
     try {
       const pairs = await deps.dex.tokens(config.chain, batch)

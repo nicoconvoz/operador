@@ -88,6 +88,7 @@ const result = await scanOnce(
     // Exactly as production wires Solana now: Jupiter and the chain, no GoPlus.
     onChain: solanaMints,
     prefetch: async (_chain, addresses) => { await Promise.all([jupiterTokens.prefetch(addresses), solanaMints.prefetch(addresses)]) },
+    markets: (chain, addresses) => jupiterTokens.markets(chain, addresses),
     sellProbe: jupiter,
     decimals: {
       decimals: (chain, address) => jupiterTokens.decimals(chain, address),

@@ -1098,6 +1098,21 @@ describe('scanOnce — Jupiter and the chain, no GoPlus', () => {
     expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
   })
 
+  it('prices the universe from the injected market source, never asking DexScreener', async () => {
+    // The candles are Jupiter's and per mint, so the market half follows: the
+    // death watch compares live liquidity against the liquidity at entry, and a
+    // ratio across two providers — one pair against every pool — detects nothing.
+    const { scanDeps } = rig()
+    const fromJupiter = scanDeps.dex.toMarketSnapshots('solana', [pair('good'), pair('minty')])
+    let dexPriced = 0
+    const dex = Object.assign(Object.create(Object.getPrototypeOf(scanDeps.dex)), scanDeps.dex, {
+      tokens: async () => { dexPriced++; return [] },
+    })
+    const outcome = await scanOnce({ ...scanDeps, dex, markets: async () => fromJupiter }, config)
+    expect(dexPriced).toBe(0)
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
+  })
+
   it('a failed prefetch is not fatal — each token is still asked, and fails closed if it must', async () => {
     const { scanDeps } = rig()
     const outcome = await scanOnce({ ...scanDeps, prefetch: async () => { throw new Error('rpc down') } }, config)

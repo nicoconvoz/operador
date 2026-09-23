@@ -114,7 +114,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // is the same quota.
   const gecko = new GeckoTerminal(hedged(), geckoThrottle)
   /**
-   * Where a token's security comes from, per chain — ONE answer shared by the
+   * Where a token's security and market come from, per chain — ONE answer shared by the
    * scan and the door, so the two cannot disagree about what makes a token safe.
    *
    * Solana: Jupiter and the chain. *Hagamos todo con Jupiter.* GoPlus answered
@@ -131,13 +131,17 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    */
   const solanaMints = new SolanaMints(config.solanaRpcUrl, ports.postJson)
   const jupiterCharts = new JupiterCharts(hedged())
-  const securityFor = (chain: Chain) =>
+  const sourcesFor = (chain: Chain) =>
     chain === 'solana'
       ? {
           onChain: solanaMints,
           prefetch: async (_chain: Chain, addresses: readonly string[]) => {
             await Promise.all([jupiterTokens.prefetch(addresses), solanaMints.prefetch(addresses)])
           },
+          // The MARKET half too, per mint, from the source the candles and the
+          // live prices come from — so the liquidity a position is opened
+          // against and the liquidity its death watch reads are comparable.
+          markets: (c: Chain, addresses: readonly string[]) => jupiterTokens.markets(c, addresses),
         }
       : { goplus }
 
@@ -326,11 +330,31 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // of requests a cycle against a limit of three hundred a minute. A chain
     // that fails costs the others nothing, and a total failure returns an empty
     // map — which the engine reads as silence, not as a mismatch.
+    //
+    // Solana is JUPITER now, per mint, and asked fresh every time — never from
+    // the scan's minute-long cache, because the stop re-prices the book every
+    // thirty seconds and a cached price would cut a position on where it WAS.
+    // One source for the price, the live liquidity and the candles, so the
+    // death watch's live liquidity and the liquidity it recorded at entry are
+    // one provider's numbers. The price-agreement guard still compares this
+    // against the last closed candle, which catches a momentary glitch against
+    // a bar that was right fifteen minutes ago.
     marketPrices: async (positions) => {
       const prices = new Map<string, number>()
       const byChain = new Map<Chain, string[]>()
       for (const p of positions) byChain.set(p.chain, [...(byChain.get(p.chain) ?? []), p.tokenAddress])
       for (const [chain, addresses] of byChain) {
+        if (chain === 'solana') {
+          try {
+            for (const m of await jupiterTokens.markets(chain, addresses, { refresh: true })) {
+              prices.set(`${chain}:${m.address}`, m.priceUsd)
+              liveMarkets.set(`${chain}:${m.address}`, m)
+            }
+          } catch {
+            // Silence, not a verdict.
+          }
+          continue
+        }
         for (let i = 0; i < addresses.length; i += 30) {
           try {
             const pairs = await dex.tokens(chain, addresses.slice(i, i + 30))
@@ -437,8 +461,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // the handful about to be opened, which costs a few seconds each.
     confirmEntry: (snapshot) =>
       confirmEntry(snapshot.address, async (address) => {
-        const pairs = await dex.tokens(snapshot.chain, [address])
-        const market = dex.toMarketSnapshots(snapshot.chain, pairs)[0]
+        // Fresh at the door, from the same source the scan priced it with.
+        const market =
+          snapshot.chain === 'solana'
+            ? (await jupiterTokens.markets('solana', [address], { refresh: true }))[0]
+            : dex.toMarketSnapshots(snapshot.chain, await dex.tokens(snapshot.chain, [address]))[0]
         if (!market) return null
         const { snapshot: examined } = await examineToken(
           {
@@ -446,7 +473,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             // The same source the scan used, asked for ONE token: one request
             // to Jupiter and one to the chain, a second or so, where it was
             // GoPlus on its two-second interval plus a candle download.
-            ...securityFor(snapshot.chain),
+            ...sourcesFor(snapshot.chain),
             sellProbe: sellProbeFor(snapshot.chain),
             decimals: decimalsFor,
             ...(snapshot.chain === 'bsc' ? { history } : {}),
@@ -614,9 +641,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // rehearsal. Every gap this project has paid for was out here.
               ...(betweenSteps ? { betweenSteps } : {}),
               // Jupiter and the chain on Solana, GoPlus on BSC — the SAME
-              // `securityFor` the door uses, so the two cannot disagree about
+              // `sourcesFor` the door uses, so the two cannot disagree about
               // what makes a token safe.
-              ...securityFor(chain),
+              ...sourcesFor(chain),
               sellProbe: sellProbeFor(chain),
               decimals: decimalsFor,
               // GeckoTerminal's pool discovery was 142 of the first 184 seconds

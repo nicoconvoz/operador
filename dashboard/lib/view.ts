@@ -6,6 +6,7 @@ import { productionLadder } from '../../src/application/production-ladder.js'
 import { productionDoors } from '../../src/application/production-doors.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
 import { DexScreener, type MarketSnapshot } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
+import { JupiterTokens } from '../../src/infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { makeHttpGet } from '../../src/infrastructure/http.js'
 import { type StatePort } from '../../src/domain/persistence/store.js'
 
@@ -113,8 +114,24 @@ async function liveMarkets(store: StatePort): Promise<ReadonlyMap<string, Market
   const byChain = new Map<string, string[]>()
   for (const p of held) byChain.set(p.chain, [...(byChain.get(p.chain) ?? []), p.tokenAddress])
 
-  const dex = new DexScreener(makeHttpGet({ timeoutMs: 6_000 }))
+  const http = makeHttpGet({ timeoutMs: 6_000 })
+  const dex = new DexScreener(http)
   for (const [chain, addresses] of byChain) {
+    // Solana from JUPITER, per mint, exactly as the engine prices it — the one
+    // screen the operator reads must show the number the engine decides on. A
+    // screen valuing the book from DexScreener while the stop cuts on Jupiter
+    // would disagree about the only figure that matters, which is the drift
+    // this read model exists to prevent.
+    if (chain === 'solana') {
+      try {
+        for (const m of await new JupiterTokens(http).markets('solana', addresses, { refresh: true })) {
+          markets.set(`${chain}:${m.address}`, m)
+        }
+      } catch {
+        // Falls back to the stored numbers, and the screen says which.
+      }
+      continue
+    }
     for (let i = 0; i < addresses.length; i += 30) {
       try {
         const pairs = await dex.tokens(chain as 'solana' | 'bsc', addresses.slice(i, i + 30))

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { JupiterTokens } from './jupiter-tokens.js'
+import { JupiterTokens, jupiterMarket } from './jupiter-tokens.js'
 import { JUPITER_LITE_BASE } from './jupiter.js'
 import { stubHttp, type HttpGet } from '../../http.js'
 
@@ -132,3 +132,88 @@ describe('JupiterTokens — a hundred mints per request', () => {
   })
 })
 
+describe('jupiterMarket — the market half, from the same source as the candles', () => {
+  // The candles moved to Jupiter, per MINT. The market half has to follow, for
+  // two reasons measured on the same 183 tokens:
+  //
+  // - The death watch compares LIVE liquidity against the liquidity recorded
+  //   at entry. Jupiter sums every pool of a mint and DexScreener reports one
+  //   pair — p10 0.48x, p90 5.11x between them — so a ratio across the two
+  //   providers would detect nothing.
+  // - The idle gate asks whether anyone trades the token, and the candles now
+  //   answer for the mint. A pair-level count beside mint-level bars measures
+  //   "is it alive" with one ruler and "how did it move" with another.
+  //
+  // Prices agree: median ratio 0.9999, 80% within ±2%.
+
+  const live = {
+    id: 'Mint', name: 'Bonk', symbol: 'Bonk', decimals: 5,
+    usdPrice: 0.0000038, liquidity: 5_376_761, fdv: 300_000_000,
+    firstPool: { id: 'Pool1', createdAt: '2022-12-25T00:00:00.000Z' },
+    stats5m: { priceChange: 0.4, buyVolume: 1_000, sellVolume: 500, numBuys: 30, numSells: 20 },
+    stats1h: { priceChange: 2.8, buyVolume: 179_967, sellVolume: 152_568, numBuys: 4_617, numSells: 4_797 },
+    stats6h: { priceChange: -1.1, buyVolume: 900_000, sellVolume: 850_000, numBuys: 20_000, numSells: 19_000 },
+    stats24h: { priceChange: 5.5, buyVolume: 3_000_000, sellVolume: 2_900_000, numBuys: 80_000, numSells: 79_000 },
+  }
+
+  it('maps every field the gates and the death watch read', () => {
+    const m = jupiterMarket(live, 1_000)!
+    expect(m).toMatchObject({
+      chain: 'solana', address: 'Mint', symbol: 'Bonk', observedAt: 1_000,
+      priceUsd: 0.0000038, liquidityUsd: 5_376_761, fdvUsd: 300_000_000,
+      volumeUsd: { h1: 179_967 + 152_568, h6: 1_750_000, h24: 5_900_000 },
+      priceChangePct: { m5: 0.4, h1: 2.8, h6: -1.1, h24: 5.5 },
+      txns: { h1: { buys: 4_617, sells: 4_797 }, h24: { buys: 80_000, sells: 79_000 } },
+      pairCreatedAt: Date.parse('2022-12-25T00:00:00.000Z'),
+    })
+  })
+
+  it('has no market for a token with no price', () => {
+    // Not a zero: a token nobody prices is not a token anyone can trade.
+    const { usdPrice: _unpriced, ...noPrice } = live
+    expect(jupiterMarket(noPrice, 1)).toBeNull()
+    expect(jupiterMarket({ ...live, usdPrice: 0 }, 1)).toBeNull()
+  })
+
+  it('reports an unreported window as UNKNOWN, never as flat', () => {
+    // A change of zero is a measurement; a missing window is silence. Reading
+    // silence as flat would let the momentum rule decide on a number nobody
+    // measured.
+    const { stats5m: _gone, ...noFiveMinutes } = live
+    expect(jupiterMarket(noFiveMinutes, 1)!.priceChangePct.m5).toBeNull()
+  })
+
+  it('answers many mints in one request and reuses what it already has', async () => {
+    const asked: string[] = []
+    const http: HttpGet = async (u) => {
+      asked.push(u)
+      const mints = decodeURIComponent(u.slice(url.length)).split(',')
+      return { status: 200, json: async () => mints.map((id) => ({ ...live, id })) }
+    }
+    const tokens = new JupiterTokens(http)
+    const markets = await tokens.markets('solana', ['A', 'B', 'C'])
+    expect(markets.map((m) => m.address)).toEqual(['A', 'B', 'C'])
+    expect(asked).toHaveLength(1)
+    expect(await tokens.markets('bsc', ['A'])).toEqual([])
+  })
+})
+describe('JupiterTokens — LIVE prices are never served from the cache', () => {
+  // The cache stands a minute, which is right for a scan and wrong for the
+  // stop: it re-prices the book every thirty seconds, and a price read from a
+  // minute-old cache would cut a position on where it WAS. Hours of this
+  // project went into making the stop look sooner; a stale price undoes all of it.
+  it('refetches when asked to refresh, even what it just fetched', async () => {
+    let requests = 0
+    const http: HttpGet = async (u) => {
+      requests++
+      const mints = decodeURIComponent(u.slice(url.length)).split(',')
+      return { status: 200, json: async () => mints.map((id) => ({ ...bonk, id, usdPrice: 1 })) }
+    }
+    const tokens = new JupiterTokens(http)
+    await tokens.markets('solana', ['A'])
+    await tokens.markets('solana', ['A'])
+    expect(requests).toBe(1)
+    await tokens.markets('solana', ['A'], { refresh: true })
+    expect(requests).toBe(2)
+  })
+})
