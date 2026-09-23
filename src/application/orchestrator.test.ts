@@ -1172,6 +1172,32 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect(sale!.price).toBeLessThan(1)
   })
 
+  it('sells as it is a position still LISTED, once its sellers lead', async () => {
+    // Buy pressure is not a floor any more, so a token the sellers took can
+    // still be a candidate with its switch on. Its counts come from the list.
+    const listed = { ...candidate('Held', 80), snapshot: { ...candidate('Held', 80).snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      scan: async () => [listed],
+      marketPrices: async () => new Map([['solana:Held', 0.9]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('📉 Presión vendedora')
+  })
+
+  it('opens a new position only through the ENTRY door — volume expansion and trend', async () => {
+    // *Para la primera compra: expansión del volumen más del 50% y tendencia
+    // más del 50%.* Two candidates, one of them cooling off.
+    const hot = { ...candidate('hot', 90), opportunity: { score: 90, components: { volumeExpansion: 0.8, momentum: 1 } as never } }
+    const cold = { ...candidate('cold', 95), opportunity: { score: 95, components: { volumeExpansion: 0.2, momentum: 1 } as never } }
+    const { deps, store, throttle } = rig({ scan: async () => [cold, hot] })
+    await runCycle(deps, { ...config, entryComponents: { volumeExpansion: 0.5, momentum: 0.5 } }, throttle)
+    const opened = (await store.loadPositions()).map((p) => p.tokenAddress)
+    expect(opened).toContain('hot')
+    expect(opened).not.toContain('cold')
+  })
+
   it('does NOT sell as it is at a price the candles do not confirm', async () => {
     // Exempt from the no-loss guard, so it takes the stop's second-source check.
     const sellers = { ...off('Held', ['buyPressure']), snapshot: { ...off('Held').snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }

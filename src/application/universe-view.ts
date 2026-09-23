@@ -146,6 +146,8 @@ export interface UniverseOptions {
    * tokens the book may buy — the exact drift this read model exists to stop.
    */
   readonly minComponents?: ComponentFloors
+  /** The engine's first-buy door: a token failing it is drawn filtered, never buyable. */
+  readonly entryComponents?: ComponentFloors
   /**
    * The same SCORE door the ranking applies, for the same reason as the floors
    * above: a screen that draws a token as buyable while the engine refuses it
@@ -348,6 +350,10 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
               // definitions of "worth trading" is how the canvas and the engine
               // end up disagreeing about what the book may hold.
               : !meetsMinimums(opportunity.components, options.minComponents)
+                ? 'filtered'
+              // And the FIRST-buy door, which the engine applies to anything it
+              // would open. Only reached for a token not held — `held` wins above.
+              : !meetsMinimums(opportunity.components, options.entryComponents)
                 ? 'filtered'
               // And below the engine's own SCORE door, for the same reason.
               : opportunity.score < (options.minScore ?? 0)

@@ -25,6 +25,7 @@ import { type SizingPolicy } from '../domain/economics/sizing.js'
 import { planRecovery, type OrderProbe, type RecoveredPosition, type RecoveryPlan } from './recovery.js'
 import { resyncCascade, RESYNC_TOLERANCE_PCT } from './resync.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
+import { meetsMinimums, type ComponentFloors } from '../domain/scanner/opportunity.js'
 
 /**
  * The orchestrator — one cycle of the whole system.
@@ -180,6 +181,11 @@ export interface CycleConfig {
    * this is not silently given a different rule.
    */
   readonly usdPerToken?: number | null
+  /**
+   * What a candidate needs to be OPENED, on top of the floors every held and
+   * listed token answers to. Absent: nothing more. See `DEFAULT_ENTRY_FLOORS`.
+   */
+  readonly entryComponents?: ComponentFloors
   /** Passed through to the tick, which derives the exit target from it. */
   readonly maxCostSharePct?: number
   /**
@@ -674,6 +680,8 @@ export async function runCycle(
         .map((s) => [`${s.snapshot.chain}:${s.snapshot.address}`, s]),
     )
     const stillListed = new Set(candidates.map((c) => `${c.snapshot.chain}:${c.snapshot.address}`))
+    /** The latest reading of every token this pass examined, switched off or listed. */
+    const seenNow = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.snapshot]))
     const rotations = rotateOnSwitchOff(
       recovery.positions.map((r) => {
         const key = `${r.position.chain}:${r.position.tokenAddress}`
@@ -689,10 +697,11 @@ export async function runCycle(
           // the first sells. A token missing from both lists is silence.
           switchOff: off !== undefined ? true : stillListed.has(key) ? false : null,
           failed: off?.failed ?? [],
-          // The hour behind the buy-pressure reading, so a sale at a loss is
-          // only ever made on trades somebody actually counted.
-          hourBuys: off?.snapshot.txns?.h1.buys ?? null,
-          hourSells: off?.snapshot.txns?.h1.sells ?? null,
+          // The hour behind the pressure reading, from whichever list the token
+          // is on — the sellers' sale does not wait for the switch — so a sale
+          // at a loss is only ever made on trades somebody actually counted.
+          hourBuys: (off?.snapshot ?? seenNow.get(key))?.txns?.h1.buys ?? null,
+          hourSells: (off?.snapshot ?? seenNow.get(key))?.txns?.h1.sells ?? null,
           ...standingOf(r.position),
         }
       }),
@@ -961,6 +970,10 @@ export async function runCycle(
     const eligible = candidates
       .filter((c) => !held.has(`${c.snapshot.chain}:${c.snapshot.address}`))
       .filter((c) => !justFreed.has(`${c.snapshot.chain}:${c.snapshot.address}`))
+      // The FIRST-buy door: *expansión del volumen más del 50% y tendencia más
+      // del 50%.* Here and not in the ranking, so a held token is never judged
+      // by the way it was bought.
+      .filter((c) => meetsMinimums(c.opportunity.components, config.entryComponents))
 
     if (slotsLeft > 0 && free > 0) {
       const plan = planPortfolio(

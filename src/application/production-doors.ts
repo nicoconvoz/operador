@@ -88,13 +88,6 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
   // full. At 0.3 it admits anything under about a 2.8% round trip, and PURR
   // charged 15.55%.
   costEfficiency: 0.3,
-  // *Sólo vas a operar las monedas que tengan más del 1% de presión
-  // compradora.* Buy pressure is the share of buys in the last hour above the
-  // neutral half, 0..1 — so 1% is buys above 50.5% of the hour's trades. An
-  // even or silent hour scores zero and is refused. Like the toll, it also
-  // turns the switch on a position already held: a winner whose buyers left
-  // may rotate, and only above what its round trip costs.
-  buyPressure: 0.01,
 
 }
 
@@ -126,6 +119,25 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
 // would be a fourth rule doing the same job twice — and it was the wrong one
 // to reach for anyway: at 50 it was blamed for a narrow book while the real
 // cut was `momentum`, which only a third of tokens clear in any given hour.
+/**
+ * The door for a FIRST buy, and only for it.
+ *
+ * *Para la primera compra vamos a basarnos en otra cosa: en la expansión del
+ * volumen más del 50% y tendencia más del 50%.* The operator. Volume expansion
+ * above half is the last hour trading more than 1.5× the day's hourly average;
+ * trend (`momentum`) is 1 for a token rising in the hour or the day and 0
+ * otherwise, so above half means rising.
+ *
+ * NOT a floor. The floors also turn the switch on a position already held, and
+ * a volume burst cools off in minutes — as a floor it would rotate positions
+ * out for the way they were bought. What a held position answers to is who is
+ * trading it now: buy pressure adds, sell pressure sells.
+ */
+export const DEFAULT_ENTRY_FLOORS: ComponentFloors = {
+  volumeExpansion: 0.5,
+  momentum: 0.5,
+}
+
 export const DEFAULT_MIN_SCORE = 75
 
 export interface ProductionDoors {
@@ -133,6 +145,8 @@ export interface ProductionDoors {
   readonly minComponents: ComponentFloors
   /** The score door, read after the score is computed and never folded into it. */
   readonly minScore: number
+  /** What a token needs to be OPENED, on top of the floors. See `DEFAULT_ENTRY_FLOORS`. */
+  readonly entryComponents: ComponentFloors
   /**
    * Whether a token held back only by a preference gate may still be bought
    * when nothing better is free. OFF: *hacé que sólo sean candidatas las que ya
@@ -151,5 +165,5 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const parsed = Number(raw)
   const minScore = raw && Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIN_SCORE
 
-  return { minComponents: DEFAULT_COMPONENT_FLOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
+  return { minComponents: DEFAULT_COMPONENT_FLOORS, entryComponents: DEFAULT_ENTRY_FLOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
 }

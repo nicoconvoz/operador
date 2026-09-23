@@ -125,13 +125,11 @@ export function rotateOnSwitchOff(
 ): readonly RotationDecision[] {
   const decisions: RotationDecision[] = []
   for (const holder of holders) {
-    // Silence is not evidence.
-    if (holder.switchOff !== true) continue
     // Nothing held: there is nothing to sell, and `idle-slots` already owns
     // this case. Two functions releasing the same slot is how a book counts
     // the same capital twice.
     if (holder.openQty <= 0) continue
-    // The SELLERS lead, MEASURED: sold as it is. Only on an hour that had
+    // The SELLERS lead, MEASURED: sold as it is, whatever the switch says. Only on an hour that had
     // trades — a count nobody reported reads as zero, and selling at a loss on
     // a number nobody measured is the one mistake this must not make. An even
     // hour, where neither side leads by 1%, falls through to the toll rule.
@@ -146,6 +144,11 @@ export function rotateOnSwitchOff(
       })
       continue
     }
+    // Everything below is the FILTER's rotation, and silence is not evidence:
+    // only a token examined and refused by a floor has its switch off. The
+    // sellers' sale above does not wait for it — it reads who is trading now,
+    // not why the token was bought.
+    if (holder.switchOff !== true) continue
     // *Hacé lo mismo en la rotación por filtro.* Out only when the position is
     // up by MORE than its whole round trip costs; below that the filter going
     // off is not a reason to close in the red. Unmeasured is not a verdict.

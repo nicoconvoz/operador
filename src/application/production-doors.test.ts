@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS } from './production-doors.js'
+import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS, DEFAULT_ENTRY_FLOORS } from './production-doors.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
-  it('is TWO floors now: what the token charges, and whether buyers are pushing it', () => {
+  it('is ONE floor for everything held and listed: what the token charges', () => {
     // `momentum` and `headroom` were removed after the operator relaunched with
     // the momentum rule on and the engine opened THREE positions where the rule
     // had thirty-seven candidates.
@@ -18,16 +18,17 @@ describe('productionDoors — one definition of what the book may buy', () => {
     // so everything the rule admits passes it and the floor can never cut. A
     // dead knob, and a dead knob is worse than a wrong one, because the next
     // reader tunes it and nothing happens.
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3, buyPressure: 0.01 })
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3 })
   })
 
-  it('trades only what BUYERS are pushing — more than 1% of buy pressure', () => {
-    // *Sólo vas a operar las monedas que tengan más del 1% de presión
-    // compradora.* The operator. Buy pressure is the share of buys in the last
-    // hour above the neutral half, 0..1 — the bar the detail sheet draws — so
-    // 1% is buys above 50.5% of the hour's trades. A DOOR, like the toll, never
-    // a weight: it refuses without moving anyone's score.
-    expect(DEFAULT_COMPONENT_FLOORS.buyPressure).toBe(0.01)
+  it('opens a FIRST buy only on volume expansion and trend, both above half', () => {
+    // *Para la primera compra vamos a basarnos en otra cosa: en la expansión
+    // del volumen más del 50% y tendencia más del 50%.* The operator. An ENTRY
+    // door, not a floor: a position already held is never judged by why it
+    // was bought, so a volume burst cooling off does not rotate it out.
+    expect(DEFAULT_ENTRY_FLOORS).toEqual({ volumeExpansion: 0.5, momentum: 0.5 })
+    expect(DEFAULT_COMPONENT_FLOORS.buyPressure).toBeUndefined()
+    expect(productionDoors({}).entryComponents).toEqual(DEFAULT_ENTRY_FLOORS)
   })
 
   it('keeps the TOLL, and that is not an oversight', () => {

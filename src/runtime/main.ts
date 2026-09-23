@@ -913,6 +913,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       breakEven: config.breakEven,
       maxStopPct: config.maxStopPct,
       usdPerToken: config.usdPerToken,
+      // *Para la primera compra: expansión del volumen más del 50% y tendencia
+      // más del 50%.* Applied only to what the cycle would open.
+      entryComponents: config.entryComponents,
       idleSlots: {
         // *Si el token ha perdido menos del 1.2% y la moneda está en un puntaje
         // bajo, cambiarla por una mejor y asumir esa pequeña pérdida.*

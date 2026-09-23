@@ -202,6 +202,8 @@ export interface RuntimeConfig {
    * no longer bounded by how strict the rules are.
    */
   readonly usdPerToken: number | null
+  /** What a candidate needs to be OPENED. See `DEFAULT_ENTRY_FLOORS`. */
+  readonly entryComponents: import('../domain/scanner/opportunity.js').ComponentFloors
   /** Whether a token failing only a preference gate may still be bought. See `ProductionDoors`. */
   readonly reserve: boolean
   /** One-minute candles a dip's low must hold before a DCA rung buys it. */
@@ -482,6 +484,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
+    entryComponents: productionDoors(env).entryComponents,
     reserve: productionDoors(env).reserve,
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.

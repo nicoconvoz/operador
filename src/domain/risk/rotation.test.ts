@@ -133,6 +133,14 @@ describe('rotateOnSwitchOff — the SELLERS took the hour: sold as it is', () =>
     expect(rotateOnSwitchOff([gone({ hourBuys: null, hourSells: null })])).toEqual([])
   })
 
+  it('sells on the SELLERS alone, whatever the switch says', () => {
+    // Buy pressure is no longer a floor — the first buy reads volume expansion
+    // and trend — so a position the sellers took can still have its switch on.
+    // The exit is about who is trading NOW, not about why it was bought.
+    expect(rotateOnSwitchOff([gone({ switchOff: false, failed: [] })])[0]?.comment).toBe(BUYERS_GONE_COMMENT)
+    expect(rotateOnSwitchOff([gone({ switchOff: null, failed: [] })])[0]?.comment).toBe(BUYERS_GONE_COMMENT)
+  })
+
   it('does NOT sell on an even hour — neither side is pushing, so nothing is done', () => {
     // Buy pressure under 1% turns the switch, but the SELLERS must lead by more
     // than 1% for a sale as it is. In between, only the toll rule applies.

@@ -458,6 +458,12 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.tier).toBe('reserve')
   })
 
+  it('draws a token failing the ENTRY door as filtered — the engine will not open it', async () => {
+    const store = await seed([token('COLD')])
+    const view = await buildUniverse(store, { now: () => NOW, entryComponents: { volumeExpansion: 2 } })
+    expect(view.tokens[0]?.tier).toBe('filtered')
+  })
+
   it('draws it FILTERED when the engine keeps the reserve off', async () => {
     // *Sólo candidatas las que ya cumplan todas las condiciones.* A fallback
     // the engine will never buy must not be drawn as one it might.
