@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, type RotationHolder } from './rotation.js'
+import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, BUYERS_GONE_COMMENT, type RotationHolder } from './rotation.js'
 
 const holder = (over: Partial<RotationHolder> = {}): RotationHolder => ({
   unrealisedPct: 2,
@@ -103,5 +103,49 @@ describe('rotateOnSwitchOff — never closes in the red', () => {
     const [decision] = rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], unrealisedPct: 2, tollPct: 0.9 })])
     expect(decision?.reason).toContain('+2.00%')
     expect(decision?.reason).toContain('0.90%')
+  })
+})
+
+describe('rotateOnSwitchOff — the SELLERS took the hour: sold as it is', () => {
+  // *Cuando la presión compradora aumente más de 1%, compra; cuando la presión
+  // vendedora aumente más del 1%, venta* — and *se vende como esté*. The
+  // operator. Sell pressure mirrors buy pressure: sells above 50.5% of the
+  // hour's trades. Not the toll's rule: sold at a loss too, under its own exit.
+  const gone = (over: Partial<RotationHolder> = {}) =>
+    holder({ switchOff: true, failed: ['buyPressure'], hourBuys: 40, hourSells: 60, unrealisedPct: -5, tollPct: 0.9, ...over })
+
+  it('sells a position under water once sellers take more than 50.5% of the hour', () => {
+    const [decision] = rotateOnSwitchOff([gone()])
+    expect(decision?.comment).toBe(BUYERS_GONE_COMMENT)
+    expect(decision?.reason).toContain('60 ventas de 100')
+  })
+
+  it('sells it even when buy pressure is not the only floor that failed', () => {
+    const [decision] = rotateOnSwitchOff([gone({ failed: ['costEfficiency', 'buyPressure'] })])
+    expect(decision?.comment).toBe(BUYERS_GONE_COMMENT)
+  })
+
+  it('does NOTHING on a silent hour — no trades measured is not buyers leaving', () => {
+    // Jupiter reports a missing count as zero, and a zero-trade hour reads as
+    // zero pressure. Selling at a loss on a number nobody measured is the one
+    // mistake this exit must never make.
+    expect(rotateOnSwitchOff([gone({ hourBuys: 0, hourSells: 0 })])).toEqual([])
+    expect(rotateOnSwitchOff([gone({ hourBuys: null, hourSells: null })])).toEqual([])
+  })
+
+  it('does NOT sell on an even hour — neither side is pushing, so nothing is done', () => {
+    // Buy pressure under 1% turns the switch, but the SELLERS must lead by more
+    // than 1% for a sale as it is. In between, only the toll rule applies.
+    expect(rotateOnSwitchOff([gone({ hourBuys: 50, hourSells: 50 })])).toEqual([])
+    expect(rotateOnSwitchOff([gone({ hourBuys: 496, hourSells: 504 })])).toEqual([])
+    expect(rotateOnSwitchOff([gone({ hourBuys: 49, hourSells: 51 })])[0]?.comment).toBe(BUYERS_GONE_COMMENT)
+    // 50.7% sellers: 1.4% of sell pressure on the buy door's own scale.
+    expect(rotateOnSwitchOff([gone({ hourBuys: 493, hourSells: 507 })])[0]?.comment).toBe(BUYERS_GONE_COMMENT)
+  })
+
+  it('leaves every other floor on the toll rule — the toll alone never sells at a loss', () => {
+    expect(rotateOnSwitchOff([gone({ failed: ['costEfficiency'], hourBuys: 50, hourSells: 50 })])).toEqual([])
+    const [winner] = rotateOnSwitchOff([gone({ failed: ['costEfficiency'], hourBuys: 50, hourSells: 50, unrealisedPct: 2 })])
+    expect(winner?.comment).toBe(ROTATION_EXIT_COMMENT)
   })
 })

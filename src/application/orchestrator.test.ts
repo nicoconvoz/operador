@@ -1156,6 +1156,35 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
   })
 
+  it('SELLS AS IT IS when the sellers take the hour — the one rotation that may close in the red', async () => {
+    // *Cuando la presión vendedora aumente más del 1%, venta — se vende como
+    // esté.* Bought at 1, the market is at 0.9, sixty sells in a hundred.
+    const sellers = { ...off('Held', ['buyPressure']), snapshot: { ...off('Held').snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [sellers],
+      marketPrices: async () => new Map([['solana:Held', 0.9]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell')
+    expect(sale?.comment).toBe('📉 Presión vendedora')
+    expect(sale!.price).toBeLessThan(1)
+  })
+
+  it('does NOT sell as it is at a price the candles do not confirm', async () => {
+    // Exempt from the no-loss guard, so it takes the stop's second-source check.
+    const sellers = { ...off('Held', ['buyPressure']), snapshot: { ...off('Held').snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [sellers],
+      marketPrices: async () => new Map([['solana:Held', 0.00001]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+  })
+
   it('does NOT blacklist the token — a rotation is not a death', async () => {
     // It may be bought again the day it qualifies. Only a death verdict is
     // terminal, and confusing the two would permanently retire a token for

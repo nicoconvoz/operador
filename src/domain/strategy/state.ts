@@ -128,7 +128,7 @@ export type CloseAllOrder = {
    * blacklists the token, which is exactly why it needs a name of its own
    * instead of borrowing one.
    */
-  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit' | '❄️ Salida por congelamiento' | '🔁 Rotación' | '🛑 Stop' | '🔄 Cambio' | '🔒 Break-even'
+  readonly comment: '🏁 Exit' | '⚖️ BE Exit' | '☠️ Death Exit' | '❄️ Salida por congelamiento' | '🔁 Rotación' | '🛑 Stop' | '🔄 Cambio' | '🔒 Break-even' | '📉 Presión vendedora'
 }
 
 export type Order = EntryOrder | CloseAllOrder

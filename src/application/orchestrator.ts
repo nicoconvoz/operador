@@ -11,7 +11,9 @@ import { type Candles } from './replay.js'
 import { type EntryConfirmation } from './confirm-entry.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
-import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { rotateOnSwitchOff, BUYERS_GONE_COMMENT, SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { pricesDisagree } from '../domain/market/price-agreement.js'
+import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
@@ -687,13 +689,17 @@ export async function runCycle(
           // the first sells. A token missing from both lists is silence.
           switchOff: off !== undefined ? true : stillListed.has(key) ? false : null,
           failed: off?.failed ?? [],
+          // The hour behind the buy-pressure reading, so a sale at a loss is
+          // only ever made on trades somebody actually counted.
+          hourBuys: off?.snapshot.txns?.h1.buys ?? null,
+          hourSells: off?.snapshot.txns?.h1.sells ?? null,
           ...standingOf(r.position),
         }
       }),
     )
 
     const rotatedIds: string[] = []
-    for (const { holder, reason } of rotations) {
+    for (const { holder, reason, comment } of rotations) {
       // Already sold by the stop, moments ago and above. Selling twice is how
       // a book goes short on a spot engine.
       if (stopped.has(holder.id)) continue
@@ -703,12 +709,17 @@ export async function runCycle(
       // No live price, no sale. Selling at a number nobody confirmed is how a
       // position once left at a ten-thousandth of its value.
       if (recovered === undefined || price === undefined || price <= 0) continue
+      // The buyers-gone sale is exempt from the no-loss guard, so it takes the
+      // stop's own second-source check: a unit nobody agreed on is how CWZ6Bs
+      // left at a hundred-and-eighty-thousandth of its price.
+      const forced = comment === BUYERS_GONE_COMMENT
+      if (forced && (recovered.position.lastPriceUsd == null || pricesDisagree(price, recovered.position.lastPriceUsd, DEFAULT_GATE_POLICY.maxPriceRatio))) continue
       const broker = await deps.brokerFor(recovered.position)
       // The SAME `settle` the engine tick uses — the idempotency key, the
       // no-loss guard and the per-fill suffix all come from one place. A
       // second copy of that is how a retry sells twice.
       const refused = await settle(
-        [{ kind: 'closeAll', comment: ROTATION_EXIT_COMMENT }],
+        [{ kind: 'closeAll', comment }],
         // Keyed by the bar the position last evaluated, not by the clock: a
         // re-run of this cycle then collides with itself instead of selling
         // the same position again.
@@ -732,7 +743,7 @@ export async function runCycle(
       rotatedIds.push(holder.id)
       const rotated = alert(
         'token-rotated',
-        `🔁 ${holder.symbol} sale y el capital rota`,
+        forced ? `📉 ${holder.symbol} presión vendedora: se vendió como estaba` : `🔁 ${holder.symbol} sale y el capital rota`,
         `${reason}. Se vendió todo a ${price} y la ranura vuelve al reparto. El token NO queda vetado: puede volver a entrar el día que califique.`,
         at,
         { position: holder.id, token: holder.tokenAddress },

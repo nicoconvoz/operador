@@ -54,6 +54,21 @@ export const ROTATION_EXIT_COMMENT = '🔁 Rotación' as const
  */
 export const SWAP_EXIT_COMMENT = '🔄 Cambio' as const
 
+/**
+ * The SELLERS lead the hour: sold AS IT IS.
+ *
+ * *Cuando la presión vendedora aumente más del 1%, venta — se vende como
+ * esté.* The operator, mirroring the buy door. The one allocator exit that may close in the red, and
+ * so it has a name of its own — the no-loss guard tells exits apart by their
+ * comment, and the tape must say why a position left at a loss.
+ *
+ * It sells on ORDER FLOW, never on price: buy pressure is who is trading, not
+ * where the price went, so the death exit's guardrail is untouched. What it
+ * costs, stated: the reading moves hour to hour, so a position can be sold at
+ * a loss and bought back the next cycle, paying its round trip each time.
+ */
+export const BUYERS_GONE_COMMENT = '📉 Presión vendedora' as const
+
 export interface RotationHolder {
   readonly id: string
   readonly symbol: string
@@ -84,15 +99,30 @@ export interface RotationHolder {
    * already paid plus the cost of selling now. See `positionTollPct`.
    */
   readonly tollPct?: number | null
+  /** Buys and sells in the last hour behind the buy-pressure reading. Null: not reported. */
+  readonly hourBuys?: number | null
+  readonly hourSells?: number | null
 }
 
 export interface RotationDecision {
   readonly holder: RotationHolder
   /** Human-readable, for the alert and the audit trail. */
   readonly reason: string
+  /** Which exit sells it: the toll-bound rotation, or the buyers-gone sale as it is. */
+  readonly comment: typeof ROTATION_EXIT_COMMENT | typeof BUYERS_GONE_COMMENT
 }
 
-export function rotateOnSwitchOff(holders: readonly RotationHolder[]): readonly RotationDecision[] {
+/**
+ * How far the SELLERS must lead the hour before a position is sold as it is,
+ * on the same 0..1 scale as buy pressure: 0.01 is sells above 50.5% of the
+ * hour's trades — the mirror of the buy door's own 1%.
+ */
+export const SELL_PRESSURE_EXIT = 0.01
+
+export function rotateOnSwitchOff(
+  holders: readonly RotationHolder[],
+  sellPressureExit: number = SELL_PRESSURE_EXIT,
+): readonly RotationDecision[] {
   const decisions: RotationDecision[] = []
   for (const holder of holders) {
     // Silence is not evidence.
@@ -101,6 +131,21 @@ export function rotateOnSwitchOff(holders: readonly RotationHolder[]): readonly 
     // this case. Two functions releasing the same slot is how a book counts
     // the same capital twice.
     if (holder.openQty <= 0) continue
+    // The SELLERS lead, MEASURED: sold as it is. Only on an hour that had
+    // trades — a count nobody reported reads as zero, and selling at a loss on
+    // a number nobody measured is the one mistake this must not make. An even
+    // hour, where neither side leads by 1%, falls through to the toll rule.
+    const buys = holder.hourBuys ?? 0
+    const trades = buys + (holder.hourSells ?? 0)
+    const sellPressure = trades > 0 ? ((trades - buys) / trades - 0.5) * 2 : 0
+    if (trades > 0 && sellPressure > sellPressureExit) {
+      decisions.push({
+        holder,
+        comment: BUYERS_GONE_COMMENT,
+        reason: `la presión vendedora pasó el ${(sellPressureExit * 100).toFixed(0)}% (${trades - buys} ventas de ${trades} en la última hora) — se vende como esté`,
+      })
+      continue
+    }
     // *Hacé lo mismo en la rotación por filtro.* Out only when the position is
     // up by MORE than its whole round trip costs; below that the filter going
     // off is not a reason to close in the red. Unmeasured is not a verdict.
@@ -110,6 +155,7 @@ export function rotateOnSwitchOff(holders: readonly RotationHolder[]): readonly 
     if (standing <= toll) continue
     decisions.push({
       holder,
+      comment: ROTATION_EXIT_COMMENT,
       reason: `el interruptor se apagó (${holder.failed.join(', ')} por debajo del piso) y va +${standing.toFixed(2)}%, más que el ${toll.toFixed(2)}% que cuesta el viaje`,
     })
   }

@@ -67,6 +67,7 @@ const SPANISH: Record<CloseAllOrder['comment'], string> = {
   // A position that reached its target and was on its way to a loss. It left
   // at zero instead of at the stop, which is the whole reason it exists.
   '🔒 Break-even': '🔒 Salida en break-even',
+  '📉 Presión vendedora': '📉 Salida por presión vendedora',
 }
 // A DCA rung arrives as "➕ DCA-2" and an entry as "🟢 Entry" — neither is a
 // `closeAll` comment, so neither is in the union above. Anything unknown is
