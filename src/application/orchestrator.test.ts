@@ -1156,36 +1156,6 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
   })
 
-  it('SELLS AS IT IS when the sellers take the hour — the one rotation that may close in the red', async () => {
-    // *Cuando la presión vendedora aumente más del 1%, venta — se vende como
-    // esté.* Bought at 1, the market is at 0.9, sixty sells in a hundred.
-    const sellers = { ...off('Held', ['buyPressure']), snapshot: { ...off('Held').snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }
-    const { deps, store, throttle } = rig({
-      brokerFor: seeded,
-      switchedOff: () => [sellers],
-      marketPrices: async () => new Map([['solana:Held', 0.9]]),
-    })
-    await withFills(store)
-    await runCycle(deps, config, throttle)
-    const sale = (await store.allFills()).find((f) => f.side === 'sell')
-    expect(sale?.comment).toBe('📉 Presión vendedora')
-    expect(sale!.price).toBeLessThan(1)
-  })
-
-  it('sells as it is a position still LISTED, once its sellers lead', async () => {
-    // Buy pressure is not a floor any more, so a token the sellers took can
-    // still be a candidate with its switch on. Its counts come from the list.
-    const listed = { ...candidate('Held', 80), snapshot: { ...candidate('Held', 80).snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }
-    const { deps, store, throttle } = rig({
-      brokerFor: seeded,
-      scan: async () => [listed],
-      marketPrices: async () => new Map([['solana:Held', 0.9]]),
-    })
-    await withFills(store)
-    await runCycle(deps, config, throttle)
-    expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('📉 Presión vendedora')
-  })
-
   it('opens a new position only through the ENTRY door — volume expansion and trend', async () => {
     // *Para la primera compra: expansión del volumen más del 50% y tendencia
     // más del 50%.* Two candidates, one of them cooling off.
@@ -1200,19 +1170,6 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect(opened).toContain('hot')
     expect(opened).toContain('warm')
     expect(opened).not.toContain('cold')
-  })
-
-  it('does NOT sell as it is at a price the candles do not confirm', async () => {
-    // Exempt from the no-loss guard, so it takes the stop's second-source check.
-    const sellers = { ...off('Held', ['buyPressure']), snapshot: { ...off('Held').snapshot, txns: { h1: { buys: 40, sells: 60 }, h24: { buys: 400, sells: 600 } } } as TokenSnapshot }
-    const { deps, store, throttle } = rig({
-      brokerFor: seeded,
-      switchedOff: () => [sellers],
-      marketPrices: async () => new Map([['solana:Held', 0.00001]]),
-    })
-    await withFills(store)
-    await runCycle(deps, config, throttle)
-    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
   })
 
   it('does NOT blacklist the token — a rotation is not a death', async () => {

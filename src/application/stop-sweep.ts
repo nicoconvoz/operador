@@ -1,6 +1,6 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { positionLedger, tokenNetUsd } from './ledger.js'
-import { nextPressureRung, pressureOf, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
+import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio } from '../domain/economics/sizing.js'
@@ -314,7 +314,9 @@ export async function sweepStops(
       // anyway would orphan the quantity — neither realised nor unrealised,
       // and gone from the screen that was watching it.
       if (refused) {
-        if (deps.pressureLadder) await buyRungOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)
+        if (deps.pressureLadder && (await actOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)) === 'sold') {
+          stopped.push(position.id)
+        }
         continue
       }
       await deps.store.closePosition(position.id)
@@ -342,7 +344,9 @@ export async function sweepStops(
       cut = tokenNetUsd(tape, position.chain, position.tokenAddress) > lossUsd(input)
     }
     if (!cut) {
-      if (held && deps.pressureLadder) await buyRungOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)
+      if (held && deps.pressureLadder && (await actOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)) === 'sold') {
+        stopped.push(position.id)
+      }
       continue
     }
 
@@ -385,12 +389,15 @@ export async function sweepStops(
 }
 
 /**
- * One rung, if buyers just pushed through 1%. Nothing, otherwise.
+ * What buy pressure says now, acted on: a rung when buyers push through 1%,
+ * the whole position when they fall through it — *se vende como esté*.
  *
- * Never into a position the death watch has frozen or condemned: a freeze
- * blocks new capital by definition, and a dying token is not an opportunity.
+ * ONE reading and ONE memory for both, so a buy and a sale can never be
+ * decided on two different views of the same hour. A rung is never bought
+ * into a position the death watch froze or condemned; the sale is allowed in
+ * any stage, because leaving is never new risk.
  */
-async function buyRungOnPressure(
+async function actOnPressure(
   deps: StopSweepDeps,
   ladder: PressureLadder,
   position: PersistedPosition,
@@ -398,24 +405,55 @@ async function buyRungOnPressure(
   price: number,
   at: number,
   throttle: AlertThrottle,
-): Promise<void> {
-  if (position.deathWatch.stage !== 'healthy') return
+): Promise<'bought' | 'sold' | null> {
   const entries = fills.filter((f) => f.side === 'buy').length
-  if (entries < 1 || entries >= ladder.policy.maxEntries) return
+  if (entries < 1) return null
 
   let counts: Awaited<ReturnType<PressureLadder['hourCounts']>>
   try {
     counts = await ladder.hourCounts(position)
   } catch {
-    return
+    return null
   }
   const now = counts === null ? null : pressureOf(counts.buys, counts.sells, 'buy')
   const previous = ladder.previous.get(position.id) ?? null
   // A silent hour keeps the last reading: it is not a fall to zero, and
   // recording it as one would fake a crossing the moment trades come back.
   if (now !== null) ladder.previous.set(position.id, now)
+  if (counts === null) return null
+  const trades = counts.buys + counts.sells
+  const line = `${(ladder.policy.threshold * 100).toFixed(0)}%`
+
+  // *La venta se va a realizar si la presión compradora cae 1%.* Sold as it
+  // is — exempt from the no-loss guard by its own comment.
+  if (buyersFellThrough({ previous, now }, ladder.policy.threshold)) {
+    const broker = await deps.brokerFor(position)
+    const refused = await settle(
+      [{ kind: 'closeAll', comment: BUYERS_GONE_COMMENT }],
+      position.lastBarTime,
+      price,
+      at,
+      position,
+      broker,
+      deps.store,
+    )
+    if (refused) return null
+    await deps.store.closePosition(position.id)
+    ladder.previous.delete(position.id)
+    const gone = alert(
+      'token-rotated',
+      `📉 ${position.symbol} sin compradores: se vendió como estaba`,
+      `La presión compradora cayó del ${line} (${counts.buys} compras de ${trades} en la última hora). Se vendió todo a ${price}. El token NO queda vetado.`,
+      at,
+      { position: position.id, token: position.tokenAddress },
+    )
+    if (throttle.shouldSend(gone, `gone:${position.id}`)) await deps.alerts.send(gone)
+    return 'sold'
+  }
+
+  if (position.deathWatch.stage !== 'healthy') return null
   const rung = nextPressureRung({ entries, previous, now }, ladder.policy)
-  if (rung === null || counts === null) return
+  if (rung === null) return null
 
   const id = `DCA-${rung}`
   const broker = await deps.brokerFor(position)
@@ -429,14 +467,14 @@ async function buyRungOnPressure(
     broker,
     deps.store,
   )
-  if ((await deps.store.fillsFor(position.id)).length === before) return
-  const trades = counts.buys + counts.sells
+  if ((await deps.store.fillsFor(position.id)).length === before) return null
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `La presión compradora cruzó el ${(ladder.policy.threshold * 100).toFixed(0)}% (${counts.buys} compras de ${trades} en la última hora). Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
+    `La presión compradora cruzó el ${line} (${counts.buys} compras de ${trades} en la última hora). Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )
   if (throttle.shouldSend(bought, `dca:${position.id}:${rung}`)) await deps.alerts.send(bought)
+  return 'bought'
 }

@@ -50,3 +50,29 @@ export function nextPressureRung(
   if (previous === null || now === null) return null
   return previous <= policy.threshold && now > policy.threshold ? entries : null
 }
+
+/**
+ * Buyers fell THROUGH the threshold: above it before, at or under it now.
+ *
+ * *La venta se va a realizar no si la presión vendedora aumenta a más de 1%,
+ * sino si la presión compradora cae 1%.* The operator — the mirror of the
+ * rung. On the crossing, never the level: the first buy reads volume
+ * expansion and trend, not buy pressure, so a position can open on an even
+ * hour, and selling on the level would dump it on the next sweep.
+ */
+export function buyersFellThrough(
+  input: { readonly previous: number | null; readonly now: number | null },
+  threshold: number,
+): boolean {
+  const { previous, now } = input
+  if (previous === null || now === null) return false
+  return previous > threshold && now <= threshold
+}
+
+/**
+ * The exit for it: sold AS IT IS, the one exit the allocator may take in the
+ * red besides the two for a dead asset — *se vende como esté*. A name of its
+ * own, because the no-loss guard tells exits apart by their comment and the
+ * tape must say why a position left at a loss.
+ */
+export const BUYERS_GONE_COMMENT = '📉 Sin compradores' as const

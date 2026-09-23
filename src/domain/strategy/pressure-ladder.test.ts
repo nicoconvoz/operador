@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { pressureOf, nextPressureRung, PRESSURE_THRESHOLD } from './pressure-ladder.js'
+import { pressureOf, nextPressureRung, buyersFellThrough, PRESSURE_THRESHOLD } from './pressure-ladder.js'
 
 /**
  * *Cuando la presión compradora aumente más de 1%, compra; cuando la presión
@@ -46,5 +46,27 @@ describe('nextPressureRung — a rung each time buyers push through 1%', () => {
   it('stops at the last rung, and never opens a position — the first buy has its own door', () => {
     expect(nextPressureRung({ entries: 6, previous: 0, now: 0.2 }, policy)).toBeNull()
     expect(nextPressureRung({ entries: 0, previous: 0, now: 0.2 }, policy)).toBeNull()
+  })
+})
+
+describe('buyersFellThrough — sell when buy pressure falls through 1%', () => {
+  // *La venta se va a realizar no si la presión vendedora aumenta a más de 1%,
+  // sino si la presión compradora cae 1%.* The mirror of the rung: buyers
+  // crossing 1% upward buy, buyers falling through it sell.
+  it('sells on the crossing downward — above 1%, then at or under it', () => {
+    expect(buyersFellThrough({ previous: 0.2, now: 0.005 }, 0.01)).toBe(true)
+    expect(buyersFellThrough({ previous: 0.2, now: 0.01 }, 0.01)).toBe(true)
+  })
+
+  it('does not sell a pressure that was already under 1% — a fresh position with an even hour stays', () => {
+    // The first buy reads volume expansion and trend, not buy pressure, so a
+    // position can open on an even hour. Selling on the LEVEL would dump it on
+    // the next sweep.
+    expect(buyersFellThrough({ previous: 0.005, now: 0 }, 0.01)).toBe(false)
+  })
+
+  it('needs a before and an after, like the rung', () => {
+    expect(buyersFellThrough({ previous: null, now: 0 }, 0.01)).toBe(false)
+    expect(buyersFellThrough({ previous: 0.2, now: null }, 0.01)).toBe(false)
   })
 })

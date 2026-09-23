@@ -171,6 +171,39 @@ describe('the ladder, bought when buyers push through 1%', () => {
   })
 })
 
+describe('the sale when buyers fall through 1% — sold as it is', () => {
+  // *La venta se va a realizar no si la presión vendedora aumenta a más de 1%,
+  // sino si la presión compradora cae 1%.* The mirror of the rung, on the same
+  // reading and the same memory.
+  const sells = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'sell')
+
+  it('sells everything, at a loss too, on the sweep that sees buy pressure fall through 1%', async () => {
+    const { store, sent, run } = await rig({ counts: [{ buys: 60, sells: 40 }, { buys: 50, sells: 50 }] })
+    await run(0.94)
+    expect(await sells(store)).toEqual([])
+    expect(await run(0.94)).toEqual([ID])
+    const sale = (await sells(store))[0]
+    expect(sale?.comment).toBe('📉 Sin compradores')
+    expect(sale!.price).toBeLessThan(1)
+    expect((await store.loadPositions()).map((p) => p.id)).toEqual([])
+    expect(sent.some((a) => a.title.includes('sin compradores'))).toBe(true)
+  })
+
+  it('does NOT sell a position whose buyers never led — the first buy does not read buy pressure', async () => {
+    const { store, run } = await rig({ counts: [{ buys: 50, sells: 50 }, { buys: 40, sells: 60 }] })
+    await run(0.94)
+    await run(0.94)
+    expect(await sells(store)).toEqual([])
+  })
+
+  it('does NOT sell at a price the candle feed does not confirm', async () => {
+    const { store, run } = await rig({ held: position({ lastPriceUsd: 0.000001 }), counts: [{ buys: 60, sells: 40 }, { buys: 50, sells: 50 }] })
+    await run(0.94)
+    await run(0.94)
+    expect(await sells(store)).toEqual([])
+  })
+})
+
 describe('the break-even never closes in the red', () => {
   // *No cierres en negativo.* Three break-evens closed between −$0.10 and
   // −$0.18 the morning the price stop was switched off.

@@ -1,5 +1,6 @@
 import { type AlertPort, AlertThrottle, alert } from '../domain/notifications/alerts.js'
-import { ROTATION_EXIT_COMMENT, BUYERS_GONE_COMMENT } from '../domain/risk/rotation.js'
+import { ROTATION_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { BUYERS_GONE_COMMENT } from '../domain/strategy/pressure-ladder.js'
 import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT, type AssetHealthObservation, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { idempotencyKeyFor, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { stepCascade } from '../domain/strategy/cascade.js'
@@ -667,9 +668,9 @@ export function refusesToSellAtALoss(
     order.comment === DEATH_EXIT_COMMENT ||
     order.comment === FROZEN_EXIT_COMMENT ||
     order.comment === STOP_LOSS_COMMENT ||
-    // *Si la presión compradora cae a menos del 1%, se vende como esté.* The
-    // operator's order, and it is his to give: the buyers left, so the
-    // position leaves at whatever the market pays.
+    // *Si la presión compradora cae 1%, se vende como esté.* The operator's
+    // order, and it is his to give: the buyers left, so the position leaves
+    // at whatever the market pays.
     order.comment === BUYERS_GONE_COMMENT
     // The break-even is NOT exempt any more. It was, on the argument that the
     // alternative was riding the position down to the stop — and there is no
