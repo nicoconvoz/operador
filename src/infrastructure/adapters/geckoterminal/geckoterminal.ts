@@ -40,6 +40,7 @@ export interface BarSize {
 
 export const ONE_HOUR: BarSize = { timeframe: 'hour' }
 export const FIFTEEN_MINUTES: BarSize = { timeframe: 'minute', aggregate: 15 }
+export const ONE_MINUTE: BarSize = { timeframe: 'minute', aggregate: 1 }
 
 /** How many minutes one bar covers. Lets a caller turn a bar count into an age. */
 export const barMinutes = (size: BarSize): number =>

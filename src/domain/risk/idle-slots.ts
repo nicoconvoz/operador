@@ -204,16 +204,27 @@ export function releasableSlots(
   const tolerance = policy.maxSwapLossPct ?? 0
   for (const holder of holders) {
     if (terminal.has(holder.id) || holder.openQty <= 0) continue
-    if (tolerance <= 0) continue
     // No live price, no verdict. Selling on a number no second source
     // confirmed is how a $15 position once left at a tenth of a cent.
     const standing = holder.unrealisedPct
     if (standing === null || standing === undefined) continue
-    // Above water is not this rule's business: a position in profit that has
-    // stopped ranking is the ROTATION switch's case, and it takes the gain.
-    if (standing > 0) continue
-    if (standing < -tolerance) continue
     if (holder.score !== null && best < holder.score + policy.minScoreEdge) continue
+    // A WINNER whose score fell behind a clearly better one takes its gain and
+    // makes room: *la que esté en ganancia y caiga su puntaje, rotar a otra con
+    // mejor.* It owes no toll, so it needs none configured — and the no-loss
+    // guard still refuses the sale if leaving would cost more than the gain.
+    if (standing > 0) {
+      decisions.push({
+        holder,
+        reason:
+          holder.score === null
+            ? `está en ganancia (+${standing.toFixed(2)}%) y ya no está entre los candidatos — rota a una mejor`
+            : `está en ganancia (+${standing.toFixed(2)}%) y hay un candidato ${(best - holder.score).toFixed(0)} puntos mejor`,
+      })
+      continue
+    }
+    if (tolerance <= 0) continue
+    if (standing < -tolerance) continue
     decisions.push({
       holder,
       reason:

@@ -231,10 +231,23 @@ describe('swapping a slot that is barely under water for a better token', () => 
     expect(symbols(releasableSlots([holding({ unrealisedPct: -1.2 })], [80], NOW, swap))).toEqual(['IDLE'])
   })
 
-  it('does NOT sell a position that is UP — that is the switch\'s case', () => {
-    // A position in profit that stopped ranking is the rotation switch's, and
-    // it takes the gain rather than accepting a toll it does not owe.
-    expect(releasableSlots([holding({ unrealisedPct: 0.4 })], [80], NOW, swap)).toEqual([])
+  it('swaps a WINNER whose score fell behind a clearly better one', () => {
+    // *La que esté en ganancia y caiga su puntaje, rotar a otra con mejor.*
+    // The operator, reversing this file's own exclusion: a winner that stopped
+    // being the best use of the slot takes its gain and makes room.
+    const [decision] = releasableSlots([holding({ unrealisedPct: 0.4 })], [80], NOW, swap)
+    expect(decision?.holder.symbol).toBe('IDLE')
+    expect(decision?.reason).toContain('ganancia')
+  })
+
+  it('keeps a winner when nothing clearly better is waiting', () => {
+    expect(releasableSlots([holding({ unrealisedPct: 0.4, score: 75 })], [80], NOW, swap)).toEqual([])
+    expect(releasableSlots([holding({ unrealisedPct: 0.4 })], [], NOW, swap)).toEqual([])
+  })
+
+  it('rotates a winner even with no toll configured — a gain owes no toll', () => {
+    const noToll = { idleAfterMs: 3 * HOUR, minScoreEdge: 10 }
+    expect(symbols(releasableSlots([holding({ unrealisedPct: 0.4 })], [80], NOW, noToll))).toEqual(['IDLE'])
   })
 
   it('does NOT sell when nothing better is waiting', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { realisedBySell, commonFund, positionLedger } from './ledger.js'
+import { realisedBySell, commonFund, positionLedger, tokenNetUsd } from './ledger.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
@@ -159,5 +159,43 @@ describe('the walk cannot be reordered into a different answer', () => {
 
     const scrambled = positionLedger([sell, buy])
     expect(scrambled.realisedUsd).not.toBeCloseTo(10, 9)
+  })
+})
+
+describe('tokenNetUsd — what one token has made across every position it ever had', () => {
+  // *Tener en cuenta la ganancia total del token a lo largo del tiempo, y si la
+  // ganancia es mayor a la pérdida también SL y rotar.* The operator. A
+  // position id is `chain:address:openedAt`, and fills outlive positions, so
+  // the token's whole history is still on the tape after each one closed.
+  const A = 'solana:AAA'
+
+  it('adds up every closed trade of the token, net of what the chain took', () => {
+    const fills = [
+      fill(`${A}:1`, 'buy', 1, 15, NOW - 400, 0.05),
+      fill(`${A}:1`, 'sell', 1.1, 15, NOW - 300, 0.05),
+      fill(`${A}:2`, 'buy', 1, 15, NOW - 200, 0.05),
+      fill(`${A}:2`, 'sell', 1.05, 15, NOW - 100, 0.05),
+    ]
+    // +1.50 and +0.75, less four fees of five cents.
+    expect(tokenNetUsd(fills, 'solana', 'AAA')).toBeCloseTo(2.05, 9)
+  })
+
+  it('counts the open position too — its fees are already spent', () => {
+    const fills = [fill(`${A}:1`, 'buy', 1, 15, NOW - 100, 0.05)]
+    expect(tokenNetUsd(fills, 'solana', 'AAA')).toBeCloseTo(-0.05, 9)
+  })
+
+  it('never counts another token, even one whose address starts the same', () => {
+    const fills = [
+      fill('solana:AAAB:1', 'buy', 1, 15, NOW - 300),
+      fill('solana:AAAB:1', 'sell', 2, 15, NOW - 200),
+      fill('bsc:AAA:1', 'buy', 1, 15, NOW - 300),
+      fill('bsc:AAA:1', 'sell', 2, 15, NOW - 200),
+    ]
+    expect(tokenNetUsd(fills, 'solana', 'AAA')).toBe(0)
+  })
+
+  it('is zero for a token never traded', () => {
+    expect(tokenNetUsd([], 'solana', 'AAA')).toBe(0)
   })
 })

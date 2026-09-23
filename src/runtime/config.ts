@@ -1,4 +1,6 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
+import { ladderCapitalUsd } from '../application/paper-run.js'
+import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { FLAT_ONE_PCT_STOP, type StopLossPolicy } from '../domain/risk/stop-loss.js'
@@ -200,6 +202,10 @@ export interface RuntimeConfig {
    * no longer bounded by how strict the rules are.
    */
   readonly usdPerToken: number | null
+  /** One-minute candles a dip's low must hold before a DCA rung buys it. */
+  readonly dcaFloorBars: number
+  /** How far under the LAST buy a DCA rung must be, in percent. */
+  readonly dcaGapPct: number
   /**
    * How much of a winner gross gain the chain may eat, in percent.
    *
@@ -402,7 +408,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // ON, and independently. Without it the executor's classic door decides,
     // and it refuses exactly what a wide shortlist is full of.
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
-    usdPerToken: number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN),
+    // Unset: what the whole ladder needs, derived below — *cada escalón de 15
+    // dólares*, so six rungs, their gas and the price headroom.
+    usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
+    // *Un piso lateral de 5 velas de 1 minuto antes de volver a comprar la
+    // bajada.* Each rung also needs the price five percent under the LAST
+    // buy — the reference's own `min_gap_pct`.
+    dcaFloorBars: number(env, 'OPERADOR_DCA_FLOOR_BARS', 5),
+    dcaGapPct: number(env, 'OPERADOR_DCA_GAP_PCT', DEFAULT_PARAMS.minGapPct),
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
     // stop, NET of the round trip — which on a $15 fill is 1.38% and lands on
@@ -450,6 +463,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       // *no quiero que mires el porcentaje.* The percent fields above are then
       // not consulted at all. Zero hands the decision back to them.
       maxLossUsd: number(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0.1),
+      // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
+      // salir en pérdida.* ON: the stop sells at a loss only what the token
+      // has already paid for across its whole history.
+      onlyWhenHistoryCovers: onUnless(env, 'OPERADOR_STOP_NEEDS_HISTORY'),
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
@@ -468,7 +485,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     )
   }
 
-  return config
+  // The slot a ladder of `maxUsdPerLevel` rungs needs, when nobody fixed one:
+  // the exact inverse of what the tick deploys, so every rung is the rung.
+  return {
+    ...config,
+    usdPerToken:
+      config.usdPerToken ??
+      ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel }, config.maxDcaPerToken + 1, config.gasUsdPerSwap),
+  }
 }
 
 /** Redacted for logs. Secrets never reach stdout, not even once at boot. */

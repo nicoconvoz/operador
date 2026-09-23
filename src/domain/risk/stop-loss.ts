@@ -118,6 +118,17 @@ export interface StopLossPolicy {
    * position the instant it was bought and pay the round trip for nothing.
    */
   readonly maxLossUsd?: number
+  /**
+   * Sell at a loss only when the TOKEN has already paid for it.
+   *
+   * *Tener en cuenta la ganancia total del token a lo largo del tiempo, y si la
+   * ganancia es mayor a la pérdida también SL y rotar; si no, no salir en
+   * pérdida.* When set, the stop fires only if everything this token has made
+   * across every position it ever had, net of costs, is more than the loss it
+   * would lock in now. Otherwise the position is held, and the ladder is what
+   * averages it down.
+   */
+  readonly onlyWhenHistoryCovers?: boolean
 }
 
 /**

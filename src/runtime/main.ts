@@ -18,7 +18,7 @@ import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
-import { GeckoTerminal, barMinutes, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { GeckoTerminal, barMinutes, ONE_MINUTE, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
@@ -327,6 +327,15 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // book whose every tick depends on it must not go blind when it moves.
     candlesFor: (position) =>
       candlesOf(position.chain, position.tokenAddress, position.pairAddress, config.barSize, 1000),
+    // *Agregá 5 escalones de DCA, pero pedí un piso lateral de 5 velas de 1
+    // minuto antes de volver a comprar la bajada y promediar. Cada escalón de
+    // 15 dólares.* The same route to the candles as the tick, one minute a
+    // bar, thirty of them: enough to see a dip and the floor under it.
+    floorLadder: {
+      policy: { maxEntries: config.maxDcaPerToken + 1, gapPct: config.dcaGapPct, floorBars: config.dcaFloorBars },
+      rungUsd: config.maxUsdPerLevel,
+      minuteBars: (position) => candlesOf(position.chain, position.tokenAddress, position.pairAddress, ONE_MINUTE, 30),
+    },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
     // never GeckoTerminal: asking the candle feed to check the candle feed
@@ -849,6 +858,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // shortlist is now chosen for RISING, and door 1 refuses a bar making a
         // new twenty-bar high. Sixteen candidates produced five positions.
         useMomentumEntry: config.buyOnSelection,
+        // The cascade's OWN rungs, switched off: a gap no price can clear. It
+        // confirms a bottom on twenty strategy bars — five hours at 15m — and
+        // the operator asked for five one-minute candles, which the floor
+        // ladder buys from the stop's sweep. Two paths buying rungs would buy
+        // the same dip twice. The ladder CAPITAL still comes from maxLevels
+        // and maxOpenEntries, which this does not touch.
+        minGapPct: 100,
         maxUsdPerLevel: config.maxUsdPerLevel,
         dropInitPct: config.dropInitPct,
         impatientProfitPct: config.impatientProfitPct,

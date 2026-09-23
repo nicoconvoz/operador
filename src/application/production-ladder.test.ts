@@ -3,11 +3,10 @@ import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL 
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to a flat $15 ladder of ONE buy, no DCA', () => {
-    // Two, not five: it halves what one token can ever cost and doubles the
-    // book. Measured on $1,500 — fourteen positions at $95.09 becomes
-    // twenty-nine at $47.57.
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 1, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+  it('defaults to a flat $15 ladder of an entry and FIVE DCA rungs', () => {
+    // *Agregá 5 escalones de DCA... cada escalón de 15 dólares.* The operator,
+    // after the single buy ran out of ways to rescue a position under water.
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -21,7 +20,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 1, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -84,6 +83,8 @@ describe('production ladder — depth ZERO is one buy and nothing after it', () 
 
   it('still defaults to whatever the decision above says', () => {
     expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
+    // *Agregá 5 escalones de DCA.* The entry and five rungs.
+    expect(productionLadder({}).maxOpenEntries).toBe(6)
   })
 
   it('still refuses nonsense rather than taking it', () => {

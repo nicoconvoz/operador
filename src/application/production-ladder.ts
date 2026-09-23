@@ -65,7 +65,7 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
  * mistake than a deep ladder that keeps buying into one.
  *
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 0
+export const DEFAULT_MAX_DCA_PER_TOKEN = 5
 
 /**
  * The drop from the 20-bar swing high the classic entry demands, in percent.

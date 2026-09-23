@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type FloorLadder } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -45,6 +45,11 @@ export interface CycleDeps {
   readonly probe: OrderProbe
   /** Candles for a position, oldest first. Null when unavailable this cycle. */
   readonly candlesFor: (position: PersistedPosition) => Promise<Candles | null>
+  /**
+   * The DCA ladder, bought on a floor of one-minute candles by the same sweep
+   * that runs the stop. Absent: no ladder.
+   */
+  readonly floorLadder?: FloorLadder
   /**
    * What the MARKET says every held token is worth, keyed `chain:address`.
    *

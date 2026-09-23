@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { deployableCapital } from '../application/paper-run.js'
 import { ConfigError, describeConfig, loadConfig } from './config.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { stopLossPctFor } from '../domain/risk/stop-loss.js'
@@ -191,12 +192,33 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token the same fifteen dollars', () => {
-    // A fixed size makes the BOOK grow with the shortlist. An even split of the
-    // capital would do the opposite: two hundred names would each get a rung
-    // too small to pay its own gas.
-    expect(loadConfig(valid).usdPerToken).toBe(15)
+  it('gives every token the same fifteen dollars A RUNG, for all six rungs', () => {
+    // *Agregá 5 escalones de DCA... cada escalón de 15 dólares.* The slot is
+    // what six $15 rungs need once gas and the price headroom are reserved,
+    // so the rung the tick derives — deployable over rungs — is exactly 15.
+    const config = loadConfig(valid)
+    expect(config.maxDcaPerToken).toBe(5)
+    const deployable = deployableCapital({
+      initialCapital: config.usdPerToken!,
+      gasUsdPerSwap: config.gasUsdPerSwap,
+      maxOpenEntries: config.maxDcaPerToken + 1,
+      params: DEFAULT_PARAMS,
+    })
+    expect(deployable / 6).toBeCloseTo(15, 9)
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
+  })
+
+  it('sells at a loss only what the token has already paid for', () => {
+    // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
+    // salir en pérdida.*
+    expect(loadConfig(valid).stopLoss.onlyWhenHistoryCovers).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '0' }).stopLoss.onlyWhenHistoryCovers).toBe(false)
+  })
+
+  it('confirms a rung on five one-minute candles, five percent under the last buy', () => {
+    const config = loadConfig(valid)
+    expect(config.dcaFloorBars).toBe(5)
+    expect(config.dcaGapPct).toBe(5)
   })
 
   it('cuts at one percent, FLAT, whatever the token has already done', () => {
@@ -204,7 +226,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // quiero quedarme con ninguna posición que baje eso, y rotás a otra
     // moneda.* Paper mode, so the rule IS the experiment.
     const stop = loadConfig(valid).stopLoss
-    expect(stop).toEqual({ shareOfRun: 0, minStopPct: 1, maxStopPct: 1, maxLossUsd: 0.1 })
+    expect(stop).toEqual({ shareOfRun: 0, minStopPct: 1, maxStopPct: 1, maxLossUsd: 0.1, onlyWhenHistoryCovers: true })
 
     // FLAT is the property, not the literal above. `shareOfRun: 0` turns the
     // proportional rule off at its source, so a token up 1000% is cut at the

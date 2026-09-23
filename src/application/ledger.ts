@@ -163,3 +163,30 @@ export function commonFund(fills: readonly PersistedFill[]): CommonFund {
 
   return { realisedUsd, costsUsd, netUsd: realisedUsd - costsUsd }
 }
+
+/**
+ * What one token has made across EVERY position it ever had, net of costs.
+ *
+ * The operator: *tener en cuenta la ganancia total del token a lo largo del
+ * tiempo, y si la ganancia es mayor a la pérdida también SL y rotar; si no, no
+ * salir en pérdida.* A loss the token has already paid for out of its own
+ * winnings leaves it still ahead; one it has not is a loss the book eats.
+ *
+ * A position id is `chain:address:openedAt`, and fills deliberately outlive
+ * their positions, so the token's whole history is still on the tape. The
+ * open position counts too: its buy fees are already spent.
+ */
+export function tokenNetUsd(fills: readonly PersistedFill[], chain: string, address: string): number {
+  const prefix = `${chain}:${address}:`
+  const byPosition = new Map<string, PersistedFill[]>()
+  for (const fill of fills) {
+    if (!fill.positionId.startsWith(prefix)) continue
+    byPosition.set(fill.positionId, [...(byPosition.get(fill.positionId) ?? []), fill])
+  }
+  let net = 0
+  for (const own of byPosition.values()) {
+    const ledger = positionLedger(own)
+    net += ledger.realisedUsd - ledger.costsUsd
+  }
+  return net
+}
