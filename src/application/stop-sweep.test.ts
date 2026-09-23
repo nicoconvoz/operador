@@ -122,3 +122,24 @@ describe('exitLevelsFor — a dollar stop is passed through untouched', () => {
   })
 })
 
+
+describe('exitLevelsFor — a stop switched OFF stays off', () => {
+  // *Quedó la parte de corte por venta en negativo, justo lo que habíamos
+  // corregido.* The operator, the morning after the price stop was switched
+  // off. It had been: every field of it was zero. But the 1:4 derivation only
+  // stepped aside while the DOLLAR stop decided, so zeroing the dollars handed
+  // the decision straight back to it — JEANPHIL "cayó −5.6%, su stop estaba en
+  // 5%", OTC, PURR, biketyson, RAYCAT, all cut at a loss.
+  const off = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
+
+  it('derives no stop from the ratio when the stop itself is off', () => {
+    const { stop } = exitLevelsFor(position(quality(0.25, 0.05)), { ...sizing, stop: off })
+    expect(stop.minStopPct).toBe(0)
+    expect(stop.maxStopPct).toBe(0)
+  })
+
+  it('still derives one when a percent stop is on — the 1:4 is unchanged', () => {
+    const { stop } = exitLevelsFor(position(quality(0.25, 0.05)), sizing)
+    expect(stop.minStopPct).toBeCloseTo(8.41, 1)
+  })
+})

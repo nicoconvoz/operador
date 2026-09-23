@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { exitLevelsFor } from '../application/stop-sweep.js'
+import { exitSizingFrom, type CycleConfig } from '../application/orchestrator.js'
+import { type PersistedPosition } from '../domain/persistence/store.js'
 import { deployableCapital } from '../application/paper-run.js'
 import { ConfigError, describeConfig, loadConfig } from './config.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
@@ -234,6 +237,30 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // Still one variable away, and still tested where it lives.
     expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.1' }).stopLoss.maxLossUsd).toBe(0.1)
     expect(loadConfig({ ...valid, OPERADOR_STOP_MIN_PCT: '0' }).stopLoss.minStopPct).toBe(0)
+  })
+
+  it('cuts NOTHING on a fall through the path the sweep actually runs — the 1:4 included', () => {
+    // The test above asked the configured stop and passed while production cut
+    // six positions at a loss: the sweep does not read that stop, it reads
+    // what `exitLevelsFor` derives from it. So this asks the same question the
+    // same way the engine does.
+    const config = loadConfig(valid)
+    const sizing = exitSizingFrom({
+      stopLoss: config.stopLoss,
+      rewardRiskRatio: config.rewardRiskRatio,
+      maxCostSharePct: config.maxCostSharePct,
+      gasUsdPerSwap: config.gasUsdPerSwap,
+      breakEven: config.breakEven,
+      maxStopPct: config.maxStopPct,
+      params: DEFAULT_PARAMS,
+    } as unknown as CycleConfig)
+    const held = {
+      quality: { liquidityUsd: 100_000, spreadPct: 0.25, slippagePct: 0.3, referenceUsd: 100, observedAt: 0 },
+      capitalUsd: config.usdPerToken,
+    } as unknown as PersistedPosition
+    const { stop } = exitLevelsFor(held, sizing)
+    const fell = { entryPriceUsd: 1, marketPriceUsd: 0.5, openQty: 90, runAtEntryPct: null }
+    expect(shouldStopOut(fell, stop)).toBe(false)
   })
 
   it('never swaps a position under water for a better one — no close in the red', () => {

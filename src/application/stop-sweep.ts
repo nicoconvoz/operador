@@ -135,7 +135,13 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
   // also drop the limit on the floor: the operator's rule deleted by the very
   // arithmetic he said not to run.
   const dollarsDecide = sizing.stop.maxLossUsd !== undefined && sizing.stop.maxLossUsd > 0
-  if (!dollarsDecide && target !== null && sizing.rewardRiskRatio !== undefined && sizing.rewardRiskRatio > 0) {
+  // The ratio RESHAPES a stop that is on; it never switches one on. Zeroing the
+  // dollars once handed the decision straight to it, and six positions were
+  // cut at a loss the morning after the operator had turned the stop off —
+  // *quedó la parte de corte por venta en negativo, justo lo que habíamos
+  // corregido.*
+  const percentOn = sizing.stop.minStopPct > 0 || sizing.stop.maxStopPct > 0
+  if (!dollarsDecide && percentOn && target !== null && sizing.rewardRiskRatio !== undefined && sizing.rewardRiskRatio > 0) {
     const pct = stopForRatio(target, roundTrip, sizing.rewardRiskRatio)
     // Zero means the pair is impossible on this pool. Fall back rather than
     // invent: the base policy is the operator's own number.
@@ -293,7 +299,7 @@ export async function sweepStops(
     }
     if (armed && held && price! <= avg * (1 + levels.breakEvenPct / 100)) {
       const broker = await deps.brokerFor(position)
-      await settle(
+      const refused = await settle(
         [{ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }],
         position.lastBarTime,
         price!,
@@ -302,6 +308,14 @@ export async function sweepStops(
         broker,
         deps.store,
       )
+      // Refused means it would have closed in the red: the position is HELD,
+      // with its tokens, and the ladder may average it down. Closing it here
+      // anyway would orphan the quantity — neither realised nor unrealised,
+      // and gone from the screen that was watching it.
+      if (refused) {
+        if (deps.floorLadder) await buyRungOnFloor(deps, deps.floorLadder, position, fills, price!, at, throttle)
+        continue
+      }
       await deps.store.closePosition(position.id)
       // In the same list as the stops, on purpose: the caller locks the token
       // out of the same cycle's allocation, and buying straight back what was

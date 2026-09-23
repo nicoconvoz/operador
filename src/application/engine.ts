@@ -666,11 +666,12 @@ export function refusesToSellAtALoss(
   if (
     order.comment === DEATH_EXIT_COMMENT ||
     order.comment === FROZEN_EXIT_COMMENT ||
-    order.comment === STOP_LOSS_COMMENT ||
-    // It aims at zero, and a fill a few basis points under is still the
-    // point: the alternative is riding the same position down to the stop.
-    // A guard that refused it would re-open the exact hole it closes.
-    order.comment === BREAK_EVEN_COMMENT
+    order.comment === STOP_LOSS_COMMENT
+    // The break-even is NOT exempt any more. It was, on the argument that the
+    // alternative was riding the position down to the stop — and there is no
+    // stop now: *no cierres en negativo; sólo el death o congelamiento.* Three
+    // break-evens closed between −$0.10 and −$0.18 the morning that shipped.
+    // Refused, the position is held and the ladder averages it down.
   ) {
     return false
   }

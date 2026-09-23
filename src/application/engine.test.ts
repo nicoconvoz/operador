@@ -1107,14 +1107,23 @@ describe('the exit target is derived from what leaving costs', () => {
 
 })
 
-describe('refusesToSellAtALoss — the break-even exit is a RISK exit', () => {
-  // It aims at zero, and a fill a few basis points under average cost is still
-  // the point: the alternative is riding the same position down to the stop.
-  // A no-loss guard that refused it would re-open the exact hole it closes —
-  // a winner turned into a loss because the exit meant to prevent that was
-  // not allowed to fire.
-  it('lets a break-even sale through even a hair under average cost', () => {
-    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }, 1, 0.999)).toBe(false)
+describe('refusesToSellAtALoss — the break-even exit is NOT a risk exit any more', () => {
+  // It was exempt on the argument that the alternative was riding the position
+  // down to the stop. There is no stop now — *no cierres en negativo; sólo el
+  // death o congelamiento* — and three break-evens closed between −$0.10 and
+  // −$0.18 on the morning that rule shipped. Held instead, the ladder averages
+  // the position down; only an asset that stopped being one sells at a loss.
+  it('refuses a break-even sale under average cost', () => {
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }, 1, 0.999)).toBe(true)
+  })
+
+  it('lets a break-even sale through at or above average cost', () => {
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }, 1, 1.001)).toBe(false)
+  })
+
+  it('still lets the two exits for a dead asset through at any price', () => {
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '☠️ Death Exit' }, 1, 0.1)).toBe(false)
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '❄️ Salida por congelamiento' }, 1, 0.1)).toBe(false)
   })
 
   it('while the strategy exit at the same price is still refused', () => {
