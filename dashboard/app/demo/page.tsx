@@ -54,6 +54,8 @@ const make = (i: number): UniverseToken => {
         : tier === 'dead'
           ? ['sell quote failed']
           : [],
+    // The demo shows WHY a filtered token waits, as the live screen does.
+    holdBack: tier === 'filtered' ? [{ kind: 'entry' as const, name: 'volumeExpansion', value: 0.49, floor: 0.5 }] : [],
     position: tier === 'held'
       ? {
           capitalUsd: 200,

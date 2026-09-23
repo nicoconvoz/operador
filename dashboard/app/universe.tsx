@@ -970,6 +970,23 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
         <Bar key={name} label={COMPONENT_LABEL[name] ?? name} value={value} color={style.core} />
       ))}
 
+      {/* Why a safe token is still not bought, in the numbers it was judged
+          on. Without it a door missed by one point looked like a door met:
+          *hay filtradas que cumplen con la condición y no se inician.* */}
+      {token.holdBack.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 4 }}>no entra por</div>
+          {token.holdBack.map((door) => (
+            <div key={door.kind + door.name} style={{ color: '#e3b341', fontSize: 12 }}>
+              •{' '}
+              {door.kind === 'score'
+                ? `puntaje ${door.value.toFixed(1)} — la puerta pide ${door.floor}`
+                : `${COMPONENT_LABEL[door.name] ?? door.name} ${(door.value * 100).toFixed(1)}% — ${door.kind === 'entry' ? 'la primera compra pide' : 'el piso pide'} ${(door.floor * 100).toFixed(0)}%`}
+            </div>
+          ))}
+        </div>
+      )}
+
       {token.blockers.length > 0 && (
         <div style={{ marginTop: 12 }}>
           <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 4 }}>bloqueada por</div>
@@ -999,6 +1016,9 @@ function Bar({ label, value, color }: { label: string; value: number; color: str
       <div style={{ flex: 1, height: 5, background: '#21262d', borderRadius: 3, overflow: 'hidden' }}>
         <div style={{ width: `${Math.max(0, Math.min(1, value)) * 100}%`, height: '100%', background: color }} />
       </div>
+      {/* The number, to one decimal: a bar at 49.5% looks like half, and
+          rounded to a whole it reads 50% — the door it just missed. */}
+      <span style={{ color: '#8b949e', width: 40, textAlign: 'right', flexShrink: 0 }}>{(Math.max(0, value) * 100).toFixed(1)}%</span>
     </div>
   )
 }

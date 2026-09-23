@@ -1,5 +1,5 @@
 import { evaluateGates, forgivableFailures, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { meetsMinimums, scoreOpportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
+import { meetsMinimums, failedMinimums, scoreOpportunity, type Opportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -54,6 +54,15 @@ export type TokenTier =
   /** The death exit condemned it. Never again. */
   | 'dead'
 
+/** One door a token did not clear, with what it read and what the door asks. */
+export interface HoldBack {
+  readonly kind: 'floor' | 'entry' | 'score'
+  /** The component, or 'score'. */
+  readonly name: string
+  readonly value: number
+  readonly floor: number
+}
+
 export interface UniverseToken {
   readonly id: string
   readonly symbol: string
@@ -74,6 +83,17 @@ export interface UniverseToken {
   readonly frictionPct: number
   /** Gate failures, plainest first. Empty when it passed. */
   readonly blockers: readonly string[]
+  /**
+   * Why a SAFE token is still not bought, in the numbers it was judged on: a
+   * component floor, the first-buy door, or the score door. Empty for a token
+   * the engine may open, or one already held.
+   *
+   * *Hay filtradas que cumplen con la condición y no se inician.* They did
+   * not — pwease read 49% of volume expansion against a door of 50% — but the
+   * bars carried no number and the sheet listed only safety blockers, so a
+   * door missed by one point looked like a door met.
+   */
+  readonly holdBack: readonly HoldBack[]
   /**
    * OUR money, in something that now fails a SAFETY gate.
    *
@@ -379,6 +399,12 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
       ageHours: snapshot.pairCreatedAt === null ? null : (snapshot.observedAt - snapshot.pairCreatedAt) / 3_600_000,
       frictionPct: 2 * (quality.spreadPct + quality.slippagePct),
       blockers,
+      // Only for a token the gates let through and nobody holds: anything else
+      // is explained by its blockers, or is ours already.
+      holdBack:
+        held || unsafe || !gateResult.passed || snapshot.securityChecked === false
+          ? []
+          : holdBackOf(opportunity, options),
       position: held
         ? {
             capitalUsd: held.capitalUsd,
@@ -503,6 +529,7 @@ function fromPositionAlone(
     ageHours: null,
     frictionPct: 2 * (position.quality.spreadPct + position.quality.slippagePct),
     blockers: ['el escáner no la encontró en este ciclo — los datos son los de la posición'],
+    holdBack: [],
     position: {
       capitalUsd: position.capitalUsd,
       holdsTokens,
@@ -511,4 +538,23 @@ function fromPositionAlone(
       deathSignals: latestSignals(position),
     },
   }
+}
+
+/** Every door a safe token did not clear: the floors, the first-buy door, the score. */
+function holdBackOf(opportunity: Opportunity, options: UniverseOptions): readonly HoldBack[] {
+  const components = opportunity.components
+  const doors = (kind: HoldBack['kind'], floors: ComponentFloors | undefined): HoldBack[] =>
+    failedMinimums(components, floors).map((name) => ({
+      kind,
+      name,
+      value: components[name] ?? 0,
+      floor: floors?.[name] ?? 0,
+    }))
+  return [
+    ...doors('floor', options.minComponents),
+    ...doors('entry', options.entryComponents),
+    ...(opportunity.score < (options.minScore ?? 0)
+      ? [{ kind: 'score' as const, name: 'score', value: opportunity.score, floor: options.minScore ?? 0 }]
+      : []),
+  ]
 }

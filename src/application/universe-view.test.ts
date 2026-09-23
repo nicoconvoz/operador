@@ -464,6 +464,26 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.tier).toBe('filtered')
   })
 
+  it('says WHY a filtered token is held back, in the numbers it was judged on', async () => {
+    // *Hay filtradas que cumplen con la condición y no se inician.* They did
+    // not: pwease read 49% of volume expansion against a door of 50%. The bars
+    // carried no number and the sheet listed only safety blockers, so a door
+    // missed by one point looked like a door met. A filtered token now says
+    // which door, what it read, and what the door asks.
+    const store = await seed([token('COLD')])
+    const view = await buildUniverse(store, { now: () => NOW, entryComponents: { volumeExpansion: 2 }, minScore: 101 })
+    const back = view.tokens[0]!.holdBack
+    expect(back.find((b) => b.kind === 'entry')).toMatchObject({ name: 'volumeExpansion', floor: 2 })
+    expect(back.find((b) => b.kind === 'score')).toMatchObject({ floor: 101 })
+    expect(back.find((b) => b.kind === 'entry')!.value).toBeLessThan(2)
+  })
+
+  it('holds nothing back on a token the engine may open', async () => {
+    const store = await seed([token('HOT')])
+    const view = await buildUniverse(store, { now: () => NOW })
+    expect(view.tokens[0]!.holdBack).toEqual([])
+  })
+
   it('draws it FILTERED when the engine keeps the reserve off', async () => {
     // *Sólo candidatas las que ya cumplan todas las condiciones.* A fallback
     // the engine will never buy must not be drawn as one it might.
