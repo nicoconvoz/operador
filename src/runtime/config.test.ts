@@ -196,19 +196,19 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token the same fifteen dollars A RUNG, for all six rungs', () => {
-    // *Agregá 5 escalones de DCA... cada escalón de 15 dólares.* The slot is
-    // what six $15 rungs need once gas and the price headroom are reserved,
-    // so the rung the tick derives — deployable over rungs — is exactly 15.
+  it('gives every token fifteen dollars, one buy, no DCA', () => {
+    // *Cancelá los DCA, cada token sólo un piso de 15 usd.* The slot is what
+    // one $15 buy needs once gas and the price headroom are reserved, so the
+    // buy the tick derives — deployable over rungs — is exactly 15.
     const config = loadConfig(valid)
-    expect(config.maxDcaPerToken).toBe(5)
+    expect(config.maxDcaPerToken).toBe(0)
     const deployable = deployableCapital({
       initialCapital: config.usdPerToken!,
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.maxDcaPerToken + 1,
       params: DEFAULT_PARAMS,
     })
-    expect(deployable / 6).toBeCloseTo(15, 9)
+    expect(deployable / 1).toBeCloseTo(15, 9)
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
   })
 
