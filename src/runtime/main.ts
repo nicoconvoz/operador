@@ -25,6 +25,8 @@ import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakes
 import { Erc20Decimals } from '../infrastructure/adapters/pancakeswap/erc20-decimals.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
+import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
+import { firstThatAnswers } from '../application/candle-source.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { makeAdaptiveThrottle } from '../infrastructure/adaptive-throttle.js'
 import { makeHedgedGet } from '../infrastructure/hedged-get.js'
@@ -128,6 +130,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    * BSC: GoPlus, unchanged. Nothing else there reads a contract's security.
    */
   const solanaMints = new SolanaMints(config.solanaRpcUrl, ports.postJson)
+  const jupiterCharts = new JupiterCharts(hedged())
   const securityFor = (chain: Chain) =>
     chain === 'solana'
       ? {
@@ -300,13 +303,19 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // chain. An order sent to a real venue genuinely can have landed without
     // us hearing about it, and halting is the only honest answer to that.
     probe: async () => (config.mode === 'paper' ? 'not-filled' : 'unknown'),
-    candlesFor: async (position) => {
-      try {
-        return await gecko.candles(position.chain, position.pairAddress, config.barSize, 1000)
-      } catch {
-        return null
-      }
-    },
+    // Jupiter first, by MINT; GeckoTerminal by pool only when Jupiter cannot
+    // answer. *La operativa también con Jupiter.* GeckoTerminal was about 2.5s
+    // a position behind the hardest rate limit this engine meets; forty mints
+    // from Jupiter took 2.0s eight at a time with no refusal in eighty. The
+    // fallback exists because Jupiter's chart endpoint is undocumented, and a
+    // book whose every tick depends on it must not go blind when it moves.
+    candlesFor: (position) =>
+      firstThatAnswers([
+        ...(position.chain === 'solana'
+          ? [() => jupiterCharts.candles(position.chain, position.tokenAddress, config.barSize, 1000)]
+          : []),
+        () => gecko.candles(position.chain, position.pairAddress, config.barSize, 1000),
+      ]),
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
     // never GeckoTerminal: asking the candle feed to check the candle feed
