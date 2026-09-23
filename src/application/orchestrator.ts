@@ -187,6 +187,8 @@ export interface CycleConfig {
    * runner that went to +28%.
    */
   readonly breakEven?: boolean
+  /** The widest the derived stop may ever be. See `ExitSizing.maxStopPct`. */
+  readonly maxStopPct?: number
 }
 
 /**
@@ -1155,5 +1157,6 @@ export function exitSizingFrom(config: CycleConfig): ExitSizing {
     gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,
     floorPct: config.params.minProfitPct,
     breakEven: config.breakEven === true,
+    maxStopPct: config.maxStopPct,
   }
 }

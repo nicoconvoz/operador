@@ -11,7 +11,7 @@ import { type BrokerPort } from '../domain/execution/broker.js'
 import { orderKeyPart } from './recovery.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY, type SizingPolicy } from '../domain/economics/sizing.js'
 import { deployableCapital, scaledParams } from './paper-run.js'
-import { minProfitPctFor, roundTripCostPct } from '../domain/economics/sizing.js'
+import { minProfitPctFor, roundTripCostForFill } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { BREAK_EVEN_COMMENT, STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
 import { SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
@@ -279,12 +279,10 @@ export async function tickPosition(
   // the derived target falls under the flat floor. A departure that survives
   // by coincidence is one nobody will notice breaking.
   const fillUsd = sizing.tradeable ? sized.maxUsdPerLevel : deployable / rungs
-  const roundTrip = roundTripCostPct(
-    fillUsd,
-    input.position.quality.spreadPct,
-    input.position.quality.slippagePct,
-    config.gasUsdPerSwap ?? 0.05,
-  )
+  // Scaled to the fill, as the broker charges it. The raw $100 reading made
+  // the target on a thin pool demand a move the trade was never going to pay
+  // for, and the ratchet arms at this same number — so the two must agree.
+  const roundTrip = roundTripCostForFill(fillUsd, input.position.quality, config.gasUsdPerSwap ?? 0.05)
   // The target answers ONE question — does a winner cover what leaving costs,
   // with room to spare. What a LOSER costs is the stop's question, and the
   // stop is derived from this number rather than the other way round: see

@@ -2,7 +2,7 @@ import { alert, type AlertPort, type AlertThrottle } from '../domain/notificatio
 import { positionLedger } from './ledger.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { minProfitPctFor, roundTripCostPct, stopForRatio } from '../domain/economics/sizing.js'
+import { minProfitPctFor, roundTripCostForFill, stopForRatio } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import type { BrokerPort } from '../domain/execution/broker.js'
 import type { PersistedPosition, StatePort } from '../domain/persistence/store.js'
@@ -81,6 +81,16 @@ export interface ExitSizing {
   readonly gasUsdPerSwap: number
   readonly floorPct: number
   readonly breakEven: boolean
+  /**
+   * The widest the DERIVED stop may ever be, in percent. Undefined: no ceiling.
+   *
+   * The 1:4 has none of its own — it multiplies the toll by about seven — so a
+   * thin pool derives 14.7% and a high-fee one 20.1% even with the toll right.
+   * The formula is honest about the pool; it is not what the operator asked
+   * for, which was a stop near nine. Above the ceiling the rule is reacting to
+   * an expensive pool rather than to him.
+   */
+  readonly maxStopPct: number | undefined
 }
 
 /** The three lines a position lives between, in percent of its average cost. */
@@ -110,12 +120,10 @@ export interface ExitLevels {
  * the exit would have been happy to sell.
  */
 export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): ExitLevels => {
-  const roundTrip = roundTripCostPct(
-    position.capitalUsd,
-    position.quality.spreadPct,
-    position.quality.slippagePct,
-    sizing.gasUsdPerSwap,
-  )
+  // The toll at the size actually traded, scaled the way the broker charges
+  // it. It was the raw $100 reading on a $15 fill, and the 1:4 multiplied that
+  // by seven: fomopay was cut with a 24% stop the sweep printed itself.
+  const roundTrip = roundTripCostForFill(position.capitalUsd, position.quality, sizing.gasUsdPerSwap)
   const target =
     sizing.maxCostSharePct === undefined ? null : minProfitPctFor(roundTrip, sizing.maxCostSharePct, sizing.floorPct)
 
@@ -124,7 +132,10 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
     const pct = stopForRatio(target, roundTrip, sizing.rewardRiskRatio)
     // Zero means the pair is impossible on this pool. Fall back rather than
     // invent: the base policy is the operator's own number.
-    if (pct > 0) stop = { shareOfRun: 0, minStopPct: pct, maxStopPct: pct }
+    if (pct > 0) {
+      const capped = sizing.maxStopPct !== undefined && sizing.maxStopPct > 0 ? Math.min(pct, sizing.maxStopPct) : pct
+      stop = { shareOfRun: 0, minStopPct: capped, maxStopPct: capped }
+    }
   }
 
   return {

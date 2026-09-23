@@ -215,6 +215,7 @@ export interface RuntimeConfig {
   readonly maxCostSharePct: number
   readonly rewardRiskRatio: number
   readonly breakEven: boolean
+  readonly maxStopPct: number
   /**
    * How much of a loss the allocator may pay to move a slot to a better token.
    *
@@ -413,6 +414,13 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // loss. Measured before it was built: four losers had been above the target
     // first, $5.57 between them. OPERADOR_BREAK_EVEN=0 turns it off.
     breakEven: onUnless(env, 'OPERADOR_BREAK_EVEN'),
+    // *El operador pierde de a mucho, no funciona el SL.* The 1:4 multiplies
+    // the toll by about seven with no ceiling of its own: fomopay was cut with
+    // a 24% stop, a thin pool derives 51% on the old toll and 14.7% on the
+    // right one. Ten is rounded up from the 8.7-9.5 the operator asked for —
+    // the deep pool derives 8.4% and is untouched; above it, the formula is
+    // reacting to an expensive pool rather than to him. Zero means no ceiling.
+    maxStopPct: number(env, 'OPERADOR_MAX_STOP_PCT', 10),
     maxSwapLossPct: number(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', DEFAULT_MAX_SWAP_LOSS_PCT),
     stopLoss: {
       // ON, FLAT, at one percent — the operator's experiment: *si alguno llega

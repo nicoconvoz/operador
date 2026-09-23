@@ -1076,6 +1076,27 @@ describe('the exit target is derived from what leaving costs', () => {
     expect(await targetFor()).toBe(config.params.minProfitPct)
   })
 
+  it('prices the toll at the size it trades, not at the size it was MEASURED', async () => {
+    // quality.slippagePct is the impact of a $100 quote, and the target used
+    // it raw as the impact of a $15 fill — on a thin pool, six and a half
+    // times too big. The paper broker always scaled it; the target did not, so
+    // it demanded a move the trade was never going to pay for.
+    //
+    // A thin pool is where the two readings part company, which is why this
+    // fixture exists: on the deep one the rest of these tests use, raw and
+    // scaled agree to a few basis points and a mutation back to raw survived.
+    const thin = { liquidityUsd: 100_000, spreadPct: 0.25, slippagePct: 3, referenceUsd: 100, observedAt: 0 }
+    const r = rig()
+    const result = await tickPosition(
+      { position: { ...position(), capitalUsd: 15, quality: thin }, candles: decline(300), health: null, broker: r.broker },
+      { ...config, maxOpenEntries: 1, maxCostSharePct: 33 },
+      r.store, r.alerts, r.throttle,
+    )
+    // Raw would ask about 21.7%; scaled asks about 6.3.
+    expect(result.minProfitPct).toBeLessThan(10)
+    expect(result.minProfitPct).toBeGreaterThan(config.params.minProfitPct)
+  })
+
   it('never drops under the configured floor', async () => {
     // A derived target that rounds to nothing would have the engine selling on
     // noise and paying its round trip for a move that means nothing.

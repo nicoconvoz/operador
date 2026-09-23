@@ -237,6 +237,34 @@ export function effectiveDepth(quality: MarketQuality): { usd: number; source: '
 /** Impact, in percent, of an order of `usd` against `depth`. */
 const impactPct = (usd: number, depth: number): number => (depth > 0 ? (usd / (depth / 2)) * 100 : Infinity)
 
+/**
+ * What a round trip of THIS size costs on THIS pool — with the impact scaled
+ * to the order, exactly as the paper broker charges it.
+ *
+ * `roundTripCostPct` takes a slippage figure as given, and every live caller
+ * handed it `quality.slippagePct`: the impact of a quote for `referenceUsd`,
+ * which is $100. On a $15 fill that is the toll of an order six and a half
+ * times bigger than the one being sized. The broker never made that mistake —
+ * it inverts the quote into an effective depth and charges `usd / (depth/2)`,
+ * linear in size — so the target and the stop were derived from a toll the
+ * engine was not actually paying.
+ *
+ * It mattered because the 1:4 stop multiplies the toll by about seven. The
+ * sweep's own alerts showed it: fomopay cut at −50.7% with a stop of **24%**,
+ * Stamp with **15%**, against a rule that lands near 9% on an ordinary pool.
+ * On fomopay's reading (1.1% at $100) the raw toll is 3.37% and the real one
+ * is 1.50%.
+ *
+ * ONE definition of impact, shared with the broker through `effectiveDepth`.
+ * Two would eventually disagree about what a trade costs, and the one that
+ * decides where to sell would be the one that was wrong.
+ */
+export const roundTripCostForFill = (fillUsd: number, quality: MarketQuality, gasUsdPerSwap: number): number => {
+  if (!(fillUsd > 0)) return 100
+  const impact = impactPct(fillUsd, effectiveDepth(quality).usd)
+  return 2 * (quality.spreadPct + impact + (100 * gasUsdPerSwap) / fillUsd)
+}
+
 /** Largest order whose impact stays within `budgetPct`. */
 const maxOrderUsd = (budgetPct: number, depth: number): number => (budgetPct <= 0 ? 0 : (budgetPct * depth) / 200)
 

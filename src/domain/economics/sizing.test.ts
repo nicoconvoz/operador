@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, stopForRatio } from './sizing.js'
+import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, stopForRatio, roundTripCostForFill } from './sizing.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -292,3 +292,41 @@ describe('stopForRatio — the stop is what the TARGET makes affordable', () => 
     expect(stopForRatio(1.5, 1.38, 1)).toBe(0)
   })
 })
+
+describe('roundTripCostForFill — the toll at the size actually traded', () => {
+  // *El operador pierde de a mucho, no funciona el SL.* It worked; it was
+  // sized from the wrong toll. The sweep's own alerts said so: fomopay cut at
+  // −50.7% with *su stop estaba en 24%*, Stamp with 15% — against a rule that
+  // lands near 9% on an ordinary pool.
+  //
+  // `quality.slippagePct` is the impact of a quote for `referenceUsd` —
+  // $100 — and `roundTripCostPct` took it RAW as the impact of a $15 fill.
+  // The paper broker never did: it inverts the quote into an effective depth
+  // and charges `usd / (depth / 2)`, which is linear in size. At $15 that is
+  // 0.15 of the measured figure. The target and the stop were paying the toll
+  // of an order six and a half times bigger than the one they were sized for,
+  // and the 1:4 derivation multiplies the toll by about seven.
+
+  const thin = { liquidityUsd: 100_000, spreadPct: 0.25, slippagePct: 1.1, referenceUsd: 100, observedAt: 0 }
+
+  it('scales the measured impact to the fill, exactly as the broker charges it', () => {
+    const depth = effectiveDepth(thin).usd
+    const impactAtFill = (15 / (depth / 2)) * 100
+    expect(impactAtFill).toBeCloseTo(0.165, 6)
+    expect(roundTripCostForFill(15, thin, 0.05)).toBeCloseTo(2 * (0.25 + impactAtFill + (100 * 0.05) / 15), 9)
+  })
+
+  it('is far below the raw reading on a thin pool, which is the whole bug', () => {
+    const raw = roundTripCostPct(15, thin.spreadPct, thin.slippagePct, 0.05)
+    const real = roundTripCostForFill(15, thin, 0.05)
+    expect(raw).toBeCloseTo(3.37, 2)
+    expect(real).toBeCloseTo(1.50, 2)
+  })
+
+  it('agrees with the raw reading when the fill IS the reference size', () => {
+    // The two formulas are the same thing measured at the same size. Any gap
+    // here would mean the scaling is wrong, not merely different.
+    expect(roundTripCostForFill(100, thin, 0.05)).toBeCloseTo(roundTripCostPct(100, 0.25, 1.1, 0.05), 9)
+  })
+})
+

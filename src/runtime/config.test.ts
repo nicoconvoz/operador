@@ -216,6 +216,14 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(stopLossPctFor(null, stop)).toBe(1)
   })
 
+  it('never lets the derived stop run wider than ten percent', () => {
+    // The 1:4 multiplies the toll by about seven and has no ceiling of its own:
+    // fomopay was cut with a 24% stop the sweep printed itself. Ten, rounded up
+    // from the 8.7-9.5 the operator asked for; zero means no ceiling at all.
+    expect(loadConfig(valid).maxStopPct).toBe(10)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_STOP_PCT: '15' }).maxStopPct).toBe(15)
+  })
+
   it('keeps a winner from closing at a loss unless told not to', () => {
     // *Un break even.* Four losers had been above their target first — $5.57
     // between them — and a ratchet is what makes that impossible. On by
