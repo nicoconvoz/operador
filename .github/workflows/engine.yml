@@ -105,38 +105,26 @@ jobs:
           # examined, every scan. Set the repository variable to a number only
           # to impose a cap on a day the providers are unhappy.
           OPERADOR_MAX_SECURITY_CHECKS: ${{ vars.OPERADOR_MAX_SECURITY_CHECKS }}
-          # ── Two cadences, not one ──────────────────────────────────────
+          # ── Every pass is a full scan ─────────────────────────────────
           #
-          # Most passes are WATCH passes: recover, advance every open position,
-          # checkpoint. They cost one candle request and one sell probe per
-          # position — under a minute for five — so this is what decides how
-          # quickly a closed 15m bar gets acted on.
-          OPERADOR_CYCLE_MS: ${{ vars.OPERADOR_CYCLE_MS || '300000' }}
-          # FIFTEEN MINUTES, and it follows from the entry rule rather than from
-          # taste. The momentum door reads a FIVE MINUTE window; an hourly scan
-          # hands the allocator a shortlist whose freshest fact is fifty minutes
-          # old, which is the same as not reading that window at all.
+          # The operator: *ahora el rescaneo hacelo a cada rato, si solo son 14
+          # segundos.* A cold Solana scan is Jupiter and the chain in batches —
+          # measured at 9.8 seconds — so there is nothing left for a slower
+          # clock to save. The old split (watch 5 min, held 20, full 15 to 120)
+          # was argued against a scan that cost four to twenty minutes of
+          # somebody else's rate limit.
           #
-          # The old hour was argued against a different strategy — *an
-          # opportunity missed by an hour is only missed* — and that is still
-          # true of a token you might buy tomorrow. It is false of one selected
-          # BECAUSE it is moving right now.
+          # What makes it affordable on the DATABASE, which is the free tier's
+          # real limit: a scan keeps the candidates and the book and nothing
+          # else. The security cache is BSC-only, the registry is read at most
+          # every fifteen minutes and never written.
           #
-          # Affordable because a steady-state scan is the paid stage alone,
-          # about four minutes: discovery is cached six hours and an examination
-          # stands for two, so a scan fifteen minutes after the last one finds
-          # almost everything already answered.
-          #
-          # What it costs, stated: the scan runs AFTER the tick, so every third
-          # cycle now waits for it instead of every twelfth.
-          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '900000' }}
-          # The URGENT half of a scan on its own clock: re-examine the book,
-          # discover nothing. A token holding money can rug in ten minutes; one
-          # that does not is only a missed opportunity, and the two were sharing
-          # a schedule set by the expensive one.
-          OPERADOR_HELD_SCAN_MS: ${{ vars.OPERADOR_HELD_SCAN_MS || '1200000' }}
-          # Generous: with watch passes now cheap, the 350-minute job timeout is
-          # what ends a run, not this. It is here so a pathological loop cannot
-          # spin forever.
-          OPERADOR_MAX_CYCLES: ${{ vars.OPERADOR_MAX_CYCLES || '120' }}
+          # The stop does not depend on this: it sweeps every 30 seconds inside
+          # the sleep between passes.
+          OPERADOR_CYCLE_MS: ${{ vars.OPERADOR_CYCLE_MS || '60000' }}
+          OPERADOR_SCAN_MS: ${{ vars.OPERADOR_SCAN_MS || '60000' }}
+          OPERADOR_HELD_SCAN_MS: ${{ vars.OPERADOR_HELD_SCAN_MS || '60000' }}
+          # About eighty seconds a pass, so 240 passes ends a run near five
+          # hours, inside the 350-minute job timeout rather than killed by it.
+          OPERADOR_MAX_CYCLES: ${{ vars.OPERADOR_MAX_CYCLES || '240' }}
         run: npm run cycle

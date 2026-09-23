@@ -41,6 +41,7 @@ import { healthForCycle, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
+import { readOnlyRegistry } from '../application/read-only-registry.js'
 import { worthStoring } from '../application/worth-storing.js'
 import { type LiveMarket } from '../domain/scanner/live-market.js'
 import { runLoop, shutdownSignal } from './loop.js'
@@ -162,6 +163,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // expires because new pools appear — but a pool younger than the window
   // cannot clear the history gate anyway, which wants 250 bars: 2.6 days at 15m.
   const cachedDiscovery = new CachedDiscovery(gecko, store, { now: () => Date.now() })
+  // The permanent registry, read at most every fifteen minutes and never
+  // written. A scan keeps the candidates and the book and nothing else.
+  const registry = readOnlyRegistry(store, { everyMs: 15 * 60_000 })
   /**
    * The pool provider, whole.
    *
@@ -477,9 +481,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             sellProbe: sellProbeFor(snapshot.chain),
             decimals: decimalsFor,
             ...(snapshot.chain === 'bsc' ? { history } : {}),
-            // Recorded, so the next scan does not repeat an examination made
-            // seconds ago. A fresh look is a fresh look whoever asked for it.
-            securityCache: store,
+            // BSC only: see the scan's own `securityCache` below.
+            ...(snapshot.chain === 'bsc' ? { securityCache: store } : {}),
           },
           { chain: snapshot.chain, referenceUsd: 100 },
           market,
@@ -652,12 +655,17 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               ...(chain === 'bsc' ? { history } : {}),
               // The permanent registry. It is the memory the discovery
               // providers do not have, and the operator's instruction about it
-              // was one line: never delete it.
-              store,
-              // Remembers what has been examined, so the budget reaches the
-              // whole list over a few cycles instead of re-checking the same
-              // twenty forever.
-              securityCache: store,
+              // was one line: never delete it. Read, never written.
+              store: registry,
+              // BSC only now. It remembered every token EXAMINED — about 117 a
+              // scan, candidates or not — because examining one meant a GoPlus
+              // call on a two-second interval and repeating it was the cost.
+              // On Solana an examination is a memory read after one batched
+              // request, so the cache saves nothing and costs two things: a
+              // write per examined token, against the operator's rule that
+              // only candidates are stored — *no tenés que guardar todo, sólo
+              // las candidatas* — and security answers up to two hours stale.
+              ...(chain === 'bsc' ? { securityCache: store } : {}),
               // Can this engine SEE the token trade? Two providers disagreed —
               // GeckoTerminal reporting zero trades an hour where DexScreener
               // reported thirty-five on the same pool — and the engine was
