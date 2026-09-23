@@ -202,6 +202,8 @@ export interface RuntimeConfig {
    * no longer bounded by how strict the rules are.
    */
   readonly usdPerToken: number | null
+  /** Points under the entry score at which a held position is sold. Zero: off. */
+  readonly scoreStopPoints: number
   /** The ways a candidate may be OPENED, any one enough. See `DEFAULT_ENTRY_DOORS`. */
   readonly entryDoors: readonly import('../domain/scanner/opportunity.js').ComponentFloors[]
   /** Whether a token failing only a preference gate may still be bought. See `ProductionDoors`. */
@@ -474,6 +476,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
     entryDoors: productionDoors(env).entryDoors,
+    // *Cuando el puntaje cae 5 puntos, SL.* Points under the entry score at
+    // which a held position is sold as it is. Zero turns it off.
+    scoreStopPoints: numberOrZero(env, 'OPERADOR_SCORE_STOP_POINTS', 5),
     reserve: productionDoors(env).reserve,
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.

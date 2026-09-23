@@ -103,6 +103,16 @@ export interface PersistedPosition {
    */
   readonly breakEvenArmed?: boolean
   /**
+   * The opportunity score the position was bought at: the baseline the score
+   * stop measures its fall from. *Cuando el puntaje cae 5 puntos, SL.*
+   *
+   * Written ONCE — both stores keep the first non-null value and ignore every
+   * later one, because every step of the cycle writes the whole row and a
+   * baseline that could be overwritten is not a baseline. Absent on positions
+   * opened before it existed; the cycle gives those their first reading.
+   */
+  readonly entryScore?: number | null
+  /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *
    * This is the field that makes recovery safe. A process that dies between

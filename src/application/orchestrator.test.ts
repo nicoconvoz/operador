@@ -1172,6 +1172,81 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect(opened).not.toContain('cold')
   })
 
+  describe('the score stop — *cuando el puntaje cae 5 puntos, SL*', () => {
+    const scored = { ...config, scoreStopPoints: 5 }
+    const withBaseline = async (store: MemoryStore, entryScore: number) => {
+      await withFills(store)
+      const [held] = await store.loadPositions()
+      await store.savePosition({ ...held!, entryScore })
+    }
+
+    it('SELLS once the score is five points under the one it was bought at — at a loss too', async () => {
+      // PEPE: bought at 93.2, read 65.9 ten minutes later.
+      const { deps, store, throttle } = rig({
+        brokerFor: seeded,
+        scan: async () => [candidate('Held', 65.9)],
+        marketPrices: async () => new Map([['solana:Held', 0.9]]),
+      })
+      await withBaseline(store, 93.2)
+      await runCycle(deps, scored, throttle)
+      const sale = (await store.allFills()).find((f) => f.side === 'sell')
+      expect(sale?.comment).toBe('📉 Cae el puntaje')
+      expect(sale!.price).toBeLessThan(1)
+      expect((await store.loadPositions()).find((p) => p.id === 'pos-1')).toBeUndefined()
+    })
+
+    it('reads the score of a token switched off too — a floor failing is not silence', async () => {
+      const { deps, store, throttle } = rig({
+        brokerFor: seeded,
+        switchedOff: () => [off('Held')],
+        marketPrices: async () => new Map([['solana:Held', 0.9]]),
+      })
+      await withBaseline(store, 93.2)
+      await runCycle(deps, scored, throttle)
+      expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('📉 Cae el puntaje')
+    })
+
+    it('holds on a smaller fall', async () => {
+      const { deps, store, throttle } = rig({
+        brokerFor: seeded,
+        scan: async () => [candidate('Held', 90)],
+        marketPrices: async () => new Map([['solana:Held', 0.9]]),
+      })
+      await withBaseline(store, 93.2)
+      await runCycle(deps, scored, throttle)
+      expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+    })
+
+    it('gives a position with no baseline its first reading, and sells nothing on it', async () => {
+      const { deps, store, throttle } = rig({
+        brokerFor: seeded,
+        scan: async () => [candidate('Held', 50)],
+        marketPrices: async () => new Map([['solana:Held', 0.9]]),
+      })
+      await withFills(store)
+      await runCycle(deps, scored, throttle)
+      expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+      expect((await store.loadPositions()).find((p) => p.id === 'pos-1')?.entryScore).toBe(50)
+    })
+
+    it('does NOT sell at a price the candles do not confirm', async () => {
+      const { deps, store, throttle } = rig({
+        brokerFor: seeded,
+        scan: async () => [candidate('Held', 10)],
+        marketPrices: async () => new Map([['solana:Held', 0.00001]]),
+      })
+      await withBaseline(store, 93.2)
+      await runCycle(deps, scored, throttle)
+      expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+    })
+
+    it('opens a new position with the score it was bought at', async () => {
+      const { deps, store, throttle } = rig({ scan: async () => [candidate('fresh', 88)] })
+      await runCycle(deps, scored, throttle)
+      expect((await store.loadPositions()).find((p) => p.tokenAddress === 'fresh')?.entryScore).toBe(88)
+    })
+  })
+
   it('does NOT blacklist the token — a rotation is not a death', async () => {
     // It may be bought again the day it qualifies. Only a death verdict is
     // terminal, and confusing the two would permanently retire a token for

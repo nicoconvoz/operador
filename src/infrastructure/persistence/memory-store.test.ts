@@ -83,5 +83,24 @@ describe('MemoryStore — the break-even ratchet', () => {
     expect(loaded!.breakEvenArmed).toBe(true)
     expect(loaded!.lastBarTime).toBe(1)
   })
+
+  it('keeps the FIRST score a position was given — a later save cannot move the baseline', async () => {
+    // *Cuando el puntaje cae 5 puntos, SL* — measured from the score at entry,
+    // so the baseline is written once and every stale snapshot after it that
+    // carries a different one, or none, leaves it where it was.
+    const store = new MemoryStore()
+    const base = {
+      id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+      cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+      quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+      capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+    }
+    await store.savePosition(base)
+    await store.savePosition({ ...base, entryScore: 93.2 })
+    await store.savePosition({ ...base, entryScore: 65.9 })
+    await store.savePosition({ ...base, lastBarTime: 1 })
+    const [loaded] = await store.loadPositions()
+    expect(loaded!.entryScore).toBe(93.2)
+  })
 })
 

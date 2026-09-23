@@ -248,5 +248,25 @@ describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
     const [loaded] = await new PostgresStore(client).loadPositions()
     expect(loaded!.breakEvenArmed).toBe(true)
   })
+
+  it('keeps the first entry score — a later save cannot move the baseline', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition({ ...position, entryScore: 93.2 })
+    expect(calls[0]!.sql).toContain('entry_score = COALESCE(positions.entry_score, EXCLUDED.entry_score)')
+    expect(calls[0]!.params).toContain(93.2)
+  })
+
+  it('reads the entry score back as a number, and absent as null', async () => {
+    const row = {
+      id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
+      cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
+      capital_usd: '500', last_bar_time: '1', last_price_usd: '1', pending_orders: [],
+      opened_at: '1', updated_at: '1', break_even_armed: false,
+    }
+    const [scored] = await new PostgresStore(fakeSql([[{ ...row, entry_score: '93.2' }]]).client).loadPositions()
+    expect(scored!.entryScore).toBe(93.2)
+    const [bare] = await new PostgresStore(fakeSql([[{ ...row, entry_score: null }]]).client).loadPositions()
+    expect(bare!.entryScore).toBeNull()
+  })
 })
 

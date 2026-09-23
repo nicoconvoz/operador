@@ -63,6 +63,7 @@ interface PositionRow {
   opened_at: string | number
   updated_at: string | number
   break_even_armed?: boolean | null
+  entry_score?: string | number | null
 }
 
 /**
@@ -98,6 +99,7 @@ export class PostgresStore implements StatePort {
       openedAt: num(row.opened_at),
       updatedAt: num(row.updated_at),
       breakEvenArmed: row.break_even_armed === true,
+      entryScore: row.entry_score === null || row.entry_score === undefined ? null : num(row.entry_score),
     }))
   }
 
@@ -105,8 +107,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                              break_even_armed, entry_score)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -118,10 +120,12 @@ export class PostgresStore implements StatePort {
          updated_at = EXCLUDED.updated_at,
          -- The RATCHET. Every step of the cycle writes the whole row, and a
          -- stale snapshot must never be able to turn this back off.
-         break_even_armed = positions.break_even_armed OR EXCLUDED.break_even_armed`,
+         break_even_armed = positions.break_even_armed OR EXCLUDED.break_even_armed,
+         -- The score BASELINE, written once: the first non-null value stays.
+         entry_score = COALESCE(positions.entry_score, EXCLUDED.entry_score)`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
-       p.breakEvenArmed === true],
+       p.breakEvenArmed === true, p.entryScore ?? null],
     )
   }
 

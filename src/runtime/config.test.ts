@@ -257,6 +257,12 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(shouldStopOut(fell, stop)).toBe(false)
   })
 
+  it('stops a position whose score falls five points from the one it was bought at', () => {
+    // *Cuando el puntaje cae 5 puntos, SL.* Zero turns it off.
+    expect(loadConfig(valid).scoreStopPoints).toBe(5)
+    expect(loadConfig({ ...valid, OPERADOR_SCORE_STOP_POINTS: '0' }).scoreStopPoints).toBe(0)
+  })
+
   it('never swaps a position under water for a better one — no close in the red', () => {
     expect(loadConfig(valid).maxSwapLossPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_MAX_SWAP_LOSS_PCT: '1.2' }).maxSwapLossPct).toBe(1.2)

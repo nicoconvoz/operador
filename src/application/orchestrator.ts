@@ -12,6 +12,9 @@ import { type EntryConfirmation } from './confirm-entry.js'
 import { tickPosition, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
 import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
+import { scoreFell, SCORE_STOP_COMMENT } from '../domain/risk/score-stop.js'
+import { pricesDisagree } from '../domain/market/price-agreement.js'
+import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
@@ -185,6 +188,11 @@ export interface CycleConfig {
    * See `DEFAULT_ENTRY_DOORS`.
    */
   readonly entryDoors?: readonly ComponentFloors[]
+  /**
+   * Points under its ENTRY score at which a held position is sold, as it is.
+   * *Cuando el puntaje cae 5 puntos, SL.* Absent or zero: off.
+   */
+  readonly scoreStopPoints?: number
   /** Passed through to the tick, which derives the exit target from it. */
   readonly maxCostSharePct?: number
   /**
@@ -679,6 +687,64 @@ export async function runCycle(
         .map((s) => [`${s.snapshot.chain}:${s.snapshot.address}`, s]),
     )
     const stillListed = new Set(candidates.map((c) => `${c.snapshot.chain}:${c.snapshot.address}`))
+
+    // ── 3a-bis. The score stop ────────────────────────────────────────────────
+    //
+    // *Cuando el puntaje cae 5 puntos, SL.* The operator, after PEPE: bought at
+    // 93.2, down to 65.9 ten minutes later, still held an hour after at −11.6%.
+    // The score of a held token comes from whichever list this pass put it on;
+    // one the gates rejected has none, and silence never sells.
+    //
+    // A position with no baseline — opened before the rule existed — takes
+    // this reading as its first; the store keeps the first one it is given.
+    const scoreNow = new Map<string, number>([
+      ...candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score] as const),
+      ...[...offNow.values()].map((o) => [`${o.snapshot.chain}:${o.snapshot.address}`, o.opportunity.score] as const),
+    ])
+    for (const r of recovery.positions) {
+      if (stopped.has(r.position.id)) continue
+      const position = now(r.position.id, r.position)
+      const key = `${position.chain}:${position.tokenAddress}`
+      const score = scoreNow.get(key) ?? null
+      if (score === null) continue
+      const baseline = position.entryScore ?? null
+      if (baseline === null) {
+        await deps.store.savePosition({ ...position, entryScore: score })
+        continue
+      }
+      if (!scoreFell({ entryScore: baseline, score }, config.scoreStopPoints ?? 0)) continue
+      if (!((ledgers.get(position.id)?.qty ?? 0) > 0)) continue
+      // Exempt from the no-loss guard, so it takes the stop's own second-source
+      // check: a unit nobody agreed on is how CWZ6Bs left at a
+      // hundred-and-eighty-thousandth of its price.
+      const price = marketPrices.get(key)
+      if (price === undefined || !(price > 0)) continue
+      if (position.lastPriceUsd == null || pricesDisagree(price, position.lastPriceUsd, DEFAULT_GATE_POLICY.maxPriceRatio)) continue
+      const broker = await deps.brokerFor(position)
+      const refused = await settle(
+        [{ kind: 'closeAll', comment: SCORE_STOP_COMMENT }],
+        position.lastBarTime,
+        price,
+        at,
+        position,
+        broker,
+        deps.store,
+      )
+      if (refused) continue
+      await deps.store.closePosition(position.id)
+      stoppedIds.push(position.id)
+      stoppedTokens.push(key)
+      stopped.add(position.id)
+      const cut = alert(
+        'token-stopped',
+        `📉 ${position.symbol} cortada: el puntaje cayó`,
+        `Se compró con ${baseline.toFixed(1)} y ahora tiene ${score.toFixed(1)}, ${(baseline - score).toFixed(1)} puntos menos. Se vendió todo a ${price}. El token NO queda vetado.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+      if (throttle.shouldSend(cut, `score-stop:${position.id}`)) await deps.alerts.send(cut)
+    }
+
     const rotations = rotateOnSwitchOff(
       recovery.positions.map((r) => {
         const key = `${r.position.chain}:${r.position.tokenAddress}`
@@ -1073,6 +1139,8 @@ export async function runCycle(
           // What the token had already done when we arrived, kept because the
           // stop is sized by it. Six hours is the window the entry rule reads.
           runAtEntryPct: allocation.snapshot.priceChangePct?.h6 ?? null,
+          // The score it was bought at: the baseline the score stop falls from.
+          entryScore: allocation.score,
           pendingOrders: [],
           openedAt: at,
           updatedAt: at,

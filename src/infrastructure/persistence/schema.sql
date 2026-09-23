@@ -33,6 +33,8 @@ CREATE INDEX IF NOT EXISTS positions_token_idx ON positions (chain, token_addres
 -- it has to land on a live database without a truncate, and run as a no-op on
 -- every boot after that. The upsert keeps it with OR, so once true it stays.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS break_even_armed BOOLEAN NOT NULL DEFAULT false;
+-- The score a position was bought at: the baseline of the score stop.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_score DOUBLE PRECISION;
 
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure

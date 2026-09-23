@@ -40,8 +40,12 @@ export class MemoryStore implements StatePort {
     // The break-even ratchet, kept exactly as the SQL keeps it. A reference
     // store looser than production would let the tests pass on a rule the real
     // one enforces and this one does not.
-    const armed = this.positions.get(position.id)?.breakEvenArmed === true || position.breakEvenArmed === true
-    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed }))
+    const stored = this.positions.get(position.id)
+    const armed = stored?.breakEvenArmed === true || position.breakEvenArmed === true
+    // The score baseline, kept exactly as the SQL keeps it: the first
+    // non-null value, never moved by a later save.
+    const entryScore = stored?.entryScore ?? position.entryScore ?? null
+    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed, entryScore }))
   }
 
   async closePosition(positionId: string): Promise<void> {
