@@ -18,7 +18,7 @@ import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
-import { GeckoTerminal, barMinutes } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { GeckoTerminal, barMinutes, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
@@ -26,7 +26,7 @@ import { Erc20Decimals } from '../infrastructure/adapters/pancakeswap/erc20-deci
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
-import { firstThatAnswers } from '../application/candle-source.js'
+import { tokenCandles } from '../application/candle-source.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { makeAdaptiveThrottle } from '../infrastructure/adaptive-throttle.js'
 import { makeHedgedGet } from '../infrastructure/hedged-get.js'
@@ -132,6 +132,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    */
   const solanaMints = new SolanaMints(config.solanaRpcUrl, ports.postJson)
   const jupiterCharts = new JupiterCharts(hedged())
+  // ONE route to a token's candles — Jupiter by mint, GeckoTerminal by pool
+  // behind it — for the tick AND the door. The door kept its own route to
+  // GeckoTerminal after the tick moved, and refused 25 of 26 prime tokens on
+  // pools GeckoTerminal does not know.
+  const candlesOf = tokenCandles({
+    byMint: (chain, mint, size: BarSize, limit) => jupiterCharts.candles(chain, mint, size, limit),
+    byPool: (chain, pool, size: BarSize, limit) => gecko.candles(chain, pool, size, limit),
+  })
   const sourcesFor = (chain: Chain) =>
     chain === 'solana'
       ? {
@@ -318,12 +326,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // fallback exists because Jupiter's chart endpoint is undocumented, and a
     // book whose every tick depends on it must not go blind when it moves.
     candlesFor: (position) =>
-      firstThatAnswers([
-        ...(position.chain === 'solana'
-          ? [() => jupiterCharts.candles(position.chain, position.tokenAddress, config.barSize, 1000)]
-          : []),
-        () => gecko.candles(position.chain, position.pairAddress, config.barSize, 1000),
-      ]),
+      candlesOf(position.chain, position.tokenAddress, position.pairAddress, config.barSize, 1000),
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
     // never GeckoTerminal: asking the candle feed to check the candle feed
@@ -515,8 +518,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // newest bar carrying volume; here it answers "can this engine see this
         // pool trade at all", which is a different question from "is this token
         // active" and the only one that decides whether a ladder can ever fill.
+        //
+        // Through the SAME route as the tick, by mint on Solana. Nobody able to
+        // answer is not an answer: it throws, and the door refuses closed.
         barAgeHours: async (fresh) => {
-          const candles = await gecko.candles(fresh.chain, fresh.pairAddress, config.barSize, 300)
+          const candles = await candlesOf(fresh.chain, fresh.address, fresh.pairAddress, config.barSize, 300)
+          if (candles === null) throw new Error('ninguna fuente de velas respondió')
           return hoursSinceLastTrade(candles, Date.now())
         },
         // One hour: it matches `minHourlyTxns`'s own window, and it leaves the
