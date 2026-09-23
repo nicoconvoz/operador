@@ -35,6 +35,7 @@ export function withLiveMarket(stored: TokenSnapshot, live: LiveMarket | undefin
     volumeUsd: live.volumeUsd,
     priceChangePct: live.priceChangePct,
     txns: live.txns,
+    ...(live.liquidityChangePct ? { liquidityChangePct: live.liquidityChangePct } : {}),
     observedAt: live.observedAt,
   }
 }

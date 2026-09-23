@@ -58,15 +58,16 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  * not a passing one.
  */
 export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
-  // *Ahora el filtro de entrada es sólo este, que tengan 100% de tendencia en
-  // verde — y la única condición para traer candidatas.* The operator. Trend
-  // is binary, one when the hour or the day rose 1% or more, so a floor of one
-  // means rising. The toll floor (costEfficiency 0.3) left with this; the
-  // SAFETY gates are not conditions of this kind and stay.
+  // *Sólo traer en candidatas monedas con más del 50% de actividad y con
+  // crecimiento de liquidez — de la última hora, más del 0% — y operarlas
+  // directamente.* The operator, replacing trend at 100%.
   //
-  // A floor also turns the switch on a position held: one that stops rising
-  // may rotate, and only above what its round trip costs.
-  momentum: 1,
+  // Activity above half is about 54 trades or more in the last hour. Liquidity
+  // growth is a yes or a no off Jupiter's own measurement of the hour, so a
+  // floor of one means the pool grew. The SAFETY gates are not conditions of
+  // this kind and stay.
+  activity: 0.5,
+  liquidityGrowth: 1,
 }
 
 /**

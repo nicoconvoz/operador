@@ -21,8 +21,10 @@ describe('withLiveMarket — refresh what the feed knows, keep what it cannot', 
   // exists to prevent.
 
   it('takes the market half', () => {
-    const merged = withLiveMarket(stored, live)
+    const merged = withLiveMarket(stored, { ...live, liquidityChangePct: { h1: 4 } })
     expect(merged.priceUsd).toBe(2)
+    // The hour's liquidity change is market data: the candidate door reads it.
+    expect(merged.liquidityChangePct).toEqual({ h1: 4 })
     expect(merged.liquidityUsd).toBe(200)
     expect(merged.observedAt).toBe(99)
   })

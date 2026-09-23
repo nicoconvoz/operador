@@ -287,7 +287,13 @@ export function scoreOpportunity(
 
   // Liquidity vs the previous look: 1 = flat, ≥ 1.5 = fully growing, ≤ 0.5 = gone.
   const growthRatio = previous && previous.liquidityUsd > 0 ? snapshot.liquidityUsd / previous.liquidityUsd : 1
-  const liquidityGrowth = clamp01((growthRatio - 0.5) / 1)
+  // *Crecimiento de liquidez de la última hora, más del 0%.* When the feed
+  // measured the hour, that decides — a yes or a no — because the previous
+  // look below is one production never passes, and every token read a neutral
+  // half. Unreported falls back to it.
+  const liquidityChange1h = snapshot.liquidityChangePct?.h1
+  const liquidityGrowth =
+    typeof liquidityChange1h === 'number' ? (liquidityChange1h > 0 ? 1 : 0) : clamp01((growthRatio - 0.5) / 1)
 
   // The OTHER pillar, beside `headroom`, and for the operator's own reason: a
   // pool nobody is trading is one nobody will buy from us either. More is

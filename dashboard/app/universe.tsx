@@ -57,7 +57,7 @@ const TIER_STYLE: Record<TokenTier, { core: string; halo: string; label: string;
 const COMPONENT_LABEL: Record<string, string> = {
   volumeExpansion: 'expansión de volumen',
   buyPressure: 'presión compradora',
-  liquidityGrowth: 'crecimiento de liquidez',
+  liquidityGrowth: 'liquidez crece en la hora',
   activity: 'actividad',
   volatility: 'volatilidad',
   // Not the same question as volatility, and the pair has to be readable

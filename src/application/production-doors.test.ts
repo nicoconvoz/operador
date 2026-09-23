@@ -9,7 +9,10 @@ describe('productionDoors — one definition of what the book may buy', () => {
     // 100% means rising. The toll floor (0.3) and the score door (75) are
     // gone with this; the SAFETY gates are not conditions of this kind and
     // stay, as they always do.
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ momentum: 1 })
+    // Then replaced outright: *sólo traer en candidatas monedas con más del 50%
+    // de actividad y con crecimiento de liquidez — de la última hora, más del
+    // 0% — y operarlas directamente.* Trend is no longer asked.
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ activity: 0.5, liquidityGrowth: 1 })
     expect(DEFAULT_MIN_SCORE).toBe(0)
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
   })

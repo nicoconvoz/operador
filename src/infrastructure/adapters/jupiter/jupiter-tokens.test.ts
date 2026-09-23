@@ -168,6 +168,14 @@ describe('jupiterMarket — the market half, from the same source as the candles
     })
   })
 
+  it('carries the LIQUIDITY change of the last hour — the only measured liquidity growth there is', () => {
+    // *Crecimiento de liquidez de la última hora, más del 0%.* The component
+    // compared against a previous look nobody ever passed, so every token read
+    // a neutral 50%. Jupiter reports the change itself.
+    expect(jupiterMarket({ ...live, stats1h: { ...live.stats1h, liquidityChange: 8 } }, 1)!.liquidityChangePct).toEqual({ h1: 8 })
+    expect(jupiterMarket(live, 1)!.liquidityChangePct).toEqual({ h1: null })
+  })
+
   it('has no market for a token with no price', () => {
     // Not a zero: a token nobody prices is not a token anyone can trade.
     const { usdPrice: _unpriced, ...noPrice } = live

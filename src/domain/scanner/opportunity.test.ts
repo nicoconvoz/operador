@@ -106,6 +106,16 @@ describe('opportunity — the components still move the right way, weighed or no
     expect(buying.score).toBe(neutral.score)
   })
 
+  it('reads liquidity growth off the HOUR when the feed reports it — a yes or a no', () => {
+    // *Crecimiento de liquidez de la última hora, más del 0%.* Jupiter's own
+    // measurement beats a previous look that production never passed.
+    expect(scoreOpportunity(base({ liquidityChangePct: { h1: 0.1 } }), P).components.liquidityGrowth).toBe(1)
+    expect(scoreOpportunity(base({ liquidityChangePct: { h1: 0 } }), P).components.liquidityGrowth).toBe(0)
+    expect(scoreOpportunity(base({ liquidityChangePct: { h1: -3 } }), P).components.liquidityGrowth).toBe(0)
+    // Unreported: back to the previous look, neutral without one.
+    expect(scoreOpportunity(base({ liquidityChangePct: { h1: null } }), P).components.liquidityGrowth).toBeCloseTo(0.5, 9)
+  })
+
   it('growing liquidity still separates from draining liquidity, and neither moves the score', () => {
     const previous = base({ liquidityUsd: 100_000 })
     const growing = scoreOpportunity(base({ liquidityUsd: 150_000 }), P, previous)

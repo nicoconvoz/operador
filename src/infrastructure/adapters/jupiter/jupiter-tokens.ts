@@ -48,6 +48,8 @@ export interface JupiterWindow {
   readonly buyVolume?: number
   readonly sellVolume?: number
   readonly numBuys?: number
+  /** Percent change of the pool's liquidity over the window. */
+  readonly liquidityChange?: number
   readonly numSells?: number
 }
 
@@ -95,6 +97,11 @@ export function jupiterMarket(info: JupiterTokenInfo, observedAt: number): Marke
     txns: {
       h1: { buys: num(info.stats1h?.numBuys), sells: num(info.stats1h?.numSells) },
       h24: { buys: num(info.stats24h?.numBuys), sells: num(info.stats24h?.numSells) },
+    },
+    // Measured by Jupiter over the hour. Unreported is null, never zero: a flat
+    // hour and a silent one are different answers.
+    liquidityChangePct: {
+      h1: typeof info.stats1h?.liquidityChange === 'number' && Number.isFinite(info.stats1h.liquidityChange) ? info.stats1h.liquidityChange : null,
     },
     pairCreatedAt: Number.isFinite(created) ? created : null,
   }

@@ -79,6 +79,12 @@ export interface TokenSnapshot {
   readonly volumeUsd: WindowedVolume
   readonly priceChangePct: WindowedChangePct
   readonly txns: { readonly h1: TxnCounts; readonly h24: TxnCounts }
+  /**
+   * How the pool's liquidity changed over the last hour, in percent, as the
+   * feed measured it. Null: not reported. Absent: a feed that has no such
+   * number (DexScreener). *Crecimiento de liquidez de la última hora.*
+   */
+  readonly liquidityChangePct?: { readonly h1: number | null }
   /** When the pair was created, or null when the source does not know. */
   readonly pairCreatedAt: number | null
   /**
