@@ -28,6 +28,12 @@ export interface Candidate {
 export interface Rejected {
   readonly snapshot: TokenSnapshot
   readonly gates: GateResult
+  /**
+   * The score it WOULD have had. Never a reason to buy it — the verdict is the
+   * rejection — but a position we already hold keeps being scored, so the
+   * score stop can see it fall: *cayó de puntaje y nunca vendió tampoco.*
+   */
+  readonly opportunity?: Opportunity
 }
 
 /**
@@ -155,7 +161,11 @@ export function rankUniverse(
     const gates = evaluateGates(snapshot, policy.gates)
     const forgiven = gates.passed || policy.reserve === false ? null : forgivableFailures(gates)
     if (!gates.passed && forgiven === null) {
-      rejected.push({ snapshot, gates })
+      rejected.push({
+        snapshot,
+        gates,
+        opportunity: scoreOpportunity(snapshot, policy.opportunity, previous.get(tokenKey(snapshot)) ?? null, quality(snapshot)),
+      })
       continue
     }
     // Quality is measured before scoring, because what the chain will take is

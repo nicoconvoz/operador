@@ -1078,6 +1078,41 @@ describe('scanOnce — Jupiter and the chain, no GoPlus', () => {
     expect([...prefetched[0]!].sort()).toEqual(['good', 'minty'])
   })
 
+  it('WAITS for the sale quote of a token we hold — an unanswered quote is not an unsafe token', async () => {
+    // *Observá a three... igual es insegura.* It was not: its sale quoted fine
+    // from anywhere but the runner, whose shared IP Jupiter refuses. The scan
+    // read the silence as an unknown honeypot, painted our position red, and
+    // dropped it before scoring it — so the score stop never saw it fall.
+    const { scanDeps } = rig()
+    const tries = new Map<string, number>()
+    const flaky: ScanDeps = {
+      ...scanDeps,
+      sellProbe: {
+        assessSell: async (address) => {
+          const n = (tries.get(address) ?? 0) + 1
+          tries.set(address, n)
+          return n === 1 ? { sellQuote: 'unknown', priceImpactPct: null } : { sellQuote: 'ok', priceImpactPct: 0.1 }
+        },
+      },
+      patience: { budgetMs: 60_000, backoffMs: 1_000, sleep: async () => {} },
+    }
+    const outcome = await scanOnce(flaky, { ...config, held: ['good'] })
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
+    expect(tries.get('good')).toBe(2)
+  })
+
+  it('does not wait for a stranger — one try, and the scan stays fast', async () => {
+    const { scanDeps } = rig()
+    let asked = 0
+    const silent: ScanDeps = {
+      ...scanDeps,
+      sellProbe: { assessSell: async () => { asked++; return { sellQuote: 'unknown', priceImpactPct: null } } },
+      patience: { budgetMs: 60_000, backoffMs: 1_000, sleep: async () => {} },
+    }
+    await scanOnce(silent, { ...config, held: [] })
+    expect(asked).toBe(2)
+  })
+
   it('does not spend a sell quote on a token that already failed', async () => {
     // The quote is the one cost left per token. A live mint authority fails
     // closed whatever the quote would say, so asking would change no verdict —

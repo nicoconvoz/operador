@@ -1,4 +1,5 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
+import { patientSellProbe } from './patient-sell-probe.js'
 import { type StatePort } from '../domain/persistence/store.js'
 import { type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
@@ -108,6 +109,17 @@ export interface ScanDeps {
   readonly markets?: (chain: Chain, addresses: readonly string[]) => Promise<MarketSnapshot[]>
   /** Chain-appropriate sell probe. Without one, honeypot stays unknown and the gates fail closed. */
   readonly sellProbe?: SellProbePort
+  /**
+   * How long to WAIT for the sale quote of a token we hold, instead of reading
+   * silence as an unknown honeypot. Absent: one try, as for every stranger.
+   *
+   * *Observá a three... igual es insegura.* It was not: its sale quoted fine
+   * from anywhere but the runner, whose shared IP Jupiter refuses. The scan
+   * painted our position red and dropped it before scoring it, so the score
+   * stop never saw its score fall. Only held tokens wait — they are few, and a
+   * false verdict on one blinds every exit that watches it.
+   */
+  readonly patience?: { readonly budgetMs: number; readonly backoffMs: number; readonly sleep: (ms: number) => Promise<void> }
   readonly decimals: DecimalsPort
   readonly history?: HistoryPort
   /**
@@ -860,7 +872,12 @@ export async function scanOnce(
     const record = (stage: ScanError['stage'], error: unknown) =>
       errors.push({ address: market.address, stage, error: String(error) })
 
-    const { snapshot, slippagePct } = await examineToken(deps, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
+    // A token we HOLD waits for its sale quote; a stranger gets one try.
+    const probing =
+      deps.patience && deps.sellProbe && held.has(market.address)
+        ? { ...deps, sellProbe: patientSellProbe(deps.sellProbe, deps.patience) }
+        : deps
+    const { snapshot, slippagePct } = await examineToken(probing, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,

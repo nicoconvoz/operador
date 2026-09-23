@@ -461,3 +461,16 @@ describe('ranking — buy pressure as a door', () => {
     expect(rankUniverse([traded(0, 0)], new Map(), quality, doors).candidates).toEqual([])
   })
 })
+
+describe('ranking — a rejected token is still SCORED', () => {
+  // *Cayó de puntaje y nunca vendió tampoco.* THREE was rejected by a gate —
+  // an unanswered sale quote — and a rejected token carried no score, so the
+  // score stop on a position we HOLD had nothing to read. The score is pure
+  // and costs nothing; the verdict stays a rejection.
+  it('carries the opportunity of a token the gates refused', () => {
+    const unsafe = token('unsafe', { security: { ...token('x').security, honeypot: null } })
+    const ranked = rankUniverse([unsafe], new Map(), quality, policy)
+    expect(ranked.candidates).toEqual([])
+    expect(ranked.rejected[0]?.opportunity?.score).toBeGreaterThan(0)
+  })
+})

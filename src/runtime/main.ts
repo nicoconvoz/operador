@@ -8,7 +8,7 @@ import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_COMPONENT_FLOORS } from '../application/production-doors.js'
-import { type SwitchedOff } from '../domain/scanner/ranking.js'
+import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { ladderCapitalUsd } from '../application/paper-run.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type Chain, type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -280,6 +280,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const liveMarkets = new Map<string, LiveMarket>()
 
   let lastSwitchedOff: SwitchedOff[] = []
+  // What the last scan rejected, scored anyway, for the score stop on tokens
+  // we hold. Reset per scan, like the switch.
+  let lastRejected: Rejected[] = []
 
   const brokerFor = async (position: PersistedPosition) => {
     let broker = brokers.get(position.id)
@@ -639,8 +642,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // Reset per scan, never accumulated. A verdict from the pass before last
     // is not a verdict about now, and this one can SELL.
     switchedOff: () => lastSwitchedOff,
+    rejected: () => lastRejected,
     scan: async (kind, betweenSteps) => {
       lastSwitchedOff = []
+      lastRejected = []
       const candidates: Candidate[] = []
       // What we already hold, per chain. Every universe source is a list of
       // what is POPULAR NOW, so a token bought six hours ago that has stopped
@@ -684,6 +689,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // what makes a token safe.
               ...sourcesFor(chain),
               sellProbe: sellProbeFor(chain),
+              // Held tokens WAIT for their sale quote, sixty seconds at most, the
+              // operator's own budget: THREE was painted unsafe, and never
+              // scored, because the runner's quote went unanswered once.
+              patience: { budgetMs: 60_000, backoffMs: 1_000, sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)) },
               decimals: decimalsFor,
               // GeckoTerminal's pool discovery was 142 of the first 184 seconds
               // of a cold scan, measured, for a universe Jupiter's own lists
@@ -846,6 +855,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // whole: the orchestrator does the matching, and a filter here would
           // be a second place that decides what counts as our own position.
           lastSwitchedOff.push(...result.switchedOff)
+          lastRejected.push(...result.rejected)
           // A scan three times slower in CI than on a laptop is either a rate
           // limit or a mystery. This is how it stops being a mystery.
           console.log(`[scan:limits] ${chain} ${spentSince()}`)

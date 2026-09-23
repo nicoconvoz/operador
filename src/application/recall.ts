@@ -1,4 +1,4 @@
-import { rankUniverse, tokenKey, type Candidate, type RankingPolicy, type SwitchedOff } from '../domain/scanner/ranking.js'
+import { rankUniverse, tokenKey, type Candidate, type RankingPolicy, type SwitchedOff , type Rejected } from '../domain/scanner/ranking.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -63,6 +63,8 @@ export interface RecallOptions {
 
 export interface RecalledScan {
   readonly candidates: readonly Candidate[]
+  /** What the re-priced shelf refused on a gate, scored anyway: see `Rejected.opportunity`. */
+  readonly rejected?: readonly Rejected[]
   /**
    * What the re-priced shelf refused on a component floor — the switch, off.
    *
@@ -130,5 +132,5 @@ export async function recallCandidates(store: StatePort, options: RecallOptions)
     options.ranking,
   )
 
-  return { candidates: ranked.candidates, switchedOff: ranked.switchedOff, scannedAt }
+  return { candidates: ranked.candidates, switchedOff: ranked.switchedOff, rejected: ranked.rejected, scannedAt }
 }

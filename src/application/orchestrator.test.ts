@@ -1206,6 +1206,20 @@ describe('runCycle — the switch goes off on a position holding money', () => {
       expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('📉 Cae el puntaje')
     })
 
+    it('reads the score of a token the gates REJECTED — an unsafe label does not blind the stop', async () => {
+      // THREE: painted unsafe by an unanswered quote, dropped before scoring,
+      // and never cut while its score fell. *Cayó de puntaje y nunca vendió.*
+      const rejected = { snapshot: off('Held').snapshot, gates: { passed: false, failures: [] }, opportunity: { score: 50, components: {} as never } }
+      const { deps, store, throttle } = rig({
+        brokerFor: seeded,
+        rejected: () => [rejected as never],
+        marketPrices: async () => new Map([['solana:Held', 0.9]]),
+      })
+      await withBaseline(store, 93.2)
+      await runCycle(deps, scored, throttle)
+      expect((await store.allFills()).find((f) => f.side === 'sell')?.comment).toBe('📉 Cae el puntaje')
+    })
+
     it('holds on a smaller fall', async () => {
       const { deps, store, throttle } = rig({
         brokerFor: seeded,

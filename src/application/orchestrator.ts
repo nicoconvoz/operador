@@ -16,7 +16,7 @@ import { scoreFell, SCORE_STOP_COMMENT } from '../domain/risk/score-stop.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
-import { type SwitchedOff } from '../domain/scanner/ranking.js'
+import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
 import { commonFund, positionLedger, openLotCostsUsd, type PositionLedger } from './ledger.js'
 import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
@@ -123,6 +123,7 @@ export interface CycleDeps {
   readonly recall?: () => Promise<{
     readonly candidates: readonly Candidate[]
     readonly switchedOff: readonly SwitchedOff[]
+    readonly rejected?: readonly Rejected[]
     readonly scannedAt: number
   } | null>
   /**
@@ -138,6 +139,12 @@ export interface CycleDeps {
    * working SAFELY, since not supplying it means no position is ever rotated.
    */
   readonly switchedOff?: () => readonly SwitchedOff[]
+  /**
+   * What the last scan REJECTED, scored anyway. Only ever read for tokens we
+   * hold, so the score stop is never blinded by a gate: *cayó de puntaje y
+   * nunca vendió tampoco.*
+   */
+  readonly rejected?: () => readonly Rejected[]
   readonly now: () => number
 }
 
@@ -697,7 +704,11 @@ export async function runCycle(
     //
     // A position with no baseline — opened before the rule existed — takes
     // this reading as its first; the store keeps the first one it is given.
+    const rejectedNow = kind === 'watch' ? (recalled?.rejected ?? []) : (deps.rejected?.() ?? [])
     const scoreNow = new Map<string, number>([
+      ...rejectedNow.flatMap((r) =>
+        r.opportunity ? [[`${r.snapshot.chain}:${r.snapshot.address}`, r.opportunity.score] as const] : [],
+      ),
       ...candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score] as const),
       ...[...offNow.values()].map((o) => [`${o.snapshot.chain}:${o.snapshot.address}`, o.opportunity.score] as const),
     ])
