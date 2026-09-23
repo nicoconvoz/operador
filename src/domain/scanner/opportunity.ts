@@ -146,6 +146,41 @@ export function failedMinimums(
     .map(([name]) => name)
 }
 
+/**
+ * Whether a token clears ANY of several doors — several ways in, each a set
+ * of floors. None configured asks nothing more.
+ *
+ * *Agregá que si superan el 25% de expansión del volumen y tendencia más del
+ * 70% positiva, entonces inicia.* The operator, adding a second way into the
+ * first buy beside expansion and trend both above half.
+ */
+export function meetsAnyDoor(
+  components: Partial<OpportunityComponents>,
+  doors: readonly ComponentFloors[] | undefined,
+): boolean {
+  if (doors === undefined || doors.length === 0) return true
+  return doors.some((floors) => meetsMinimums(components, floors))
+}
+
+/**
+ * The door a token came closest to — fewest floors missed, the first on a
+ * tie — and what it missed. Null when it clears one. So the screen can say
+ * what is missing without listing every door's every floor.
+ */
+export function closestDoor(
+  components: Partial<OpportunityComponents>,
+  doors: readonly ComponentFloors[] | undefined,
+): { readonly floors: ComponentFloors; readonly failed: readonly (keyof OpportunityComponents)[] } | null {
+  if (doors === undefined || doors.length === 0) return null
+  let best: { floors: ComponentFloors; failed: readonly (keyof OpportunityComponents)[] } | null = null
+  for (const floors of doors) {
+    const failed = failedMinimums(components, floors)
+    if (failed.length === 0) return null
+    if (best === null || failed.length < best.failed.length) best = { floors, failed }
+  }
+  return best
+}
+
 export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // `momentum` takes its weight from `volatility`, which it complements rather
   // than replaces: volatility says the token is MOVING, momentum says which

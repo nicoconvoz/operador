@@ -25,7 +25,7 @@ import { type SizingPolicy } from '../domain/economics/sizing.js'
 import { planRecovery, type OrderProbe, type RecoveredPosition, type RecoveryPlan } from './recovery.js'
 import { resyncCascade, RESYNC_TOLERANCE_PCT } from './resync.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
-import { meetsMinimums, type ComponentFloors } from '../domain/scanner/opportunity.js'
+import { meetsAnyDoor, type ComponentFloors } from '../domain/scanner/opportunity.js'
 
 /**
  * The orchestrator — one cycle of the whole system.
@@ -183,9 +183,10 @@ export interface CycleConfig {
   readonly usdPerToken?: number | null
   /**
    * What a candidate needs to be OPENED, on top of the floors every held and
-   * listed token answers to. Absent: nothing more. See `DEFAULT_ENTRY_FLOORS`.
+   * listed token answers to — any one of these doors. Absent: nothing more.
+   * See `DEFAULT_ENTRY_DOORS`.
    */
-  readonly entryComponents?: ComponentFloors
+  readonly entryDoors?: readonly ComponentFloors[]
   /** Passed through to the tick, which derives the exit target from it. */
   readonly maxCostSharePct?: number
   /**
@@ -973,7 +974,7 @@ export async function runCycle(
       // The FIRST-buy door: *expansión del volumen más del 50% y tendencia más
       // del 50%.* Here and not in the ranking, so a held token is never judged
       // by the way it was bought.
-      .filter((c) => meetsMinimums(c.opportunity.components, config.entryComponents))
+      .filter((c) => meetsAnyDoor(c.opportunity.components, config.entryDoors))
 
     if (slotsLeft > 0 && free > 0) {
       const plan = planPortfolio(

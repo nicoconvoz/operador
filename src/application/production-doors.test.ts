@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS, DEFAULT_ENTRY_FLOORS } from './production-doors.js'
+import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS, DEFAULT_ENTRY_DOORS } from './production-doors.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
   it('is ONE floor for everything held and listed: what the token charges', () => {
@@ -26,9 +26,14 @@ describe('productionDoors — one definition of what the book may buy', () => {
     // del volumen más del 50% y tendencia más del 50%.* The operator. An ENTRY
     // door, not a floor: a position already held is never judged by why it
     // was bought, so a volume burst cooling off does not rotate it out.
-    expect(DEFAULT_ENTRY_FLOORS).toEqual({ volumeExpansion: 0.5, momentum: 0.5 })
+    // And a second way in: *si superan el 25% de expansión del volumen y
+    // tendencia más del 70% positiva, entonces inicia.* Either door opens it.
+    expect(DEFAULT_ENTRY_DOORS).toEqual([
+      { volumeExpansion: 0.5, momentum: 0.5 },
+      { volumeExpansion: 0.25, momentum: 0.7 },
+    ])
     expect(DEFAULT_COMPONENT_FLOORS.buyPressure).toBeUndefined()
-    expect(productionDoors({}).entryComponents).toEqual(DEFAULT_ENTRY_FLOORS)
+    expect(productionDoors({}).entryDoors).toEqual(DEFAULT_ENTRY_DOORS)
   })
 
   it('keeps the TOLL, and that is not an oversight', () => {

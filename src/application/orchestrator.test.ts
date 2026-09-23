@@ -1191,10 +1191,14 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     // más del 50%.* Two candidates, one of them cooling off.
     const hot = { ...candidate('hot', 90), opportunity: { score: 90, components: { volumeExpansion: 0.8, momentum: 1 } as never } }
     const cold = { ...candidate('cold', 95), opportunity: { score: 95, components: { volumeExpansion: 0.2, momentum: 1 } as never } }
-    const { deps, store, throttle } = rig({ scan: async () => [cold, hot] })
-    await runCycle(deps, { ...config, entryComponents: { volumeExpansion: 0.5, momentum: 0.5 } }, throttle)
+    // And the second way in: 25% of expansion with a rising trend.
+    const warm = { ...candidate('warm', 85), opportunity: { score: 85, components: { volumeExpansion: 0.3, momentum: 1 } as never } }
+    const { deps, store, throttle } = rig({ scan: async () => [cold, hot, warm] })
+    const doors = [{ volumeExpansion: 0.5, momentum: 0.5 }, { volumeExpansion: 0.25, momentum: 0.7 }]
+    await runCycle(deps, { ...config, entryDoors: doors }, throttle)
     const opened = (await store.loadPositions()).map((p) => p.tokenAddress)
     expect(opened).toContain('hot')
+    expect(opened).toContain('warm')
     expect(opened).not.toContain('cold')
   })
 

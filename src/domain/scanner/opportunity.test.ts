@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_OPPORTUNITY_POLICY as P, meetsMinimums, scoreOpportunity } from './opportunity.js'
+import { DEFAULT_OPPORTUNITY_POLICY as P, meetsMinimums, meetsAnyDoor, closestDoor, scoreOpportunity } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -704,5 +704,33 @@ describe('opportunity — up in the DAY or up in the HOUR', () => {
     expect(trend(null, null)).toBe(0)
     expect(trend(null, 5)).toBe(1)
     expect(trend(5, null)).toBe(1)
+  })
+})
+
+describe('meetsAnyDoor — one of several ways in', () => {
+  // *Agregá que si superan el 25% de expansión del volumen y tendencia más del
+  // 70% positiva, entonces inicia.* A second way into the first buy, beside
+  // expansion and trend both above half.
+  const doors = [{ volumeExpansion: 0.5, momentum: 0.5 }, { volumeExpansion: 0.25, momentum: 0.7 }]
+
+  it('lets a token in through either door', () => {
+    expect(meetsAnyDoor({ volumeExpansion: 0.6, momentum: 1 }, doors)).toBe(true)
+    expect(meetsAnyDoor({ volumeExpansion: 0.3, momentum: 1 }, doors)).toBe(true)
+  })
+
+  it('keeps it out when it clears neither', () => {
+    expect(meetsAnyDoor({ volumeExpansion: 0.2, momentum: 1 }, doors)).toBe(false)
+    expect(meetsAnyDoor({ volumeExpansion: 0.9, momentum: 0 }, doors)).toBe(false)
+  })
+
+  it('asks nothing when no door is configured', () => {
+    expect(meetsAnyDoor({}, undefined)).toBe(true)
+    expect(meetsAnyDoor({}, [])).toBe(true)
+  })
+
+  it('names the door it came closest to — fewest floors missed, the first on a tie', () => {
+    expect(closestDoor({ volumeExpansion: 0.3, momentum: 0 }, doors)).toEqual({ floors: doors[1], failed: ['momentum'] })
+    expect(closestDoor({ volumeExpansion: 0.2, momentum: 1 }, doors)).toEqual({ floors: doors[0], failed: ['volumeExpansion'] })
+    expect(closestDoor({ volumeExpansion: 0.3, momentum: 1 }, doors)).toBeNull()
   })
 })

@@ -132,11 +132,18 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
  * a volume burst cools off in minutes — as a floor it would rotate positions
  * out for the way they were bought. What a held position answers to is who is
  * trading it now: buy pressure adds, sell pressure sells.
+ *
+ * TWO doors, either one opens it. The second is the operator's addition: *si
+ * superan el 25% de expansión del volumen y tendencia más del 70% positiva,
+ * entonces inicia.* Stated rather than discovered later: trend is binary
+ * today — rising or not — so above 70% and above half mean the same thing,
+ * and the second door covers the first. They stay separate so each keeps its
+ * meaning the day trend is measured by degree.
  */
-export const DEFAULT_ENTRY_FLOORS: ComponentFloors = {
-  volumeExpansion: 0.5,
-  momentum: 0.5,
-}
+export const DEFAULT_ENTRY_DOORS: readonly ComponentFloors[] = [
+  { volumeExpansion: 0.5, momentum: 0.5 },
+  { volumeExpansion: 0.25, momentum: 0.7 },
+]
 
 export const DEFAULT_MIN_SCORE = 75
 
@@ -145,8 +152,8 @@ export interface ProductionDoors {
   readonly minComponents: ComponentFloors
   /** The score door, read after the score is computed and never folded into it. */
   readonly minScore: number
-  /** What a token needs to be OPENED, on top of the floors. See `DEFAULT_ENTRY_FLOORS`. */
-  readonly entryComponents: ComponentFloors
+  /** The ways a token may be OPENED, any one enough, on top of the floors. See `DEFAULT_ENTRY_DOORS`. */
+  readonly entryDoors: readonly ComponentFloors[]
   /**
    * Whether a token held back only by a preference gate may still be bought
    * when nothing better is free. OFF: *hacé que sólo sean candidatas las que ya
@@ -165,5 +172,5 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const parsed = Number(raw)
   const minScore = raw && Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIN_SCORE
 
-  return { minComponents: DEFAULT_COMPONENT_FLOORS, entryComponents: DEFAULT_ENTRY_FLOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
+  return { minComponents: DEFAULT_COMPONENT_FLOORS, entryDoors: DEFAULT_ENTRY_DOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
 }

@@ -1,5 +1,5 @@
 import { evaluateGates, forgivableFailures, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { meetsMinimums, failedMinimums, scoreOpportunity, type Opportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
+import { meetsMinimums, failedMinimums, meetsAnyDoor, closestDoor, scoreOpportunity, type Opportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -167,7 +167,7 @@ export interface UniverseOptions {
    */
   readonly minComponents?: ComponentFloors
   /** The engine's first-buy door: a token failing it is drawn filtered, never buyable. */
-  readonly entryComponents?: ComponentFloors
+  readonly entryDoors?: readonly ComponentFloors[]
   /**
    * The same SCORE door the ranking applies, for the same reason as the floors
    * above: a screen that draws a token as buyable while the engine refuses it
@@ -373,7 +373,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
                 ? 'filtered'
               // And the FIRST-buy door, which the engine applies to anything it
               // would open. Only reached for a token not held — `held` wins above.
-              : !meetsMinimums(opportunity.components, options.entryComponents)
+              : !meetsAnyDoor(opportunity.components, options.entryDoors)
                 ? 'filtered'
               // And below the engine's own SCORE door, for the same reason.
               : opportunity.score < (options.minScore ?? 0)
@@ -552,7 +552,9 @@ function holdBackOf(opportunity: Opportunity, options: UniverseOptions): readonl
     }))
   return [
     ...doors('floor', options.minComponents),
-    ...doors('entry', options.entryComponents),
+    // The first-buy door it came CLOSEST to: listing every door's every floor
+    // would bury the one thing the reader needs, which is what is missing.
+    ...doors('entry', closestDoor(opportunity.components, options.entryDoors)?.floors),
     ...(opportunity.score < (options.minScore ?? 0)
       ? [{ kind: 'score' as const, name: 'score', value: opportunity.score, floor: options.minScore ?? 0 }]
       : []),

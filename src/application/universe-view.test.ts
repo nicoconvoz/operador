@@ -460,7 +460,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
 
   it('draws a token failing the ENTRY door as filtered — the engine will not open it', async () => {
     const store = await seed([token('COLD')])
-    const view = await buildUniverse(store, { now: () => NOW, entryComponents: { volumeExpansion: 2 } })
+    const view = await buildUniverse(store, { now: () => NOW, entryDoors: [{ volumeExpansion: 2 }] })
     expect(view.tokens[0]?.tier).toBe('filtered')
   })
 
@@ -471,7 +471,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     // missed by one point looked like a door met. A filtered token now says
     // which door, what it read, and what the door asks.
     const store = await seed([token('COLD')])
-    const view = await buildUniverse(store, { now: () => NOW, entryComponents: { volumeExpansion: 2 }, minScore: 101 })
+    const view = await buildUniverse(store, { now: () => NOW, entryDoors: [{ volumeExpansion: 2 }], minScore: 101 })
     const back = view.tokens[0]!.holdBack
     expect(back.find((b) => b.kind === 'entry')).toMatchObject({ name: 'volumeExpansion', floor: 2 })
     expect(back.find((b) => b.kind === 'score')).toMatchObject({ floor: 101 })

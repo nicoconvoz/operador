@@ -65,7 +65,7 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       minComponents: doors.minComponents,
       // And the first-buy door, so the canvas never offers what the engine
       // will not open.
-      entryComponents: doors.entryComponents,
+      entryDoors: doors.entryDoors,
       // And the engine's own SCORE door. Without it the canvas draws as
       // buyable everything the floors let through, the book's own threshold
       // included — the screen-versus-engine disagreement this single builder
