@@ -888,7 +888,7 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
                Three were drawn as EN POSICIÓN with zero quantity against
                $1,250 of capital each. Read from the FILLS, never from the
                cascade level, which can believe in a fill the broker refused. */
-            token.position !== undefined && !token.position.holdsTokens
+            token.position !== null && !token.position.holdsTokens
             ? 'RESERVADA · TODAVÍA NO COMPRÓ'
             : style.label}
       </div>

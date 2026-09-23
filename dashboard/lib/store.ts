@@ -1,6 +1,6 @@
 import { Pool } from 'pg'
 import { PostgresStore } from '../../src/infrastructure/persistence/postgres-store.js'
-import { cacheFor } from '../../src/application/read-cache.js'
+import { cacheFor, type CachedRead } from '../../src/application/read-cache.js'
 
 /**
  * One pool for the whole app. Next.js reuses the module across requests, and
@@ -13,7 +13,7 @@ let cached: {
   scan: () => Promise<Awaited<ReturnType<PostgresStore['latestScan']>>>
   blacklist: () => Promise<Awaited<ReturnType<PostgresStore['blacklisted']>>>
   positions: () => Promise<Awaited<ReturnType<PostgresStore['loadPositions']>>>
-  fills: () => Promise<Awaited<ReturnType<PostgresStore['allFills']>>>
+  fills: CachedRead<Awaited<ReturnType<PostgresStore['allFills']>>>
   checkpoint: () => Promise<Awaited<ReturnType<PostgresStore['loadCheckpoint']>>>
 } | null = null
 

@@ -33,6 +33,8 @@ export interface ViewData {
   readonly dashboard: Awaited<ReturnType<typeof buildDashboard>>
   readonly universe: Awaited<ReturnType<typeof buildUniverse>>
   readonly operations: Awaited<ReturnType<typeof buildOperations>>
+  /** When the fills behind the money figures were read, or null before the first read. */
+  readonly moneyReadAt: number | null
 }
 
 export async function buildView(store: StatePort): Promise<ViewData> {

@@ -10,7 +10,7 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p dashboard",
     "build": "tsc --noEmit false --outDir dist --module nodenext --moduleResolution nodenext",
     "start": "node dist/runtime/index.js",
     "cycle": "tsx src/runtime/index.ts",

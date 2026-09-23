@@ -57,6 +57,7 @@ const make = (i: number): UniverseToken => {
     position: tier === 'held'
       ? {
           capitalUsd: 200,
+          holdsTokens: true,
           filledDcas: Math.floor(r(14) * 5),
           deathStage: i === 2 ? 'frozen' : 'healthy',
           // The demo shows the REASON too, because a snowflake with no reason
