@@ -11,7 +11,7 @@ import { DEFAULT_COMPONENT_FLOORS } from '../application/production-doors.js'
 import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { ladderCapitalUsd } from '../application/paper-run.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
-import { type Chain } from '../domain/scanner/snapshot.js'
+import { type Chain, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
 import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
@@ -24,6 +24,7 @@ import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
 import { Erc20Decimals } from '../infrastructure/adapters/pancakeswap/erc20-decimals.js'
 import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens.js'
+import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { makeAdaptiveThrottle } from '../infrastructure/adaptive-throttle.js'
 import { makeHedgedGet } from '../infrastructure/hedged-get.js'
@@ -110,6 +111,32 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // fixed toll for it. The ceiling is the same for everyone because the quota
   // is the same quota.
   const gecko = new GeckoTerminal(hedged(), geckoThrottle)
+  /**
+   * Where a token's security comes from, per chain — ONE answer shared by the
+   * scan and the door, so the two cannot disagree about what makes a token safe.
+   *
+   * Solana: Jupiter and the chain. *Hagamos todo con Jupiter.* GoPlus answered
+   * one address per call on a fixed two-second interval and would not batch,
+   * and a cold scan spent 3.5 seconds a token on it — 137 tokens, eight
+   * minutes. Jupiter's token API answers a hundred mints in half a second with
+   * the authorities and holder concentration; `getMultipleAccounts` answers a
+   * hundred with every Token-2022 extension, which Jupiter does not carry and
+   * which is where the tokens with a transfer fee, a permanent delegate or a
+   * pause switch hide — 46 of Jupiter's own hundred trending tokens were
+   * Token-2022.
+   *
+   * BSC: GoPlus, unchanged. Nothing else there reads a contract's security.
+   */
+  const solanaMints = new SolanaMints(config.solanaRpcUrl, ports.postJson)
+  const securityFor = (chain: Chain) =>
+    chain === 'solana'
+      ? {
+          onChain: solanaMints,
+          prefetch: async (_chain: Chain, addresses: readonly string[]) => {
+            await Promise.all([jupiterTokens.prefetch(addresses), solanaMints.prefetch(addresses)])
+          },
+        }
+      : { goplus }
 
   // And the cheapest rejection of all: one that needs no request. A pool younger
   // than `minHistoryBars` bars CANNOT hold them, so it is refused by
@@ -407,10 +434,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         const { snapshot: examined } = await examineToken(
           {
             dex,
-            goplus,
+            // The same source the scan used, asked for ONE token: one request
+            // to Jupiter and one to the chain, a second or so, where it was
+            // GoPlus on its two-second interval plus a candle download.
+            ...securityFor(snapshot.chain),
             sellProbe: sellProbeFor(snapshot.chain),
             decimals: decimalsFor,
-            history,
+            ...(snapshot.chain === 'bsc' ? { history } : {}),
             // Recorded, so the next scan does not repeat an examination made
             // seconds ago. A fresh look is a fresh look whoever asked for it.
             securityCache: store,
@@ -425,12 +455,19 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // The candle price beside the market price, so `priceMismatch` decides
         // here too. `examineToken` fetches no candles at all now, so this is the
         // one place the door can ask.
+        //
+        // BSC only now. On Solana the tick makes the same check before any buy —
+        // `pricesDisagree` against the candle close — and a position it refuses
+        // to buy holds nothing and is released. Asking twice cost a throttled
+        // GeckoTerminal download per candidate at the door.
         let lastCandlePriceUsd: number | null = null
-        try {
-          const candles = await gecko.candles(examined.chain, examined.pairAddress, config.barSize, 2)
-          lastCandlePriceUsd = candles.close.at(-1) ?? null
-        } catch {
-          lastCandlePriceUsd = null
+        if (examined.chain === 'bsc') {
+          try {
+            const candles = await gecko.candles(examined.chain, examined.pairAddress, config.barSize, 2)
+            lastCandlePriceUsd = candles.close.at(-1) ?? null
+          } catch {
+            lastCandlePriceUsd = null
+          }
         }
         return { ...examined, lastCandlePriceUsd }
       }, gates, {
@@ -567,10 +604,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // production, and without it the whole thing is an offline
               // rehearsal. Every gap this project has paid for was out here.
               ...(betweenSteps ? { betweenSteps } : {}),
-              goplus,
+              // Jupiter and the chain on Solana, GoPlus on BSC — the SAME
+              // `securityFor` the door uses, so the two cannot disagree about
+              // what makes a token safe.
+              ...securityFor(chain),
               sellProbe: sellProbeFor(chain),
               decimals: decimalsFor,
-              history,
+              // GeckoTerminal's pool discovery was 142 of the first 184 seconds
+              // of a cold scan, measured, for a universe Jupiter's own lists
+              // cover in under two. BSC keeps it: it has no other index.
+              ...(chain === 'bsc' ? { history } : {}),
               // The permanent registry. It is the memory the discovery
               // providers do not have, and the operator's instruction about it
               // was one line: never delete it.
@@ -596,14 +639,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // candidate again, about 205 a chain against the provider that
               // rate-limits hardest — and most of them for tokens the ranking
               // had already discarded.
-              poolCandles: (snapshot) =>
-                // `+ 1` because `candles` discards the bar still being built.
-                // That compensation used to live inside `historyBars`, beside
-                // the discard, precisely so a caller could not get it wrong —
-                // and this is a new caller that bypasses it. Asking for exactly
-                // the threshold once produced 99 against a minimum of 100 and
-                // emptied the entire book.
-                gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, POOL_CANDLES),
+              //
+              // BSC only now. On Solana the scan asks Jupiter and the chain and
+              // NO candles: this stage was one GeckoTerminal download per
+              // candidate, up to one per funded slot, against the provider that
+              // rate-limits hardest. The unit check it made — `priceMismatch` —
+              // is made again by the tick before any buy, against the same
+              // candle feed, and the stop has its own second-source guard.
+              ...(chain === 'bsc'
+                ? {
+                    poolCandles: (snapshot: TokenSnapshot) =>
+                      // `+ 1` because `candles` discards the bar still being
+                      // built; see POOL_CANDLES.
+                      gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, POOL_CANDLES),
+                  }
+                : {}),
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

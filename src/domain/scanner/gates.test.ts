@@ -843,3 +843,49 @@ describe('the day-long collapse, measured on the book that paid for it', () => {
     expect(production({ priceChangePct: { h1: null, h6: null, h24: null } })).not.toContain('freefall')
   })
 })
+
+describe('the LP lock is the operator\'s to drop, and production dropped it', () => {
+  // *No, detenelo. Hagamos todo con Jupiter.* Asked directly whether to keep
+  // GoPlus for the survivors — the only source of the LP lock — or drop it,
+  // he dropped it. Jupiter does not carry the lock and the chain does not
+  // either, so production no longer asks the question.
+  //
+  // It is a POLICY switch rather than a deleted gate. STRICT keeps it on, so
+  // the gate's logic stays tested and the day it comes back it is one line.
+  const onAnLpTokenVenue = clean({ dexId: 'raydium' }, { lpLockedPct: null })
+
+  it('production does not ask', () => {
+    expect(evaluateGates(onAnLpTokenVenue, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('lpLocked')
+  })
+
+  it('the strict policy still does, and still fails closed on silence', () => {
+    expect(evaluateGates(onAnLpTokenVenue, STRICT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)).toContain('lpLocked:unknown')
+  })
+})
+
+describe('a known failure is reported before an unknown one', () => {
+  // The FIRST failure is the one the screen leads with, the one the door
+  // quotes when it refuses, and the one an operator reads as the reason. The
+  // scan now skips the sell quote for a token that already fails — the quote
+  // could only add failures — which leaves its honeypot unknown. Listed first,
+  // that unknown would present a mintable token as one that cannot be sold:
+  // true, and not why it was refused.
+  //
+  // "We know the dev can print more" says more than "we did not ask whether it
+  // sells", and that holds whether or not anything was skipped.
+  it('leads with what was established, not with what was not asked', () => {
+    const minty = clean({}, { honeypot: null, mintAuthorityActive: true })
+    const failures = evaluateGates(minty, STRICT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)
+    expect(failures[0]).toBe('mintAuthority:failed')
+    expect(failures).toContain('honeypot:unknown')
+  })
+
+  it('keeps each group in the order the gates were asked', () => {
+    // A stable reordering, not a new ranking: two known failures keep their
+    // relative order, and so do two unknowns.
+    const rug = clean({}, { honeypot: true, mintAuthorityActive: true, topHoldersPct: null })
+    expect(evaluateGates(rug, STRICT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`))
+      .toEqual(['honeypot:failed', 'mintAuthority:failed', 'topHolders:unknown'])
+  })
+})
+

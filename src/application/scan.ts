@@ -2,7 +2,7 @@ import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/mar
 import { type StatePort } from '../domain/persistence/store.js'
 import { type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
-import { evaluateMarketGates, forgivableFailures } from '../domain/scanner/gates.js'
+import { evaluateMarketGates, evaluateSafetyGates, forgivableFailures } from '../domain/scanner/gates.js'
 import { hoursSinceLastTrade } from './idle-hours.js'
 import { type Candles } from './replay.js'
 import { meetsMinimums, scoreOpportunity } from '../domain/scanner/opportunity.js'
@@ -79,7 +79,26 @@ export interface HistoryPort {
 
 export interface ScanDeps {
   readonly dex: DexScreener
-  readonly goplus: GoPlus
+  /**
+   * Optional since the scan moved to Jupiter and the chain. It answered one
+   * address per call on a fixed two-second interval and would not batch on
+   * Solana, verified live, and it was most of a twenty-minute scan. Still wired
+   * for BSC, where nothing else reads a contract's security.
+   */
+  readonly goplus?: GoPlus
+  /**
+   * What the chain itself says about a mint: the authorities, the transfer
+   * fee, and every Token-2022 power over holders — a permanent delegate, a
+   * pause switch, a transfer hook. Primary data rather than a vendor's reading.
+   */
+  readonly onChain?: { security(chain: Chain, address: string): Promise<Partial<SecurityReport> | null> }
+  /**
+   * Ask the batched sources about everything the loop is about to examine,
+   * ONCE, before it starts — a hundred mints per request — so that each
+   * token's own questions are memory reads. A failure here is not fatal: every
+   * token is still asked on its own, and fails closed if it must.
+   */
+  readonly prefetch?: (chain: Chain, addresses: readonly string[]) => Promise<void>
   /** Chain-appropriate sell probe. Without one, honeypot stays unknown and the gates fail closed. */
   readonly sellProbe?: SellProbePort
   readonly decimals: DecimalsPort
@@ -336,75 +355,72 @@ const UNKNOWN_SECURITY: SecurityReport = {
  */
 export async function examineToken(
   deps: ScanDeps,
-  config: Pick<ScanConfig, 'chain' | 'referenceUsd'>,
+  config: Pick<ScanConfig, 'chain' | 'referenceUsd'> & {
+    /**
+     * Whether a sell quote could still change anything. Handed in by the scan,
+     * which owns the gate policy; absent, every token is quoted as before.
+     */
+    readonly shouldProbe?: (provisional: TokenSnapshot) => boolean
+  },
   market: Omit<TokenSnapshot, 'security' | 'historyBars'>,
   at: number,
   record: (stage: ScanError['stage'], error: unknown) => void,
 ): Promise<{ readonly snapshot: TokenSnapshot; readonly slippagePct: number | null }> {
-  const askGoPlus = async (): Promise<Partial<SecurityReport> | null> => {
+  const ask = async (question: () => Promise<Partial<SecurityReport> | null>): Promise<Partial<SecurityReport> | null> => {
     try {
-      return await deps.goplus.securityReport(config.chain, market.address)
+      return await question()
     } catch (error) {
       record('security', error)
       return null
     }
   }
 
-  const askMetadataProvider = async (): Promise<{
-    audit: Partial<SecurityReport> | null
-    sell: SellAssessment | null
-  }> => {
-    let audit: Partial<SecurityReport> | null = null
-    if (deps.decimals.security) {
-      try {
-        audit = await deps.decimals.security(config.chain, market.address)
-      } catch (error) {
-        record('security', error)
-      }
-    }
-    if (!deps.sellProbe) return { audit, sell: null }
-    try {
-      const decimals = await deps.decimals.decimals(config.chain, market.address)
-      if (decimals === null || market.priceUsd <= 0) return { audit, sell: null }
-      const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
-      // One quote answers both questions: whether the token can be SOLD at
-      // all — the honeypot test, and the only one worth trusting because it
-      // is a fact rather than a third party's flag — and what the impact of
-      // a real order actually is.
-      return { audit, sell: await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd) }
-    } catch (error) {
-      record('quote', error)
-      return { audit, sell: null }
-    }
-  }
+  // Every OPINION first, the sell quote after. Once the scan has prefetched,
+  // these are memory reads — the chain and Jupiter each answered a hundred
+  // mints per request — and knowing them first is what lets the one real cost
+  // left, the quote, be skipped for a token that has already failed.
+  const [onChain, primary, audit] = await Promise.all([
+    deps.onChain ? ask(() => deps.onChain!.security(config.chain, market.address)) : Promise.resolve(null),
+    deps.goplus ? ask(() => deps.goplus!.securityReport(config.chain, market.address)) : Promise.resolve(null),
+    deps.decimals.security ? ask(() => deps.decimals.security!(config.chain, market.address)) : Promise.resolve(null),
+  ])
 
-  // NO candles here. The history count used to ride along in this parallel
-  // burst, once per AFFORDABLE token — about 105 a chain — and the ranking then
-  // discarded most of them. Candles come from the provider that rate-limits
-  // hardest, so those were the most expensive requests in the cycle and the
-  // ones with the least chance of mattering.
-  //
-  // The operator's rule: score them on what is FREE, keep the ones the budget
-  // can fund, and only then pay for candles. The count is measured in step 4b
-  // now, out of the one series that also answers bar freshness and the candle
-  // price — for the candidates alone.
-  const [primary, metadata] = await Promise.all([askGoPlus(), askMetadataProvider()])
-
-  // Merged in TRUST order, which the concurrency must not disturb: GoPlus
-  // first, then the metadata provider's audit, then venue heuristics.
-  // Danger from any source wins; unknowns fill in from the next.
+  // Merged in TRUST order: the chain's own account data first — primary facts,
+  // not a reading of them — then GoPlus where it is still wired (BSC), then
+  // Jupiter's audit, then venue heuristics. Danger from any source wins;
+  // unknowns fill in from the next.
   const opinions: Partial<SecurityReport>[] = []
+  if (onChain) opinions.push(onChain)
   if (primary) opinions.push(primary)
-  if (metadata.audit) opinions.push(metadata.audit)
+  if (audit) opinions.push(audit)
   if (config.chain === 'solana') opinions.push(lpLockFromVenue(market.dexId))
 
   let security: SecurityReport = opinions.length > 0 ? mergeSecurity(...opinions) : UNKNOWN_SECURITY
   let slippagePct: number | null = null
-  if (metadata.sell) {
-    // A probe result beats any reported flag, in both directions.
-    const { sellQuote } = metadata.sell
-    security = { ...security, honeypot: sellQuote === 'ok' ? false : sellQuote === 'unknown' ? security.honeypot : true }
-    slippagePct = metadata.sell.priceImpactPct
+
+  // The quote is skipped only where it cannot change a verdict. The gates can
+  // only ADD failures once the honeypot is known, so a token that already fails
+  // with the honeypot assumed CLEAN fails with any answer at all.
+  const provisional: TokenSnapshot = { ...market, security: { ...security, honeypot: false }, historyBars: null, securityChecked: true }
+  const worthQuoting = config.shouldProbe?.(provisional) ?? true
+
+  if (deps.sellProbe && worthQuoting) {
+    try {
+      const decimals = await deps.decimals.decimals(config.chain, market.address)
+      if (decimals !== null && market.priceUsd > 0) {
+        const amountRaw = BigInt(Math.floor((config.referenceUsd / market.priceUsd) * 10 ** decimals))
+        // One quote answers both questions: whether the token can be SOLD at
+        // all — the honeypot test, and the only one worth trusting because it
+        // is a fact rather than a third party's flag — and what the impact of
+        // a real order actually is.
+        const sell: SellAssessment = await deps.sellProbe.assessSell(market.address, amountRaw, decimals, config.referenceUsd)
+        // A probe result beats any reported flag, in both directions.
+        security = { ...security, honeypot: sell.sellQuote === 'ok' ? false : sell.sellQuote === 'unknown' ? security.honeypot : true }
+        slippagePct = sell.priceImpactPct
+      }
+    } catch (error) {
+      record('quote', error)
+    }
   }
 
   await deps.securityCache?.recordSecurity(config.chain, market.address, security, slippagePct, at)
@@ -783,6 +799,25 @@ export async function scanOnce(
     checking: Math.min(budget, unexamined.length),
   })
 
+  // Everything the loop is about to examine, asked in batches before it starts.
+  // A hundred mints per request to Jupiter and to the chain, against one
+  // address per call on a two-second interval before — measured at 3.5s a token
+  // over 137 tokens. A failure is recorded, never fatal: each token is still
+  // asked on its own below.
+  const toExamine = ordered.slice(0, budget).map((m) => m.address)
+  if (deps.prefetch && toExamine.length > 0) {
+    try {
+      await deps.prefetch(config.chain, toExamine)
+    } catch (error) {
+      errors.push({ address: 'prefetch', stage: 'security', error: String(error) })
+    }
+  }
+
+  // Whether a sell quote could still change the verdict: the gates can only
+  // ADD failures once the honeypot is known, so a token that fails its safety
+  // gates with the honeypot assumed clean fails whatever the quote says.
+  const shouldProbe = (provisional: TokenSnapshot) => evaluateSafetyGates(provisional, config.ranking.gates).passed
+
   let done = 0
   for (const market of ordered.slice(0, budget)) {
     done += 1
@@ -803,7 +838,7 @@ export async function scanOnce(
     const record = (stage: ScanError['stage'], error: unknown) =>
       errors.push({ address: market.address, stage, error: String(error) })
 
-    const { snapshot, slippagePct } = await examineToken(deps, config, market, scannedAt, record)
+    const { snapshot, slippagePct } = await examineToken(deps, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
     snapshots.push(snapshot)
     quality.set(tokenKey(snapshot), {
       liquidityUsd: market.liquidityUsd,

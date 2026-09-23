@@ -35,17 +35,62 @@ export interface JupiterTokenInfo {
 }
 
 export class JupiterTokens implements DecimalsPort {
-  private readonly cache = new Map<string, JupiterTokenInfo | null>()
+  private readonly cache = new Map<string, { info: JupiterTokenInfo | null; at: number }>()
+  private readonly now: () => number
+  private readonly maxAgeMs: number
 
   constructor(
     private readonly http: HttpGet,
     private readonly throttle: Throttle = NO_THROTTLE,
     private readonly base: string = JUPITER_LITE_BASE,
-  ) {}
+    options: { readonly now?: () => number; readonly maxAgeMs?: number } = {},
+  ) {
+    this.now = options.now ?? Date.now
+    // A minute. Holder concentration and the authorities are SAFETY gates, and
+    // the door re-asks them before money moves; an answer that never expired
+    // would let it approve on one from the previous pass.
+    this.maxAgeMs = options.maxAgeMs ?? 60_000
+  }
+
+  private fresh(mint: string): { info: JupiterTokenInfo | null } | undefined {
+    const hit = this.cache.get(mint)
+    return hit && this.now() - hit.at <= this.maxAgeMs ? hit : undefined
+  }
+
+  private remember(mint: string, info: JupiterTokenInfo | null): void {
+    this.cache.set(mint, { info, at: this.now() })
+  }
+
+  /**
+   * Ask for many mints at once, a hundred per request.
+   *
+   * *Hagamos todo con Jupiter.* The search endpoint takes a comma-separated
+   * list — a hundred mints answered in 0.49s, measured — and the scan was
+   * asking one at a time. What `discover` already brought is skipped: the
+   * universe's own lists arrive with everything this would fetch.
+   */
+  async prefetch(mints: readonly string[]): Promise<void> {
+    const missing = [...new Set(mints)].filter((m) => this.fresh(m) === undefined)
+    for (let i = 0; i < missing.length; i += 100) {
+      const batch = missing.slice(i, i + 100)
+      await this.throttle.wait()
+      const response = await this.http(`${this.base}/tokens/v2/search?query=${batch.map(encodeURIComponent).join(',')}`)
+      // A refused request is not an answer about any mint: nothing cached.
+      if (response.status !== 200) continue
+      const body = (await response.json()) as unknown
+      const found = new Map<string, JupiterTokenInfo>()
+      for (const token of Array.isArray(body) ? (body as JupiterTokenInfo[]) : []) {
+        if (typeof token.id === 'string') found.set(token.id, token)
+      }
+      // Search is fuzzy, so only an exact id counts — and a mint it did not
+      // return is remembered as unknown rather than re-asked one by one.
+      for (const mint of batch) this.remember(mint, found.get(mint) ?? null)
+    }
+  }
 
   async info(mint: string): Promise<JupiterTokenInfo | null> {
-    const cached = this.cache.get(mint)
-    if (cached !== undefined) return cached
+    const cached = this.fresh(mint)
+    if (cached !== undefined) return cached.info
 
     await this.throttle.wait()
     const response = await this.http(`${this.base}/tokens/v2/search?query=${encodeURIComponent(mint)}`)
@@ -54,7 +99,7 @@ export class JupiterTokens implements DecimalsPort {
     const list = Array.isArray(body) ? (body as JupiterTokenInfo[]) : []
     // Search is fuzzy; only an exact mint match is the token we asked about.
     const match = list.find((t) => t.id === mint) ?? null
-    this.cache.set(mint, match)
+    this.remember(mint, match)
     return match
   }
 
@@ -86,7 +131,7 @@ export class JupiterTokens implements DecimalsPort {
       for (const token of body as JupiterTokenInfo[]) {
         if (typeof token.id === 'string') {
           seen.add(token.id)
-          this.cache.set(token.id, token) // free metadata for the security pass
+          this.remember(token.id, token) // free metadata for the security pass
         }
       }
     }

@@ -810,7 +810,7 @@ describe('scanOnce — the door is asked BEFORE anything is paid for', () => {
     })
     const spy: ScanDeps = {
       ...deps,
-      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
+      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus!.securityReport(c, a) } } as NonNullable<ScanDeps['goplus']>,
     }
     // A door nothing can clear.
     await scanOnce(spy, { ...config, ranking: { ...config.ranking, minScore: 999 } })
@@ -829,7 +829,7 @@ describe('scanOnce — the door is asked BEFORE anything is paid for', () => {
     })
     const spy: ScanDeps = {
       ...deps,
-      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
+      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus!.securityReport(c, a) } } as NonNullable<ScanDeps['goplus']>,
     }
     await scanOnce(spy, { ...config, ranking: { ...config.ranking, minScore: 0, requireRising: false } })
     expect(paid).toEqual(['good'])
@@ -851,7 +851,7 @@ describe('scanOnce — the door is asked BEFORE anything is paid for', () => {
     })
     const spy: ScanDeps = {
       ...deps,
-      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus.securityReport(c, a) } } as ScanDeps['goplus'],
+      goplus: { securityReport: async (c: 'solana' | 'bsc', a: string) => { paid.push(a); return deps.goplus!.securityReport(c, a) } } as NonNullable<ScanDeps['goplus']>,
     }
     await scanOnce(spy, { ...config, held: ['ours'], ranking: { ...config.ranking, minScore: 999 } })
     expect(paid).toEqual(['ours'])
@@ -1023,3 +1023,85 @@ describe('scanOnce — the registry is the memory the providers do not have', ()
     expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['seen'])
   })
 })
+
+describe('scanOnce — Jupiter and the chain, no GoPlus', () => {
+  // *Es una consulta de unos segundos y la estamos haciendo demorar más de
+  // veinte minutos... hagamos todo con Jupiter.* Measured cold before the
+  // change: 142s discovering pools on GeckoTerminal, 184s before the first
+  // token was examined, then 3.5s a token for 137 tokens — GoPlus answers one
+  // address per call on a fixed two-second interval.
+  //
+  // Jupiter answers a hundred mints in half a second with the authorities and
+  // holder concentration; the chain answers a hundred with every Token-2022
+  // extension. Both are asked ONCE, in batches, before the loop, and the loop
+  // reads what they said.
+
+  const discovery = {
+    [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }, { chainId: 'solana', tokenAddress: 'minty' }] },
+    [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    [`${DEXSCREENER_BASE}/tokens/v1/solana/good,minty`]: { body: [pair('good'), pair('minty')] },
+  }
+
+  const rig = (onChainFor: (address: string) => Partial<SecurityReport> = () => ({
+    mintAuthorityActive: false, freezeAuthorityActive: false, transferTaxPct: 0, hasBlacklist: false,
+  })) => {
+    const { deps } = build(discovery)
+    const { goplus: _unused, ...withoutGoPlus } = deps
+    const probed: string[] = []
+    const prefetched: string[][] = []
+    const scanDeps: ScanDeps = {
+      ...withoutGoPlus,
+      decimals: {
+        decimals: async () => 6,
+        security: async () => ({ mintAuthorityActive: false, freezeAuthorityActive: false, topHoldersPct: 20, creatorPct: 1 }),
+      },
+      onChain: { security: async (_chain, address) => onChainFor(address) },
+      prefetch: async (_chain, addresses) => { prefetched.push([...addresses]) },
+      sellProbe: {
+        assessSell: async (address) => { probed.push(address); return { sellQuote: 'ok', priceImpactPct: 0.1 } },
+      },
+    }
+    return { scanDeps, probed, prefetched }
+  }
+
+  it('finds a clean token with no GoPlus at all', async () => {
+    const { scanDeps } = rig()
+    const outcome = await scanOnce(scanDeps, config)
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
+  })
+
+  it('asks for everything it will examine ONCE, before the loop', async () => {
+    const { scanDeps, prefetched } = rig()
+    await scanOnce(scanDeps, config)
+    expect(prefetched).toHaveLength(1)
+    expect([...prefetched[0]!].sort()).toEqual(['good', 'minty'])
+  })
+
+  it('does not spend a sell quote on a token that already failed', async () => {
+    // The quote is the one cost left per token. A live mint authority fails
+    // closed whatever the quote would say, so asking would change no verdict —
+    // the gates can only ADD failures once the honeypot is known.
+    const { scanDeps, probed } = rig((address) => ({
+      mintAuthorityActive: address === 'minty', freezeAuthorityActive: false, transferTaxPct: 0, hasBlacklist: false,
+    }))
+    const outcome = await scanOnce(scanDeps, config)
+    expect(probed).toEqual(['good'])
+    expect(outcome.candidates.map((c) => c.snapshot.address)).not.toContain('minty')
+  })
+
+  it('reads the chain\'s verdict: a permanent delegate is a blacklist', async () => {
+    const { scanDeps } = rig((address) => ({
+      mintAuthorityActive: false, freezeAuthorityActive: false, transferTaxPct: 0, hasBlacklist: address === 'minty',
+    }))
+    const outcome = await scanOnce(scanDeps, config)
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
+  })
+
+  it('a failed prefetch is not fatal — each token is still asked, and fails closed if it must', async () => {
+    const { scanDeps } = rig()
+    const outcome = await scanOnce({ ...scanDeps, prefetch: async () => { throw new Error('rpc down') } }, config)
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
+  })
+})
+

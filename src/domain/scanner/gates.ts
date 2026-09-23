@@ -74,6 +74,15 @@ export interface GatePolicy {
   readonly minHourlyTxns: number
   readonly maxTransferTaxPct: number
   readonly minLpLockedPct: number
+  /**
+   * Whether the LP lock is asked at all.
+   *
+   * REQUIRED, so every policy has to say which it is. The operator dropped it
+   * when the scan moved to Jupiter and the chain: GoPlus was the only source of
+   * the lock and neither of those carries it, and asked directly — keep GoPlus
+   * for the survivors, or drop it — he dropped it. *Hagamos todo con Jupiter.*
+   */
+  readonly requireLpLock: boolean
   readonly maxTopHoldersPct: number
   readonly maxCreatorPct: number
   /**
@@ -259,6 +268,9 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   minHourlyTxns: 4,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
+  // Not asked: see `requireLpLock`. The threshold stays because the death
+  // watch still reads it for venues that report a lock.
+  requireLpLock: false,
   // EIGHTY, and the operator named the trade: *subilo al 80%, nos vamos a
   // arriesgar.*
   //
@@ -379,6 +391,8 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
  */
 export const STRICT_GATE_POLICY: GatePolicy = {
   ...DEFAULT_GATE_POLICY,
+  // Kept ON, so the gate's logic stays tested after production stopped asking.
+  requireLpLock: true,
   minLiquidityUsd: 20_000,
   minVolume24hUsd: 10_000,
   maxFallPct: 50,
@@ -664,7 +678,7 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   // An LP lock can only exist where LP tokens exist. On concentrated venues
   // the gate is skipped — not passed — and the liquidity gate plus the death
   // exit's monitoring carry the defense. See lp-model.ts.
-  if (lpModelOf(snapshot.dexId, snapshot.dexLabels) === 'lp-token') {
+  if (policy.requireLpLock && lpModelOf(snapshot.dexId, snapshot.dexLabels) === 'lp-token') {
     if (s.lpLockedPct === null) failures.push(fail('lpLocked', 'unknown', 'LP lock status unknown'))
     else if (s.lpLockedPct < policy.minLpLockedPct) {
       failures.push(fail('lpLocked', 'failed', `LP locked ${s.lpLockedPct}% < ${policy.minLpLockedPct}%`))
@@ -760,7 +774,14 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
     failures.push(fail('idle', 'failed', `${lastHour} operaciones en la última hora, menos de ${policy.minHourlyTxns} — con barras de 15m eso deja barras vacías, y una barra vacía no existe para la estrategia`))
   }
 
-  return { passed: failures.length === 0, failures }
+  // What was ESTABLISHED leads, what was not asked follows — a stable split, so
+  // each group keeps the order the gates were asked in. The first failure is
+  // the reason the screen shows and the door quotes, and "the dev can still
+  // mint" says more than "nobody asked whether it sells". It mattered once the
+  // scan began skipping the sell quote for tokens that already fail: an unknown
+  // honeypot listed first would present a mintable token as an unsellable one.
+  const ordered = [...failures.filter((f) => f.reason === 'failed'), ...failures.filter((f) => f.reason !== 'failed')]
+  return { passed: ordered.length === 0, failures: ordered }
 }
 
 /**

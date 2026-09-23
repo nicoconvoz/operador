@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { JupiterTokens } from './jupiter-tokens.js'
 import { JUPITER_LITE_BASE } from './jupiter.js'
-import { stubHttp } from '../../http.js'
+import { stubHttp, type HttpGet } from '../../http.js'
 
 const BONK = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'
 
@@ -80,3 +80,55 @@ describe('JupiterTokens — discovery asks for everything the provider gives', (
     expect(asked.some((t) => t.includes('toporganicscore'))).toBe(true)
   })
 })
+
+describe('JupiterTokens — a hundred mints per request', () => {
+  // *Hagamos todo con Jupiter.* The search endpoint takes a comma-separated
+  // list and answered a hundred mints in 0.49s, measured — the scan was asking
+  // one at a time. The universe's own lists already arrive with everything; this
+  // is for the rest: the book, DexScreener's boosts, the registry.
+  const recorder = (answer: (mints: string[]) => unknown[] = (mints) => mints.map((id) => ({ ...bonk, id }))) => {
+    const asked: string[][] = []
+    const http: HttpGet = async (u) => {
+      const mints = decodeURIComponent(u.slice(url.length)).split(',')
+      asked.push(mints)
+      return { status: 200, json: async () => answer(mints) }
+    }
+    return { http, asked }
+  }
+
+  it('asks in batches of a hundred', async () => {
+    const { http, asked } = recorder()
+    await new JupiterTokens(http).prefetch(Array.from({ length: 250 }, (_, i) => `M${i}`))
+    expect(asked.map((a) => a.length)).toEqual([100, 100, 50])
+  })
+
+  it('answers from the batch without asking again', async () => {
+    const { http, asked } = recorder()
+    const tokens = new JupiterTokens(http)
+    await tokens.prefetch(['A', 'B'])
+    expect(await tokens.decimals('solana', 'A')).toBe(5)
+    expect(await tokens.security('solana', 'B')).not.toBeUndefined()
+    expect(asked).toHaveLength(1)
+  })
+
+  it('does not re-ask for what the universe lists already brought', async () => {
+    const { http, asked } = recorder()
+    const tokens = new JupiterTokens(http)
+    await tokens.prefetch(['A'])
+    await tokens.prefetch(['A', 'B'])
+    expect(asked).toEqual([['A'], ['B']])
+  })
+
+  it('re-asks once an answer is older than a minute', async () => {
+    // Holder concentration is a safety gate and the door re-asks it before
+    // money moves. An answer that never expired would approve on an old one.
+    let clock = 0
+    const { http, asked } = recorder()
+    const tokens = new JupiterTokens(http, undefined, undefined, { now: () => clock, maxAgeMs: 60_000 })
+    await tokens.prefetch(['A'])
+    clock += 61_000
+    await tokens.security('solana', 'A')
+    expect(asked).toHaveLength(2)
+  })
+})
+
