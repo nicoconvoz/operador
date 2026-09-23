@@ -2,57 +2,21 @@ import { describe, it, expect } from 'vitest'
 import { productionDoors, DEFAULT_MIN_SCORE, DEFAULT_COMPONENT_FLOORS, DEFAULT_ENTRY_DOORS } from './production-doors.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
-  it('is ONE floor for everything held and listed: what the token charges', () => {
-    // `momentum` and `headroom` were removed after the operator relaunched with
-    // the momentum rule on and the engine opened THREE positions where the rule
-    // had thirty-seven candidates.
-    //
-    // Both asked the question the rule now asks, and asked it worse. The
-    // momentum component is BINARY — one when h24 or h1 cleared 1%, zero
-    // otherwise — so a floor of 0.5 meant "the hour must be at least one
-    // percent", while the rule requires the hour above ZERO. A token up 0.4% in
-    // the hour passed his rule and was killed by a floor set for a different
-    // strategy: not a stricter version of his decision, a silent override of it.
-    //
-    // `headroom` was worse. It is one for anything not falling 3% in the hour,
-    // so everything the rule admits passes it and the floor can never cut. A
-    // dead knob, and a dead knob is worse than a wrong one, because the next
-    // reader tunes it and nothing happens.
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ costEfficiency: 0.3 })
-  })
-
-  it('opens a FIRST buy only on volume expansion and trend, both above half', () => {
-    // *Para la primera compra vamos a basarnos en otra cosa: en la expansión
-    // del volumen más del 50% y tendencia más del 50%.* The operator. An ENTRY
-    // door, not a floor: a position already held is never judged by why it
-    // was bought, so a volume burst cooling off does not rotate it out.
-    // And a second way in: *si superan el 25% de expansión del volumen y
-    // tendencia más del 70% positiva, entonces inicia.* Either door opens it.
-    expect(DEFAULT_ENTRY_DOORS).toEqual([
-      { volumeExpansion: 0.5, momentum: 0.5 },
-      { volumeExpansion: 0.25, momentum: 0.7 },
-    ])
-    expect(DEFAULT_COMPONENT_FLOORS.buyPressure).toBeUndefined()
-    expect(productionDoors({}).entryDoors).toEqual(DEFAULT_ENTRY_DOORS)
-  })
-
-  it('keeps the TOLL, and that is not an oversight', () => {
-    // *Sacá todos los filtros* was about what makes a token interesting. This
-    // one answers what it CHARGES, which is a different question, and it
-    // matters MORE under a strategy whose positions turn over in minutes:
-    // every round trip pays it in full. PURR charged 15.55% a round trip and
-    // was bought anyway, because an average can always be carried by its other
-    // terms and a floor cannot.
-    expect(DEFAULT_COMPONENT_FLOORS.costEfficiency).toBe(0.3)
-    expect(DEFAULT_COMPONENT_FLOORS.momentum).toBeUndefined()
-    expect(DEFAULT_COMPONENT_FLOORS.headroom).toBeUndefined()
-  })
-
-  it('opens the score door at 75 — every condition, plus the score', () => {
-    // *Hacé que sólo sean candidatas las que ya cumplan todas las condiciones,
-    // sumada la condición de puntaje arriba de 75.*
+  it('asks a candidate ONE thing: trend at 100%', () => {
+    // *Ahora el filtro de entrada es sólo este, que tengan 100% de tendencia
+    // en verde — y la única condición para traer candidatas.* The operator.
+    // Trend is binary — one when the hour or the day rose 1% or more — so
+    // 100% means rising. The toll floor (0.3) and the score door (75) are
+    // gone with this; the SAFETY gates are not conditions of this kind and
+    // stay, as they always do.
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ momentum: 1 })
+    expect(DEFAULT_MIN_SCORE).toBe(0)
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
-    expect(DEFAULT_MIN_SCORE).toBe(75)
+  })
+
+  it('asks nothing more for a first buy — the one condition already made it a candidate', () => {
+    expect(DEFAULT_ENTRY_DOORS).toEqual([])
+    expect(productionDoors({}).entryDoors).toEqual([])
   })
 
   it('keeps the reserve OFF — a token that fails any gate is not a candidate', () => {

@@ -58,37 +58,15 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  * not a passing one.
  */
 export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
-  // `momentum` and `headroom` are GONE, and the reason is measured rather than
-  // preferred. The operator relaunched with the momentum rule on and the engine
-  // opened THREE positions where the rule had thirty-seven candidates.
+  // *Ahora el filtro de entrada es sólo este, que tengan 100% de tendencia en
+  // verde — y la única condición para traer candidatas.* The operator. Trend
+  // is binary, one when the hour or the day rose 1% or more, so a floor of one
+  // means rising. The toll floor (costEfficiency 0.3) left with this; the
+  // SAFETY gates are not conditions of this kind and stay.
   //
-  // Both floors ask the question the rule now asks, and ask it worse:
-  //
-  //   momentum = (h24 >= 1% || h1 >= 1%) ? 1 : 0, floored at 0.5
-  //
-  // Binary, so a floor of 0.5 means "must be 1" — h1 at least ONE percent. The
-  // rule requires h1 above ZERO. So a token up 0.4% in the hour passed the
-  // operator's rule and was killed by a floor that had been set for a different
-  // strategy. It was not a stricter version of his decision; it was silently
-  // overriding it.
-  //
-  //   headroom = h1 < -3% ? 0 : 1, floored at 0.3
-  //
-  // Worse: anything the rule admits is rising, so headroom is always 1 and the
-  // floor can never cut. A dead knob, and a dead knob is worse than a wrong one
-  // because the next reader tunes it and nothing happens.
-  //
-  // The rule replaces both, across THREE windows instead of two, and it reads
-  // the five minutes that neither of them could see.
-  //
-  // `costEfficiency` STAYS, and it is not an oversight against *sacá todos los
-  // filtros*. It answers a different question — what the token charges to trade
-  // it, not whether it is moving — and it matters MORE under this strategy, not
-  // less: positions turn over in minutes and every round trip pays the toll in
-  // full. At 0.3 it admits anything under about a 2.8% round trip, and PURR
-  // charged 15.55%.
-  costEfficiency: 0.3,
-
+  // A floor also turns the switch on a position held: one that stops rising
+  // may rotate, and only above what its round trip costs.
+  momentum: 1,
 }
 
 /**
@@ -133,19 +111,19 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
  * out for the way they were bought. What a held position answers to is who is
  * trading it now: buy pressure adds, sell pressure sells.
  *
- * TWO doors, either one opens it. The second is the operator's addition: *si
+ * EMPTY now: the one condition — trend at 100% — became a floor, so every
+ * candidate already meets it. The doors below it were, in order: expansion and
+ * trend above half; then a second way in, *si
  * superan el 25% de expansión del volumen y tendencia más del 70% positiva,
  * entonces inicia.* Stated rather than discovered later: trend is binary
  * today — rising or not — so above 70% and above half mean the same thing,
  * and the second door covers the first. They stay separate so each keeps its
  * meaning the day trend is measured by degree.
  */
-export const DEFAULT_ENTRY_DOORS: readonly ComponentFloors[] = [
-  { volumeExpansion: 0.5, momentum: 0.5 },
-  { volumeExpansion: 0.25, momentum: 0.7 },
-]
+export const DEFAULT_ENTRY_DOORS: readonly ComponentFloors[] = []
 
-export const DEFAULT_MIN_SCORE = 75
+// OPEN: trend at 100% is the one condition for a candidate. It was 75.
+export const DEFAULT_MIN_SCORE = 0
 
 export interface ProductionDoors {
   /** The binary key. Below any floor the token is neither candidate nor reserve. */
