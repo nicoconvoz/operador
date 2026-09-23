@@ -1121,8 +1121,9 @@ describe('refusesToSellAtALoss — the break-even exit is NOT a risk exit any mo
     expect(refusesToSellAtALoss({ kind: 'closeAll', comment: BREAK_EVEN_COMMENT }, 1, 1.001)).toBe(false)
   })
 
-  it('lets the buyers-gone exit through at any price — the operator sells it as it is', () => {
-    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '📉 Sin compradores' }, 1, 0.9)).toBe(false)
+  it('refuses the buyers-gone exit under cost — *que no tengamos pérdidas*', () => {
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '📉 Sin compradores' }, 1, 0.9)).toBe(true)
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '📉 Sin compradores' }, 1, 1.02)).toBe(false)
   })
 
   it('still lets the two exits for a dead asset through at any price', () => {

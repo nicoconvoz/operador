@@ -82,6 +82,8 @@ const rig = async (options: {
               return seen[Math.min(countRequests++, seen.length - 1)]!
             },
             previous: new Map<string, number>(),
+            gone: new Set<string>(),
+            gasUsdPerSwap: 0.05,
           },
         }),
   }
@@ -171,35 +173,70 @@ describe('the ladder, bought when buyers push through 1%', () => {
   })
 })
 
-describe('the sale when buyers fall through 1% — sold as it is', () => {
-  // *La venta se va a realizar no si la presión vendedora aumenta a más de 1%,
-  // sino si la presión compradora cae 1%.* The mirror of the rung, on the same
-  // reading and the same memory.
+describe('the sale when buyers fall through 1% — only with a positive margin', () => {
+  // *La venta se va a realizar si la presión compradora cae 1%* — and then:
+  // *asegurate que haya margen positivo, para que no tengamos pérdidas ni
+  // comisiones innecesarias.* Measured on the first eight: all eight closed in
+  // the red. So the buyers leaving MARKS the position, and it is sold once it
+  // is up by more than its whole round trip — about 0.77% here: the fee paid
+  // entering, the spread and impact of leaving, one swap of gas.
   const sells = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'sell')
+  const fell = [{ buys: 60, sells: 40 }, { buys: 50, sells: 50 }]
 
-  it('sells everything, at a loss too, on the sweep that sees buy pressure fall through 1%', async () => {
-    const { store, sent, run } = await rig({ counts: [{ buys: 60, sells: 40 }, { buys: 50, sells: 50 }] })
+  it('HOLDS a position under water when its buyers fall through — no loss, no needless fee', async () => {
+    const { store, run } = await rig({ counts: fell })
     await run(0.94)
+    expect(await run(0.94)).toEqual([])
     expect(await sells(store)).toEqual([])
-    expect(await run(0.94)).toEqual([ID])
-    const sale = (await sells(store))[0]
-    expect(sale?.comment).toBe('📉 Sin compradores')
-    expect(sale!.price).toBeLessThan(1)
-    expect((await store.loadPositions()).map((p) => p.id)).toEqual([])
+    expect((await store.loadPositions()).map((p) => p.id)).toEqual([ID])
+  })
+
+  it('holds one up by LESS than its round trip — the fees would eat the gain', async () => {
+    const { store, run } = await rig({ counts: fell })
+    await run(1.005)
+    await run(1.005)
+    expect(await sells(store)).toEqual([])
+  })
+
+  it('sells at once when the gain already clears the whole round trip', async () => {
+    const { store, sent, run } = await rig({ counts: fell })
+    await run(1.02)
+    expect(await run(1.02)).toEqual([ID])
+    expect((await sells(store))[0]?.comment).toBe('📉 Sin compradores')
     expect(sent.some((a) => a.title.includes('sin compradores'))).toBe(true)
+  })
+
+  it('sells a marked position LATER, once the gain clears the trip and the buyers are still gone', async () => {
+    const { store, run } = await rig({ counts: [...fell, { buys: 50, sells: 50 }] })
+    await run(0.94)
+    await run(0.94)
+    expect(await run(1.02)).toEqual([ID])
+    expect((await sells(store))[0]!.price).toBeGreaterThan(1)
+  })
+
+  it('clears the mark when buyers come back — they did not leave after all', async () => {
+    const { store, run } = await rig({ counts: [...fell, { buys: 60, sells: 40 }, { buys: 60, sells: 40 }] })
+    await run(0.94)
+    await run(0.94)
+    await run(0.94)
+    await run(1.02)
+    expect(await sells(store)).toEqual([])
+    // *En el peor de los casos tenemos el DCA para promediar.* The buyers came
+    // back at 0.94, so the rung bought there — averaging down, as intended.
+    expect((await store.fillsFor(ID)).filter((f) => f.side === 'buy')).toHaveLength(2)
   })
 
   it('does NOT sell a position whose buyers never led — the first buy does not read buy pressure', async () => {
     const { store, run } = await rig({ counts: [{ buys: 50, sells: 50 }, { buys: 40, sells: 60 }] })
-    await run(0.94)
-    await run(0.94)
+    await run(1.02)
+    await run(1.02)
     expect(await sells(store)).toEqual([])
   })
 
   it('does NOT sell at a price the candle feed does not confirm', async () => {
-    const { store, run } = await rig({ held: position({ lastPriceUsd: 0.000001 }), counts: [{ buys: 60, sells: 40 }, { buys: 50, sells: 50 }] })
-    await run(0.94)
-    await run(0.94)
+    const { store, run } = await rig({ held: position({ lastPriceUsd: 0.000001 }), counts: fell })
+    await run(1.02)
+    await run(1.02)
     expect(await sells(store)).toEqual([])
   })
 })

@@ -1,9 +1,9 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
-import { positionLedger, tokenNetUsd } from './ledger.js'
+import { positionLedger, tokenNetUsd, openLotCostsUsd } from './ledger.js'
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { minProfitPctFor, roundTripCostForFill, stopForRatio } from '../domain/economics/sizing.js'
+import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import type { BrokerPort } from '../domain/execution/broker.js'
 import type { PersistedFill, PersistedPosition, StatePort } from '../domain/persistence/store.js'
@@ -176,6 +176,14 @@ export interface PressureLadder {
    * Owned by the caller, so the cycle's sweeps and the loop's share one memory.
    */
   readonly previous: Map<string, number>
+  /**
+   * Positions whose buyers fell through 1% and have not come back: MARKED to
+   * leave, and sold the first sweep their gain clears the whole round trip.
+   * Owned by the caller, like `previous`.
+   */
+  readonly gone: Set<string>
+  /** Gas per swap, for what leaving would cost. */
+  readonly gasUsdPerSwap: number
 }
 
 export interface StopSweepDeps {
@@ -424,9 +432,23 @@ async function actOnPressure(
   const trades = counts.buys + counts.sells
   const line = `${(ladder.policy.threshold * 100).toFixed(0)}%`
 
-  // *La venta se va a realizar si la presión compradora cae 1%.* Sold as it
-  // is — exempt from the no-loss guard by its own comment.
-  if (buyersFellThrough({ previous, now }, ladder.policy.threshold)) {
+  // *La venta se va a realizar si la presión compradora cae 1%* — and then
+  // *asegurate que haya margen positivo, para que no tengamos pérdidas ni
+  // comisiones innecesarias.* The first eight all closed in the red: buyers
+  // leave as the price turns. So their leaving MARKS the position, and it is
+  // sold the first sweep it is up by more than its whole round trip — the
+  // fees paid entering plus the cost of leaving now. Buyers coming back clear
+  // the mark: they did not leave after all.
+  if (buyersFellThrough({ previous, now }, ladder.policy.threshold)) ladder.gone.add(position.id)
+  if (now !== null && now > ladder.policy.threshold) ladder.gone.delete(position.id)
+  if (ladder.gone.has(position.id)) {
+    const ledger = positionLedger(fills)
+    if (ledger.avgCostUsd === null || !(ledger.qty > 0)) return null
+    const standing = (price / ledger.avgCostUsd - 1) * 100
+    const toll = positionTollPct(openLotCostsUsd(fills), ledger.deployedUsd, ledger.qty * price, position.quality, ladder.gasUsdPerSwap)
+    // Marked and not yet clear: held, and no rung is bought into a token its
+    // buyers just left.
+    if (!(standing > toll)) return null
     const broker = await deps.brokerFor(position)
     const refused = await settle(
       [{ kind: 'closeAll', comment: BUYERS_GONE_COMMENT }],
@@ -440,10 +462,11 @@ async function actOnPressure(
     if (refused) return null
     await deps.store.closePosition(position.id)
     ladder.previous.delete(position.id)
+    ladder.gone.delete(position.id)
     const gone = alert(
       'token-rotated',
-      `📉 ${position.symbol} sin compradores: se vendió como estaba`,
-      `La presión compradora cayó del ${line} (${counts.buys} compras de ${trades} en la última hora). Se vendió todo a ${price}. El token NO queda vetado.`,
+      `📉 ${position.symbol} sin compradores: salió con ganancia`,
+      `Los compradores se fueron — la presión compradora cayó del ${line} (${counts.buys} compras de ${trades} en la última hora) — y va +${standing.toFixed(2)}%, más que el ${toll.toFixed(2)}% que cuesta el viaje. Se vendió todo a ${price}. El token NO queda vetado.`,
       at,
       { position: position.id, token: position.tokenAddress },
     )

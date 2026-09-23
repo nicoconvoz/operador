@@ -1,6 +1,5 @@
 import { type AlertPort, AlertThrottle, alert } from '../domain/notifications/alerts.js'
 import { ROTATION_EXIT_COMMENT } from '../domain/risk/rotation.js'
-import { BUYERS_GONE_COMMENT } from '../domain/strategy/pressure-ladder.js'
 import { applyDeathVerdict, assessAssetHealth, DEFAULT_DEATH_EXIT_POLICY, DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT, type AssetHealthObservation, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { idempotencyKeyFor, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { stepCascade } from '../domain/strategy/cascade.js'
@@ -667,11 +666,10 @@ export function refusesToSellAtALoss(
   if (
     order.comment === DEATH_EXIT_COMMENT ||
     order.comment === FROZEN_EXIT_COMMENT ||
-    order.comment === STOP_LOSS_COMMENT ||
-    // *Si la presión compradora cae 1%, se vende como esté.* The operator's
-    // order, and it is his to give: the buyers left, so the position leaves
-    // at whatever the market pays.
-    order.comment === BUYERS_GONE_COMMENT
+    order.comment === STOP_LOSS_COMMENT
+    // The buyers-gone sale is NOT exempt: *asegurate que haya margen positivo,
+    // para que no tengamos pérdidas.* It only sells above the whole round trip,
+    // and this guard is the second lock on that.
     // The break-even is NOT exempt any more. It was, on the argument that the
     // alternative was riding the position down to the stop — and there is no
     // stop now: *no cierres en negativo; sólo el death o congelamiento.* Three

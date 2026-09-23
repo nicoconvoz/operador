@@ -342,6 +342,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         return market ? { buys: market.txns.h1.buys, sells: market.txns.h1.sells } : null
       },
       previous: new Map<string, number>(),
+      gone: new Set<string>(),
+      gasUsdPerSwap: config.gasUsdPerSwap,
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
