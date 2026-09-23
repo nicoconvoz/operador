@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -54,6 +54,8 @@ export interface CycleDeps {
    * that runs the stop. Absent: no ladder.
    */
   readonly pressureLadder?: PressureLadder
+  /** The one-step ladder on price: a rung once the price has halved. */
+  readonly dropLadder?: DropLadder
   /**
    * What the MARKET says every held token is worth, keyed `chain:address`.
    *
@@ -200,6 +202,12 @@ export interface CycleConfig {
    * *Cuando el puntaje cae 5 puntos, SL.* Absent or zero: off.
    */
   readonly scoreStopPoints?: number
+  /**
+   * Whether a held position rotates out when its filter switches off. Absent
+   * means yes, as it always has; production turns it off — *lo demás, sólo
+   * salí si el TP se cumple.*
+   */
+  readonly rotateOnFilter?: boolean
   /** Passed through to the tick, which derives the exit target from it. */
   readonly maxCostSharePct?: number
   /**
@@ -756,7 +764,7 @@ export async function runCycle(
       if (throttle.shouldSend(cut, `score-stop:${position.id}`)) await deps.alerts.send(cut)
     }
 
-    const rotations = rotateOnSwitchOff(
+    const rotations = config.rotateOnFilter === false ? [] : rotateOnSwitchOff(
       recovery.positions.map((r) => {
         const key = `${r.position.chain}:${r.position.tokenAddress}`
         const off = offNow.get(key)

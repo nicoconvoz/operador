@@ -202,6 +202,12 @@ export interface RuntimeConfig {
    * no longer bounded by how strict the rules are.
    */
   readonly usdPerToken: number | null
+  /** Whether a held position rotates out when its filter switches off. */
+  readonly rotateOnFilter: boolean
+  /** Whether the buy-pressure ladder and its sale run at all. */
+  readonly pressure: boolean
+  /** How far under the last buy the one DCA rung buys, in percent. */
+  readonly dcaDropPct: number
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -312,6 +318,9 @@ const numberOrZero = (env: Env, key: string, fallback: number): number => {
  * safe direction for a switch whose job is to recover capital: the failure it
  * guards against is money stuck in a position nobody can trade.
  */
+/** OFF unless set to 1, true or yes. */
+const onlyIf = (env: Env, key: string): boolean => ['1', 'true', 'yes'].includes(env[key]?.trim().toLowerCase() ?? '')
+
 const onUnless = (env: Env, key: string): boolean => {
   const raw = env[key]?.trim().toLowerCase()
   return !(raw === '0' || raw === 'false' || raw === 'no')
@@ -425,7 +434,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // *Un break even.* A position that reached its target may never close at a
     // loss. Measured before it was built: four losers had been above the target
     // first, $5.57 between them. OPERADOR_BREAK_EVEN=0 turns it off.
-    breakEven: onUnless(env, 'OPERADOR_BREAK_EVEN'),
+    // OFF: *lo demás, sólo salí si el TP se cumple.* The ratchet sells a winner
+    // back at its cost — protection, not the TP. OPERADOR_BREAK_EVEN=1 for it.
+    breakEven: onlyIf(env, 'OPERADOR_BREAK_EVEN'),
     // *El operador pierde de a mucho, no funciona el SL.* The 1:4 multiplies
     // the toll by about seven with no ceiling of its own: fomopay was cut with
     // a 24% stop, a thin pool derives 51% on the old toll and 14.7% on the
@@ -480,7 +491,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     entryDoors: productionDoors(env).entryDoors,
     // *Cuando el puntaje cae 5 puntos, SL.* Points under the entry score at
     // which a held position is sold as it is. Zero turns it off.
-    scoreStopPoints: numberOrZero(env, 'OPERADOR_SCORE_STOP_POINTS', 5),
+    scoreStopPoints: numberOrZero(env, 'OPERADOR_SCORE_STOP_POINTS', 0),
+    // *Dejá correr todo con esa única condición y la de congelamiento y la de
+    // la muerte; lo demás, sólo salí si el TP se cumple.* Both OFF, one
+    // variable away each.
+    rotateOnFilter: onlyIf(env, 'OPERADOR_ROTATE_ON_FILTER'),
+    pressure: onlyIf(env, 'OPERADOR_PRESSURE'),
+    // The one rung's trigger, from the module the dashboard reads too.
+    dcaDropPct: productionLadder(env).dcaDropPct,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings

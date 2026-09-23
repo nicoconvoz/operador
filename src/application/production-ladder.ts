@@ -65,7 +65,15 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
  * mistake than a deep ladder that keeps buying into one.
  *
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 0
+export const DEFAULT_MAX_DCA_PER_TOKEN = 1
+
+/**
+ * How far under the last buy the price must fall before the one rung buys.
+ * *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale, volver a
+ * comprar — sólo esa condición.* Here because the engine buys on it and the
+ * screen draws it.
+ */
+export const DEFAULT_DCA_DROP_PCT = 50
 
 /**
  * The drop from the 20-bar swing high the classic entry demands, in percent.
@@ -121,6 +129,7 @@ export interface ProductionLadder {
   readonly impatientProfitPct: number
   /** Gain above which it waits none at all. */
   readonly urgentProfitPct: number
+  readonly dcaDropPct: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -155,5 +164,6 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
     impatientProfitPct: positive(env.OPERADOR_IMPATIENT_PROFIT_PCT, DEFAULT_IMPATIENT_PROFIT_PCT),
     urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),
+    dcaDropPct: percent(env.OPERADOR_DCA_DROP_PCT, DEFAULT_DCA_DROP_PCT),
   }
 }

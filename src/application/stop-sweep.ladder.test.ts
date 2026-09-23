@@ -48,6 +48,8 @@ const rig = async (options: {
   readonly counts?: readonly ({ buys: number; sells: number } | null)[]
   readonly ladder?: boolean
   readonly levels?: ExitLevels
+  /** The one-step ladder at half the price, instead of the pressure ladder. */
+  readonly drop?: boolean
 } = {}) => {
   const store = new MemoryStore()
   const held = options.held ?? position()
@@ -71,7 +73,8 @@ const rig = async (options: {
       return broker
     },
     now: () => AT,
-    ...(options.ladder === false
+    ...(options.drop ? { dropLadder: { policy: { maxEntries: 2, dropPct: 50 }, rungUsd: 15 } } : {}),
+    ...(options.ladder === false || options.drop
       ? {}
       : {
           pressureLadder: {
@@ -258,5 +261,47 @@ describe('the break-even never closes in the red', () => {
     const { store, run } = await rig({ held: position({ breakEvenArmed: true, lastPriceUsd: 1.004 }), ladder: false, levels: { stop: NO_STOP, armAtPct: 3, breakEvenPct: 0.5 } })
     expect(await run(1.004)).toEqual([ID])
     expect((await store.fillsFor(ID)).find((f) => f.side === 'sell')?.comment).toBe('🔒 Break-even')
+  })
+})
+
+describe('the one-step ladder: a rung once the price has halved', () => {
+  // *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale, volver a
+  // comprar — sólo esa condición.*
+  const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
+  const half = (over: Partial<PersistedPosition> = {}) => position({ lastPriceUsd: 0.5, ...over })
+  const buys = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
+
+  it('buys a fifteen-dollar rung once the price is at half the buy', async () => {
+    const { store, sent, run } = await rig({ held: half(), drop: true, stop: NO_STOP })
+    await run(0.5)
+    const rung = (await store.fillsFor(ID)).find((f) => f.orderId === 'DCA-1')
+    expect(rung?.side).toBe('buy')
+    expect(rung!.price * rung!.qty).toBeCloseTo(15, 0)
+    expect(sent.some((a) => a.title.includes('DCA-1'))).toBe(true)
+  })
+
+  it('waits above half', async () => {
+    const { store, run } = await rig({ held: half({ lastPriceUsd: 0.51 }), drop: true, stop: NO_STOP })
+    await run(0.51)
+    expect(await buys(store)).toHaveLength(1)
+  })
+
+  it('buys it ONCE — the ladder is one step', async () => {
+    const { store, run } = await rig({ held: half({ lastPriceUsd: 0.4 }), drop: true, stop: NO_STOP })
+    await run(0.4)
+    await run(0.4)
+    expect(await buys(store)).toHaveLength(2)
+  })
+
+  it('buys nothing into a FROZEN position', async () => {
+    const { store, run } = await rig({ held: half({ deathWatch: { ...startDeathWatch(1, 0), stage: 'frozen' } }), drop: true, stop: NO_STOP })
+    await run(0.5)
+    expect(await buys(store)).toHaveLength(1)
+  })
+
+  it('buys nothing at a price the candle feed does not confirm', async () => {
+    const { store, run } = await rig({ held: half({ lastPriceUsd: 0.000001 }), drop: true, stop: NO_STOP })
+    await run(0.5)
+    expect(await buys(store)).toHaveLength(1)
   })
 })

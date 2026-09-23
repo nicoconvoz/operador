@@ -43,7 +43,7 @@ export interface LadderRung {
  * broken looked exactly alike, which makes the correct one impossible to trust.
  */
 export interface LadderLock {
-  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'pressure'
+  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'pressure' | 'drop'
   readonly held: boolean
   /** What it is waiting for, in the numbers it is waiting on. */
   readonly detail: string
@@ -153,6 +153,11 @@ export interface OperationsOptions {
    * `threshold` upward. Absent: the cascade's own ladder. `pressureOf` reads
    * the held token's buy pressure now, 0..1; null when nobody counted the hour.
    */
+  /**
+   * The one-step ladder on price: a rung once the price has fallen `dropPct`
+   * under the last buy. Drawn instead of the pressure ladder when given.
+   */
+  readonly dropLadder?: { readonly dropPct: number }
   readonly pressureLadder?: {
     readonly threshold: number
     readonly pressureOf?: (position: PersistedPosition) => Promise<number | null>
@@ -237,8 +242,11 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     // already refused is this read model's own failure mode, with the sides
     // swapped — usually the engine refuses what the screen offers.
     const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
+    const drop = options.dropLadder
     const pressure = options.pressureLadder
-    const ladder: LadderRung[] = pressure
+    const ladder: LadderRung[] = drop
+      ? dropRungs(filledByLevel, fillable, drop.dropPct, params, inFlight?.level ?? filledByLevel.size)
+      : pressure
       ? pressureRungs(filledByLevel, fillable, params, inFlight?.level ?? filledByLevel.size)
       : Array.from({ length: fillable }, (_, level) => {
       const fill = filledByLevel.get(level)
@@ -269,7 +277,9 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       unrealisedPct: unrealisedUsd !== null && deployedUsd > 0 ? (unrealisedUsd / deployedUsd) * 100 : null,
       costsUsd,
       ladder,
-      locks: pressure
+      locks: drop
+        ? dropLocks(buys, price, fillable, drop.dropPct)
+        : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
       fills: [...fills].reverse(),
@@ -310,6 +320,59 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
 
 
 const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
+
+/**
+ * The price ladder's rungs: each `dropPct` under the one before, measured from
+ * what was actually PAID where a rung filled — the engine measures from the
+ * last buy, so a plan that ignored the fills would drift from it.
+ */
+function dropRungs(
+  filledByLevel: ReadonlyMap<number, PersistedFill>,
+  fillable: number,
+  dropPct: number,
+  params: CascadeParams,
+  waitingOn: number,
+): LadderRung[] {
+  const rungs: LadderRung[] = []
+  let above: number | null = null
+  for (let level = 0; level < fillable; level++) {
+    const fill = filledByLevel.get(level)
+    const trigger: number | null = level === 0 || above === null ? null : above * (1 - dropPct / 100)
+    rungs.push({
+      level,
+      triggerPrice: trigger,
+      nominalUsd: usdForLevel(params, level),
+      filled: fill !== undefined,
+      fillPrice: fill?.price ?? null,
+      fillUsd: fill ? fill.price * fill.qty : null,
+      pending: level === waitingOn && !fill,
+    })
+    above = fill?.price ?? trigger
+  }
+  return rungs
+}
+
+/** What the next price rung waits for: the price `dropPct` under the last buy. Null when flat or full. */
+function dropLocks(
+  buys: readonly PersistedFill[],
+  price: number | null,
+  fillable: number,
+  dropPct: number,
+): readonly LadderLock[] | null {
+  if (buys.length === 0 || buys.length >= fillable) return null
+  const last = [...buys].sort((a, b) => a.time - b.time).at(-1)!
+  const line = last.price * (1 - dropPct / 100)
+  const reached = price !== null && price <= line
+  return [
+    {
+      name: 'drop',
+      held: reached,
+      detail: reached
+        ? `el precio llegó a ${line.toPrecision(4)} — el escalón compra en este barrido`
+        : `el escalón compra si el precio cae a ${line.toPrecision(4)} (${dropPct}% bajo la compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
+    },
+  ]
+}
 
 /**
  * The pressure ladder's rungs. No trigger PRICE on any of them: a rung waits

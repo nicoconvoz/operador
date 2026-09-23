@@ -1,6 +1,7 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { positionLedger, tokenNetUsd, openLotCostsUsd } from './ledger.js'
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
+import { nextDropRung, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
@@ -186,6 +187,17 @@ export interface PressureLadder {
   readonly gasUsdPerSwap: number
 }
 
+/**
+ * The DCA ladder on the PRICE alone: a rung once the price has fallen
+ * `dropPct` under the last buy. *Armá un solo paso de DCA: si el precio cae al
+ * 50% de lo que vale, volver a comprar — sólo esa condición.*
+ */
+export interface DropLadder {
+  readonly policy: DropLadderPolicy
+  /** What the rung buys, in dollars. */
+  readonly rungUsd: number
+}
+
 export interface StopSweepDeps {
   readonly store: StatePort
   readonly alerts: AlertPort
@@ -193,6 +205,8 @@ export interface StopSweepDeps {
   readonly now: () => number
   /** Absent: no ladder, which is every caller that predates it. */
   readonly pressureLadder?: PressureLadder
+  /** Absent: no price ladder. */
+  readonly dropLadder?: DropLadder
 }
 
 export async function sweepStops(
@@ -354,7 +368,9 @@ export async function sweepStops(
     if (!cut) {
       if (held && deps.pressureLadder && (await actOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)) === 'sold') {
         stopped.push(position.id)
+        continue
       }
+      if (held && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle)
       continue
     }
 
@@ -500,4 +516,47 @@ async function actOnPressure(
   )
   if (throttle.shouldSend(bought, `dca:${position.id}:${rung}`)) await deps.alerts.send(bought)
   return 'bought'
+}
+
+/**
+ * One rung, if the price has fallen `dropPct` under the last buy. Never into
+ * a position the death watch has frozen or condemned.
+ */
+async function buyOnDrop(
+  deps: StopSweepDeps,
+  ladder: DropLadder,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<void> {
+  if (position.deathWatch.stage !== 'healthy') return
+  const buys = fills.filter((f) => f.side === 'buy').sort((a, b) => a.time - b.time)
+  const last = buys[buys.length - 1]
+  if (!last) return
+  const rung = nextDropRung({ entries: buys.length, lastBuyPrice: last.price, priceUsd: price }, ladder.policy)
+  if (rung === null) return
+
+  const id = `DCA-${rung}`
+  const broker = await deps.brokerFor(position)
+  const before = fills.length
+  await settle(
+    [{ kind: 'entry', id, level: rung, usd: ladder.rungUsd, qty: ladder.rungUsd / price, comment: id }],
+    position.lastBarTime,
+    price,
+    at,
+    position,
+    broker,
+    deps.store,
+  )
+  if ((await deps.store.fillsFor(position.id)).length === before) return
+  const bought = alert(
+    'dca-filled',
+    `🪜 ${position.symbol} promedió — ${id}`,
+    `El precio cayó ${((1 - price / last.price) * 100).toFixed(1)}% desde la compra. Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(bought, `dca:${position.id}:${rung}`)) await deps.alerts.send(bought)
 }

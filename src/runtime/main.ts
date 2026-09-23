@@ -336,17 +336,24 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // rung each time buy pressure crosses 1% upward. The hour's counts come
     // from Jupiter, per mint, out of the response the book's live prices just
     // refreshed — so a sweep costs a cache read, not a request.
-    pressureLadder: {
-      policy: { maxEntries: config.maxDcaPerToken + 1, threshold: PRESSURE_THRESHOLD },
+    // Off by default, one variable away: OPERADOR_PRESSURE=1.
+    ...(config.pressure ? { pressureLadder: {
+        policy: { maxEntries: config.maxDcaPerToken + 1, threshold: PRESSURE_THRESHOLD },
+        rungUsd: config.maxUsdPerLevel,
+        hourCounts: async (position: PersistedPosition) => {
+          if (position.chain !== 'solana') return null
+          const [market] = await jupiterTokens.markets('solana', [position.tokenAddress])
+          return market ? { buys: market.txns.h1.buys, sells: market.txns.h1.sells } : null
+        },
+        previous: new Map<string, number>(),
+        gone: new Set<string>(),
+        gasUsdPerSwap: config.gasUsdPerSwap,
+      } } : {}),
+    // *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale,
+    // volver a comprar — sólo esa condición.* A $15 rung, once.
+    dropLadder: {
+      policy: { maxEntries: config.maxDcaPerToken + 1, dropPct: config.dcaDropPct },
       rungUsd: config.maxUsdPerLevel,
-      hourCounts: async (position: PersistedPosition) => {
-        if (position.chain !== 'solana') return null
-        const [market] = await jupiterTokens.markets('solana', [position.tokenAddress])
-        return market ? { buys: market.txns.h1.buys, sells: market.txns.h1.sells } : null
-      },
-      previous: new Map<string, number>(),
-      gone: new Set<string>(),
-      gasUsdPerSwap: config.gasUsdPerSwap,
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
@@ -935,6 +942,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // más del 50%.* Applied only to what the cycle would open.
       entryDoors: config.entryDoors,
       scoreStopPoints: config.scoreStopPoints,
+      // Off by default: *lo demás, sólo salí si el TP se cumple.*
+      rotateOnFilter: config.rotateOnFilter,
       idleSlots: {
         // *Si el token ha perdido menos del 1.2% y la moneda está en un puntaje
         // bajo, cambiarla por una mejor y asumir esa pequeña pérdida.*

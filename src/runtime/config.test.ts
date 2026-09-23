@@ -196,19 +196,20 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token fifteen dollars, one buy, no DCA', () => {
-    // *Cancelá los DCA, cada token sólo un piso de 15 usd.* The slot is what
-    // one $15 buy needs once gas and the price headroom are reserved, so the
-    // buy the tick derives — deployable over rungs — is exactly 15.
+  it('gives every token two fifteen-dollar buys: the entry, and one rung at half the price', () => {
+    // *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale,
+    // volver a comprar.* The slot is what two $15 buys need once gas and the
+    // price headroom are reserved, so each buy is exactly 15.
     const config = loadConfig(valid)
-    expect(config.maxDcaPerToken).toBe(0)
+    expect(config.maxDcaPerToken).toBe(1)
+    expect(config.dcaDropPct).toBe(50)
     const deployable = deployableCapital({
       initialCapital: config.usdPerToken!,
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.maxDcaPerToken + 1,
       params: DEFAULT_PARAMS,
     })
-    expect(deployable / 1).toBeCloseTo(15, 9)
+    expect(deployable / 2).toBeCloseTo(15, 9)
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
   })
 
@@ -259,8 +260,19 @@ describe('two rules stand, and the doors they need are separate switches', () =>
 
   it('stops a position whose score falls five points from the one it was bought at', () => {
     // *Cuando el puntaje cae 5 puntos, SL.* Zero turns it off.
-    expect(loadConfig(valid).scoreStopPoints).toBe(5)
-    expect(loadConfig({ ...valid, OPERADOR_SCORE_STOP_POINTS: '0' }).scoreStopPoints).toBe(0)
+    // OFF now: *sacá lo de la caída del puntaje.* One variable away.
+    expect(loadConfig(valid).scoreStopPoints).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_SCORE_STOP_POINTS: '5' }).scoreStopPoints).toBe(5)
+  })
+
+  it('runs only the TP, the freeze and the death: every other exit is off', () => {
+    // *Dejá correr todo con esa única condición y la de congelamiento y la de
+    // la muerte; lo demás, sólo salí si el TP se cumple.*
+    const config = loadConfig(valid)
+    expect(config.rotateOnFilter).toBe(false)
+    expect(config.pressure).toBe(false)
+    expect(config.exitOnFreeze).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_ROTATE_ON_FILTER: '1', OPERADOR_PRESSURE: '1' })).toMatchObject({ rotateOnFilter: true, pressure: true })
   })
 
   it('never sells a position for a better token — only its TP closes it', () => {
@@ -286,8 +298,10 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // *Un break even.* Four losers had been above their target first — $5.57
     // between them — and a ratchet is what makes that impossible. On by
     // default, because it is the operator's decision; one variable to undo.
-    expect(loadConfig(valid).breakEven).toBe(true)
-    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: '0' }).breakEven).toBe(false)
+    // OFF now: *lo demás, sólo salí si el TP se cumple.* The ratchet sells a
+    // winner back at its cost — protection, not the TP.
+    expect(loadConfig(valid).breakEven).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: '1' }).breakEven).toBe(true)
   })
 
   it('still takes a wider stop when one is asked for', () => {

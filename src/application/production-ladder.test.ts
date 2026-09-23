@@ -3,11 +3,11 @@ import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL 
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to ONE buy of $15 and no DCA at all', () => {
+  it('defaults to a $15 buy and ONE rung, bought when the price has halved', () => {
     // *Ahora cancelá los DCA y dejá sólo este sistema activo, haciendo que
     // cada token sólo tenga un piso de 15 usd.* The operator, once the exits
     // — the score stop, the buyers leaving, the toll — became the system.
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 1, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 2, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25, dcaDropPct: 50 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -16,12 +16,12 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('takes an override for either', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: '50', OPERADOR_MAX_DCA: '2' }))
-      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25, dcaDropPct: 50 })
   })
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 1, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 2, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25, dcaDropPct: 50 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -84,8 +84,9 @@ describe('production ladder — depth ZERO is one buy and nothing after it', () 
 
   it('still defaults to whatever the decision above says', () => {
     expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
-    // The entry alone.
-    expect(productionLadder({}).maxOpenEntries).toBe(1)
+    // The entry and one rung.
+    expect(productionLadder({}).maxOpenEntries).toBe(2)
+    expect(productionLadder({ OPERADOR_DCA_DROP_PCT: '30' }).dcaDropPct).toBe(30)
   })
 
   it('still refuses nonsense rather than taking it', () => {

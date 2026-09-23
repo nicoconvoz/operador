@@ -7,7 +7,6 @@ import { productionDoors } from '../../src/application/production-doors.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
 import { DexScreener, type MarketSnapshot } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
 import { JupiterTokens } from '../../src/infrastructure/adapters/jupiter/jupiter-tokens.js'
-import { pressureOf, PRESSURE_THRESHOLD } from '../../src/domain/strategy/pressure-ladder.js'
 import { makeHttpGet } from '../../src/infrastructure/http.js'
 import { type StatePort } from '../../src/domain/persistence/store.js'
 
@@ -87,16 +86,9 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         urgentProfitPct: ladder.urgentProfitPct,
       },
       maxOpenEntries: ladder.maxOpenEntries,
-      // The ladder the engine BUYS: a rung each time buy pressure crosses 1%
-      // upward. The pressure is read from the same market response that
-      // values the book — not one extra request.
-      pressureLadder: {
-        threshold: PRESSURE_THRESHOLD,
-        pressureOf: async (position) => {
-          const market = (await markets).get(`${position.chain}:${position.tokenAddress}`)
-          return market ? pressureOf(market.txns.h1.buys, market.txns.h1.sells, 'buy') : null
-        },
-      },
+      // The ladder the engine BUYS: one rung, once the price has halved from
+      // the last buy — from the same module the engine reads.
+      dropLadder: { dropPct: ladder.dcaDropPct },
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.
       tapeLength: 30,

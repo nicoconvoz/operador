@@ -1261,6 +1261,18 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     })
   })
 
+  it('rotates NOTHING when the rotation by filter is switched off — only the TP closes it', async () => {
+    // *Lo demás, sólo salí si el TP se cumple.*
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 1.5]]),
+    })
+    await withFills(store)
+    await runCycle(deps, { ...config, rotateOnFilter: false }, throttle)
+    expect((await store.allFills()).some((f) => f.comment === '🔁 Rotación')).toBe(false)
+  })
+
   it('does NOT blacklist the token — a rotation is not a death', async () => {
     // It may be bought again the day it qualifies. Only a death verdict is
     // terminal, and confusing the two would permanently retire a token for
