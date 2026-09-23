@@ -933,6 +933,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // better candidate does. Composed here because it is the first thing
         // allowed to sell a position the allocator did not have to sell.
         maxSwapLossPct: config.maxSwapLossPct,
+        // Off by default: only a position's own exits close it.
+        swapHolders: config.swapHolders,
         idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,
         minScoreEdge: config.minScoreEdge,
       },

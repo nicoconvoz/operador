@@ -75,6 +75,14 @@ export interface IdleSlotPolicy {
    * liked in pursuit of a score that moves bar to bar.
    */
   readonly maxSwapLossPct?: number
+  /**
+   * Whether a slot HOLDING tokens may be sold for a better token at all.
+   * Absent means yes, which is how this file has worked since the operator
+   * made it the allocator's call; false returns the decision to the position's
+   * own exits. *No me cortes por cambio por una mejor — sólo dejá que, si el
+   * TP que habíamos puesto se activa, cierre; si no, no.*
+   */
+  readonly swapHolders?: boolean
 }
 
 /** Three hours: twelve bars at 15m, most of the 20-bar swing-high window. */
@@ -210,6 +218,7 @@ export function releasableSlots(
   const tolerance = policy.maxSwapLossPct ?? 0
   for (const holder of holders) {
     if (terminal.has(holder.id) || holder.openQty <= 0) continue
+    if (policy.swapHolders === false) continue
     // No live price, no verdict. Selling on a number no second source
     // confirmed is how a $15 position once left at a tenth of a cent.
     const standing = holder.unrealisedPct

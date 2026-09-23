@@ -202,6 +202,8 @@ export interface RuntimeConfig {
    * no longer bounded by how strict the rules are.
    */
   readonly usdPerToken: number | null
+  /** Whether a position holding tokens may be sold for a better token. */
+  readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
   readonly scoreStopPoints: number
   /** The ways a candidate may be OPENED, any one enough. See `DEFAULT_ENTRY_DOORS`. */
@@ -479,6 +481,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // *Cuando el puntaje cae 5 puntos, SL.* Points under the entry score at
     // which a held position is sold as it is. Zero turns it off.
     scoreStopPoints: numberOrZero(env, 'OPERADOR_SCORE_STOP_POINTS', 5),
+    // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
+    // que habíamos puesto se activa, cierre; si no, no.* A position holding
+    // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings
+    // the swap back. Empty slots still move to whatever waits.
+    swapHolders: ['1', 'true', 'yes'].includes(env.OPERADOR_SWAP_HOLDERS?.trim().toLowerCase() ?? ''),
     reserve: productionDoors(env).reserve,
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.

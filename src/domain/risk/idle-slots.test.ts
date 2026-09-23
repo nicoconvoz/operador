@@ -242,6 +242,15 @@ describe('swapping a slot that is barely under water for a better token', () => 
     expect(decision?.reason).toContain('0.90%')
   })
 
+  it('touches NO position holding tokens when swapping holders is switched off', () => {
+    // *No me cortes por cambio por una mejor — sólo dejá que, si el TP que
+    // habíamos puesto se activa, cierre; si no, no.* A winner, a loser inside
+    // the toll: neither is sold for a better token. Empty slots still move.
+    const off = { ...swap, swapHolders: false }
+    expect(releasableSlots([holding({ unrealisedPct: 1.4, tollPct: 0.9 })], [80], NOW, off)).toEqual([])
+    expect(releasableSlots([holding({ unrealisedPct: -0.5, tollPct: 0.9 })], [80], NOW, off)).toEqual([])
+  })
+
   it('keeps a winner that has not yet paid for its own round trip — it would close in the red', () => {
     expect(releasableSlots([holding({ unrealisedPct: 0.9, tollPct: 0.9 })], [80], NOW, swap)).toEqual([])
     expect(releasableSlots([holding({ unrealisedPct: 0.4, tollPct: 0.9 })], [80], NOW, swap)).toEqual([])

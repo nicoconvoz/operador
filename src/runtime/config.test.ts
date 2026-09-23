@@ -263,6 +263,12 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_SCORE_STOP_POINTS: '0' }).scoreStopPoints).toBe(0)
   })
 
+  it('never sells a position for a better token — only its TP closes it', () => {
+    // *No me cortes por cambio por una mejor; sólo dejá que el TP cierre.*
+    expect(loadConfig(valid).swapHolders).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_SWAP_HOLDERS: '1' }).swapHolders).toBe(true)
+  })
+
   it('never swaps a position under water for a better one — no close in the red', () => {
     expect(loadConfig(valid).maxSwapLossPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_MAX_SWAP_LOSS_PCT: '1.2' }).maxSwapLossPct).toBe(1.2)
