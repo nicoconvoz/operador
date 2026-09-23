@@ -7,8 +7,7 @@ import { productionDoors } from '../../src/application/production-doors.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
 import { DexScreener, type MarketSnapshot } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
 import { JupiterTokens } from '../../src/infrastructure/adapters/jupiter/jupiter-tokens.js'
-import { JupiterCharts } from '../../src/infrastructure/adapters/jupiter/jupiter-charts.js'
-import { ONE_MINUTE } from '../../src/infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { pressureOf, PRESSURE_THRESHOLD } from '../../src/domain/strategy/pressure-ladder.js'
 import { makeHttpGet } from '../../src/infrastructure/http.js'
 import { type StatePort } from '../../src/domain/persistence/store.js'
 
@@ -88,17 +87,15 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         urgentProfitPct: ladder.urgentProfitPct,
       },
       maxOpenEntries: ladder.maxOpenEntries,
-      // The ladder the engine BUYS: 5% under the last buy and a floor of
-      // one-minute candles, from the same module the engine reads. The
-      // minutes are asked only for a position already in the zone, so a page
-      // polling every ten seconds pays for the few about to act.
-      floorLadder: {
-        gapPct: ladder.dcaGapPct,
-        floorBars: ladder.dcaFloorBars,
-        minuteBars: async (position) =>
-          position.chain === 'solana'
-            ? new JupiterCharts(makeHttpGet({ timeoutMs: 6_000 })).candles('solana', position.tokenAddress, ONE_MINUTE, 30)
-            : null,
+      // The ladder the engine BUYS: a rung each time buy pressure crosses 1%
+      // upward. The pressure is read from the same market response that
+      // values the book — not one extra request.
+      pressureLadder: {
+        threshold: PRESSURE_THRESHOLD,
+        pressureOf: async (position) => {
+          const market = (await markets).get(`${position.chain}:${position.tokenAddress}`)
+          return market ? pressureOf(market.txns.h1.buys, market.txns.h1.sells, 'buy') : null
+        },
       },
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.

@@ -37,10 +37,6 @@ const sell = (positionId: string, price: number, qty: number, time: number) => (
   comment: '🏁 Exit', idempotencyKey: `${positionId}:sell:${time}`,
 })
 
-/** Fell to 0.94 and has held it for five one-minute candles since. */
-const FLOOR = { time: [1, 2, 3, 4, 5, 6, 7].map((m) => AT - (8 - m) * MIN), low: [0.97, 0.94, 0.942, 0.943, 0.944, 0.941, 0.945] }
-/** Still printing a new low every minute. */
-const KNIFE = { time: FLOOR.time, low: [0.97, 0.96, 0.955, 0.95, 0.947, 0.946, 0.945] }
 
 const DOLLAR_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0.1 }
 
@@ -48,7 +44,8 @@ const rig = async (options: {
   readonly held?: PersistedPosition
   readonly history?: readonly ReturnType<typeof buy | typeof sell>[]
   readonly stop?: ExitLevels['stop']
-  readonly bars?: { time: number[]; low: number[] } | null
+  /** The hour's counts each sweep sees, in order; the last repeats. Null: nobody answered. */
+  readonly counts?: readonly ({ buys: number; sells: number } | null)[]
   readonly ladder?: boolean
   readonly levels?: ExitLevels
 } = {}) => {
@@ -59,7 +56,7 @@ const rig = async (options: {
   for (const fill of options.history ?? []) await store.recordFill(fill)
 
   const sent: Alert[] = []
-  let barRequests = 0
+  let countRequests = 0
   const brokers = new Map<string, PaperBroker>()
   const deps: StopSweepDeps = {
     store,
@@ -77,17 +74,21 @@ const rig = async (options: {
     ...(options.ladder === false
       ? {}
       : {
-          floorLadder: {
-            policy: { maxEntries: 6, gapPct: 5, floorBars: 5 },
+          pressureLadder: {
+            policy: { maxEntries: 6, threshold: 0.01 },
             rungUsd: 15,
-            minuteBars: async () => { barRequests++; return options.bars === undefined ? FLOOR : options.bars },
+            hourCounts: async () => {
+              const seen = options.counts ?? [{ buys: 50, sells: 50 }, { buys: 60, sells: 40 }]
+              return seen[Math.min(countRequests++, seen.length - 1)]!
+            },
+            previous: new Map<string, number>(),
           },
         }),
   }
   const levels: ExitLevels = options.levels ?? { stop: options.stop ?? { ...DOLLAR_STOP, onlyWhenHistoryCovers: true }, armAtPct: null, breakEvenPct: 0 }
   const run = (price: number) =>
     sweepStops(deps, () => levels, new AlertThrottle(0), [held], new Map([['solana:T', price]]), AT)
-  return { store, sent, run, barRequests: () => barRequests }
+  return { store, sent, run, countRequests: () => countRequests }
 }
 
 describe('the stop, when the token has paid for the loss — and only then', () => {
@@ -125,47 +126,48 @@ describe('the stop, when the token has paid for the loss — and only then', () 
   })
 })
 
-describe('the ladder, bought on a floor of one-minute candles', () => {
-  it('buys a fifteen-dollar rung once the dip has held its low for five minutes', async () => {
+describe('the ladder, bought when buyers push through 1%', () => {
+  // *Aplicalo para el DCA también — nada de escalones, esa regla.* A $15 rung
+  // each time buy pressure CROSSES 1% upward: an even hour, then buyers.
+  const buys = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
+
+  it('buys a fifteen-dollar rung on the sweep that sees buy pressure cross 1%', async () => {
     const { store, sent, run } = await rig()
-    await run(0.945)
+    await run(0.97)
+    expect(await buys(store)).toHaveLength(1)
+    await run(0.97)
     const rung = (await store.fillsFor(ID)).find((f) => f.orderId === 'DCA-1')
     expect(rung?.side).toBe('buy')
     expect(rung!.price * rung!.qty).toBeCloseTo(15, 0)
-    expect(sent.some((a) => a.title.includes('DCA-1'))).toBe(true)
+    expect(sent.some((a) => a.title.includes('DCA-1') && a.body.includes('$15.00'))).toBe(true)
   })
 
-  it('waits while it is still making new lows', async () => {
-    const { store, run } = await rig({ bars: KNIFE })
-    await run(0.945)
-    expect((await store.fillsFor(ID)).filter((f) => f.side === 'buy')).toHaveLength(1)
+  it('buys ONE rung per crossing, not one per sweep while it stays above', async () => {
+    const { store, run } = await rig({ counts: [{ buys: 50, sells: 50 }, { buys: 60, sells: 40 }, { buys: 70, sells: 30 }] })
+    for (let i = 0; i < 4; i++) await run(0.97)
+    expect(await buys(store)).toHaveLength(2)
   })
 
-  it('does not even ask for the minutes until the dip is deep enough', async () => {
-    const { store, run, barRequests } = await rig()
-    await run(0.99)
-    expect(barRequests()).toBe(0)
-    expect((await store.fillsFor(ID)).filter((f) => f.side === 'buy')).toHaveLength(1)
+  it('buys nothing on a silent hour, and a silent hour does not fake a crossing', async () => {
+    const { store, run } = await rig({ counts: [{ buys: 60, sells: 40 }, null, { buys: 0, sells: 0 }, { buys: 60, sells: 40 }] })
+    for (let i = 0; i < 4; i++) await run(0.97)
+    expect(await buys(store)).toHaveLength(1)
   })
 
   it('buys nothing into a FROZEN position — a freeze blocks new capital', async () => {
-    const held = position({ deathWatch: { ...startDeathWatch(1, 0), stage: 'frozen' } })
+    const held = position({ lastPriceUsd: 0.97, deathWatch: { ...startDeathWatch(1, 0), stage: 'frozen' } })
     const { store, run } = await rig({ held })
-    await run(0.945)
-    expect((await store.fillsFor(ID)).filter((f) => f.side === 'buy')).toHaveLength(1)
+    await run(0.97)
+    await run(0.97)
+    expect(await buys(store)).toHaveLength(1)
   })
 
   it('buys nothing at a price the candle feed does not confirm', async () => {
-    // The same guard the stop runs on: a unit nobody agreed on is not a dip.
+    // The same guard the stop runs on: a unit nobody agreed on is not a price.
     const { store, run } = await rig({ held: position({ lastPriceUsd: 0.000001 }) })
-    await run(0.945)
-    expect((await store.fillsFor(ID)).filter((f) => f.side === 'buy')).toHaveLength(1)
-  })
-
-  it('buys nothing when it cannot see the minutes', async () => {
-    const { store, run } = await rig({ bars: null })
-    await run(0.945)
-    expect((await store.fillsFor(ID)).filter((f) => f.side === 'buy')).toHaveLength(1)
+    await run(0.97)
+    await run(0.97)
+    expect(await buys(store)).toHaveLength(1)
   })
 })
 

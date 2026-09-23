@@ -6,15 +6,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
   it('defaults to a flat $15 ladder of an entry and FIVE DCA rungs', () => {
     // *Agregá 5 escalones de DCA... cada escalón de 15 dólares.* The operator,
     // after the single buy ran out of ways to rescue a position under water.
-    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25, dcaGapPct: 5, dcaFloorBars: 5 })
-  })
-
-  it('holds the floor rule the engine and the screen both read', () => {
-    // *Un piso lateral de 5 velas de 1 minuto*, five percent under the last
-    // buy. One place, because a screen drawing a different rung from the one
-    // the engine buys is the drift this module exists to prevent.
-    expect(productionLadder({ OPERADOR_DCA_GAP_PCT: '8', OPERADOR_DCA_FLOOR_BARS: '3' })).toMatchObject({ dcaGapPct: 8, dcaFloorBars: 3 })
-    expect(productionLadder({ OPERADOR_DCA_GAP_PCT: 'x', OPERADOR_DCA_FLOOR_BARS: '-2' })).toMatchObject({ dcaGapPct: 5, dcaFloorBars: 5 })
+    expect(productionLadder({})).toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -23,12 +15,12 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('takes an override for either', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: '50', OPERADOR_MAX_DCA: '2' }))
-      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25, dcaGapPct: 5, dcaFloorBars: 5 })
+      .toEqual({ maxUsdPerLevel: 50, maxOpenEntries: 3, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25, dcaGapPct: 5, dcaFloorBars: 5 })
+      .toEqual({ maxUsdPerLevel: 15, maxOpenEntries: 6, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25 })
   })
 
   it('never expresses itself by editing the evidence', () => {

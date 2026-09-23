@@ -1,6 +1,6 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { positionLedger, tokenNetUsd } from './ledger.js'
-import { nextFloorRung, type FloorLadderPolicy } from '../domain/strategy/floor-ladder.js'
+import { nextPressureRung, pressureOf, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio } from '../domain/economics/sizing.js'
@@ -159,22 +159,23 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
 }
 
 /**
- * The DCA ladder, bought on a floor of one-minute candles.
+ * The DCA ladder on order flow: a rung each time buyers push through 1%.
  *
- * Here and not in the cascade because of the resolution the operator asked
- * for: the cascade decides on CLOSED strategy bars, fifteen minutes each, and
- * *un piso lateral de 5 velas de 1 minuto* is a question about minutes. This
- * sweep already runs every thirty seconds in all three places the book is
+ * *Aplicalo para el DCA también — nada de escalones, esa regla.* Here because
+ * this sweep already runs every thirty seconds in all three places the book is
  * watched, so the ladder rides on it rather than on a fourth loop.
  */
-export interface FloorLadder {
-  readonly policy: FloorLadderPolicy
+export interface PressureLadder {
+  readonly policy: PressureLadderPolicy
   /** What each rung buys, in dollars. *Cada escalón de 15 dólares.* */
   readonly rungUsd: number
-  /** CLOSED one-minute candles for the token; null when nobody could answer. */
-  readonly minuteBars: (
-    position: PersistedPosition,
-  ) => Promise<{ readonly time: readonly number[]; readonly low: readonly number[] } | null>
+  /** The last hour's buys and sells for the token; null when nobody could answer. */
+  readonly hourCounts: (position: PersistedPosition) => Promise<{ readonly buys: number; readonly sells: number } | null>
+  /**
+   * The last buy pressure read per position — the "before" of a crossing.
+   * Owned by the caller, so the cycle's sweeps and the loop's share one memory.
+   */
+  readonly previous: Map<string, number>
 }
 
 export interface StopSweepDeps {
@@ -183,7 +184,7 @@ export interface StopSweepDeps {
   readonly brokerFor: (position: PersistedPosition) => Promise<BrokerPort>
   readonly now: () => number
   /** Absent: no ladder, which is every caller that predates it. */
-  readonly floorLadder?: FloorLadder
+  readonly pressureLadder?: PressureLadder
 }
 
 export async function sweepStops(
@@ -313,7 +314,7 @@ export async function sweepStops(
       // anyway would orphan the quantity — neither realised nor unrealised,
       // and gone from the screen that was watching it.
       if (refused) {
-        if (deps.floorLadder) await buyRungOnFloor(deps, deps.floorLadder, position, fills, price!, at, throttle)
+        if (deps.pressureLadder) await buyRungOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)
         continue
       }
       await deps.store.closePosition(position.id)
@@ -341,7 +342,7 @@ export async function sweepStops(
       cut = tokenNetUsd(tape, position.chain, position.tokenAddress) > lossUsd(input)
     }
     if (!cut) {
-      if (held && deps.floorLadder) await buyRungOnFloor(deps, deps.floorLadder, position, fills, price!, at, throttle)
+      if (held && deps.pressureLadder) await buyRungOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)
       continue
     }
 
@@ -384,14 +385,14 @@ export async function sweepStops(
 }
 
 /**
- * One rung, if the dip has held a floor. Nothing, otherwise.
+ * One rung, if buyers just pushed through 1%. Nothing, otherwise.
  *
  * Never into a position the death watch has frozen or condemned: a freeze
- * blocks new capital by definition, and a dying token is not a dip.
+ * blocks new capital by definition, and a dying token is not an opportunity.
  */
-async function buyRungOnFloor(
+async function buyRungOnPressure(
   deps: StopSweepDeps,
-  ladder: FloorLadder,
+  ladder: PressureLadder,
   position: PersistedPosition,
   fills: readonly PersistedFill[],
   price: number,
@@ -399,25 +400,22 @@ async function buyRungOnFloor(
   throttle: AlertThrottle,
 ): Promise<void> {
   if (position.deathWatch.stage !== 'healthy') return
-  const buys = fills
-    .filter((f) => f.side === 'buy')
-    .sort((a, b) => a.time - b.time)
-    .map((f) => ({ price: f.price, time: f.time }))
-  if (buys.length === 0 || buys.length >= ladder.policy.maxEntries) return
-  // The cheap test first. The minutes cost a request, and most sweeps find
-  // the price nowhere near a rung.
-  const last = buys[buys.length - 1]!
-  if (price > last.price * (1 - ladder.policy.gapPct / 100)) return
+  const entries = fills.filter((f) => f.side === 'buy').length
+  if (entries < 1 || entries >= ladder.policy.maxEntries) return
 
-  let bars: Awaited<ReturnType<FloorLadder['minuteBars']>>
+  let counts: Awaited<ReturnType<PressureLadder['hourCounts']>>
   try {
-    bars = await ladder.minuteBars(position)
+    counts = await ladder.hourCounts(position)
   } catch {
     return
   }
-  if (bars === null) return
-  const rung = nextFloorRung({ buys, priceUsd: price, bars }, ladder.policy)
-  if (rung === null) return
+  const now = counts === null ? null : pressureOf(counts.buys, counts.sells, 'buy')
+  const previous = ladder.previous.get(position.id) ?? null
+  // A silent hour keeps the last reading: it is not a fall to zero, and
+  // recording it as one would fake a crossing the moment trades come back.
+  if (now !== null) ladder.previous.set(position.id, now)
+  const rung = nextPressureRung({ entries, previous, now }, ladder.policy)
+  if (rung === null || counts === null) return
 
   const id = `DCA-${rung}`
   const broker = await deps.brokerFor(position)
@@ -432,10 +430,11 @@ async function buyRungOnFloor(
     deps.store,
   )
   if ((await deps.store.fillsFor(position.id)).length === before) return
+  const trades = counts.buys + counts.sells
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `Cayó ${((1 - price / last.price) * 100).toFixed(1)}% desde la última compra y el piso aguantó ${ladder.policy.floorBars} velas de 1 minuto. Compró ${ladder.rungUsd.toFixed(2)} a ${price}.`,
+    `La presión compradora cruzó el ${(ladder.policy.threshold * 100).toFixed(0)}% (${counts.buys} compras de ${trades} en la última hora). Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )

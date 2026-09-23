@@ -206,10 +206,6 @@ export interface RuntimeConfig {
   readonly entryComponents: import('../domain/scanner/opportunity.js').ComponentFloors
   /** Whether a token failing only a preference gate may still be bought. See `ProductionDoors`. */
   readonly reserve: boolean
-  /** One-minute candles a dip's low must hold before a DCA rung buys it. */
-  readonly dcaFloorBars: number
-  /** How far under the LAST buy a DCA rung must be, in percent. */
-  readonly dcaGapPct: number
   /**
    * How much of a winner gross gain the chain may eat, in percent.
    *
@@ -415,13 +411,6 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // Unset: what the whole ladder needs, derived below — *cada escalón de 15
     // dólares*, so six rungs, their gas and the price headroom.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
-    // *Un piso lateral de 5 velas de 1 minuto antes de volver a comprar la
-    // bajada.* Each rung also needs the price five percent under the LAST
-    // buy — the reference's own `min_gap_pct`.
-    // From the module the dashboard reads too: a screen drawing a different
-    // rung from the one the engine buys is the drift it exists to prevent.
-    dcaFloorBars: productionLadder(env).dcaFloorBars,
-    dcaGapPct: productionLadder(env).dcaGapPct,
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
     // stop, NET of the round trip — which on a $15 fill is 1.38% and lands on

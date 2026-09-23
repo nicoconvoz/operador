@@ -219,12 +219,6 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '0' }).stopLoss.onlyWhenHistoryCovers).toBe(false)
   })
 
-  it('confirms a rung on five one-minute candles, five percent under the last buy', () => {
-    const config = loadConfig(valid)
-    expect(config.dcaFloorBars).toBe(5)
-    expect(config.dcaGapPct).toBe(5)
-  })
-
   it('has NO stop by price — only the death and freeze exits may sell at a loss', () => {
     // *No, el SL no lo quiero; quiero el que habíamos acordado antes, el death
     // o congelamiento.* The operator. A position that falls is held and the

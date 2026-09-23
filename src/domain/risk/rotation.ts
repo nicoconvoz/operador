@@ -1,4 +1,5 @@
 import { type Chain } from '../scanner/snapshot.js'
+import { pressureOf, PRESSURE_THRESHOLD } from '../strategy/pressure-ladder.js'
 import { type OpportunityComponents } from '../scanner/opportunity.js'
 
 /**
@@ -117,7 +118,7 @@ export interface RotationDecision {
  * on the same 0..1 scale as buy pressure: 0.01 is sells above 50.5% of the
  * hour's trades — the mirror of the buy door's own 1%.
  */
-export const SELL_PRESSURE_EXIT = 0.01
+export const SELL_PRESSURE_EXIT = PRESSURE_THRESHOLD
 
 export function rotateOnSwitchOff(
   holders: readonly RotationHolder[],
@@ -135,7 +136,9 @@ export function rotateOnSwitchOff(
     // hour, where neither side leads by 1%, falls through to the toll rule.
     const buys = holder.hourBuys ?? 0
     const trades = buys + (holder.hourSells ?? 0)
-    const sellPressure = trades > 0 ? ((trades - buys) / trades - 0.5) * 2 : 0
+    // ONE definition of pressure, the ladder's own: a buy that crosses and a
+    // sale that crosses must be measured the same way.
+    const sellPressure = pressureOf(buys, trades - buys, 'sell') ?? 0
     if (trades > 0 && sellPressure > sellPressureExit) {
       decisions.push({
         holder,
