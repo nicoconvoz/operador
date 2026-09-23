@@ -513,3 +513,69 @@ describe('a ladder the venue cannot climb is not a ladder', () => {
     expect(ladder).toHaveLength(6)
   })
 })
+
+describe('buildOperations — the ladder the ENGINE buys: a floor of one-minute candles', () => {
+  // *Arreglalo.* The screen drew the cascade's rungs — a trigger from the
+  // first price, twenty 15m bars of confirmation, a rebound — while the engine
+  // buys on the floor rule: 5% under the LAST buy, and the dip's low held for
+  // five one-minute candles. A screen describing a trade the engine will not
+  // make is this read model's own failure mode.
+  const floor = (minuteBars?: () => Promise<{ time: number[]; low: number[] } | null>) => ({
+    ...options,
+    maxOpenEntries: 6,
+    floorLadder: { gapPct: 5, floorBars: 5, ...(minuteBars ? { minuteBars } : {}) },
+  })
+  const held = (over: Partial<PersistedPosition> = {}) => ({ cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.97, ...over })
+  const HELD_LOWS = { time: [1, 2, 3, 4, 5, 6, 7].map((m) => NOW - (8 - m) * MIN), low: [0.97, 0.94, 0.942, 0.943, 0.944, 0.941, 0.945] }
+
+  it('draws six rungs, each 5% under the one before, from what was actually paid', async () => {
+    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN), fill('DCA-1', 0.94, 16, NOW - 20 * MIN)], held())
+    const [p] = (await buildOperations(store, floor())).positions
+    expect(p!.ladder).toHaveLength(6)
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.95, 9)
+    // From the price DCA-1 actually filled at, not from a plan.
+    expect(p!.ladder[2]!.triggerPrice).toBeCloseTo(0.94 * 0.95, 9)
+    expect(p!.ladder[3]!.triggerPrice).toBeCloseTo(0.94 * 0.95 * 0.95, 9)
+    expect(p!.ladder.map((r) => r.pending)).toEqual([false, false, true, false, false, false])
+  })
+
+  it('waits on the gap first, and does not spend a request on the minutes until it is met', async () => {
+    let asked = 0
+    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN)], held())
+    const [p] = (await buildOperations(store, floor(async () => { asked++; return HELD_LOWS }))).positions
+    expect(p!.locks!.map((l) => [l.name, l.held])).toEqual([['gap', false], ['floor', false]])
+    expect(p!.locks![0]!.detail).toContain('0.9500')
+    expect(asked).toBe(0)
+  })
+
+  it('reads the floor from the same minutes the engine does, once the price is in the zone', async () => {
+    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN)], held({ lastPriceUsd: 0.945 }))
+    const [p] = (await buildOperations(store, floor(async () => HELD_LOWS))).positions
+    expect(p!.locks!.map((l) => [l.name, l.held])).toEqual([['gap', true], ['floor', true]])
+    expect(p!.locks![1]!.detail).toContain('5 de 5')
+  })
+
+  it('says how far the floor has got while it is still being built', async () => {
+    const knife = { time: HELD_LOWS.time, low: [0.97, 0.96, 0.955, 0.95, 0.948, 0.946, 0.945] }
+    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN)], held({ lastPriceUsd: 0.945 }))
+    const [p] = (await buildOperations(store, floor(async () => knife))).positions
+    expect(p!.locks![1]!.held).toBe(false)
+    expect(p!.locks![1]!.detail).toContain('0 de 5')
+  })
+
+  it('measures the gap from the LAST buy, so a second rung needs a new dip', async () => {
+    // 0.92 is 8% under the entry but only 2% under DCA-1 at 0.94.
+    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN), fill('DCA-1', 0.94, 16, NOW - 20 * MIN)], held({ lastPriceUsd: 0.92 }))
+    const [p] = (await buildOperations(store, floor(async () => HELD_LOWS))).positions
+    expect(p!.locks![0]!.held).toBe(false)
+    expect(p!.locks![0]!.detail).toContain((0.94 * 0.95).toPrecision(4))
+  })
+
+  it('has nothing to wait on once all six are bought', async () => {
+    const six = ['Entry', 'DCA-1', 'DCA-2', 'DCA-3', 'DCA-4', 'DCA-5'].map((id, i) => fill(id, 1 - i * 0.06, 15, NOW - (30 - i) * MIN))
+    const store = await seed(six, held())
+    const [p] = (await buildOperations(store, floor())).positions
+    expect(p!.locks).toBeNull()
+    expect(p!.ladder.every((r) => r.filled)).toBe(true)
+  })
+})

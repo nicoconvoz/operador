@@ -110,6 +110,16 @@ export const DEFAULT_DROP_INIT_PCT = 0
 export const DEFAULT_IMPATIENT_PROFIT_PCT = 10
 export const DEFAULT_URGENT_PROFIT_PCT = 25
 
+/**
+ * The floor rule for DCA rungs: *un piso lateral de 5 velas de 1 minuto antes
+ * de volver a comprar la bajada.* A rung needs the price this far under the
+ * LAST buy — the reference's own `min_gap_pct` — and the dip's low held for
+ * this many closed one-minute candles. Here because the engine buys on them
+ * and the screen draws them, and neither may own them.
+ */
+export const DEFAULT_DCA_GAP_PCT = 5
+export const DEFAULT_DCA_FLOOR_BARS = 5
+
 export interface ProductionLadder {
   readonly maxUsdPerLevel: number
   /** Entries the venue holds open at once: the entry plus its DCA rungs. */
@@ -120,6 +130,8 @@ export interface ProductionLadder {
   readonly impatientProfitPct: number
   /** Gain above which it waits none at all. */
   readonly urgentProfitPct: number
+  readonly dcaGapPct: number
+  readonly dcaFloorBars: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -154,5 +166,7 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
     impatientProfitPct: positive(env.OPERADOR_IMPATIENT_PROFIT_PCT, DEFAULT_IMPATIENT_PROFIT_PCT),
     urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),
+    dcaGapPct: positive(env.OPERADOR_DCA_GAP_PCT, DEFAULT_DCA_GAP_PCT),
+    dcaFloorBars: positive(env.OPERADOR_DCA_FLOOR_BARS, DEFAULT_DCA_FLOOR_BARS),
   }
 }

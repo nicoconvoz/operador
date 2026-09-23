@@ -47,15 +47,32 @@ export function nextFloorRung(input: FloorLadderInput, policy: FloorLadderPolicy
   const last = buys[buys.length - 1]!
   if (priceUsd > last.price * (1 - policy.gapPct / 100)) return null
 
-  // Only the minutes of THIS dip. A low from before the last buy belongs to a
-  // dip the ladder has already bought.
+  const held = minutesOnFloor(bars, last.time)
+  return held !== null && held >= policy.floorBars ? buys.length : null
+}
+
+/**
+ * How many CLOSED one-minute candles the low of this dip has held for — the
+ * minutes since the lowest low after `after` (the last buy's time). Null with
+ * nothing to read.
+ *
+ * Only the minutes of THIS dip: a low from before the last buy belongs to a
+ * dip the ladder has already bought. Counted from the FIRST touch of the low,
+ * because matching a low is not breaking it — a floor tested and held is a
+ * floor.
+ *
+ * The ladder and the screen both read it, so the two cannot disagree about
+ * whether a rung is about to fire.
+ */
+export function minutesOnFloor(
+  bars: { readonly time: readonly number[]; readonly low: readonly number[] },
+  after: number,
+): number | null {
   const lows: number[] = []
   for (let i = 0; i < bars.time.length; i++) {
-    if (bars.time[i]! > last.time) lows.push(bars.low[i]!)
+    if (bars.time[i]! > after) lows.push(bars.low[i]!)
   }
-  if (lows.length < policy.floorBars + 1) return null
-
-  const floor = Math.min(...lows.slice(0, lows.length - policy.floorBars))
-  const since = Math.min(...lows.slice(lows.length - policy.floorBars))
-  return since >= floor ? buys.length : null
+  if (lows.length === 0) return null
+  const floor = Math.min(...lows)
+  return lows.length - 1 - lows.indexOf(floor)
 }

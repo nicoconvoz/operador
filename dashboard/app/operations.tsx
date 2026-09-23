@@ -127,7 +127,7 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
           {position.locks && (
             <div style={{ margin: '8px 0' }}>
               <div style={{ color: DIM, fontSize: 12, marginBottom: 4 }}>
-                cerrojos del próximo peldaño — los cuatro tienen que ceder
+                cerrojos del próximo peldaño — {position.locks.length === 2 ? 'los dos' : `los ${position.locks.length}`} tienen que ceder
               </div>
               {position.locks.map((lock) => (
                 <div key={lock.name} style={{ display: 'flex', gap: 6, fontSize: 12, padding: '2px 0' }}>

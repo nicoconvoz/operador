@@ -414,8 +414,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // *Un piso lateral de 5 velas de 1 minuto antes de volver a comprar la
     // bajada.* Each rung also needs the price five percent under the LAST
     // buy — the reference's own `min_gap_pct`.
-    dcaFloorBars: number(env, 'OPERADOR_DCA_FLOOR_BARS', 5),
-    dcaGapPct: number(env, 'OPERADOR_DCA_GAP_PCT', DEFAULT_PARAMS.minGapPct),
+    // From the module the dashboard reads too: a screen drawing a different
+    // rung from the one the engine buys is the drift it exists to prevent.
+    dcaFloorBars: productionLadder(env).dcaFloorBars,
+    dcaGapPct: productionLadder(env).dcaGapPct,
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
     // stop, NET of the round trip — which on a $15 fill is 1.38% and lands on

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { nextFloorRung, type FloorLadderPolicy } from './floor-ladder.js'
+import { nextFloorRung, minutesOnFloor, type FloorLadderPolicy } from './floor-ladder.js'
 
 /**
  * *Agregá 5 escalones de DCA, pero pedí un piso lateral de 5 velas de 1
@@ -67,5 +67,31 @@ describe('nextFloorRung — buy the dip only once it has held a floor', () => {
 
   it('buys nothing when it cannot see the minutes — silence is not a floor', () => {
     expect(nextFloorRung({ buys: oneBuy, priceUsd: 0.9, bars: minutes([]) }, policy)).toBeNull()
+  })
+})
+
+describe('minutesOnFloor — how long the low of this dip has held', () => {
+  // The screen asks the same question the ladder does, and gets the same
+  // answer from the same function: two readings of "has the floor held" would
+  // eventually disagree about whether a rung is about to fire.
+  it('counts the closed minutes since the lowest low', () => {
+    expect(minutesOnFloor(minutes([0.97, 0.94, 0.942, 0.943]), 0)).toBe(2)
+  })
+
+  it('restarts at every new low', () => {
+    expect(minutesOnFloor(minutes([0.97, 0.96, 0.95]), 0)).toBe(0)
+  })
+
+  it('counts from the FIRST touch when the low is matched, not the last', () => {
+    // Matching a low is not breaking it: a floor tested and held is a floor.
+    expect(minutesOnFloor(minutes([0.94, 0.95, 0.94, 0.95]), 0)).toBe(3)
+  })
+
+  it('ignores the minutes before the last buy', () => {
+    expect(minutesOnFloor({ time: [MIN, 2 * MIN, 3 * MIN], low: [0.5, 0.9, 0.95] }, MIN)).toBe(1)
+  })
+
+  it('is null with nothing to read', () => {
+    expect(minutesOnFloor(minutes([]), 0)).toBeNull()
   })
 })

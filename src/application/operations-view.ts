@@ -2,7 +2,8 @@ import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, positionLedger } from './ledger.js'
-import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
+import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
+import { minutesOnFloor } from '../domain/strategy/floor-ladder.js'
 
 /**
  * What the broker is actually DOING — as opposed to where it might act.
@@ -43,7 +44,7 @@ export interface LadderRung {
  * broken looked exactly alike, which makes the correct one impossible to trust.
  */
 export interface LadderLock {
-  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound'
+  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'gap' | 'floor'
   readonly held: boolean
   /** What it is waiting for, in the numbers it is waiting on. */
   readonly detail: string
@@ -148,6 +149,21 @@ export interface OperationsOptions {
    * reachable that the broker is going to refuse.
    */
   readonly maxOpenEntries?: number
+  /**
+   * The ladder the ENGINE buys, when it buys on a floor of one-minute candles
+   * rather than on the cascade's own rungs. Absent: the cascade's ladder.
+   *
+   * `minuteBars` is asked only for a position whose price is already in the
+   * zone, so a screen polling every ten seconds pays for the few that are
+   * about to act, never for the book.
+   */
+  readonly floorLadder?: {
+    readonly gapPct: number
+    readonly floorBars: number
+    readonly minuteBars?: (
+      position: PersistedPosition,
+    ) => Promise<{ readonly time: readonly number[]; readonly low: readonly number[] } | null>
+  }
 }
 
 export async function buildOperations(store: StatePort, options: OperationsOptions): Promise<OperationsView> {
@@ -228,7 +244,10 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     // already refused is this read model's own failure mode, with the sides
     // swapped — usually the engine refuses what the screen offers.
     const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
-    const ladder: LadderRung[] = Array.from({ length: fillable }, (_, level) => {
+    const floor = options.floorLadder
+    const ladder: LadderRung[] = floor
+      ? floorRungs(filledByLevel, fillable, floor.gapPct, params, inFlight?.level ?? filledByLevel.size)
+      : Array.from({ length: fillable }, (_, level) => {
       const fill = filledByLevel.get(level)
       return {
         level,
@@ -257,7 +276,9 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       unrealisedPct: unrealisedUsd !== null && deployedUsd > 0 ? (unrealisedUsd / deployedUsd) * 100 : null,
       costsUsd,
       ladder,
-      locks: ladderLocks(position.cascade, params, position.lastPriceUsd),
+      locks: floor
+        ? await floorLocks(position, buys, price, fillable, floor)
+        : ladderLocks(position.cascade, params, position.lastPriceUsd),
       fills: [...fills].reverse(),
       openedAt: position.openedAt,
       updatedAt: position.updatedAt,
@@ -296,6 +317,86 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
 
 
 const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
+
+/**
+ * The floor ladder's rungs: each one `gapPct` under the one before it,
+ * measured from what was actually PAID where a rung has filled, and from the
+ * rung above's own line where it has not — the engine measures from the last
+ * buy, so a plan that ignored the real fills would drift from it.
+ */
+function floorRungs(
+  filledByLevel: ReadonlyMap<number, PersistedFill>,
+  fillable: number,
+  gapPct: number,
+  params: CascadeParams,
+  waitingOn: number,
+): LadderRung[] {
+  const rungs: LadderRung[] = []
+  let above: number | null = null
+  for (let level = 0; level < fillable; level++) {
+    const fill = filledByLevel.get(level)
+    const trigger: number | null = level === 0 || above === null ? null : above * (1 - gapPct / 100)
+    rungs.push({
+      level,
+      triggerPrice: trigger,
+      nominalUsd: usdForLevel(params, level),
+      filled: fill !== undefined,
+      fillPrice: fill?.price ?? null,
+      fillUsd: fill ? fill.price * fill.qty : null,
+      pending: level === waitingOn && !fill,
+    })
+    above = fill?.price ?? trigger
+  }
+  return rungs
+}
+
+/**
+ * What the next floor rung is waiting for: the price `gapPct` under the last
+ * buy, then the dip's low held for `floorBars` one-minute candles — the same
+ * `minutesOnFloor` the engine buys on. Null when flat or the ladder is full.
+ */
+async function floorLocks(
+  position: PersistedPosition,
+  buys: readonly PersistedFill[],
+  price: number | null,
+  fillable: number,
+  floor: NonNullable<OperationsOptions['floorLadder']>,
+): Promise<readonly LadderLock[] | null> {
+  if (buys.length === 0 || buys.length >= fillable) return null
+  const last = [...buys].sort((a, b) => a.time - b.time).at(-1)!
+  const line = last.price * (1 - floor.gapPct / 100)
+  const inZone = price !== null && price <= line
+
+  const gap: LadderLock = {
+    name: 'gap',
+    held: inZone,
+    detail: inZone
+      ? `está ${pct((price! / last.price - 1) * 100)} bajo la última compra`
+      : `falta que caiga a ${line.toPrecision(4)} (${floor.gapPct}% bajo la última compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
+  }
+
+  let minutes: number | null = null
+  if (inZone && floor.minuteBars) {
+    try {
+      const bars = await floor.minuteBars(position)
+      minutes = bars === null ? null : minutesOnFloor(bars, last.time)
+    } catch {
+      minutes = null
+    }
+  }
+  const floorLock: LadderLock = {
+    name: 'floor',
+    held: minutes !== null && minutes >= floor.floorBars,
+    detail: !inZone
+      ? `después, que el mínimo aguante ${floor.floorBars} velas de 1 minuto`
+      : minutes === null
+        ? 'sin velas de 1 minuto para medir el piso'
+        : minutes >= floor.floorBars
+          ? `el piso aguantó ${Math.min(minutes, floor.floorBars)} de ${floor.floorBars} velas de 1 minuto`
+          : `${minutes} de ${floor.floorBars} velas de 1 minuto sin un mínimo nuevo — cada mínimo nuevo reinicia la cuenta`,
+  }
+  return [gap, floorLock]
+}
 
 /**
  * The rebound locks, evaluated against the state the position actually carries.
