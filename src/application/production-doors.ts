@@ -88,6 +88,14 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
   // full. At 0.3 it admits anything under about a 2.8% round trip, and PURR
   // charged 15.55%.
   costEfficiency: 0.3,
+  // *Sólo vas a operar las monedas que tengan más del 1% de presión
+  // compradora.* Buy pressure is the share of buys in the last hour above the
+  // neutral half, 0..1 — so 1% is buys above 50.5% of the hour's trades. An
+  // even or silent hour scores zero and is refused. Like the toll, it also
+  // turns the switch on a position already held: a winner whose buyers left
+  // may rotate, and only above what its round trip costs.
+  buyPressure: 0.01,
+
 }
 
 /**

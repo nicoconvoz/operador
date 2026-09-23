@@ -440,3 +440,24 @@ describe('the momentum door — moving up right now, or the switch is off', () =
     expect(rank([falling], false).candidates).toHaveLength(1)
   })
 })
+
+describe('ranking — buy pressure as a door', () => {
+  // *Sólo vas a operar las monedas que tengan más del 1% de presión
+  // compradora.* Buys above 50.5% of the hour's trades, or no candidate.
+  const doors = { ...policy, minScore: 0, minComponents: { buyPressure: 0.01 } }
+  const traded = (buys: number, sells: number) => token(`b${buys}s${sells}`, { txns: { h1: { buys, sells }, h24: { buys: 900, sells: 850 } } })
+
+  it('admits a token whose buyers lead the hour', () => {
+    expect(rankUniverse([traded(55, 45)], new Map(), quality, doors).candidates).toHaveLength(1)
+  })
+
+  it('switches off one whose hour is even, or led by sellers', () => {
+    const ranked = rankUniverse([traded(50, 50), traded(40, 60)], new Map(), quality, doors)
+    expect(ranked.candidates).toEqual([])
+    expect(ranked.switchedOff.map((s) => s.failed)).toEqual([['buyPressure'], ['buyPressure']])
+  })
+
+  it('switches off a silent hour — no trades is no pressure', () => {
+    expect(rankUniverse([traded(0, 0)], new Map(), quality, doors).candidates).toEqual([])
+  })
+})
