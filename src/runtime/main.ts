@@ -27,6 +27,7 @@ import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens
 import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
 import { tokenCandles } from '../application/candle-source.js'
+import { patientSellProbe } from '../application/patient-sell-probe.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
 import { makeAdaptiveThrottle } from '../infrastructure/adaptive-throttle.js'
 import { makeHedgedGet } from '../infrastructure/hedged-get.js'
@@ -490,7 +491,16 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
             // to Jupiter and one to the chain, a second or so, where it was
             // GoPlus on its two-second interval plus a candle download.
             ...sourcesFor(snapshot.chain),
-            sellProbe: sellProbeFor(snapshot.chain),
+            // PATIENT here, and only here. The scan quoted this token a moment
+            // ago; an unanswered re-quote is silence, not a verdict, and
+            // refusing on it left prime tokens waiting whole cycles — *estuvieron
+            // sin entrar unos minutos.* Sixty seconds at most, the operator's
+            // own budget, and it stops the instant Jupiter answers.
+            sellProbe: patientSellProbe(sellProbeFor(snapshot.chain), {
+              budgetMs: 60_000,
+              backoffMs: 1_000,
+              sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+            }),
             decimals: decimalsFor,
             ...(snapshot.chain === 'bsc' ? { history } : {}),
             // BSC only: see the scan's own `securityCache` below.
