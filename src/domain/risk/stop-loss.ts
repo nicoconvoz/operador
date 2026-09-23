@@ -103,6 +103,21 @@ export interface StopLossPolicy {
    * the rule and not having it would be the same thing.
    */
   readonly maxStopPct: number
+  /**
+   * A loss in DOLLARS that ends the position, and when it is set it is the
+   * WHOLE rule.
+   *
+   * *Ponele un SL de 0.10 centavos, todo lo que caiga a partir de ahí salte,
+   * inmediatamente.* And when the first version kept a percentage beside it:
+   * *no quiero que mires el porcentaje cuando detecte 0.10 SL.* So no flat
+   * percent, no 1:4 derivation, no ceiling — the position has lost this many
+   * dollars or it has not.
+   *
+   * Price only, never the toll. A position is born about ten cents under water
+   * — the buy's own cost — so a limit that counted costs would sell every
+   * position the instant it was bought and pay the round trip for nothing.
+   */
+  readonly maxLossUsd?: number
 }
 
 /**
@@ -211,9 +226,20 @@ export function shouldStopOut(input: StopLossInput, policy: StopLossPolicy): boo
   if (input.openQty <= 0) return false
   if (input.marketPriceUsd === null || !(input.marketPriceUsd > 0)) return false
   if (!(input.entryPriceUsd > 0)) return false
+  // Dollars decide ALONE when they are set. Returning here, before any
+  // percentage is computed, is the operator's instruction made structural.
+  if (policy.maxLossUsd !== undefined && policy.maxLossUsd > 0) {
+    return lossUsd(input) >= policy.maxLossUsd
+  }
   const stopPct = stopLossPctFor(input.runAtEntryPct, policy)
   if (stopPct <= 0) return false
   return input.marketPriceUsd <= input.entryPriceUsd * (1 - stopPct / 100)
+}
+
+/** What the position has lost on PRICE, in dollars — never the toll. */
+export function lossUsd(input: StopLossInput): number {
+  if (input.marketPriceUsd === null || !(input.marketPriceUsd > 0)) return 0
+  return input.openQty * (input.entryPriceUsd - input.marketPriceUsd)
 }
 
 /** How far under water it is, for the alert and the audit trail. */

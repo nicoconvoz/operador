@@ -407,6 +407,44 @@ describe('runLoop — the stop does not clock off between cycles', () => {
     expect(await store.loadPositions()).toEqual([])
   })
 
+  it('keeps watching when the stop is DOLLARS only and the percent is off', async () => {
+    // The loop's guard used to ask only whether a PERCENT stop was set. A book
+    // held under ten cents and nothing else would have gone unwatched between
+    // cycles — the dollar rule honoured inside a pass and ignored in the
+    // twenty minutes around it.
+    let clock = NOW
+    let asked = 0
+    const store = new MemoryStore()
+    const { deps } = rig({
+      store,
+      now: () => clock,
+      marketPrices: async () => new Map([['solana:Held', asked++ === 0 ? 1 : 0.9]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 500, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    await store.savePosition({
+      id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+      cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 15,
+      lastBarTime: -1, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+    })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 3_600_000,
+      price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+
+    await runLoop(
+      deps,
+      { ...config, stopLoss: { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0.1 }, breakEven: false },
+      new AlertThrottle(60_000),
+      { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+    )
+
+    expect((await store.allFills()).find((f: { side: string; comment: string }) => f.side === 'sell')?.comment).toBe('🛑 Stop')
+  })
+
   it('leaves a position with orders in flight alone, because that is a HALT', async () => {
     // Recovery could not answer whether the fill happened. An unattended system
     // is allowed to stop; it is never allowed to guess, and selling on top of

@@ -110,3 +110,15 @@ describe('exitSizingFrom — the ceiling reaches the sweep', () => {
   })
 })
 
+describe('exitLevelsFor — a dollar stop is passed through untouched', () => {
+  // The 1:4 derivation builds a fresh percent policy, and a fresh object would
+  // drop the dollar limit on the floor — the operator's rule deleted by the
+  // arithmetic he told us not to run. *No quiero que mires el porcentaje.*
+  it('keeps the dollar limit and derives no percentage at all', () => {
+    const tenCents = { ...FLAT_ONE_PCT_STOP, maxLossUsd: 0.1 }
+    const { stop } = exitLevelsFor(position(quality(0.25, 3)), { ...sizing, stop: tenCents })
+    expect(stop.maxLossUsd).toBe(0.1)
+    expect(stop).toEqual(tenCents)
+  })
+})
+

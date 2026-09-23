@@ -204,7 +204,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // quiero quedarme con ninguna posición que baje eso, y rotás a otra
     // moneda.* Paper mode, so the rule IS the experiment.
     const stop = loadConfig(valid).stopLoss
-    expect(stop).toEqual({ shareOfRun: 0, minStopPct: 1, maxStopPct: 1 })
+    expect(stop).toEqual({ shareOfRun: 0, minStopPct: 1, maxStopPct: 1, maxLossUsd: 0.1 })
 
     // FLAT is the property, not the literal above. `shareOfRun: 0` turns the
     // proportional rule off at its source, so a token up 1000% is cut at the
@@ -214,6 +214,13 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(stopLossPctFor(0, stop)).toBe(1)
     // And an unmeasured run cannot widen it either.
     expect(stopLossPctFor(null, stop)).toBe(1)
+  })
+
+  it('stops at ten cents of loss, in dollars', () => {
+    // *Ponele un SL de 0.10 centavos.* Zero turns the dollar stop off and
+    // hands the decision back to the percentage.
+    expect(loadConfig(valid).stopLoss.maxLossUsd).toBe(0.1)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.25' }).stopLoss.maxLossUsd).toBe(0.25)
   })
 
   it('never lets the derived stop run wider than ten percent', () => {

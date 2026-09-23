@@ -10,6 +10,7 @@ import {
   shouldStopOut,
   stopLossPctFor,
   drawdownPct,
+  lossUsd,
   STOP_LOSS_COMMENT,
   BREAK_EVEN_COMMENT,
   type StopLossPolicy,
@@ -128,7 +129,12 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
     sizing.maxCostSharePct === undefined ? null : minProfitPctFor(roundTrip, sizing.maxCostSharePct, sizing.floorPct)
 
   let stop = sizing.stop
-  if (target !== null && sizing.rewardRiskRatio !== undefined && sizing.rewardRiskRatio > 0) {
+  // A dollar limit is the WHOLE rule — *no quiero que mires el porcentaje* —
+  // so nothing is derived over it. Building a fresh percent policy here would
+  // also drop the limit on the floor: the operator's rule deleted by the very
+  // arithmetic he said not to run.
+  const dollarsDecide = sizing.stop.maxLossUsd !== undefined && sizing.stop.maxLossUsd > 0
+  if (!dollarsDecide && target !== null && sizing.rewardRiskRatio !== undefined && sizing.rewardRiskRatio > 0) {
     const pct = stopForRatio(target, roundTrip, sizing.rewardRiskRatio)
     // Zero means the pair is impossible on this pool. Fall back rather than
     // invent: the base policy is the operator's own number.
@@ -306,10 +312,17 @@ export async function sweepStops(
     stopped.push(position.id)
 
     const down = drawdownPct(input)
+    // In the unit of the rule that fired. Explaining a dollar cut in
+    // percentages would be the screen describing a rule the engine is not
+    // running.
+    const why =
+      policy.maxLossUsd !== undefined && policy.maxLossUsd > 0
+        ? `Perdía $${lossUsd(input).toFixed(2)} y el stop es de $${policy.maxLossUsd.toFixed(2)}.`
+        : `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, policy).toFixed(0)}%.`
     const cut = alert(
       'token-stopped',
       `🛑 ${position.symbol} cortada por stop`,
-      `Cayó ${down === null ? '' : down.toFixed(1) + '% '}bajo el precio de compra, y su stop estaba en ${stopLossPctFor(input.runAtEntryPct, policy).toFixed(0)}%. Se vendió todo a ${price}. El token NO queda vetado.`,
+      `${why} Se vendió todo a ${price}. El token NO queda vetado.`,
       at,
       { position: position.id, token: position.tokenAddress },
     )

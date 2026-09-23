@@ -445,6 +445,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', FLAT_ONE_PCT_STOP.shareOfRun),
       minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', FLAT_ONE_PCT_STOP.minStopPct),
       maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', FLAT_ONE_PCT_STOP.maxStopPct),
+      // *Ponele un SL de 0.10 centavos, todo lo que caiga a partir de ahí
+      // salte, inmediatamente.* In DOLLARS, and when set it is the whole rule —
+      // *no quiero que mires el porcentaje.* The percent fields above are then
+      // not consulted at all. Zero hands the decision back to them.
+      maxLossUsd: number(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0.1),
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,

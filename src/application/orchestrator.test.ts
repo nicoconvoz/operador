@@ -2156,3 +2156,57 @@ describe('the break-even ratchet — a winner may never close at a loss', () => 
   })
 })
 
+describe('runCycle — ten cents and out', () => {
+  // *Ponele un SL de 0.10 centavos, todo lo que caiga a partir de ahí salte.*
+  // Run with the production shape — a 1:4 ratio and a cost share configured,
+  // so the percentage derivation WOULD kick in — to prove it does not get a
+  // say once a dollar limit is set.
+  const tenCents: CycleConfig = {
+    ...config, maxOpenEntries: 1, maxCostSharePct: 33, rewardRiskRatio: 4, maxStopPct: 10,
+    stopLoss: { ...FLAT_ONE_PCT_STOP, maxLossUsd: 0.1 },
+  }
+
+  const cycleAt = async (price: number) => {
+    let store: MemoryStore
+    const { deps, store: st, alerts, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', price]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition({ ...position(), capitalUsd: 15 })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, tenCents, throttle)
+    return { sale: (await store.allFills()).find((f) => f.side === 'sell') ?? null, alerts }
+  }
+
+  it('sells once the position has lost ten cents', async () => {
+    // 15 × (1.0033 − 0.99) ≈ $0.20 on price. The 1:4 stop on this pool would
+    // sit near eight percent and not be anywhere close.
+    const { sale } = await cycleAt(0.99)
+    expect(sale?.comment).toBe('🛑 Stop')
+  })
+
+  it('holds while it has lost less', async () => {
+    // 15 × (1.0033 − 0.997) ≈ $0.095.
+    const { sale } = await cycleAt(0.997)
+    expect(sale).toBeNull()
+  })
+
+  it('says it in DOLLARS, because that is the rule it applied', async () => {
+    // A message that explained a dollar cut in percentages would be the screen
+    // describing a rule the engine is not running.
+    const { alerts } = await cycleAt(0.99)
+    const cut = alerts.sent.find((a) => a.kind === 'token-stopped')
+    expect(cut?.body).toContain('$0.10')
+    expect(cut?.body).not.toMatch(/stop estaba en \d/)
+  })
+})
+

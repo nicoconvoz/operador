@@ -103,7 +103,10 @@ export async function runLoop(
     const policy = config.stopLoss
     // Nothing to watch for when BOTH the stop and the ratchet are off. Either
     // one alone is reason enough to look.
-    if ((policy === undefined || policy.minStopPct <= 0) && config.breakEven !== true) return
+    // A dollar limit is a stop in its own right: with the percent at zero and
+    // ten cents set, the book still has a stop and still needs watching.
+    const stopOn = policy !== undefined && (policy.minStopPct > 0 || (policy.maxLossUsd ?? 0) > 0)
+    if (!stopOn && config.breakEven !== true) return
     if (deps.marketPrices === undefined) return
     // The kill switch as the last pass found it. Its documented asymmetry is
     // that it stops OPENING and keeps protecting, so this would arguably run

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { shouldStopOut, stopLossPctFor, drawdownPct, DEFAULT_STOP_LOSS_POLICY, type StopLossInput } from './stop-loss.js'
+import { shouldStopOut, stopLossPctFor, drawdownPct, DEFAULT_STOP_LOSS_POLICY, FLAT_ONE_PCT_STOP, type StopLossInput } from './stop-loss.js'
 
 const P = DEFAULT_STOP_LOSS_POLICY
 const held = (over: Partial<StopLossInput> = {}): StopLossInput => ({
@@ -104,3 +104,49 @@ describe('the stop itself', () => {
     expect(drawdownPct(held({ marketPriceUsd: null }))).toBeNull()
   })
 })
+
+describe('a stop in DOLLARS, and only dollars', () => {
+  // *Ponele un SL de 0.10 centavos, todo lo que caiga a partir de ahí salte,
+  // inmediatamente.* And, when the first version kept a percentage beside it:
+  // *no quiero que mires el porcentaje cuando detecte 0.10 SL.*
+  //
+  // So when a dollar limit is set it is the WHOLE rule. No flat percent, no
+  // 1:4 derivation, no ceiling: the position has lost ten cents or it has not.
+  //
+  // Price only, never the toll. A position is born about ten cents under
+  // water — the buy's own cost — so a limit that counted costs would sell every
+  // position the instant it was bought. The rule is about the token falling.
+
+  const tenCents = { ...FLAT_ONE_PCT_STOP, maxLossUsd: 0.1 }
+  const at = (price: number | null, qty = 15): StopLossInput => ({
+    entryPriceUsd: 1, marketPriceUsd: price, openQty: qty, runAtEntryPct: null,
+  })
+
+  it('cuts once the position has lost ten cents', () => {
+    // 15 × (1 − 0.993) = $0.105
+    expect(shouldStopOut(at(0.993), tenCents)).toBe(true)
+  })
+
+  it('holds at nine cents', () => {
+    // 15 × (1 − 0.994) = $0.09
+    expect(shouldStopOut(at(0.994), tenCents)).toBe(false)
+  })
+
+  it('does not look at the percentage at all', () => {
+    // A $5 position down 1.5% has lost seven and a half cents. The 1% flat
+    // stop beside it WOULD have cut — and must not, because the operator said
+    // not to look. Dollars decide alone.
+    expect(shouldStopOut(at(0.985, 5), tenCents)).toBe(false)
+    expect(shouldStopOut(at(0.985, 5), FLAT_ONE_PCT_STOP)).toBe(true)
+  })
+
+  it('never fires on silence', () => {
+    expect(shouldStopOut(at(null), tenCents)).toBe(false)
+  })
+
+  it('leaves the percent stop exactly as it was when no dollar limit is set', () => {
+    expect(shouldStopOut(at(0.993), FLAT_ONE_PCT_STOP)).toBe(false)
+    expect(shouldStopOut(at(0.989), FLAT_ONE_PCT_STOP)).toBe(true)
+  })
+})
+
