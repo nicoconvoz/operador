@@ -190,3 +190,27 @@ export function tokenNetUsd(fills: readonly PersistedFill[], chain: string, addr
   }
   return net
 }
+
+/**
+ * The fees paid on the round trip still OPEN: every fill since the position
+ * was last flat. Zero when it holds nothing.
+ *
+ * The floor a winner must clear before a swap or a rotation may sell it is
+ * what THIS round trip cost. A position that sold once and bought back paid
+ * its old fees out of the old sale, and counting them again would hold a
+ * winner for a debt it no longer owes.
+ */
+export function openLotCostsUsd(fills: readonly PersistedFill[]): number {
+  let qty = 0
+  let costs = 0
+  for (const fill of [...fills].sort((a, b) => a.time - b.time)) {
+    if (fill.side === 'buy') {
+      qty += fill.qty
+      costs += fill.costUsd
+      continue
+    }
+    qty -= Math.min(fill.qty, qty)
+    if (qty <= 0) costs = 0
+  }
+  return qty > 0 ? costs : 0
+}

@@ -33,9 +33,16 @@ describe('productionDoors — one definition of what the book may buy', () => {
     expect(DEFAULT_COMPONENT_FLOORS.headroom).toBeUndefined()
   })
 
-  it('leaves the score door OPEN — the floors are the whole rule', () => {
+  it('opens the score door at 75 — every condition, plus the score', () => {
+    // *Hacé que sólo sean candidatas las que ya cumplan todas las condiciones,
+    // sumada la condición de puntaje arriba de 75.*
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
-    expect(DEFAULT_MIN_SCORE).toBe(0)
+    expect(DEFAULT_MIN_SCORE).toBe(75)
+  })
+
+  it('keeps the reserve OFF — a token that fails any gate is not a candidate', () => {
+    expect(productionDoors({}).reserve).toBe(false)
+    expect(productionDoors({ OPERADOR_RESERVE: '1' }).reserve).toBe(true)
   })
 
   it('takes zero as "let everything through", never as unset', () => {

@@ -69,6 +69,9 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       // included — the screen-versus-engine disagreement this single builder
       // exists to prevent.
       minScore: doors.minScore,
+      // And its reserve switch: a token the engine will not buy is not drawn
+      // as a fallback it might.
+      reserve: doors.reserve,
     }),
     buildOperations(store, {
       now,

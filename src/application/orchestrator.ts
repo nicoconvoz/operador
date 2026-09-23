@@ -15,9 +15,9 @@ import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, SWAP_EXIT_COMMENT } from '../
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { type SwitchedOff } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
-import { commonFund, positionLedger, type PositionLedger } from './ledger.js'
+import { commonFund, positionLedger, openLotCostsUsd, type PositionLedger } from './ledger.js'
 import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
-import { DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
+import { DEFAULT_SIZING_POLICY, positionTollPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { type SizingPolicy } from '../domain/economics/sizing.js'
 import { planRecovery, type OrderProbe, type RecoveredPosition, type RecoveryPlan } from './recovery.js'
@@ -608,9 +608,35 @@ export async function runCycle(
     // is true after both. One map serving both clocks would be wrong for one
     // of them, silently.
     const ledgers = new Map<string, PositionLedger>()
+    /** Fees of the round trip still open, per position. */
+    const openCosts = new Map<string, number>()
     for (const recovered of recovery.positions) {
       if (stopped.has(recovered.position.id)) continue
-      ledgers.set(recovered.position.id, positionLedger(await deps.store.fillsFor(recovered.position.id)))
+      const own = await deps.store.fillsFor(recovered.position.id)
+      ledgers.set(recovered.position.id, positionLedger(own))
+      openCosts.set(recovered.position.id, openLotCostsUsd(own))
+    }
+    /**
+     * Where a position stands and what its whole round trip costs, both in
+     * percent. The swap for a better token and the rotation by filter sell a
+     * position only when the first is larger than the second: *no cierres en
+     * negativo; un porcentaje que contemple la comisión.* Null when nobody
+     * could measure it — and an unmeasured position is never sold by either.
+     */
+    const standingOf = (position: PersistedPosition): { unrealisedPct: number | null; tollPct: number | null } => {
+      const ledger = ledgers.get(position.id)
+      const price = marketPrices.get(`${position.chain}:${position.tokenAddress}`)
+      if (!ledger || ledger.avgCostUsd === null || price === undefined || price <= 0) return { unrealisedPct: null, tollPct: null }
+      return {
+        unrealisedPct: (price / ledger.avgCostUsd - 1) * 100,
+        tollPct: positionTollPct(
+          openCosts.get(position.id) ?? 0,
+          ledger.deployedUsd,
+          ledger.qty * price,
+          position.quality,
+          config.gasUsdPerSwap ?? 0.05,
+        ),
+      }
     }
 
     // ── 3a-ter. The switch went off on a position holding money ─────────────
@@ -661,6 +687,7 @@ export async function runCycle(
           // the first sells. A token missing from both lists is silence.
           switchOff: off !== undefined ? true : stillListed.has(key) ? false : null,
           failed: off?.failed ?? [],
+          ...standingOf(r.position),
         }
       }),
     )
@@ -761,14 +788,9 @@ export async function runCycle(
         frozen: now(r.position.id, r.position).deathWatch.stage === 'frozen',
         dead: now(r.position.id, r.position).deathWatch.stage === 'dead',
         score: scoreOf.get(`${r.position.chain}:${r.position.tokenAddress}`) ?? null,
-        // Where it stands against what was paid, live. Null without a price,
-        // and the swap rule then declines to judge it.
-        unrealisedPct: (() => {
-          const ledger = ledgers.get(r.position.id)
-          const price = marketPrices.get(`${r.position.chain}:${r.position.tokenAddress}`)
-          if (!ledger || ledger.avgCostUsd === null || price === undefined || price <= 0) return null
-          return (price / ledger.avgCostUsd - 1) * 100
-        })(),
+        // Where it stands against what was paid, and what the trip costs —
+        // live. Null without a price, and the swap rule then declines to judge.
+        ...standingOf(r.position),
       })),
       kind === 'full' ? waiting.map((c) => c.opportunity.score) : [],
       at,

@@ -231,23 +231,39 @@ describe('swapping a slot that is barely under water for a better token', () => 
     expect(symbols(releasableSlots([holding({ unrealisedPct: -1.2 })], [80], NOW, swap))).toEqual(['IDLE'])
   })
 
-  it('swaps a WINNER whose score fell behind a clearly better one', () => {
+  // *Los cambios por una mejor, no cierres en negativo — y el piso no a ojo:
+  // un porcentaje que contemple la comisión.* The operator. A winner is
+  // swapped only when it is up by more than its whole round trip costs.
+  it('swaps a WINNER up by more than its round trip costs, for a clearly better token', () => {
     // *La que esté en ganancia y caiga su puntaje, rotar a otra con mejor.*
-    // The operator, reversing this file's own exclusion: a winner that stopped
-    // being the best use of the slot takes its gain and makes room.
-    const [decision] = releasableSlots([holding({ unrealisedPct: 0.4 })], [80], NOW, swap)
+    const [decision] = releasableSlots([holding({ unrealisedPct: 1.4, tollPct: 0.9 })], [80], NOW, swap)
     expect(decision?.holder.symbol).toBe('IDLE')
-    expect(decision?.reason).toContain('ganancia')
+    expect(decision?.reason).toContain('+1.40%')
+    expect(decision?.reason).toContain('0.90%')
+  })
+
+  it('keeps a winner that has not yet paid for its own round trip — it would close in the red', () => {
+    expect(releasableSlots([holding({ unrealisedPct: 0.9, tollPct: 0.9 })], [80], NOW, swap)).toEqual([])
+    expect(releasableSlots([holding({ unrealisedPct: 0.4, tollPct: 0.9 })], [80], NOW, swap)).toEqual([])
+  })
+
+  it('keeps a winner whose toll nobody could measure', () => {
+    expect(releasableSlots([holding({ unrealisedPct: 1.4, tollPct: null })], [80], NOW, swap)).toEqual([])
   })
 
   it('keeps a winner when nothing clearly better is waiting', () => {
-    expect(releasableSlots([holding({ unrealisedPct: 0.4, score: 75 })], [80], NOW, swap)).toEqual([])
-    expect(releasableSlots([holding({ unrealisedPct: 0.4 })], [], NOW, swap)).toEqual([])
+    expect(releasableSlots([holding({ unrealisedPct: 1.4, tollPct: 0.9, score: 75 })], [80], NOW, swap)).toEqual([])
+    expect(releasableSlots([holding({ unrealisedPct: 1.4, tollPct: 0.9 })], [], NOW, swap)).toEqual([])
   })
 
-  it('rotates a winner even with no toll configured — a gain owes no toll', () => {
+  it('rotates a winner even with no loss toll configured — a gain owes none', () => {
     const noToll = { idleAfterMs: 3 * HOUR, minScoreEdge: 10 }
-    expect(symbols(releasableSlots([holding({ unrealisedPct: 0.4 })], [80], NOW, noToll))).toEqual(['IDLE'])
+    expect(symbols(releasableSlots([holding({ unrealisedPct: 1.4, tollPct: 0.9 })], [80], NOW, noToll))).toEqual(['IDLE'])
+  })
+
+  it('never swaps a position under water when no loss toll is configured — never close in the red', () => {
+    const noToll = { idleAfterMs: 3 * HOUR, minScoreEdge: 10 }
+    expect(releasableSlots([holding({ unrealisedPct: -0.1, tollPct: 0.9 })], [80], NOW, noToll)).toEqual([])
   })
 
   it('does NOT sell when nothing better is waiting', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, stopForRatio, roundTripCostForFill } from './sizing.js'
+import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, stopForRatio, roundTripCostForFill, positionTollPct } from './sizing.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -330,3 +330,33 @@ describe('roundTripCostForFill — the toll at the size actually traded', () => 
   })
 })
 
+
+describe('positionTollPct — what the whole round trip of a position costs', () => {
+  // *Veinte centavos no, porque si hay más plata en juego por más escalones
+  // debe ser más el piso; y el 20 fue a ojo, debe ser un porcentaje que
+  // contemple la comisión.* The operator, on the floor a winner must clear
+  // before it is swapped for a better token.
+  const deep: MarketQuality = { liquidityUsd: 5_000_000, spreadPct: 0.25, slippagePct: 0.01, referenceUsd: 100, observedAt: 0 }
+
+  it('adds the fees already paid to what selling now would cost, as a share of what was deployed', () => {
+    // Paid 10 cents entering $15. Leaving $15.30 costs the spread, a sliver
+    // of impact on a two-million-dollar pool, and one swap of gas.
+    const exit = 15.3 * (0.25 + (15.3 / 1_000_000) * 100) / 100 + 0.05
+    expect(positionTollPct(0.1, 15, 15.3, deep, 0.05)).toBeCloseTo((100 * (0.1 + exit)) / 15, 9)
+  })
+
+  it('asks more DOLLARS of a bigger position — more money in play, a higher floor', () => {
+    const small = (positionTollPct(0.1, 15, 15.3, deep, 0.05) / 100) * 15
+    const ladder = (positionTollPct(0.4, 90, 91.8, deep, 0.05) / 100) * 90
+    expect(ladder).toBeGreaterThan(small)
+  })
+
+  it('charges a thin pool more, because leaving it moves the price', () => {
+    const thin: MarketQuality = { ...deep, slippagePct: 3 }
+    expect(positionTollPct(0.4, 90, 91.8, thin, 0.05)).toBeGreaterThan(positionTollPct(0.4, 90, 91.8, deep, 0.05))
+  })
+
+  it('is unclearable for a position that deployed nothing', () => {
+    expect(positionTollPct(0, 0, 0, deep, 0.05)).toBe(Infinity)
+  })
+})

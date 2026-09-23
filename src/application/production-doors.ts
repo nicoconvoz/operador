@@ -118,13 +118,19 @@ export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
 // would be a fourth rule doing the same job twice — and it was the wrong one
 // to reach for anyway: at 50 it was blamed for a narrow book while the real
 // cut was `momentum`, which only a third of tokens clear in any given hour.
-export const DEFAULT_MIN_SCORE = 0
+export const DEFAULT_MIN_SCORE = 75
 
 export interface ProductionDoors {
   /** The binary key. Below any floor the token is neither candidate nor reserve. */
   readonly minComponents: ComponentFloors
   /** The score door, read after the score is computed and never folded into it. */
   readonly minScore: number
+  /**
+   * Whether a token held back only by a preference gate may still be bought
+   * when nothing better is free. OFF: *hacé que sólo sean candidatas las que ya
+   * cumplan todas las condiciones.* `OPERADOR_RESERVE=1` brings it back.
+   */
+  readonly reserve: boolean
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -137,5 +143,5 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const parsed = Number(raw)
   const minScore = raw && Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIN_SCORE
 
-  return { minComponents: DEFAULT_COMPONENT_FLOORS, minScore }
+  return { minComponents: DEFAULT_COMPONENT_FLOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
 }

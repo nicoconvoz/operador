@@ -202,6 +202,8 @@ export interface RuntimeConfig {
    * no longer bounded by how strict the rules are.
    */
   readonly usdPerToken: number | null
+  /** Whether a token failing only a preference gate may still be bought. See `ProductionDoors`. */
+  readonly reserve: boolean
   /** One-minute candles a dip's low must hold before a DCA rung buys it. */
   readonly dcaFloorBars: number
   /** How far under the LAST buy a DCA rung must be, in percent. */
@@ -436,7 +438,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // the deep pool derives 8.4% and is untouched; above it, the formula is
     // reacting to an expensive pool rather than to him. Zero means no ceiling.
     maxStopPct: number(env, 'OPERADOR_MAX_STOP_PCT', 10),
-    maxSwapLossPct: number(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', DEFAULT_MAX_SWAP_LOSS_PCT),
+    // ZERO: *no cierres en negativo.* A swap for a better token may only take a
+    // gain larger than its whole round trip; `DEFAULT_MAX_SWAP_LOSS_PCT` (1.2)
+    // stays tested and one variable away.
+    maxSwapLossPct: numberOrZero(env, 'OPERADOR_MAX_SWAP_LOSS_PCT', 0),
     stopLoss: {
       // ON, FLAT, at one percent — the operator's experiment: *si alguno llega
       // a bajar 1% SL, revisá tick a tick, no quiero quedarme con ninguna
@@ -457,14 +462,19 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       // Both other policies stay tested and one variable away:
       // `OPERADOR_STOP_SHARE_OF_RUN=0.05` restores the proportional rule,
       // `OPERADOR_STOP_MIN_PCT=0` turns the stop off entirely.
-      shareOfRun: number(env, 'OPERADOR_STOP_SHARE_OF_RUN', FLAT_ONE_PCT_STOP.shareOfRun),
-      minStopPct: number(env, 'OPERADOR_STOP_MIN_PCT', FLAT_ONE_PCT_STOP.minStopPct),
-      maxStopPct: number(env, 'OPERADOR_STOP_MAX_PCT', FLAT_ONE_PCT_STOP.maxStopPct),
+      // OFF. *No, el SL no lo quiero; quiero el que habíamos acordado antes,
+      // el death o congelamiento.* No price sells a position: it is held and
+      // the ladder averages it down. What may still sell at a loss is an
+      // asset that stopped being one — the death exit and the freeze exit.
+      // Every field below is one variable away, and all of it stays tested.
+      shareOfRun: numberOrZero(env, 'OPERADOR_STOP_SHARE_OF_RUN', 0),
+      minStopPct: numberOrZero(env, 'OPERADOR_STOP_MIN_PCT', 0),
+      maxStopPct: numberOrZero(env, 'OPERADOR_STOP_MAX_PCT', 0),
       // *Ponele un SL de 0.10 centavos, todo lo que caiga a partir de ahí
       // salte, inmediatamente.* In DOLLARS, and when set it is the whole rule —
       // *no quiero que mires el porcentaje.* The percent fields above are then
       // not consulted at all. Zero hands the decision back to them.
-      maxLossUsd: number(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0.1),
+      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0),
       // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
       // salir en pérdida.* ON: the stop sells at a loss only what the token
       // has already paid for across its whole history.
@@ -472,6 +482,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
+    reserve: productionDoors(env).reserve,
     solanaRpcUrl: env.SOLANA_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com',
     // Confirmed reachable without a key; Ankr's public endpoint now requires one.
     bscRpcUrl: env.BSC_RPC_URL?.trim() || 'https://bsc-dataseed.binance.org',

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, type RotationHolder } from './rotation.js'
 
 const holder = (over: Partial<RotationHolder> = {}): RotationHolder => ({
+  unrealisedPct: 2,
+  tollPct: 0.9,
   id: 'p1',
   symbol: 'TOK',
   chain: 'solana',
@@ -75,5 +77,31 @@ describe('rotation — the switch is off, so the money leaves', () => {
       holder({ id: 'd', switchOff: true, failed: ['costEfficiency'] }),
     ])
     expect(decisions.map((d) => d.holder.id)).toEqual(['a', 'd'])
+  })
+})
+
+describe('rotateOnSwitchOff — never closes in the red', () => {
+  // *Hacé lo mismo en la rotación por filtro.* The operator, right after the
+  // swap for a better token got the same floor: out only when the position is
+  // up by MORE than its whole round trip costs — fees already paid plus the
+  // cost of leaving. Below that, the filter going off is not a reason to lose.
+  it('keeps a position that has not yet paid for its own round trip', () => {
+    expect(rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], unrealisedPct: 0.5, tollPct: 0.9 })])).toEqual([])
+    expect(rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], unrealisedPct: 0.9, tollPct: 0.9 })])).toEqual([])
+  })
+
+  it('keeps a position under water, whatever the filter says', () => {
+    expect(rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], unrealisedPct: -3, tollPct: 0.9 })])).toEqual([])
+  })
+
+  it('keeps a position whose standing or toll nobody could measure', () => {
+    expect(rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], unrealisedPct: null })])).toEqual([])
+    expect(rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], tollPct: null })])).toEqual([])
+  })
+
+  it('says what it made and what the trip cost, because the alert is where it is read', () => {
+    const [decision] = rotateOnSwitchOff([holder({ switchOff: true, failed: ['momentum'], unrealisedPct: 2, tollPct: 0.9 })])
+    expect(decision?.reason).toContain('+2.00%')
+    expect(decision?.reason).toContain('0.90%')
   })
 })

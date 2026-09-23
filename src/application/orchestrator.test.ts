@@ -1140,6 +1140,22 @@ describe('runCycle — the switch goes off on a position holding money', () => {
     expect(sale!.price).toBeGreaterThan(1)
   })
 
+  it('does NOT sell a winner that has not yet paid for its whole round trip', async () => {
+    // *Hacé lo mismo en la rotación por filtro* — out only above what the trip
+    // costs. Up 0.5% on $1,000: the venue's exit cut alone would allow it, but
+    // the fee already paid, the impact of selling $1,005 into this pool and
+    // the gas come to about 0.76%, so selling here closes in the red.
+    const { deps, store, throttle } = rig({
+      brokerFor: seeded,
+      switchedOff: () => [off('Held')],
+      marketPrices: async () => new Map([['solana:Held', 1.005]]),
+    })
+    await withFills(store)
+    await runCycle(deps, config, throttle)
+    expect((await store.allFills()).some((f) => f.side === 'sell')).toBe(false)
+    expect((await store.loadPositions()).find((x) => x.id === 'pos-1')).toBeDefined()
+  })
+
   it('does NOT blacklist the token — a rotation is not a death', async () => {
     // It may be bought again the day it qualifies. Only a death verdict is
     // terminal, and confusing the two would permanently retire a token for

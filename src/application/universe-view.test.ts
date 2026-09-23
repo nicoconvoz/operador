@@ -458,6 +458,14 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.tier).toBe('reserve')
   })
 
+  it('draws it FILTERED when the engine keeps the reserve off', async () => {
+    // *Sólo candidatas las que ya cumplan todas las condiciones.* A fallback
+    // the engine will never buy must not be drawn as one it might.
+    const store = await seed([quiet])
+    const view = await buildUniverse(store, { ...strictOptions, reserve: false })
+    expect(view.tokens[0]?.tier).toBe('filtered')
+  })
+
   it('still says WHY it is not a first choice', async () => {
     // Under the STRICT policy, which is where these gates still live: the
     // production default stopped asking turnover, volume and the FDV cap, so

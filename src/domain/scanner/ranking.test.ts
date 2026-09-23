@@ -184,6 +184,13 @@ describe('ranking — the reserve: what gets bought when nothing better is free'
     expect(only?.forgiven?.map((f) => f.gate)).toEqual(['turnover'])
   })
 
+  it('admits NOTHING forgiven when the reserve is off — every condition, or no candidate', () => {
+    // *Hacé que sólo sean candidatas las que ya cumplan todas las condiciones.*
+    const ranked = rankUniverse([quiet('quiet'), token('clean')], new Map(), quality, { ...deep, reserve: false })
+    expect(ranked.candidates.map((c) => c.snapshot.address)).toEqual(['clean'])
+    expect(ranked.rejected.map((r) => r.snapshot.address)).toEqual(['quiet'])
+  })
+
   it('puts every fully-qualified token ahead of it, whatever the scores say', () => {
     // A reserve token is a fallback for idle capital, never a competitor.
     const ranked = rankUniverse([quiet('quiet'), token('clean')], new Map(), quality, deep).candidates

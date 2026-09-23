@@ -122,6 +122,12 @@ export interface SlotHolder {
    */
   readonly unrealisedPct?: number | null
   /**
+   * What this position's whole round trip costs, in percent of what it
+   * deployed — fees already paid plus the cost of selling now. A winner must
+   * be up MORE than this to be swapped. Null: nobody could measure it.
+   */
+  readonly tollPct?: number | null
+  /**
    * What the scanner thinks of this token RIGHT NOW, or null when it is not
    * among the candidates at all.
    *
@@ -214,12 +220,17 @@ export function releasableSlots(
     // mejor.* It owes no toll, so it needs none configured — and the no-loss
     // guard still refuses the sale if leaving would cost more than the gain.
     if (standing > 0) {
+      // *Veinte centavos no: si hay más plata en juego debe ser más el piso, y
+      // debe ser un porcentaje que contemple la comisión.* Up by more than the
+      // whole round trip costs, or it would close in the red after fees.
+      const toll = holder.tollPct
+      if (toll === null || toll === undefined || standing <= toll) continue
       decisions.push({
         holder,
         reason:
           holder.score === null
-            ? `está en ganancia (+${standing.toFixed(2)}%) y ya no está entre los candidatos — rota a una mejor`
-            : `está en ganancia (+${standing.toFixed(2)}%) y hay un candidato ${(best - holder.score).toFixed(0)} puntos mejor`,
+            ? `está en ganancia (+${standing.toFixed(2)}%, más que el ${toll.toFixed(2)}% que cuesta el viaje) y ya no está entre los candidatos — rota a una mejor`
+            : `está en ganancia (+${standing.toFixed(2)}%, más que el ${toll.toFixed(2)}% que cuesta el viaje) y hay un candidato ${(best - holder.score).toFixed(0)} puntos mejor`,
       })
       continue
     }

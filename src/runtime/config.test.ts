@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { deployableCapital } from '../application/paper-run.js'
 import { ConfigError, describeConfig, loadConfig } from './config.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
-import { stopLossPctFor } from '../domain/risk/stop-loss.js'
+import { stopLossPctFor, shouldStopOut } from '../domain/risk/stop-loss.js'
 
 const valid = {
   DATABASE_URL: 'postgres://user:secret@host:5432/db',
@@ -143,7 +143,7 @@ describe('loadConfig — the security budget is a cap you ASK for, not one you g
 })
 
 describe('minScore — a door on the score, not another weight in it', () => {
-  it('is OPEN by default — the component floors are the whole rule', () => {
+  it('is 75 by default — every condition, plus the score', () => {
     // The operator's rule, and the shape of it is the point: *un filtro
     // aparte, que no modifique el puntaje total*. The toll was first expressed
     // as a WEIGHT (0.2 -> 0.9), which worked and cost too much — a weighted
@@ -154,7 +154,8 @@ describe('minScore — a door on the score, not another weight in it', () => {
     // A door does not have that property. It reads the score after it is
     // computed and answers one question, so the scale it is read against is
     // the same scale yesterday's numbers were.
-    expect(loadConfig(valid).minScore).toBe(0)
+    expect(loadConfig(valid).minScore).toBe(75)
+    expect(loadConfig(valid).reserve).toBe(false)
   })
 
   it('takes zero as a real value — it is "let everything through", not "unset"', () => {
@@ -221,28 +222,23 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.dcaGapPct).toBe(5)
   })
 
-  it('cuts at one percent, FLAT, whatever the token has already done', () => {
-    // The operator: *si alguno llega a bajar 1% SL, revisá tick a tick, no
-    // quiero quedarme con ninguna posición que baje eso, y rotás a otra
-    // moneda.* Paper mode, so the rule IS the experiment.
-    const stop = loadConfig(valid).stopLoss
-    expect(stop).toEqual({ shareOfRun: 0, minStopPct: 1, maxStopPct: 1, maxLossUsd: 0.1, onlyWhenHistoryCovers: true })
-
-    // FLAT is the property, not the literal above. `shareOfRun: 0` turns the
-    // proportional rule off at its source, so a token up 1000% is cut at the
-    // same 1% as a calm one — which is exactly what was asked for and the
-    // opposite of what `DEFAULT_STOP_LOSS_POLICY` does.
-    expect(stopLossPctFor(1000, stop)).toBe(1)
-    expect(stopLossPctFor(0, stop)).toBe(1)
-    // And an unmeasured run cannot widen it either.
-    expect(stopLossPctFor(null, stop)).toBe(1)
+  it('has NO stop by price — only the death and freeze exits may sell at a loss', () => {
+    // *No, el SL no lo quiero; quiero el que habíamos acordado antes, el death
+    // o congelamiento.* The operator. A position that falls is held and the
+    // ladder averages it down; what may sell at a loss is an asset that
+    // stopped being one, never a price.
+    const config = loadConfig(valid)
+    const fell = { entryPriceUsd: 1, marketPriceUsd: 0.1, openQty: 15, runAtEntryPct: null }
+    expect(shouldStopOut(fell, config.stopLoss)).toBe(false)
+    expect(config.exitOnFreeze).toBe(true)
+    // Still one variable away, and still tested where it lives.
+    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.1' }).stopLoss.maxLossUsd).toBe(0.1)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_MIN_PCT: '0' }).stopLoss.minStopPct).toBe(0)
   })
 
-  it('stops at ten cents of loss, in dollars', () => {
-    // *Ponele un SL de 0.10 centavos.* Zero turns the dollar stop off and
-    // hands the decision back to the percentage.
-    expect(loadConfig(valid).stopLoss.maxLossUsd).toBe(0.1)
-    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.25' }).stopLoss.maxLossUsd).toBe(0.25)
+  it('never swaps a position under water for a better one — no close in the red', () => {
+    expect(loadConfig(valid).maxSwapLossPct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_SWAP_LOSS_PCT: '1.2' }).maxSwapLossPct).toBe(1.2)
   })
 
   it('never lets the derived stop run wider than ten percent', () => {

@@ -265,6 +265,32 @@ export const roundTripCostForFill = (fillUsd: number, quality: MarketQuality, ga
   return 2 * (quality.spreadPct + impact + (100 * gasUsdPerSwap) / fillUsd)
 }
 
+/**
+ * What a position's WHOLE round trip costs, as a percentage of what it
+ * deployed: the fees it already paid on every buy, plus what selling it now
+ * would cost — spread, the impact of the sale's own size, one swap of gas.
+ *
+ * The floor a winner must clear before anything but the strategy may sell it.
+ * The operator, refusing a flat twenty cents: *si hay más plata en juego por
+ * más escalones debe ser más el piso, y el 20 fue a ojo; debe ser un
+ * porcentaje que contemple la comisión.* A gain above this line leaves the
+ * position ahead after every fee; one below it closes in the red.
+ *
+ * The paid half is EXACT, read off the fills. The exit half is modelled with
+ * the same impact the broker charges, through `effectiveDepth`.
+ */
+export const positionTollPct = (
+  paidUsd: number,
+  deployedUsd: number,
+  valueUsd: number,
+  quality: MarketQuality,
+  gasUsdPerSwap: number,
+): number => {
+  if (!(deployedUsd > 0)) return Infinity
+  const exitUsd = (valueUsd * (quality.spreadPct + impactPct(valueUsd, effectiveDepth(quality).usd))) / 100 + gasUsdPerSwap
+  return (100 * (paidUsd + exitUsd)) / deployedUsd
+}
+
 /** Largest order whose impact stays within `budgetPct`. */
 const maxOrderUsd = (budgetPct: number, depth: number): number => (budgetPct <= 0 ? 0 : (budgetPct * depth) / 200)
 

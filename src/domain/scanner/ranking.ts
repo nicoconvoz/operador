@@ -66,6 +66,13 @@ export interface RankingPolicy {
   /** Below this score a token is safe but not interesting. */
   readonly minScore: number
   /**
+   * Whether a token held back only by a preference gate may join as a reserve
+   * behind every fully-qualified one. Absent means yes, which is how this
+   * ranking has always worked; production turns it off — *sólo candidatas
+   * las que ya cumplan todas las condiciones*.
+   */
+  readonly reserve?: boolean
+  /**
    * Floors a token must clear on INDIVIDUAL components, whatever its total says.
    *
    * The score is a weighted average, so being ruinous at one thing can be
@@ -146,7 +153,7 @@ export function rankUniverse(
 
   for (const snapshot of universe) {
     const gates = evaluateGates(snapshot, policy.gates)
-    const forgiven = gates.passed ? null : forgivableFailures(gates)
+    const forgiven = gates.passed || policy.reserve === false ? null : forgivableFailures(gates)
     if (!gates.passed && forgiven === null) {
       rejected.push({ snapshot, gates })
       continue

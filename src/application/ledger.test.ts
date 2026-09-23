@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { realisedBySell, commonFund, positionLedger, tokenNetUsd } from './ledger.js'
+import { realisedBySell, commonFund, positionLedger, tokenNetUsd, openLotCostsUsd } from './ledger.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
@@ -197,5 +197,28 @@ describe('tokenNetUsd — what one token has made across every position it ever 
 
   it('is zero for a token never traded', () => {
     expect(tokenNetUsd([], 'solana', 'AAA')).toBe(0)
+  })
+})
+
+describe('openLotCostsUsd — the fees of the round trip still open', () => {
+  // The floor a winner must clear before a swap or a rotation may sell it is
+  // what THIS round trip cost. A position that already sold once and bought
+  // back paid its old fees out of the old sale; counting them again would hold
+  // a winner for a debt it no longer owes.
+  it('counts every buy since the position was last flat', () => {
+    expect(openLotCostsUsd([fill('p', 'buy', 1, 15, NOW - 300, 0.05), fill('p', 'buy', 0.95, 15, NOW - 200, 0.05)])).toBeCloseTo(0.1, 9)
+  })
+
+  it('forgets a round trip that already closed', () => {
+    const fills = [
+      fill('p', 'buy', 1, 15, NOW - 400, 0.05),
+      fill('p', 'sell', 1.1, 15, NOW - 300, 0.07),
+      fill('p', 'buy', 1, 15, NOW - 200, 0.05),
+    ]
+    expect(openLotCostsUsd(fills)).toBeCloseTo(0.05, 9)
+  })
+
+  it('is zero for a position holding nothing', () => {
+    expect(openLotCostsUsd([fill('p', 'buy', 1, 15, NOW - 400, 0.05), fill('p', 'sell', 1.1, 15, NOW - 300, 0.07)])).toBe(0)
   })
 })

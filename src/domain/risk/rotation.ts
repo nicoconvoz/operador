@@ -77,6 +77,13 @@ export interface RotationHolder {
   readonly switchOff: boolean | null
   /** Which floors failed, so the evidence travels with the decision. */
   readonly failed: readonly (keyof OpportunityComponents | 'rising')[]
+  /** How far the position stands above its average cost, in percent, at the live price. */
+  readonly unrealisedPct?: number | null
+  /**
+   * What its whole round trip costs, in percent of what it deployed — fees
+   * already paid plus the cost of selling now. See `positionTollPct`.
+   */
+  readonly tollPct?: number | null
 }
 
 export interface RotationDecision {
@@ -94,9 +101,16 @@ export function rotateOnSwitchOff(holders: readonly RotationHolder[]): readonly 
     // this case. Two functions releasing the same slot is how a book counts
     // the same capital twice.
     if (holder.openQty <= 0) continue
+    // *Hacé lo mismo en la rotación por filtro.* Out only when the position is
+    // up by MORE than its whole round trip costs; below that the filter going
+    // off is not a reason to close in the red. Unmeasured is not a verdict.
+    const standing = holder.unrealisedPct
+    const toll = holder.tollPct
+    if (standing === null || standing === undefined || toll === null || toll === undefined) continue
+    if (standing <= toll) continue
     decisions.push({
       holder,
-      reason: `el interruptor se apagó: ${holder.failed.join(', ')} por debajo del piso`,
+      reason: `el interruptor se apagó (${holder.failed.join(', ')} por debajo del piso) y va +${standing.toFixed(2)}%, más que el ${toll.toFixed(2)}% que cuesta el viaje`,
     })
   }
   return decisions

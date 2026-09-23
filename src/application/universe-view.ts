@@ -156,6 +156,8 @@ export interface UniverseOptions {
    * not know the engine's threshold is not silently given a different rule.
    */
   readonly minScore?: number
+  /** The engine's own reserve switch: off, a forgivable failure is drawn filtered. */
+  readonly reserve?: boolean
   /**
    * The market, right now, for the tokens that HOLD money — keyed `chain:address`.
    *
@@ -338,7 +340,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
           : unsafe
             ? 'unsafe'
             : !gateResult.passed
-              ? forgivableFailures(gateResult) !== null
+              ? options.reserve !== false && forgivableFailures(gateResult) !== null
                 ? 'reserve'
                 : 'filtered'
               // Below a component FLOOR is not tradeable, so the screen must not

@@ -567,6 +567,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // nothing extra to examine.
           watchSlots: config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY,
           minScore: config.minScore,
+          // *Sólo candidatas las que ya cumplan todas las condiciones.*
+          reserve: config.reserve,
           // The SAME floors the live scan applies. A shelf that allocated on
           // looser rules than the scan that filled it would quietly undo them
           // every five minutes.
@@ -745,6 +747,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // nothing extra to examine.
           watchSlots: config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY,
                 minScore: config.minScore,
+                // *Sólo candidatas las que ya cumplan todas las condiciones.*
+                reserve: config.reserve,
                 // The operator's floors: without cost, headroom AND trend all
                 // above thirty percent, it is not a coin to trade. A weighted
                 // average can let one ruinous term be carried by the rest —
