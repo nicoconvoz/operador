@@ -16,6 +16,194 @@ Spot, on-chain, harvesting volatility on assets that are volatile by nature.
 Reference strategy: [`DCA.pine`](DCA.pine) — CASCADE DCA v1.5, Pine Script v6,
 spot long, 1H, bar-close driven. Author: Jesús Nicolás Astorga. MPL-2.0.
 
+## What runs today — 2026-09-24
+
+**This section is the truth about production.** Everything below it is the
+decision log: why each rule exists, what it cost, what replaced it. Where a
+section below disagrees with this one, this one wins — and the list at the end
+names the sections it replaces.
+
+The strategy was rebuilt in two days, one operator decision at a time, and
+what survived is small enough to hold in one table:
+
+| | Rule | Where it lives |
+|---|---|---|
+| **Candidate** | safe, clears the opportunity gates still on, **activity ≥ 50%** and **liquidity grew in the last hour** | `production-doors.ts`, `gates.ts` |
+| **First buy** | $15, in the same pass it becomes a candidate | `buyOnSelection`, `production-ladder.ts` |
+| **DCA** | **one** $15 rung, once the price is at half the last buy | `drop-ladder.ts`, the stop's sweep |
+| **Exits** | the **TP**, the **freeze** exit, the **death** exit — nothing else | the cascade, `death-exit.ts` |
+
+### Candidates: two floors, on top of the gates
+
+*Sólo traer en candidatas monedas con más del 50% de actividad y con
+crecimiento de liquidez de la última hora, más del 0%, y operarlas
+directamente.*
+
+- `DEFAULT_COMPONENT_FLOORS = { activity: 0.5, liquidityGrowth: 1 }`. Activity
+  is logarithmic in the hour's trades (knee 15, full at 300), so 0.5 is about
+  **54 trades in the last hour**. Liquidity growth is a yes or a no: one when
+  Jupiter's own `stats1h.liquidityChange` is above zero.
+- `DEFAULT_MIN_SCORE = 0`, `DEFAULT_ENTRY_DOORS = []`, the reserve is off. The
+  score still exists and is still drawn; nothing gates on it.
+- The **safety gates are untouched** and still fail closed: honeypot (a real
+  sell quote), liquidity, authorities, holders, tax, the rest. They are not
+  conditions of this kind and no instruction about "the only condition" has
+  ever meant them.
+- Three **opportunity gates are still on** in `DEFAULT_GATE_POLICY` and, with
+  the reserve off, still refuse: not down more than **30% on the day**
+  (`maxDailyFallPct`), a pool at least **24 hours** old (`minAgeHours`, raised
+  by `minAgeForHistory`), and at least **4 trades in the hour**
+  (`minHourlyTxns`, which the activity floor already covers).
+
+**Liquidity growth had never been measured.** It compared against a previous
+look that `scanOnce` and the recall never passed, so every token read a
+neutral 50% — all 44 on the shelf the day it was checked. A floor on it would
+have filtered nothing, or everything. Snapshots now carry
+`liquidityChangePct.h1` from Jupiter, and `withLiveMarket` keeps it. When the
+feed is silent the old comparison is the fallback, and with no previous look it
+reads the neutral 0.5 — which FAILS a floor of one. An unreported hour is
+refused, not passed, and no BSC token can qualify: only Jupiter reports it.
+
+### The buy, and the door in front of it
+
+One entry of $15. `usdPerToken` is derived for the whole ladder — two $15 buys
+plus gas and price headroom, about **$31.7** — so the buy the tick sizes is
+exactly fifteen. `confirmEntry` re-asks the SAFETY half only, and two things
+make it trustworthy on a shared runner:
+
+- **The sale quote waits** (`patientSellProbe`): silence is retried, doubling
+  from a second, for up to sixty — the operator's own budget — and stops the
+  instant Jupiter answers. A failed quote is a verdict and is never re-asked.
+  Before this, prime tokens waited whole cycles because one quote went
+  unanswered.
+- **Candles come by mint** (`tokenCandles`): on Solana, Jupiter's charts
+  first and GeckoTerminal by pool behind them; on BSC, GeckoTerminal alone.
+  The door once kept GeckoTerminal after the tick moved to Jupiter and refused
+  25 of 26 prime tokens on pools GeckoTerminal did not know.
+
+### The one rung
+
+*Armá un solo paso de DCA: si el precio cae al 50% de lo que vale, volver a
+comprar — sólo esa condición.* `OPERADOR_MAX_DCA` defaults to 1 and
+`dcaDropPct` to 50. The stop's sweep buys it, every thirty seconds, once the
+live price is at or under half the last buy — never into a frozen or dead
+position, never into one with no candle close on record, and never when the
+live price and the last close disagree by more than the 5× `maxPriceRatio`
+band. The cascade's own rungs are switched off in production
+(`minGapPct: 100`), so the same dip is never bought twice.
+
+### Exits: three, and only three
+
+*Dejá correr todo con esa única condición y la de congelamiento y la de la
+muerte; lo demás, sólo salí si el TP se cumple.*
+
+| Exit | Leaves at a loss? |
+|---|---|
+| 🏁 The strategy's TP | no — the no-loss guard |
+| ❄️ The freeze exit (`exitOnFreeze`) | yes, by design |
+| ☠️ The death exit | yes, by design |
+
+Everything else that was built this week is **off, tested, and one variable
+away**:
+
+| Exit | Turn it on with | What it does |
+|---|---|---|
+| 🛑 Price stop | `OPERADOR_STOP_MAX_LOSS_USD` (dollars, the whole rule) or `OPERADOR_STOP_MIN_PCT` (percent, reshaped by the 1:4 `OPERADOR_REWARD_RISK` and capped at `OPERADOR_MAX_STOP_PCT` 10) | sells at a loss; the dollar stop by default only sells what the token's whole history already covers (`OPERADOR_STOP_NEEDS_HISTORY=0` lifts it) |
+| 📉 Score stop | `OPERADOR_SCORE_STOP_POINTS=5` | sells once the score is N points under the score at entry (`entry_score`) |
+| 🔒 Break-even | `OPERADOR_BREAK_EVEN=1` | once a position has reached its target, sells it if it falls back to its cost plus the round trip; the no-loss guard still refuses a sale under cost |
+| 🔁 Rotation by filter | `OPERADOR_ROTATE_ON_FILTER=1` | a switched-off winner leaves only above its whole round trip |
+| 🔄 Swap for a better token | `OPERADOR_SWAP_HOLDERS=1` | same toll rule, for a clearly better candidate |
+| 📉 Buy pressure | `OPERADOR_PRESSURE=1` | a rung on buy pressure crossing 1% up; a mark and a sale above the toll when it falls through |
+
+The toll the rotation, the swap and the buy-pressure sale share is
+`positionTollPct`: the fees of the round trip still open plus the spread,
+impact and gas of leaving now, as a percent of what was deployed. The
+break-even uses the per-fill round trip; the two stops use no toll and may sell
+at a loss. A percent, so a bigger position asks for a bigger floor in
+dollars — the operator's correction of a flat twenty cents.
+
+### Cadence
+
+Every pass is a full scan, because a cold Solana scan now takes about ten
+seconds. The engine waits **a minute after each pass ends**, so a pass starts
+about every eighty seconds: `OPERADOR_CYCLE_MS`, `OPERADOR_SCAN_MS` and
+`OPERADOR_HELD_SCAN_MS` are 60000 in `engine.yml` (loadConfig's own defaults
+are longer). The sweep runs every thirty seconds — at the top of the cycle,
+between the scan's steps and inside the sleep — and carries the DCA rung. A run holds
+240 passes, about five hours, inside the job's timeout.
+
+### Sources on Solana
+
+| Question | Asked of |
+|---|---|
+| universe | Jupiter's three token lists, DexScreener's profiles and boosts, the `solana_cache` registry |
+| market half, audit | Jupiter tokens v2 search, in batches of 100 |
+| mint and freeze authority, Token-2022 extensions | the chain, `getMultipleAccounts`, 100 a call |
+| candles | Jupiter charts by mint (the forming bar dropped), GeckoTerminal behind it |
+| can it be sold | a Jupiter sell quote, patient for held tokens and at the door |
+
+GoPlus and GeckoTerminal's discovery and history are BSC only, and BSC is off.
+
+### What is stored
+
+A scan examines every token in memory and keeps only the candidates and the
+positions still held. The security cache is BSC only. The permanent registry
+(`solana_cache`) is read at most every fifteen minutes and never written — it
+is never deleted either. Each position stores its `entry_score`, written once.
+
+### The screen
+
+- `npm run typecheck` checks the dashboard as well as the engine; CI's verify
+  job and the Docker build still run a root-only `tsc`, so on push the
+  dashboard's types are checked by the dashboard job's `next build`. It had
+  not deployed for five days before anyone looked at that status.
+- Every score bar shows its number to one decimal, and a filtered token lists
+  the door it missed, what it read and what the door asks — a 49% drawn as a
+  half-full bar looked like the 50% it missed.
+- A held token is scored even when the gates reject it, so no label can blind
+  an exit that reads the score.
+- The operations view draws the one rung at half of what was actually paid.
+
+### Measured: the first 28 hours of this configuration
+
+| | |
+|---|---|
+| 🏁 TP | 76 sales, **+$157.82** |
+| ❄️ Freeze exit | 5 sales, −$13.85 |
+| Chain costs | −$27.10 |
+| Open, unrealised | −$71.31 over 69 positions, 53 under water |
+| **Net** | **+$45.55** |
+
+Most of the open losses are shallow — 39 of 53 within 10% — and with no stop
+they wait for the TP, the rung at half, or the death watch. The unrealised
+figure is the one to watch.
+
+### What this week taught
+
+- **A switched-off rule must stay off through every path.** Zeroing the dollar
+  stop handed the decision to the 1:4 derivation, and six positions were cut at
+  a loss the morning after the stop was "off". Test the path the engine runs
+  (`exitLevelsFor(exitSizingFrom(config))`), not the setting.
+- **Measure a component before gating on it.** Liquidity growth read 50% for
+  every token for as long as it existed.
+- **Silence is not a verdict — wait for it.** An unanswered quote painted THREE
+  unsafe, dropped it before scoring, and blinded the score stop.
+- **A reader that moves must take every reader with it.** The door kept
+  GeckoTerminal after the tick moved to Jupiter.
+- **The screen must say why.** A filtered token with no reason on it sent the
+  operator hunting for a bug that was a 49% against a 50%.
+- **Type-check what ships.** The dashboard failed every build for five days
+  behind a status nobody read.
+
+### Replaced by this section
+
+"What is actually ON, as of this writing"; "Two doors and a switch"; "One
+buy, a wide door, and the switch takes profits only"; "The switch goes off on
+a live position: sell and rotate"; "The scan is every 30 minutes"; "Three
+cadences" and "Two cadences" (every pass is a full scan now); "Two DCA rungs,
+not nine"; the two `headroom` sections; "Floors, and then the capital follows
+them". Their arguments stand as history; their numbers do not.
+
 ## The system is two subsystems
 
 Keep these separate. They fail for different reasons and are tested differently.
@@ -806,7 +994,7 @@ treatment the daily one just got — reconstruct what it would have refused,
 count what that cost — and until then it is written down here as unmeasured
 rather than quietly implied to be working.
 
-#### What is actually ON, as of this writing
+#### What is actually ON, as of this writing — SUPERSEDED, see "What runs today"
 
 The taste gates were turned off when the weights became doors, and the
 difference between "disabled" and "never existed" matters enough to tabulate.
@@ -1682,7 +1870,7 @@ and the sell probe pace themselves now; GoPlus is the last fixed interval, and
 it was the last one anybody believed was earned. With BSC off the symptom
 disappears — the cause does not.
 
-### Three cadences, because the scan was doing two jobs at one rate
+### Three cadences, because the scan was doing two jobs at one rate — SUPERSEDED, see "What runs today"
 
 The operator asked the right question: *if we re-examine a few positions and
 keep replacing, what is the big scan for?* Two things, and neither is optional:
@@ -1760,7 +1948,7 @@ What it changes about the full scan: it is now only needed to find tokens the
 shelf does not have, and to re-examine what money is sitting in. That is what
 makes a longer `OPERADOR_SCAN_MS` reasonable rather than a gamble.
 
-### Two cadences, not one
+### Two cadences, not one — SUPERSEDED, see "What runs today"
 
 The cycle above has two halves that cost wildly different amounts, and they used
 to share a clock set by the expensive one:
@@ -2021,7 +2209,7 @@ The concentration is the stated cost: one death goes from 3.2% of the book to
 12.5%. The operator's argument for accepting it is the first change — with those
 three floors in front, the tokens that reach a slot are not the ones that die.
 
-### One buy, a wide door, and the switch takes profits only
+### One buy, a wide door, and the switch takes profits only — SUPERSEDED, see "What runs today"
 
 The operator's structural change, three decisions that only make sense together:
 
@@ -2084,7 +2272,7 @@ position gone from the screen that was supposed to be watching it.
 Found by the test written for the rule rather than in production, which is the
 only reason it is a paragraph here and not an incident.
 
-### Two doors and a switch — the shortlist, rebuilt in one session
+### Two doors and a switch — the shortlist, rebuilt in one session — SUPERSEDED, see "What runs today"
 
 Four decisions, all the operator's, all taken on the same afternoon and all
 pulling the same way: **express a preference as a DOOR, never as a weight.**
@@ -2175,7 +2363,7 @@ Total weights fall 3.08 → 1.94 and `activity` goes from 32.5% to **51.5%** —
 "is anyone trading it" is now more than half the answer. There is a test whose
 only job is to say so.
 
-### The run ahead is measured over the HOUR — the day let everything through
+### The run ahead is measured over the HOUR — the day let everything through — SUPERSEDED, see "What runs today"
 
 `headroom` came back as a floor, and what changed is the WINDOW it reads, not
 the mind of whoever set it. The operator's argument:
@@ -2288,7 +2476,7 @@ blacklisted, and unlike `idle-slots` — which refuses to re-open what it just
 released in the same cycle — the rotation has no cooldown. That is the next
 thing to decide, and it is a decision about churn rather than about the window.
 
-### The switch goes off on a live position: sell and rotate
+### The switch goes off on a live position: sell and rotate — SUPERSEDED, see "What runs today"
 
 The operator's rule, and the largest departure from the reference in the
 codebase:
@@ -2360,7 +2548,7 @@ doors in front of it — with cost and trend both above 30% and a 70-point floor
 the tokens reaching a slot are not the ones that die, and he would rather
 rotate capital than hold it through a turn.
 
-### The scan is every 30 minutes
+### The scan is every 30 minutes — SUPERSEDED, see "What runs today"
 
 `OPERADOR_SCAN_MS` went from an hour to **thirty minutes**, and the operator's
 reading of the economics is right: *total no tarda nada.* Discovery is cached
