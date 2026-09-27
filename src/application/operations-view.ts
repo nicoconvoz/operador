@@ -1,7 +1,7 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
-import { realisedBySell, commonFund, positionLedger } from './ledger.js'
+import { realisedBySell, commonFund, positionLedger, holdingBuys } from './ledger.js'
 import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -204,7 +204,9 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   for (const position of positions) {
     const fills = allFills.filter((fill) => fill.positionId === position.id)
 
-    const buys = fills.filter((f) => f.side === 'buy')
+    // The rungs of what it holds NOW. A cycle already sold is on the tape, not
+    // on the ladder: KITTY was drawn with its previous cycle's DCA-1 filled.
+    const buys = holdingBuys(fills)
     const costsUsd = fills.reduce((sum, f) => sum + f.costUsd, 0)
     const { qty, deployedUsd, avgCostUsd, realisedUsd } = positionLedger(fills)
 

@@ -124,6 +124,42 @@ export function positionLedger(fills: readonly PersistedFill[]): PositionLedger 
 }
 
 /**
+ * The buys of what the position holds NOW, oldest first: everything bought
+ * since the last sale that emptied it.
+ *
+ * A position that sells and buys back keeps its id and its whole tape, and the
+ * DCA ladder belongs to the HOLDING, not to the history. Counting every buy on
+ * the tape, the ladder took the old cycle's entry and rungs for its own: FONE
+ * and CALI re-entered above their first cycle, fell 20% from the new entry and
+ * bought nothing, because the next rung was still measured from the old first
+ * price and counted past rungs the holding never bought.
+ *
+ * "Empty" is relative, for the same crumbs the ledger forgives: a sale in lots
+ * can leave 1e-12 of a token, and that is an exit, not a holding.
+ */
+export function holdingBuys(fills: readonly PersistedFill[]): readonly PersistedFill[] {
+  let qty = 0
+  let peak = 0
+  let buys: PersistedFill[] = []
+  for (const fill of [...fills].sort((a, b) => a.time - b.time)) {
+    if (fill.side === 'buy') {
+      if (qty <= 0) buys = []
+      qty += fill.qty
+      peak = Math.max(peak, qty)
+      buys.push(fill)
+      continue
+    }
+    qty -= Math.min(fill.qty, qty)
+    if (qty <= peak * 1e-9) {
+      qty = 0
+      peak = 0
+      buys = []
+    }
+  }
+  return buys
+}
+
+/**
  * The common fund: money the system has made, over and above what it started
  * with, available to open new positions.
  *

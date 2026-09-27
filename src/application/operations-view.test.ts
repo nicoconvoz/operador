@@ -585,6 +585,23 @@ describe('buildOperations — the price ladder: three rungs at −10, −20, −
     expect(p!.ladder.map((r) => r.pending)).toEqual([false, false, true, false])
   })
 
+  it('draws only the rungs of what it holds now, not of a cycle already sold', async () => {
+    // KITTY was drawn with DCA-1 filled after it sold and bought back: the
+    // rung belonged to the cycle before.
+    const store = await seed(
+      [
+        fill('Entry', 1, 15, NOW - 50 * MIN),
+        fill('DCA-1', 0.9, 16, NOW - 40 * MIN),
+        fill('Exit', 1.1, 31, NOW - 30 * MIN, 'sell'),
+        fill('Entry', 1.2, 12, NOW - 20 * MIN),
+      ],
+      held,
+    )
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder.map((r) => r.filled)).toEqual([true, false, false, false])
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(1.08, 9)
+  })
+
   it('says which rung is next and how far the price still has to fall', async () => {
     const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN)], held)
     const [p] = (await buildOperations(store, ladder)).positions

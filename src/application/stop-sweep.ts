@@ -1,5 +1,5 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
-import { positionLedger, tokenNetUsd, openLotCostsUsd } from './ledger.js'
+import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './ledger.js'
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
@@ -479,7 +479,7 @@ async function actOnPressure(
   at: number,
   throttle: AlertThrottle,
 ): Promise<'bought' | 'sold' | null> {
-  const entries = fills.filter((f) => f.side === 'buy').length
+  const entries = holdingBuys(fills).length
   if (entries < 1) return null
 
   let counts: Awaited<ReturnType<PressureLadder['hourCounts']>>
@@ -622,7 +622,9 @@ async function buyOnDrop(
   throttle: AlertThrottle,
 ): Promise<void> {
   if (position.deathWatch.stage !== 'healthy') return
-  const buys = fills.filter((f) => f.side === 'buy').sort((a, b) => a.time - b.time)
+  // The HOLDING's buys, never the tape's: a position that sold and bought back
+  // starts its ladder again from the new entry.
+  const buys = holdingBuys(fills)
   const first = buys[0]
   if (!first) return
   const rung = nextDropRung({ entries: buys.length, firstBuyPrice: first.price, priceUsd: price }, ladder.policy)

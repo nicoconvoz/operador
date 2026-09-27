@@ -352,6 +352,22 @@ describe('the price ladder: three rungs at −10, −20 and −30% of the FIRST 
     expect(counts).toEqual([2, 3, 4, 4])
   })
 
+  it('starts again from the NEW entry after the position sold and bought back', async () => {
+    // Live, the first day: FONE and CALI re-entered above their first cycle,
+    // fell 20% from the new entry, and bought nothing — the ladder counted the
+    // old cycle's buys as rungs and measured from the old first price.
+    const { store, run } = await rig({
+      held: at(1.8),
+      drop: true,
+      stop: NO_STOP,
+      history: [rungAt('DCA-1', 0.9, MIN), sell(ID, 1.1, 15 + 15 / 0.9, 2 * MIN), buy(ID, 2, 3 * MIN)],
+    })
+    await run(1.9)
+    expect((await buys(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'Entry'])
+    await run(1.8)
+    expect((await buys(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'Entry', 'DCA-1'])
+  })
+
   it('buys nothing into a FROZEN position', async () => {
     const { store, run } = await rig({ held: at(0.5, { deathWatch: { ...startDeathWatch(1, 0), stage: 'frozen' } }), drop: true, stop: NO_STOP })
     await run(0.5)

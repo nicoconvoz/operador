@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { realisedBySell, commonFund, positionLedger, tokenNetUsd, openLotCostsUsd } from './ledger.js'
+import { realisedBySell, commonFund, positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './ledger.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
@@ -28,6 +28,44 @@ describe('positionLedger — what a position holds and what it made', () => {
     const ledger = positionLedger([fill('p', 'buy', 1, 10, NOW - 2), fill('p', 'sell', 2, 10, NOW - 1)])
     expect(ledger.qty).toBe(0)
     expect(ledger.hasFills).toBe(true)
+  })
+})
+
+describe('holdingBuys — the buys of what the position holds NOW', () => {
+  // A position that sells and buys again keeps its id and its whole tape. Its
+  // ladder belongs to the holding, not to the history: FONE re-entered at
+  // +23% over its first cycle, fell 20% from the new entry, and bought no rung
+  // — the ladder was still counting the old cycle's buys and measuring from
+  // its first price.
+  it('is every buy while the position has never been flat', () => {
+    const buys = holdingBuys([fill('p', 'buy', 1, 10, NOW - 3), fill('p', 'buy', 0.9, 10, NOW - 2)])
+    expect(buys.map((f) => f.price)).toEqual([1, 0.9])
+  })
+
+  it('starts again after a sale empties the position', () => {
+    const buys = holdingBuys([
+      fill('p', 'buy', 1, 10, NOW - 5),
+      fill('p', 'buy', 0.9, 10, NOW - 4),
+      fill('p', 'sell', 1.1, 20, NOW - 3),
+      fill('p', 'buy', 1.3, 10, NOW - 2),
+    ])
+    expect(buys.map((f) => f.price)).toEqual([1.3])
+  })
+
+  it('counts a sale in lots as one exit, and floating-point crumbs as empty', () => {
+    const buys = holdingBuys([
+      fill('p', 'buy', 1, 10, NOW - 5),
+      fill('p', 'buy', 1 / 3, 10, NOW - 4),
+      fill('p', 'sell', 1.1, 10, NOW - 3),
+      fill('p', 'sell', 1.1, 10 - 1e-12, NOW - 3),
+      fill('p', 'buy', 2, 10, NOW - 2),
+    ])
+    expect(buys.map((f) => f.price)).toEqual([2])
+  })
+
+  it('is empty for a position that holds nothing', () => {
+    expect(holdingBuys([])).toEqual([])
+    expect(holdingBuys([fill('p', 'buy', 1, 10, NOW - 2), fill('p', 'sell', 2, 10, NOW - 1)])).toEqual([])
   })
 })
 
