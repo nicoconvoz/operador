@@ -15,6 +15,7 @@ import { idempotencyKeyFor, type PersistedPosition } from '../domain/persistence
 import { orderKeyPart } from './recovery.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
 import { type Candles } from './replay.js'
+import { ladderCapitalUsd } from './paper-run.js'
 
 const HOUR = 3_600_000
 const quality: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
@@ -971,6 +972,33 @@ describe('tickPosition — the rung is derived from the capital, not a constant'
     // third of it into the first one — not $15 and $100 doing nothing.
     const rung = await rungUsd(150)
     expect(rung).toBeGreaterThan(30)
+  })
+})
+
+describe('tickPosition — a slot reserves its FIRST buy, and that buy is still fifteen dollars', () => {
+  // Every position used to be allocated its whole ladder: live, $2,887
+  // committed against $1,395 deployed. Now it is allocated one entry and each
+  // rung asks the free capital for its own when it fires — so the tick must
+  // divide the capital by the entries it RESERVED, while the venue still holds
+  // four. Dividing one entry's capital four ways would buy a quarter of a rung.
+  const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+  const ONE_ENTRY = ladderCapitalUsd(FLAT_15, 1, 0.05)
+  const firstBuy = async (over: Partial<EngineConfig>) => {
+    const result = await tickPosition(
+      { position: position({ capitalUsd: ONE_ENTRY }), candles: extend(decline(300)), health: null, marketPriceUsd: 0.65, broker: rig().broker },
+      { ...config, params: FLAT_15, maxOpenEntries: 4, gasUsdPerSwap: 0.05, ...over },
+      new MemoryStore(), new RecordingAlerts(), new AlertThrottle(60_000),
+    )
+    const entry = result.orders.find((o) => o.kind === 'entry')
+    return entry && entry.kind === 'entry' ? entry.usd : 0
+  }
+
+  it('buys exactly fifteen dollars on a slot sized for one entry of a four-entry ladder', async () => {
+    expect(await firstBuy({ reservedEntries: 1 })).toBeCloseTo(15, 6)
+  })
+
+  it('without it, the same slot is split four ways — under the gas floor, and nothing is bought', async () => {
+    expect(await firstBuy({})).toBeLessThan(15)
   })
 })
 

@@ -24,6 +24,21 @@ export const DEFAULT_USD_PER_TOKEN = 15
  * trip is about 1.3% and a 2% target was barely above it.
  */
 export const DEFAULT_MAX_COST_SHARE_PCT = 33
+
+/**
+ * Where the break-even arms and where an armed position sells, in percent over
+ * its average cost. *Poné el break-even en 7.5.*
+ *
+ * The operator's answer to *calibrá para que las ganancias sean las máximas y
+ * las pérdidas las mínimas*, in place of a fixed take-profit. A fixed TP would
+ * have cut the runners: fifteen real TP cycles made $5–$21 each — $133.60 of
+ * the $439.87 the strategy's own exit earned — at +32% to +120%. So nothing is
+ * sold on the way UP: the ratchet arms at +7.5% and, once armed, sells only if
+ * the price falls back to +7.5%, locking the gain it had reached. Above that
+ * the position runs, and the strategy's exit takes the top.
+ */
+export const DEFAULT_BREAK_EVEN_ARM_PCT = 7.5
+export const DEFAULT_BREAK_EVEN_FLOOR_PCT = 7.5
 import { FIFTEEN_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 
 /**
@@ -107,10 +122,19 @@ export interface RuntimeConfig {
    * unreachable, unable to buy because frozen and unable to sell because the
    * strategy's own exit wants a profit it will never reach.
    *
-   * The token is NOT blacklisted: only a death verdict does that. It goes back
-   * to being merely filtered and may be bought again the day it recovers.
+   * The token is not blacklisted by the sale itself — see `blacklistOnFreeze`,
+   * which bans it once the slot is released and holds nothing.
    */
   readonly exitOnFreeze: boolean
+  /**
+   * Blacklist a token when its frozen slot is released, so it is never bought
+   * back. ON by default: *no me gustó que las congeladas ... no pasen a la lista
+   * negra.* On the replay it cost about $6 over 336 entries and removed GO —
+   * bought back thirty minutes after a half-liquidity freeze, now −54% — and
+   * ASTEROID, bought back and $9.29 more lost. `OPERADOR_BLACKLIST_ON_FREEZE=0`
+   * restores the old rule, where a frozen token went back to the filtered pile.
+   */
+  readonly blacklistOnFreeze: boolean
   /**
    * USD cap per ladder level, in production.
    *
@@ -152,16 +176,23 @@ export interface RuntimeConfig {
   readonly idleSlotHours: number
   /**
    * DCA rungs production will actually fill, per token. Entry is not one of
-   * them, so 5 means six open entries.
+   * them, so 3 means four open entries.
    *
    * NOT `PYRAMIDING`, which is 10 because that is what the `strategy()` header
    * ran and the parity harness asserts it. Evidence, not a preference.
    *
-   * The user's reason for 5: with `linInc` at 3, DCA-5 already needs a 13%
-   * fall and DCA-10 needs 28%. A token down 28% is rarely an opportunity, and
-   * the capital those deep rungs reserve buys more by going to another token.
+   * THREE, at −10/−20/−30% of the first buy: the replay of all 336 real
+   * entries made +$373 with it against +$71 for the one rung at half. The
+   * history of the number, and why it moved each time, is in
+   * `application/production-ladder.ts`.
    */
   readonly maxDcaPerToken: number
+  /**
+   * Entries' worth of capital a position is allocated when it opens. One: the
+   * first buy. Each rung asks the book's free capital for its own when it
+   * fires. See `DEFAULT_RESERVED_ENTRIES`.
+   */
+  readonly reservedEntries: number
   /**
    * Require every window the momentum rule reads to be GREEN before a token is
    * a candidate: h6 > 0, h1 > 0 and m5 > 0.
@@ -206,8 +237,8 @@ export interface RuntimeConfig {
   readonly rotateOnFilter: boolean
   /** Whether the buy-pressure ladder and its sale run at all. */
   readonly pressure: boolean
-  /** How far under the last buy the one DCA rung buys, in percent. */
-  readonly dcaDropPct: number
+  /** How far under the FIRST buy each DCA rung buys, in percent, DCA-1 first. */
+  readonly dcaDropsPct: readonly number[]
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -231,6 +262,10 @@ export interface RuntimeConfig {
   readonly maxCostSharePct: number
   readonly rewardRiskRatio: number
   readonly breakEven: boolean
+  /** Where the break-even arms, in percent over the average cost. */
+  readonly breakEvenArmPct: number
+  /** Where an ARMED position sells. Never above the arm. */
+  readonly breakEvenFloorPct: number
   readonly maxStopPct: number
   /**
    * How much of a loss the allocator may pay to move a slot to a better token.
@@ -326,6 +361,18 @@ const onUnless = (env: Env, key: string): boolean => {
   return !(raw === '0' || raw === 'false' || raw === 'no')
 }
 
+/**
+ * A percentage in [min, 100), or null when absent or nonsense. For the lines
+ * whose rule is "nonsense falls back to the decision", not "nonsense refuses
+ * to boot": a mistyped break-even must not stop the engine that protects the
+ * book, and falling back to the operator's own number is the safe direction.
+ */
+const percentOrNull = (env: Env, key: string, above: number): number | null => {
+  const raw = env[key]?.trim()
+  const value = Number(raw)
+  return raw && Number.isFinite(value) && value >= above && value < 100 ? value : null
+}
+
 const number = (env: Env, key: string, fallback: number): number => {
   const raw = env[key]?.trim()
   if (!raw) return fallback
@@ -357,6 +404,15 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
   // user's, made with money on a real chart.
   const timeframe = env.OPERADOR_TIMEFRAME?.trim() ?? '15m'
   if (timeframe !== '1h' && timeframe !== '15m') throw new ConfigError(`OPERADOR_TIMEFRAME must be "1h" or "15m", got "${timeframe}"`)
+
+  // The break-even's two lines. The arm must be above zero — a ratchet armed at
+  // cost is a stop — and the floor may be anything from cost up to the arm,
+  // never above it: a floor over the arm sells the position on the very sweep
+  // that armed it, which is a fixed take-profit wearing the ratchet's name.
+  const breakEvenArmPct = percentOrNull(env, 'OPERADOR_BREAK_EVEN_ARM_PCT', Number.MIN_VALUE) ?? DEFAULT_BREAK_EVEN_ARM_PCT
+  const floorAsked = percentOrNull(env, 'OPERADOR_BREAK_EVEN_FLOOR_PCT', 0)
+  const breakEvenFloorPct =
+    floorAsked !== null && floorAsked <= breakEvenArmPct ? floorAsked : Math.min(DEFAULT_BREAK_EVEN_FLOOR_PCT, breakEvenArmPct)
 
   const config: RuntimeConfig = {
     mode,
@@ -405,12 +461,22 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // its opposite there is not a sentinel, it is a trap.
     maxSecurityChecks: env.OPERADOR_MAX_SECURITY_CHECKS?.trim() ? number(env, 'OPERADOR_MAX_SECURITY_CHECKS', 0) : null,
     exitOnFreeze: onUnless(env, 'OPERADOR_EXIT_ON_FREEZE'),
+    // ON: *y además que no pasen a la lista negra.* A frozen token is banned
+    // once its slot is released and holds nothing. OPERADOR_BLACKLIST_ON_FREEZE=0
+    // turns it off.
+    blacklistOnFreeze: onUnless(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     dropInitPct: productionLadder(env).dropInitPct,
     impatientProfitPct: productionLadder(env).impatientProfitPct,
     urgentProfitPct: productionLadder(env).urgentProfitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
     maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
+    // One entry reserved; each rung pays for itself out of the free capital.
+    // Capped by what the venue holds, from the same module the dashboard reads.
+    reservedEntries: Math.min(
+      productionLadder(env).reservedEntries,
+      number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN) + 1,
+    ),
     // Only an explicit "0" or "false" turns these off. A misspelt value must
     // not silently disable the strategy the engine is running, which is the
     // failure `OPERADOR_MAX_DCA=0` taught this codebase twice.
@@ -421,8 +487,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // ON, and independently. Without it the executor's classic door decides,
     // and it refuses exactly what a wide shortlist is full of.
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
-    // Unset: what the whole ladder needs, derived below — *cada escalón de 15
-    // dólares*, so six rungs, their gas and the price headroom.
+    // Unset: what the RESERVED entries need, derived below — one $15 buy, its
+    // gas and the price headroom. The rungs are not in it: each asks the free
+    // capital for its own when it fires.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
@@ -436,7 +503,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // first, $5.57 between them. OPERADOR_BREAK_EVEN=0 turns it off.
     // OFF: *lo demás, sólo salí si el TP se cumple.* The ratchet sells a winner
     // back at its cost — protection, not the TP. OPERADOR_BREAK_EVEN=1 for it.
-    breakEven: onlyIf(env, 'OPERADOR_BREAK_EVEN'),
+    // ON again, at 7.5: *poné el break-even en 7.5.* The operator's answer to a
+    // fixed take-profit, which would have cut the runners the strategy exit
+    // lives on. OPERADOR_BREAK_EVEN=0 turns it off.
+    breakEven: onUnless(env, 'OPERADOR_BREAK_EVEN'),
+    breakEvenArmPct,
+    breakEvenFloorPct,
     // *El operador pierde de a mucho, no funciona el SL.* The 1:4 multiplies
     // the toll by about seven with no ceiling of its own: fomopay was cut with
     // a 24% stop, a thin pool derives 51% on the old toll and 14.7% on the
@@ -497,8 +569,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // variable away each.
     rotateOnFilter: onlyIf(env, 'OPERADOR_ROTATE_ON_FILTER'),
     pressure: onlyIf(env, 'OPERADOR_PRESSURE'),
-    // The one rung's trigger, from the module the dashboard reads too.
-    dcaDropPct: productionLadder(env).dcaDropPct,
+    // The rungs' triggers, from the module the dashboard reads too.
+    dcaDropsPct: productionLadder(env).dcaDropsPct,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings
@@ -520,13 +592,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     )
   }
 
-  // The slot a ladder of `maxUsdPerLevel` rungs needs, when nobody fixed one:
-  // the exact inverse of what the tick deploys, so every rung is the rung.
+  // The slot the RESERVED entries need, when nobody fixed one: the exact
+  // inverse of what the tick deploys, so the first buy is the rung. One entry
+  // in production — the rungs are funded when they fire, not held for them.
   return {
     ...config,
     usdPerToken:
       config.usdPerToken ??
-      ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel }, config.maxDcaPerToken + 1, config.gasUsdPerSwap),
+      ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel }, config.reservedEntries, config.gasUsdPerSwap),
   }
 }
 

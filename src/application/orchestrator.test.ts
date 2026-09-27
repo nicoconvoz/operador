@@ -14,6 +14,8 @@ import { type MarketQuality } from '../domain/market/market-quality.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { type Candles } from './replay.js'
+import { ladderCapitalUsd } from './paper-run.js'
+import { fundRungsFromFreeCapital } from './free-capital.js'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
@@ -2343,3 +2345,297 @@ describe('runCycle — ten cents and out', () => {
   })
 })
 
+
+describe('the break-even at 7.5 — *poné el break-even en 7.5*', () => {
+  // The operator, instead of a fixed take-profit that would have cut the
+  // runners: fifteen real TP cycles made $5–$21 each, $133.60 of the $439.87
+  // the strategy's own exit earned, at +32% to +120%. It ARMS once the live
+  // price is 7.5% over the average cost and, once armed, sells when the price
+  // falls back to +7.5%. Above that, the position runs.
+  //
+  // Through `runCycle`, so the lines travel the path the engine runs:
+  // CycleConfig → `exitSizingFrom` → `exitLevelsFor` → the sweep.
+  const at75: CycleConfig = { ...config, maxOpenEntries: 1, breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 }
+
+  const run = async (price: number, armed: boolean, cfg: CycleConfig = at75) => {
+    let store: MemoryStore
+    const { deps, store: st, alerts, throttle } = rig({
+      scan: async () => [],
+      marketPrices: async () => new Map([['solana:Held', price]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 1_000, maxOpenEntries: 10, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+    })
+    store = st
+    await store.savePosition({ ...position(), breakEvenArmed: armed, lastBarTime: NOW })
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR,
+      price: 1, qty: 100, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+    })
+    await runCycle(deps, cfg, throttle)
+    const sale = (await store.allFills()).find((f) => f.side === 'sell') ?? null
+    const [left] = await store.loadPositions()
+    return { sale, left, alerts }
+  }
+
+  it('arms at +7.5% and does not sell there', async () => {
+    const { sale, left } = await run(1.08, false)
+    expect(sale).toBeNull()
+    expect(left?.breakEvenArmed).toBe(true)
+  })
+
+  it('does NOT arm below +7.5%', async () => {
+    const { sale, left } = await run(1.07, false)
+    expect(sale).toBeNull()
+    expect(left?.breakEvenArmed).toBe(false)
+  })
+
+  it('sells an ARMED position the moment it falls back to +7.5%, and says it locked the gain', async () => {
+    const { sale, alerts } = await run(1.07, true)
+    expect(sale?.comment).toBe('🔒 Break-even')
+    expect(sale!.price).toBeGreaterThan(1)
+    const said = alerts.sent.find((a) => a.kind === 'position-closed')
+    expect(said?.body).toContain('+7.5%')
+  })
+
+  it('never sells a position that keeps climbing — the top belongs to the strategy exit', async () => {
+    const { sale, left } = await run(1.4, true)
+    expect(sale).toBeNull()
+    expect(left).toBeDefined()
+  })
+
+  it('does nothing at all when switched off, armed or not', async () => {
+    const { sale } = await run(1.07, true, { ...at75, breakEven: false })
+    expect(sale).toBeNull()
+  })
+})
+
+describe('runCycle — a frozen token goes to the blacklist when its slot is released', () => {
+  // *No me gustó que las congeladas llegaran a valer 8 o 9 dólares ... y además
+  // que no pasen a la lista negra.* Measured on the replay: blacklisting after
+  // any freeze cost about $6, and it removes GO — bought back thirty minutes
+  // after a half-liquidity freeze, now −54% — and ASTEROID, bought back and
+  // $9.29 more lost.
+  //
+  // At RELEASE, never at the verdict. When the freeze fires the position still
+  // holds its tokens, and recovery refuses to resume a blacklisted position:
+  // a freeze-exit sale waiting for the next open would be orphaned. At release
+  // the sale has filled — or nothing was ever bought — so nothing can strand.
+  const frozenWatch = {
+    ...startDeathWatch(1_000_000, NOW - 2 * HOUR),
+    stage: 'frozen' as const,
+    evidence: [{
+      observedAt: NOW - HOUR, source: 'scan', stageAfter: 'frozen' as const, verdict: 'freeze' as const,
+      signals: [{ kind: 'liquidityCollapse' as const, stage: 1 as const, detail: 'liquidity $480000 = 48.0% of entry' }],
+    }],
+  }
+  const frozen = (over: Partial<PersistedPosition> = {}) => position({
+    id: 'frz-1', tokenAddress: 'Frz', symbol: 'FRZ', openedAt: NOW - 3 * HOUR, lastBarTime: NOW, deathWatch: frozenWatch, ...over,
+  })
+  const soldOnFreeze = async (store: MemoryStore) => {
+    await store.recordFill({ positionId: 'frz-1', orderId: 'Entry', side: 'buy', time: NOW - 2 * HOUR, price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'f1' })
+    await store.recordFill({ positionId: 'frz-1', orderId: 'Entry', side: 'sell', time: NOW - HOUR, price: 0.8, qty: 15, costUsd: 0.05, comment: '❄️ Salida por congelamiento', idempotencyKey: 'f2' })
+  }
+  const withSwitch: CycleConfig = { ...config, blacklistOnFreeze: true }
+  const topCandidate = async () => [candidate('Frz', 99), candidate('a', 90)]
+
+  it('blacklists a frozen slot it releases once the freeze exit has sold it, with the evidence', async () => {
+    const { deps, store, throttle } = rig({ scan: topCandidate })
+    await store.savePosition(frozen())
+    await soldOnFreeze(store)
+
+    const result = await runCycle(deps, withSwitch, throttle)
+
+    expect(result.releasedIds).toEqual(['frz-1'])
+    expect(await store.blacklisted()).toContain('solana:Frz')
+    expect(store.blacklistReason('solana', 'Frz')).toContain('frozen')
+    expect(store.blacklistReason('solana', 'Frz')).toContain('48.0% of entry')
+  })
+
+  it('never buys it back, on any later cycle, however high it ranks', async () => {
+    const { deps, store, throttle } = rig({ scan: topCandidate })
+    await store.savePosition(frozen())
+    await soldOnFreeze(store)
+
+    await runCycle(deps, withSwitch, throttle)
+    const later = await runCycle(deps, withSwitch, throttle)
+
+    expect(later.opened.map((p) => p.tokenAddress)).not.toContain('Frz')
+    expect((await store.loadPositions()).map((p) => p.tokenAddress)).not.toContain('Frz')
+  })
+
+  it('blacklists one that froze before it ever bought, too', async () => {
+    const { deps, store, throttle } = rig({ scan: topCandidate })
+    await store.savePosition(frozen())
+
+    await runCycle(deps, withSwitch, throttle)
+
+    expect(await store.blacklisted()).toContain('solana:Frz')
+  })
+
+  it('says the token is now BANNED, where it used to say it was not', async () => {
+    const { deps, store, alerts, throttle } = rig({ scan: topCandidate })
+    await store.savePosition(frozen())
+    await soldOnFreeze(store)
+
+    await runCycle(deps, withSwitch, throttle)
+
+    const said = alerts.sent.find((a) => a.kind === 'token-retired' && a.title.includes('FRZ'))
+    expect(said?.body).toContain('queda vetado')
+    expect(said?.body).not.toContain('no queda vetado')
+  })
+
+  it('still never blacklists a reservation that merely went unused', async () => {
+    const { deps, store, throttle } = rig()
+    await store.savePosition(position({ id: 'idle-1', tokenAddress: 'Idle', symbol: 'IDLE', openedAt: NOW - 6 * HOUR, lastBarTime: NOW }))
+
+    await runCycle(deps, withSwitch, throttle)
+
+    expect((await store.blacklisted()).size).toBe(0)
+  })
+
+  it('with the switch off, the old behaviour: released, not banned, and bought back later', async () => {
+    const { deps, store, throttle } = rig({ scan: topCandidate })
+    await store.savePosition(frozen())
+    await soldOnFreeze(store)
+
+    await runCycle(deps, config, throttle)
+    const later = await runCycle(deps, config, throttle)
+
+    expect((await store.blacklisted()).size).toBe(0)
+    expect(later.opened.map((p) => p.tokenAddress)).toContain('Frz')
+  })
+})
+
+describe('runCycle — a slot keeps its FIRST buy, not the ladder it might one day climb', () => {
+  // Live, before this: $2,887 committed against $1,395 deployed. Every
+  // position was allocated its whole ladder up front and almost none ever
+  // bought a rung. Now a slot is given one entry, and a rung asks the free
+  // capital for its own when it fires.
+  const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+  const reserveOne: CycleConfig = {
+    ...config, params: FLAT_15, maxOpenEntries: 4, reservedEntries: 1, gasUsdPerSwap: 0.05,
+    portfolio: { ...config.portfolio, maxPositions: 0 },
+  }
+  const ONE_ENTRY = ladderCapitalUsd(FLAT_15, 1, 0.05)
+
+  it('trims a position holding a four-entry reservation back to its first buy', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [] })
+    await store.savePosition(position({ capitalUsd: ladderCapitalUsd(FLAT_15, 4, 0.05), lastBarTime: NOW }))
+    await store.recordFill({ positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR, price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'e1' })
+
+    await runCycle(deps, reserveOne, throttle)
+
+    expect((await store.loadPositions())[0]?.capitalUsd).toBeCloseTo(ONE_ENTRY, 6)
+  })
+
+  it('never trims under what the rungs already bought', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [] })
+    await store.savePosition(position({ capitalUsd: ladderCapitalUsd(FLAT_15, 4, 0.05), lastBarTime: NOW }))
+    await store.recordFill({ positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR, price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'e1' })
+    await store.recordFill({ positionId: 'pos-1', orderId: 'DCA-1', side: 'buy', time: NOW - HOUR / 2, price: 0.9, qty: 16.7, costUsd: 0.05, comment: 'DCA-1', idempotencyKey: 'e2' })
+
+    await runCycle(deps, reserveOne, throttle)
+
+    expect((await store.loadPositions())[0]?.capitalUsd).toBeCloseTo(15 + 0.9 * 16.7, 6)
+  })
+
+  it('opens more tokens on the same capital than a two-entry reservation did', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => candidate(`c${i}`, 90 - i))
+    const opened = async (cfg: CycleConfig) => {
+      const { deps, throttle } = rig({ scan: async () => many })
+      return (await runCycle(deps, { ...cfg, portfolio: { ...cfg.portfolio, totalCapitalUsd: 100 } }, throttle)).opened.length
+    }
+    expect(await opened(reserveOne)).toBeGreaterThan(await opened({ ...reserveOne, reservedEntries: 2 }))
+  })
+})
+
+describe('runCycle — a rung funded between steps is never written back over', () => {
+  // The known bug class, from the side of the new funding: "the trim wrote over
+  // what the tick had just decided". A sweep raises a position's capital when a
+  // rung fires. Every later step of the cycle carries its OWN snapshot of that
+  // position, and a stale one written back would lower the capital under what
+  // the rung just put in the token — so the allocator would hand the same
+  // dollars out a second time.
+  const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+  const ONE_ENTRY = ladderCapitalUsd(FLAT_15, 1, 0.05)
+  const cfg: CycleConfig = {
+    ...config, params: FLAT_15, maxOpenEntries: 4, reservedEntries: 1, gasUsdPerSwap: 0.05,
+    portfolio: { ...config.portfolio, totalCapitalUsd: 40, maxPositions: 0 },
+    usdPerToken: ONE_ENTRY,
+    // As production runs it: a position holding tokens is never sold for a
+    // better one, so the only thing moving its capital is the rung.
+    idleSlots: { idleAfterMs: 3 * HOUR, minScoreEdge: 10, swapHolders: false },
+  }
+
+  const setup = (prices: (asked: number) => number, over: Partial<CycleDeps> = {}) => {
+    let store: MemoryStore
+    let asked = 0
+    const built = rig({
+      marketPrices: async () => new Map([['solana:Held', prices(asked++)]]),
+      brokerFor: async (pos) => {
+        const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: pos.capitalUsd, maxOpenEntries: 4, quality: () => quality })
+        broker.seed(await store.fillsFor(pos.id))
+        return broker
+      },
+      ...over,
+    })
+    store = built.store
+    const deps: CycleDeps = {
+      ...built.deps,
+      dropLadder: {
+        policy: { maxEntries: 4, dropsPct: [10, 20, 30] },
+        rungUsd: 15,
+        fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: 40, params: FLAT_15, gasUsdPerSwap: 0.05 }),
+      },
+    }
+    return { ...built, deps }
+  }
+  const seed = async (store: MemoryStore, lastBarTime: number) => {
+    await store.savePosition(position({
+      capitalUsd: ONE_ENTRY, lastBarTime, lastPriceUsd: 1,
+      cascade: { ...initialState(), level: 1, ep1: 1, lastFill: 1, totalInvested: 15 },
+    }))
+    await store.recordFill({ positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - HOUR, price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'e1' })
+  }
+  const invariant = async (store: MemoryStore) => {
+    for (const p of await store.loadPositions()) {
+      const deployed = (await store.fillsFor(p.id)).filter((f) => f.side === 'buy').reduce((s, f) => s + f.price * f.qty, 0)
+      expect(p.capitalUsd).toBeGreaterThanOrEqual(deployed - 1e-9)
+    }
+  }
+
+  it('the tick that runs after the first sweep does not revert the capital the rung was given', async () => {
+    const { deps, store, throttle } = setup(() => 0.9, { scan: async () => [] })
+    // One bar behind, so the tick really runs and really saves the position.
+    await seed(store, flat().time.at(-2)!)
+
+    await runCycle(deps, cfg, throttle)
+
+    expect((await store.fillsFor('pos-1')).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    await invariant(store)
+  })
+
+  it('a rung funded DURING the scan survives the trim, and its capital is not handed out again', async () => {
+    let clock = NOW
+    const { deps, store, throttle } = setup((asked) => (asked === 0 ? 1 : 0.9), {
+      now: () => clock,
+      scan: async (_kind, betweenSteps) => {
+        clock += 60_000
+        await betweenSteps?.()
+        return [candidate('a', 90), candidate('b', 85)]
+      },
+    })
+    await seed(store, NOW)
+
+    await runCycle(deps, cfg, throttle)
+
+    expect((await store.fillsFor('pos-1')).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    await invariant(store)
+    // Forty dollars of capital, and the book may not have allocated more.
+    const allocated = (await store.loadPositions()).reduce((s, p) => s + p.capitalUsd, 0)
+    expect(allocated).toBeLessThanOrEqual(40)
+  })
+})

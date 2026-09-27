@@ -86,9 +86,10 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         urgentProfitPct: ladder.urgentProfitPct,
       },
       maxOpenEntries: ladder.maxOpenEntries,
-      // The ladder the engine BUYS: one rung, once the price has halved from
-      // the last buy — from the same module the engine reads.
-      dropLadder: { dropPct: ladder.dcaDropPct },
+      // The ladder the engine BUYS: three rungs at −10, −20 and −30% of the
+      // FIRST buy — from the same module the engine reads, so the screen draws
+      // each line where the sweep is actually looking.
+      dropLadder: { dropsPct: ladder.dcaDropsPct },
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.
       tapeLength: 30,

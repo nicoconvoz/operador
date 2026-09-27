@@ -77,14 +77,32 @@ export interface EngineConfig {
    *
    * The cost is real and is written down in `DeathVerdictOptions`: it collapses
    * the graded response into one stage, so a single bad reading liquidates
-   * instead of pausing. The token is NOT blacklisted — it goes back to being
-   * merely filtered and may be bought again.
+   * instead of pausing.
+   *
+   * The token is NOT blacklisted here, at the verdict, and must not be: the
+   * position still holds its tokens, and recovery refuses to resume a
+   * blacklisted position — a sale decided now and filled at the next open
+   * would be orphaned. The orchestrator blacklists it once the slot is
+   * released, holding nothing (`CycleConfig.blacklistOnFreeze`).
    */
   readonly exitOnFreeze?: boolean
   readonly sizing?: SizingPolicy
   /** Needed to reserve gas out of the position's capital before sizing. */
   readonly gasUsdPerSwap?: number
   readonly maxOpenEntries?: number
+  /**
+   * How many entries the position's capital was ALLOCATED for, and so what the
+   * tick divides it by. Never more than `maxOpenEntries`.
+   *
+   * One in production: a slot is given its first buy, and each rung asks the
+   * book's free capital for its own fifteen dollars when it fires (see
+   * `DEFAULT_RESERVED_ENTRIES`). The venue still holds `maxOpenEntries`; this
+   * only says how many of them the slot's capital is meant to pay for.
+   *
+   * Absent: `maxOpenEntries`, the whole ladder — what every caller did before,
+   * so the parity harness and the offline paths keep meaning what they meant.
+   */
+  readonly reservedEntries?: number
 }
 
 export interface TickResult {
@@ -239,7 +257,13 @@ export async function tickPosition(
   // What still binds is the POOL. The 1% impact budget shrinks a rung a thin
   // venue cannot absorb, exactly as it took PURR's $15 down to $9.46. Depth
   // outranks capital, and that is the order it has to be in.
-  const rungs = config.maxOpenEntries ?? PYRAMIDING
+  //
+  // Divided by the entries the slot was ALLOCATED for, not by the entries the
+  // venue holds. A slot is given its first buy and nothing more — each rung
+  // pays for itself out of the free capital when it fires — so dividing that
+  // one entry's capital by the four the venue holds would buy a quarter of a
+  // rung, under the gas floor, and nothing at all.
+  const rungs = Math.min(config.reservedEntries ?? config.maxOpenEntries ?? PYRAMIDING, config.maxOpenEntries ?? PYRAMIDING)
   const deployable = deployableCapital({
     initialCapital: input.position.capitalUsd,
     gasUsdPerSwap: config.gasUsdPerSwap ?? 0.05,

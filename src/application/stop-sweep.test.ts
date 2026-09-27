@@ -50,6 +50,8 @@ const sizing: ExitSizing = {
   floorPct: 2,
   breakEven: true,
   maxStopPct: 10,
+  breakEvenArmPct: undefined,
+  breakEvenFloorPct: undefined,
 }
 
 describe('exitLevelsFor — the stop is sized from the toll the broker actually charges', () => {
@@ -141,5 +143,46 @@ describe('exitLevelsFor — a stop switched OFF stays off', () => {
   it('still derives one when a percent stop is on — the 1:4 is unchanged', () => {
     const { stop } = exitLevelsFor(position(quality(0.25, 0.05)), sizing)
     expect(stop.minStopPct).toBeCloseTo(8.41, 1)
+  })
+})
+
+describe('exitLevelsFor — the break-even at 7.5, when the lines are given', () => {
+  // *Poné el break-even en 7.5.* The operator, instead of a fixed take-profit
+  // that would have cut the runners: fifteen real TP cycles made $5–$21 each,
+  // $133.60 of the $439.87 the strategy's own exit earned, at +32% to +120%.
+  // It ARMS at +7.5% over the average cost and, once armed, sells when the
+  // price falls back to +7.5%. Above it the position runs and the strategy's
+  // exit takes the top.
+  const at = { ...sizing, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 }
+
+  it('takes both lines from the config, not from the toll', () => {
+    const levels = exitLevelsFor(position(quality(0.25, 1.1)), at)
+    expect(levels.armAtPct).toBe(7.5)
+    expect(levels.breakEvenPct).toBe(7.5)
+  })
+
+  it('never floors above the arm — a ratchet that sold above where it armed would sell on arming', () => {
+    const levels = exitLevelsFor(position(quality(0.25, 1.1)), { ...at, breakEvenFloorPct: 9 })
+    expect(levels.breakEvenPct).toBe(7.5)
+  })
+
+  it('is OFF when the switch is off, whatever the lines say', () => {
+    expect(exitLevelsFor(position(quality(0.25, 1.1)), { ...at, breakEven: false }).armAtPct).toBeNull()
+  })
+
+  it('still derives both from the toll when neither is given', () => {
+    const levels = exitLevelsFor(position(quality(0.25, 1.1)), sizing)
+    expect(levels.armAtPct).toBeCloseTo(4.54, 2)
+    expect(levels.breakEvenPct).toBeCloseTo(1.50, 2)
+  })
+})
+
+describe('exitSizingFrom — the break-even lines reach the sweep', () => {
+  it('carries the arm and the floor from the cycle config into the sizing', () => {
+    const config = {
+      params: DEFAULT_PARAMS, portfolio: DEFAULT_PORTFOLIO_POLICY, heartbeatMs: 1,
+      breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5,
+    }
+    expect(exitSizingFrom(config)).toMatchObject({ breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 })
   })
 })

@@ -154,10 +154,11 @@ export interface OperationsOptions {
    * the held token's buy pressure now, 0..1; null when nobody counted the hour.
    */
   /**
-   * The one-step ladder on price: a rung once the price has fallen `dropPct`
-   * under the last buy. Drawn instead of the pressure ladder when given.
+   * The ladder on price: rung `n` once the price has fallen `dropsPct[n-1]`
+   * under the FIRST buy — the same list the engine buys on. Drawn instead of
+   * the pressure ladder when given.
    */
-  readonly dropLadder?: { readonly dropPct: number }
+  readonly dropLadder?: { readonly dropsPct: readonly number[] }
   readonly pressureLadder?: {
     readonly threshold: number
     readonly pressureOf?: (position: PersistedPosition) => Promise<number | null>
@@ -245,7 +246,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const drop = options.dropLadder
     const pressure = options.pressureLadder
     const ladder: LadderRung[] = drop
-      ? dropRungs(filledByLevel, fillable, drop.dropPct, params, inFlight?.level ?? filledByLevel.size)
+      ? dropRungs(filledByLevel, fillable, drop.dropsPct, params, inFlight?.level ?? filledByLevel.size)
       : pressure
       ? pressureRungs(filledByLevel, fillable, params, inFlight?.level ?? filledByLevel.size)
       : Array.from({ length: fillable }, (_, level) => {
@@ -278,7 +279,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       costsUsd,
       ladder,
       locks: drop
-        ? dropLocks(buys, price, fillable, drop.dropPct)
+        ? dropLocks(buys, price, fillable, drop.dropsPct)
         : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
@@ -322,54 +323,59 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
 const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
 
 /**
- * The price ladder's rungs: each `dropPct` under the one before, measured from
- * what was actually PAID where a rung filled — the engine measures from the
- * last buy, so a plan that ignored the fills would drift from it.
+ * The price ladder's rungs: rung `n` at the FIRST buy's price less
+ * `dropsPct[n-1]` — exactly where the engine buys it. Anchored to what was
+ * actually PAID for the entry, never to the plan: a line drawn from a price
+ * the position never paid would put the rung somewhere the sweep is not
+ * looking. A rung past the end of the list, or before any buy, has no line.
  */
 function dropRungs(
   filledByLevel: ReadonlyMap<number, PersistedFill>,
   fillable: number,
-  dropPct: number,
+  dropsPct: readonly number[],
   params: CascadeParams,
   waitingOn: number,
 ): LadderRung[] {
-  const rungs: LadderRung[] = []
-  let above: number | null = null
-  for (let level = 0; level < fillable; level++) {
+  const first = filledByLevel.get(0)?.price ?? null
+  return Array.from({ length: fillable }, (_, level) => {
     const fill = filledByLevel.get(level)
-    const trigger: number | null = level === 0 || above === null ? null : above * (1 - dropPct / 100)
-    rungs.push({
+    const drop = level === 0 ? undefined : dropsPct[level - 1]
+    return {
       level,
-      triggerPrice: trigger,
+      triggerPrice: first === null || drop === undefined ? null : first * (1 - drop / 100),
       nominalUsd: usdForLevel(params, level),
       filled: fill !== undefined,
       fillPrice: fill?.price ?? null,
       fillUsd: fill ? fill.price * fill.qty : null,
       pending: level === waitingOn && !fill,
-    })
-    above = fill?.price ?? trigger
-  }
-  return rungs
+    }
+  })
 }
 
-/** What the next price rung waits for: the price `dropPct` under the last buy. Null when flat or full. */
+/**
+ * What the NEXT price rung waits for: the first buy's price less its drop.
+ * Null when flat, full, or past the end of the list.
+ */
 function dropLocks(
   buys: readonly PersistedFill[],
   price: number | null,
   fillable: number,
-  dropPct: number,
+  dropsPct: readonly number[],
 ): readonly LadderLock[] | null {
   if (buys.length === 0 || buys.length >= fillable) return null
-  const last = [...buys].sort((a, b) => a.time - b.time).at(-1)!
-  const line = last.price * (1 - dropPct / 100)
+  const drop = dropsPct[buys.length - 1]
+  if (drop === undefined) return null
+  const first = [...buys].sort((a, b) => a.time - b.time)[0]!
+  const line = first.price * (1 - drop / 100)
+  const id = `DCA-${buys.length}`
   const reached = price !== null && price <= line
   return [
     {
       name: 'drop',
       held: reached,
       detail: reached
-        ? `el precio llegó a ${line.toPrecision(4)} — el escalón compra en este barrido`
-        : `el escalón compra si el precio cae a ${line.toPrecision(4)} (${dropPct}% bajo la compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
+        ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra en este barrido`
+        : `${id} compra si el precio cae a ${line.toPrecision(4)} (${drop}% bajo la primera compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
     },
   ]
 }

@@ -94,6 +94,20 @@ export interface ExitSizing {
    * an expensive pool rather than to him.
    */
   readonly maxStopPct: number | undefined
+  /**
+   * Where the break-even ARMS and where an armed position SELLS, in percent
+   * over its average cost. Undefined: derived — the arm at the exit target,
+   * the floor at the round trip, which is what the ratchet ran on first.
+   *
+   * *Poné el break-even en 7.5.* The operator, in place of a fixed take-profit
+   * that would have cut the runners: fifteen real TP cycles made $5–$21 each —
+   * $133.60 of the $439.87 the strategy's own exit earned — at +32% to +120%.
+   * Both lines at 7.5: it arms at +7.5% and, once armed, sells when the price
+   * falls back to +7.5%, so the gain it reached is locked while everything
+   * above it is left to the strategy's exit.
+   */
+  readonly breakEvenArmPct: number | undefined
+  readonly breakEvenFloorPct: number | undefined
 }
 
 /** The three lines a position lives between, in percent of its average cost. */
@@ -152,10 +166,16 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
     }
   }
 
+  // Configured lines win; absent, the ratchet derives them as it always did.
+  const armAt = sizing.breakEvenArmPct ?? target
+  const floor = sizing.breakEvenFloorPct ?? roundTrip
   return {
     stop,
-    armAtPct: sizing.breakEven && target !== null ? target : null,
-    breakEvenPct: roundTrip,
+    armAtPct: sizing.breakEven && armAt !== null ? armAt : null,
+    // Never above the arm. A floor over the arm would sell the position on the
+    // very sweep that armed it — a take-profit wearing the ratchet's name,
+    // which is the thing the operator declined.
+    breakEvenPct: armAt === null ? floor : Math.min(floor, armAt),
   }
 }
 
@@ -185,17 +205,35 @@ export interface PressureLadder {
   readonly gone: Set<string>
   /** Gas per swap, for what leaving would cost. */
   readonly gasUsdPerSwap: number
+  /**
+   * Gives the position the capital of `entries` entries out of the book's free
+   * capital — the same as `DropLadder.fund`, and for the same reason: a slot
+   * is allocated its first buy only, and a rung bought out of what is left of
+   * it would be refused by the broker for funds, silently. Absent: the rung is
+   * bought out of what the position holds.
+   */
+  readonly fund?: (position: PersistedPosition, entries: number) => Promise<PersistedPosition | null>
 }
 
 /**
- * The DCA ladder on the PRICE alone: a rung once the price has fallen
- * `dropPct` under the last buy. *Armá un solo paso de DCA: si el precio cae al
- * 50% de lo que vale, volver a comprar — sólo esa condición.*
+ * The DCA ladder on the PRICE alone: rung `n` once the price has fallen
+ * `dropsPct[n-1]` under the FIRST buy — −10%, −20%, −30% in production. See
+ * `drop-ladder.ts` for the replay that chose it.
  */
 export interface DropLadder {
   readonly policy: DropLadderPolicy
   /** What the rung buys, in dollars. */
   readonly rungUsd: number
+  /**
+   * Gives the position the capital of `entries` entries out of the book's free
+   * capital, and returns it as saved — or null when nothing is free.
+   *
+   * A position is allocated its FIRST buy only, so a rung has to pay for
+   * itself when it fires: the broker refuses an entry the position's capital
+   * cannot cover. Absent: the rung is bought out of whatever the position
+   * already holds, which is every caller that predates it.
+   */
+  readonly fund?: (position: PersistedPosition, entries: number) => Promise<PersistedPosition | null>
 }
 
 export interface StopSweepDeps {
@@ -335,10 +373,18 @@ export async function sweepStops(
       // with its tokens, and the ladder may average it down. Closing it here
       // anyway would orphan the quantity — neither realised nor unrealised,
       // and gone from the screen that was watching it.
+      //
+      // BOTH ladders, not only the pressure one. The ratchet is on by default
+      // now, and an armed position stays armed for life — so a winner that
+      // turned and fell through its first buy came here on every sweep, and
+      // the price ladder below never got a look: a rung at −10% of the first
+      // buy that could never fire on exactly the positions that had fallen.
       if (refused) {
         if (deps.pressureLadder && (await actOnPressure(deps, deps.pressureLadder, position, fills, price!, at, throttle)) === 'sold') {
           stopped.push(position.id)
+          continue
         }
+        if (deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle)
         continue
       }
       await deps.store.closePosition(position.id)
@@ -346,10 +392,13 @@ export async function sweepStops(
       // out of the same cycle's allocation, and buying straight back what was
       // just sold is a round trip, not a rotation.
       stopped.push(position.id)
+      // In the lines it actually ran on. With both at +7.5% the story is no
+      // longer "back to cost": it reached +7.5%, came back to +7.5%, and the
+      // gain was locked instead of handed back.
       const kept = alert(
         'position-closed',
-        `🔒 ${position.symbol} salió en break-even`,
-        `Había llegado al objetivo y volvió hasta el precio de compra. Se vendió a ${price} en vez de esperar al stop: una posición que ganó no cierra en pérdida.`,
+        `🔒 ${position.symbol} aseguró la ganancia`,
+        `Había llegado a +${levels.armAtPct!.toFixed(1)}% sobre el costo promedio y volvió a +${levels.breakEvenPct.toFixed(1)}%. Se vendió todo a ${price} (${((price! / avg - 1) * 100).toFixed(2)}% sobre el costo) en vez de devolver la ganancia: una posición que ganó no cierra en pérdida.`,
         at,
         { position: position.id, token: position.tokenAddress },
       )
@@ -495,14 +544,21 @@ async function actOnPressure(
   if (rung === null) return null
 
   const id = `DCA-${rung}`
-  const broker = await deps.brokerFor(position)
+  const funded = ladder.fund ? await ladder.fund(position, entries + 1) : position
+  if (funded === null) {
+    // The crossing is spent either way — the ladder buys ONE rung per crossing
+    // — so it says when it will look again, not that it will retry.
+    await sayUnfunded(deps, position, id, `La presión compradora cruzó el ${line}`, 'Se compra en el próximo cruce, si para entonces hay capital libre.', at, throttle)
+    return null
+  }
+  const broker = await deps.brokerFor(funded)
   const before = fills.length
   await settle(
     [{ kind: 'entry', id, level: rung, usd: ladder.rungUsd, qty: ladder.rungUsd / price, comment: id }],
-    position.lastBarTime,
+    funded.lastBarTime,
     price,
     at,
-    position,
+    funded,
     broker,
     deps.store,
   )
@@ -519,8 +575,42 @@ async function actOnPressure(
 }
 
 /**
- * One rung, if the price has fallen `dropPct` under the last buy. Never into
+ * A rung that fired and found nothing free to pay for it.
+ *
+ * INFO, and throttled per position: nothing was bought and nothing is at risk,
+ * and the rung is asked for again on the next sweep. A phone that buzzes every
+ * thirty seconds for a rung it cannot afford is a phone whose notifications get
+ * turned off, after which the death exit does not arrive either.
+ */
+async function sayUnfunded(
+  deps: StopSweepDeps,
+  position: PersistedPosition,
+  id: string,
+  /** What fired the rung, and — in its own words — when it is asked for again. */
+  why: string,
+  then: string,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<void> {
+  const unfunded = alert(
+    'entry-refused',
+    `💤 ${position.symbol} sin capital libre para el escalón ${id}`,
+    `${why}, pero todo el capital está asignado. ${then}`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(unfunded, `unfunded:${position.id}`)) await deps.alerts.send(unfunded)
+}
+
+/**
+ * One rung, if the price has fallen far enough under the FIRST buy. Never into
  * a position the death watch has frozen or condemned.
+ *
+ * The rung pays for itself: its capital is asked of the book's free capital
+ * first (`DropLadder.fund`), and the broker is built from the position AS
+ * FUNDED. A broker built from the old one refuses the entry for funds — the
+ * first buy already spent what the position was given — which would be a rung
+ * decided into a void.
  */
 async function buyOnDrop(
   deps: StopSweepDeps,
@@ -533,20 +623,27 @@ async function buyOnDrop(
 ): Promise<void> {
   if (position.deathWatch.stage !== 'healthy') return
   const buys = fills.filter((f) => f.side === 'buy').sort((a, b) => a.time - b.time)
-  const last = buys[buys.length - 1]
-  if (!last) return
-  const rung = nextDropRung({ entries: buys.length, lastBuyPrice: last.price, priceUsd: price }, ladder.policy)
+  const first = buys[0]
+  if (!first) return
+  const rung = nextDropRung({ entries: buys.length, firstBuyPrice: first.price, priceUsd: price }, ladder.policy)
   if (rung === null) return
-
   const id = `DCA-${rung}`
-  const broker = await deps.brokerFor(position)
+  const fell = ((1 - price / first.price) * 100).toFixed(1)
+
+  const funded = ladder.fund ? await ladder.fund(position, buys.length + 1) : position
+  if (funded === null) {
+    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde la primera compra`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
+    return
+  }
+
+  const broker = await deps.brokerFor(funded)
   const before = fills.length
   await settle(
     [{ kind: 'entry', id, level: rung, usd: ladder.rungUsd, qty: ladder.rungUsd / price, comment: id }],
-    position.lastBarTime,
+    funded.lastBarTime,
     price,
     at,
-    position,
+    funded,
     broker,
     deps.store,
   )
@@ -554,7 +651,7 @@ async function buyOnDrop(
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `El precio cayó ${((1 - price / last.price) * 100).toFixed(1)}% desde la compra. Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
+    `El precio cayó ${fell}% desde la primera compra (${first.price}). Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )

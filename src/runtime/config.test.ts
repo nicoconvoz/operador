@@ -196,21 +196,40 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token two fifteen-dollar buys: the entry, and one rung at half the price', () => {
-    // *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale,
-    // volver a comprar.* The slot is what two $15 buys need once gas and the
-    // price headroom are reserved, so each buy is exactly 15.
+  it('gives every token a fifteen-dollar first buy and three rungs at −10, −20, −30% of it', () => {
+    // *Apliquemos la configuración completa.* The slot is what ONE $15 buy
+    // needs once gas and the price headroom are reserved, so the first buy is
+    // exactly 15; each rung asks the free capital for its own when it fires.
     const config = loadConfig(valid)
-    expect(config.maxDcaPerToken).toBe(1)
-    expect(config.dcaDropPct).toBe(50)
+    expect(config.maxDcaPerToken).toBe(3)
+    expect(config.dcaDropsPct).toEqual([10, 20, 30])
+    expect(config.reservedEntries).toBe(1)
     const deployable = deployableCapital({
       initialCapital: config.usdPerToken!,
       gasUsdPerSwap: config.gasUsdPerSwap,
-      maxOpenEntries: config.maxDcaPerToken + 1,
+      maxOpenEntries: config.reservedEntries,
       params: DEFAULT_PARAMS,
     })
-    expect(deployable / 2).toBeCloseTo(15, 9)
+    expect(deployable).toBeCloseTo(15, 9)
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
+  })
+
+  it('reserves the whole ladder again when asked — one variable away', () => {
+    const config = loadConfig({ ...valid, OPERADOR_RESERVED_ENTRIES: '4' })
+    expect(config.reservedEntries).toBe(4)
+    const deployable = deployableCapital({
+      initialCapital: config.usdPerToken!,
+      gasUsdPerSwap: config.gasUsdPerSwap,
+      maxOpenEntries: config.reservedEntries,
+      params: DEFAULT_PARAMS,
+    })
+    expect(deployable / 4).toBeCloseTo(15, 9)
+  })
+
+  it('blacklists a frozen token when its slot is released, unless told not to', () => {
+    // *No me gustó que las congeladas ... no pasen a la lista negra.*
+    expect(loadConfig(valid).blacklistOnFreeze).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
   })
 
   it('sells at a loss only what the token has already paid for', () => {
@@ -294,14 +313,30 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_MAX_STOP_PCT: '15' }).maxStopPct).toBe(15)
   })
 
-  it('keeps a winner from closing at a loss unless told not to', () => {
-    // *Un break even.* Four losers had been above their target first — $5.57
-    // between them — and a ratchet is what makes that impossible. On by
-    // default, because it is the operator's decision; one variable to undo.
-    // OFF now: *lo demás, sólo salí si el TP se cumple.* The ratchet sells a
-    // winner back at its cost — protection, not the TP.
-    expect(loadConfig(valid).breakEven).toBe(false)
-    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: '1' }).breakEven).toBe(true)
+  it('runs the break-even at 7.5 by default, and one variable turns it off', () => {
+    // *Poné el break-even en 7.5.* It arms at +7.5% over the average cost and,
+    // once armed, sells on a fall back to +7.5%. ON again, after a stretch
+    // OFF under *sólo salí si el TP se cumple* — the operator's choice over a
+    // fixed take-profit that would have cut the runners.
+    expect(loadConfig(valid)).toMatchObject({ breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 })
+    for (const off of ['0', 'false', 'no']) {
+      expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: off }).breakEven).toBe(false)
+    }
+  })
+
+  it('takes both lines from the environment, and never floors above the arm', () => {
+    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN_ARM_PCT: '10', OPERADOR_BREAK_EVEN_FLOOR_PCT: '5' }))
+      .toMatchObject({ breakEvenArmPct: 10, breakEvenFloorPct: 5 })
+    // A floor above the arm would sell on the sweep that armed it. It falls
+    // back to the default, itself capped by the arm.
+    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN_FLOOR_PCT: '9' }).breakEvenFloorPct).toBe(7.5)
+    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN_ARM_PCT: '5' }).breakEvenFloorPct).toBe(5)
+  })
+
+  it('falls back to 7.5 on nonsense rather than refusing to boot', () => {
+    const config = loadConfig({ ...valid, OPERADOR_BREAK_EVEN_ARM_PCT: 'siete', OPERADOR_BREAK_EVEN_FLOOR_PCT: '-1' })
+    expect(config).toMatchObject({ breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 })
+    expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN_ARM_PCT: '0' }).breakEvenArmPct).toBe(7.5)
   })
 
   it('still takes a wider stop when one is asked for', () => {

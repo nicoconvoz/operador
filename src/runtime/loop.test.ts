@@ -445,6 +445,53 @@ describe('runLoop — the stop does not clock off between cycles', () => {
     expect((await store.allFills()).find((f: { side: string; comment: string }) => f.side === 'sell')?.comment).toBe('🛑 Stop')
   })
 
+  describe('the break-even at 7.5 is watched between cycles, alone', () => {
+    // *Poné el break-even en 7.5.* With no stop and no ladder wired, the
+    // ratchet is the only reason to look between cycles — and a winner that
+    // armed during a pass and falls back while the loop sleeps must still
+    // lock its gain.
+    const armsThenFalls = async (breakEven: boolean) => {
+      let clock = NOW
+      let asked = 0
+      const store = new MemoryStore()
+      const { deps } = rig({
+        store,
+        now: () => clock,
+        // Up 8% while the cycle runs, back to +7% once it is sleeping.
+        marketPrices: async () => new Map([['solana:Held', asked++ === 0 ? 1.08 : 1.07]]),
+        brokerFor: async (pos) => {
+          const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 500, maxOpenEntries: 10, quality: () => quality })
+          broker.seed(await store.fillsFor(pos.id))
+          return broker
+        },
+      })
+      await store.savePosition({
+        id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+        cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 15,
+        lastBarTime: -1, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+      })
+      await store.recordFill({
+        positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 3_600_000,
+        price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+      })
+      await runLoop(
+        deps,
+        { ...config, breakEven, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 },
+        new AlertThrottle(60_000),
+        { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+      )
+      return (await store.allFills()).find((f: { side: string; comment: string }) => f.side === 'sell')?.comment ?? null
+    }
+
+    it('sells the armed winner while the loop sleeps', async () => {
+      expect(await armsThenFalls(true)).toBe('🔒 Break-even')
+    })
+
+    it('and sells nothing when the ratchet is off', async () => {
+      expect(await armsThenFalls(false)).toBeNull()
+    })
+  })
+
   it('leaves a position with orders in flight alone, because that is a HALT', async () => {
     // Recovery could not answer whether the fill happened. An unattended system
     // is allowed to stop; it is never allowed to guess, and selling on top of

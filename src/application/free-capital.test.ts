@@ -1,0 +1,91 @@
+import { describe, it, expect } from 'vitest'
+import { bookCapital, fundRungsFromFreeCapital } from './free-capital.js'
+import { ladderCapitalUsd } from './paper-run.js'
+import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
+import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { initialState } from '../domain/strategy/state.js'
+import { startDeathWatch } from '../domain/risk/death-exit.js'
+import { type PersistedFill, type PersistedPosition } from '../domain/persistence/store.js'
+import { type MarketQuality } from '../domain/market/market-quality.js'
+
+const quality: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
+const params = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+const GAS = 0.05
+const ONE_ENTRY = ladderCapitalUsd(params, 1, GAS)
+const TWO_ENTRIES = ladderCapitalUsd(params, 2, GAS)
+
+const position = (id: string, capitalUsd: number): PersistedPosition => ({
+  id, chain: 'solana', tokenAddress: id, pairAddress: `pair-${id}`, symbol: id,
+  cascade: initialState(), deathWatch: startDeathWatch(1_000_000, 0), quality, capitalUsd,
+  lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+})
+
+const fill = (positionId: string, side: 'buy' | 'sell', price: number, qty: number, time: number): PersistedFill => ({
+  positionId, orderId: 'Entry', side, time, price, qty, costUsd: 0, comment: side === 'buy' ? '🟢 Entry' : '🏁 Exit',
+  idempotencyKey: `${positionId}:${side}:${time}`,
+})
+
+describe('bookCapital — ONE definition of what is free', () => {
+  it('is the capital, plus what the book has made, minus what the open positions hold', () => {
+    // A closed round trip that made ten dollars: the common fund.
+    const fills = [fill('old', 'buy', 1, 10, 0), fill('old', 'sell', 2, 10, 1)]
+    const book = bookCapital(100, fills, [{ capitalUsd: 30 }, { capitalUsd: 20 }])
+    expect(book.totalUsd).toBeCloseTo(110, 9)
+    expect(book.committedUsd).toBeCloseTo(50, 9)
+    expect(book.freeUsd).toBeCloseTo(60, 9)
+  })
+
+  it('is never negative — an over-committed book has nothing free, not a debt', () => {
+    expect(bookCapital(10, [], [{ capitalUsd: 30 }]).freeUsd).toBe(0)
+  })
+})
+
+describe('fundRungsFromFreeCapital — a rung takes its capital when it fires', () => {
+  const rig = async (total: number, held: PersistedPosition, others: readonly PersistedPosition[] = []) => {
+    const store = new MemoryStore()
+    await store.savePosition(held)
+    for (const other of others) await store.savePosition(other)
+    const fund = fundRungsFromFreeCapital({ store, totalCapitalUsd: total, params, gasUsdPerSwap: GAS })
+    return { store, fund }
+  }
+
+  it('raises the position to what one more entry needs, and saves it', async () => {
+    const { store, fund } = await rig(100, position('T', ONE_ENTRY), [position('U', 60)])
+    const funded = await fund(position('T', ONE_ENTRY), 2)
+    expect(funded?.capitalUsd).toBeCloseTo(TWO_ENTRIES, 9)
+    expect((await store.loadPositions()).find((p) => p.id === 'T')?.capitalUsd).toBeCloseTo(TWO_ENTRIES, 9)
+  })
+
+  it('refuses when the free capital cannot cover it, and touches nothing', async () => {
+    // 40 − 15.89 − 20 leaves 4.11 free, against the 15.84 a second entry adds.
+    const { store, fund } = await rig(40, position('T', ONE_ENTRY), [position('U', 20)])
+    expect(await fund(position('T', ONE_ENTRY), 2)).toBeNull()
+    expect((await store.loadPositions()).find((p) => p.id === 'T')?.capitalUsd).toBeCloseTo(ONE_ENTRY, 9)
+  })
+
+  it('charges nothing for a rung the position can already pay for — and never LOWERS it', async () => {
+    const { store, fund } = await rig(50, position('T', 45))
+    expect((await fund(position('T', 45), 2))?.capitalUsd).toBe(45)
+    expect((await store.loadPositions())[0]?.capitalUsd).toBe(45)
+  })
+
+  it('reads the capital from the STORE, never from the caller’s snapshot', async () => {
+    // The trim-over-tick bug's shape, from the other side: a sweep holding a
+    // copy from before a rung was funded must not pay for that rung twice —
+    // nor write the smaller number back over the larger one.
+    const { store, fund } = await rig(40, position('T', TWO_ENTRIES))
+    const funded = await fund(position('T', ONE_ENTRY), 2)
+    expect(funded?.capitalUsd).toBeCloseTo(TWO_ENTRIES, 9)
+    expect((await store.loadPositions())[0]?.capitalUsd).toBeCloseTo(TWO_ENTRIES, 9)
+  })
+
+  it('counts what the book has MADE as free — the same common fund the allocator spends', async () => {
+    const { store, fund } = await rig(20, position('T', ONE_ENTRY))
+    // Without the fund: 20 − 15.89 = 4.11 free, not enough. With a closed
+    // round trip that made twenty dollars, it is.
+    expect(await fund(position('T', ONE_ENTRY), 2)).toBeNull()
+    await store.recordFill(fill('old', 'buy', 1, 20, 0))
+    await store.recordFill(fill('old', 'sell', 2, 20, 1))
+    expect((await fund(position('T', ONE_ENTRY), 2))?.capitalUsd).toBeCloseTo(TWO_ENTRIES, 9)
+  })
+})

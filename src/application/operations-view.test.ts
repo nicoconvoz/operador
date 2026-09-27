@@ -560,30 +560,45 @@ describe('buildOperations — the ladder the ENGINE buys: buy pressure crossing 
   })
 })
 
-describe('buildOperations — the one-step ladder: a rung at half the price', () => {
-  // *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale, volver
-  // a comprar.* The screen draws the rung at half of what was actually paid,
-  // and says how far the price still has to fall.
-  const ladder = { ...options, maxOpenEntries: 2, dropLadder: { dropPct: 50 } }
-  const held = { cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.8 }
+describe('buildOperations — the price ladder: three rungs at −10, −20, −30% of the FIRST buy', () => {
+  // *Apliquemos la configuración completa.* The screen draws every rung where
+  // the ENGINE will buy it — the first buy's price less its drop — and says how
+  // far the price still has to fall for the next one.
+  const ladder = { ...options, maxOpenEntries: 4, dropLadder: { dropsPct: [10, 20, 30] } }
+  const held = { cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.95 }
 
-  it('draws two rungs, the second at half the price paid', async () => {
+  it('draws four rungs, each at the first buy less its drop, and waits on DCA-1', async () => {
     const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN)], held)
     const [p] = (await buildOperations(store, ladder)).positions
-    expect(p!.ladder).toHaveLength(2)
-    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.5, 9)
-    expect(p!.ladder.map((r) => r.pending)).toEqual([false, true])
+    expect(p!.ladder).toHaveLength(4)
+    expect(p!.ladder[0]!.triggerPrice).toBeNull()
+    expect(p!.ladder.slice(1).map((r) => r.triggerPrice)).toEqual([0.9, 0.8, 0.7].map((x) => expect.closeTo(x, 9)))
+    expect(p!.ladder.map((r) => r.pending)).toEqual([false, true, false, false])
   })
 
-  it('says how far the price still has to fall', async () => {
+  it('keeps measuring from the FIRST buy after a rung fills somewhere else', async () => {
+    // DCA-1 filled at 0.88, not at its 0.90 line. The engine asks DCA-2 for
+    // 20% under the first buy — 0.80 — never for 10% under 0.88.
+    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN), fill('DCA-1', 0.88, 17, NOW - 20 * MIN)], held)
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder[2]!.triggerPrice).toBeCloseTo(0.8, 9)
+    expect(p!.ladder.map((r) => r.pending)).toEqual([false, false, true, false])
+  })
+
+  it('says which rung is next and how far the price still has to fall', async () => {
     const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN)], held)
     const [p] = (await buildOperations(store, ladder)).positions
     expect(p!.locks!.map((l) => [l.name, l.held])).toEqual([['drop', false]])
-    expect(p!.locks![0]!.detail).toContain('0.5000')
+    expect(p!.locks![0]!.detail).toContain('DCA-1')
+    expect(p!.locks![0]!.detail).toContain('0.9000')
+    expect(p!.locks![0]!.detail).toContain('10% bajo la primera compra')
   })
 
-  it('has nothing to wait on once the rung is bought', async () => {
-    const store = await seed([fill('Entry', 1, 15, NOW - 30 * MIN), fill('DCA-1', 0.5, 30, NOW - 10 * MIN)], held)
+  it('has nothing to wait on once all three are bought', async () => {
+    const store = await seed([
+      fill('Entry', 1, 15, NOW - 30 * MIN), fill('DCA-1', 0.9, 16, NOW - 20 * MIN),
+      fill('DCA-2', 0.8, 18, NOW - 15 * MIN), fill('DCA-3', 0.7, 21, NOW - 10 * MIN),
+    ], held)
     const [p] = (await buildOperations(store, ladder)).positions
     expect(p!.locks).toBeNull()
   })

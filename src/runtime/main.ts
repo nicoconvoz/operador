@@ -10,6 +10,7 @@ import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_COMPONENT_FLOORS } from '../application/production-doors.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { ladderCapitalUsd } from '../application/paper-run.js'
+import { fundRungsFromFreeCapital } from '../application/free-capital.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type Chain, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
@@ -241,7 +242,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // In paper mode every position keeps its own broker, so one position's cash
   // can never be spent by another — the same isolation the live wallets will
   // need to enforce for real.
-  const brokers = new Map<string, PaperBroker>()
+  //
+  // Kept with the CAPITAL it was built for. A rung now raises a position's
+  // capital out of the free pool at the moment it fires, and a broker cached
+  // from before that would refuse the very rung it was funded for — the first
+  // buy already spent what a one-entry slot was given. A capital that moved
+  // rebuilds the broker from the fills, which are the facts either way.
+  const brokers = new Map<string, { readonly capitalUsd: number; readonly broker: PaperBroker }>()
   /**
    * The scan a health pass reads, memoised for a minute.
    *
@@ -285,24 +292,62 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   let lastRejected: Rejected[] = []
 
   const brokerFor = async (position: PersistedPosition) => {
-    let broker = brokers.get(position.id)
-    if (!broker) {
-      broker = new PaperBroker({
-        gasUsdPerSwap: config.gasUsdPerSwap,
-        initialCapital: position.capitalUsd,
-        // Five DCAs plus the entry. The reference's ten stays in PYRAMIDING,
-        // which the parity harness asserts; production composes its own.
-        maxOpenEntries: config.maxDcaPerToken + 1,
-        quality: () => position.quality,
-      })
-      // Seeded from the fills, which are the only record that survives a
-      // process. Without this every cycle would start flat and the ladder
-      // would be rebuilt from level zero, forever.
-      broker.seed(await store.fillsFor(position.id))
-      brokers.set(position.id, broker)
-    }
+    const cached = brokers.get(position.id)
+    if (cached && cached.capitalUsd === position.capitalUsd) return cached.broker
+    const broker = new PaperBroker({
+      gasUsdPerSwap: config.gasUsdPerSwap,
+      initialCapital: position.capitalUsd,
+      // Three DCAs plus the entry. The reference's ten stays in PYRAMIDING,
+      // which the parity harness asserts; production composes its own.
+      maxOpenEntries: config.maxDcaPerToken + 1,
+      quality: () => position.quality,
+    })
+    // Seeded from the fills, which are the only record that survives a
+    // process. Without this every cycle would start flat and the ladder
+    // would be rebuilt from level zero, forever.
+    broker.seed(await store.fillsFor(position.id))
+    brokers.set(position.id, { capitalUsd: position.capitalUsd, broker })
     return broker
   }
+
+  /**
+   * The ladder production runs, composed ONCE: the cycle sizes slots with it
+   * and the sweep prices a rung's capital with it. Two copies would disagree
+   * about what one more entry costs.
+   */
+  const params: CycleConfig['params'] = {
+    ...DEFAULT_PARAMS,
+    // Door 3, composed HERE beside the ladder cap and the entry drop, never
+    // in DEFAULT_PARAMS — the parity harness asserts those are the backtest
+    // own inputs.
+    //
+    // It is what the scanner change requires rather than an extra: the
+    // shortlist is now chosen for RISING, and door 1 refuses a bar making a
+    // new twenty-bar high. Sixteen candidates produced five positions.
+    useMomentumEntry: config.buyOnSelection,
+    // The cascade's OWN rungs, switched off: a gap no price can clear. It
+    // confirms a bottom on twenty strategy bars — five hours at 15m — while
+    // the price ladder buys from the stop's sweep. Two paths buying rungs
+    // would buy the same dip twice.
+    minGapPct: 100,
+    maxUsdPerLevel: config.maxUsdPerLevel,
+    dropInitPct: config.dropInitPct,
+    impatientProfitPct: config.impatientProfitPct,
+    urgentProfitPct: config.urgentProfitPct,
+  }
+
+  /**
+   * A rung's capital, taken from the book's FREE capital when the rung fires —
+   * the same definition of free the allocator opens positions with. A slot is
+   * allocated its first buy only (`DEFAULT_RESERVED_ENTRIES`), so every rung,
+   * on either ladder, pays for itself here or waits.
+   */
+  const fundRung = fundRungsFromFreeCapital({
+    store,
+    totalCapitalUsd: config.totalCapitalUsd,
+    params,
+    gasUsdPerSwap: config.gasUsdPerSwap,
+  })
 
   const deps: CycleDeps = {
     store,
@@ -348,12 +393,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         previous: new Map<string, number>(),
         gone: new Set<string>(),
         gasUsdPerSwap: config.gasUsdPerSwap,
+        // Same funding as the price ladder: a slot holds its first buy only.
+        fund: fundRung,
       } } : {}),
-    // *Armá un solo paso de DCA: si el precio cae al 50% de lo que vale,
-    // volver a comprar — sólo esa condición.* A $15 rung, once.
+    // *Apliquemos la configuración completa.* Three $15 rungs, at −10, −20
+    // and −30% of the FIRST buy, bought by the sweep every thirty seconds.
+    //
+    // Each pays for itself: a slot is allocated its first buy only, so a rung
+    // asks the book's FREE capital for one more entry — the same definition
+    // of free the allocator opens positions with — and waits a sweep when
+    // there is none. One `fund` for the cycle's sweeps and the loop's, since
+    // both read these deps.
     dropLadder: {
-      policy: { maxEntries: config.maxDcaPerToken + 1, dropPct: config.dcaDropPct },
+      policy: { maxEntries: config.maxDcaPerToken + 1, dropsPct: config.dcaDropsPct },
       rungUsd: config.maxUsdPerLevel,
+      fund: fundRung,
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
@@ -664,13 +718,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       const open = await store.loadPositions()
       // Priced exactly as the allocator prices it, so the scan buys candles for
       // the number of positions the capital will actually open — not one more.
+      // A slot is the RESERVED entries, one in production: pricing it at the
+      // whole ladder would count half the tokens the book really opens.
       const fundedSlots = Math.max(1, Math.ceil(
         config.totalCapitalUsd /
-        ladderCapitalUsd(
-          { ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel, dropInitPct: config.dropInitPct },
-          config.maxDcaPerToken + 1,
-          config.gasUsdPerSwap,
-        ),
+        (config.usdPerToken ?? ladderCapitalUsd(params, config.reservedEntries, config.gasUsdPerSwap)),
       ))
       for (const chain of config.chains) {
         // The counters live on adapters SHARED by every chain, so they are
@@ -883,36 +935,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // The reference params with production's own ladder cap. DEFAULT_PARAMS
       // stays untouched: it is what TradingView ran, and the parity harness
       // asserts it.
-      // The two numbers production differs on. Composed here, never by editing
+      // The two numbers production differs on. Composed above, never by editing
       // DEFAULT_PARAMS — the parity harness asserts those are the backtest's
       // own inputs, and evidence that can be edited to express a preference has
-      // stopped being evidence.
-      params: {
-        ...DEFAULT_PARAMS,
-        // Door 3, composed HERE beside the ladder cap and the entry drop, never
-        // in DEFAULT_PARAMS — the parity harness asserts those are the
-        // backtest own inputs.
-        //
-        // It is what the scanner change requires rather than an extra: the
-        // shortlist is now chosen for RISING, and door 1 refuses a bar making a
-        // new twenty-bar high. Sixteen candidates produced five positions.
-        useMomentumEntry: config.buyOnSelection,
-        // The cascade's OWN rungs, switched off: a gap no price can clear. It
-        // confirms a bottom on twenty strategy bars — five hours at 15m — and
-        // the operator asked for five one-minute candles, which the floor
-        // ladder buys from the stop's sweep. Two paths buying rungs would buy
-        // the same dip twice. The ladder CAPITAL still comes from maxLevels
-        // and maxOpenEntries, which this does not touch.
-        minGapPct: 100,
-        maxUsdPerLevel: config.maxUsdPerLevel,
-        dropInitPct: config.dropInitPct,
-        impatientProfitPct: config.impatientProfitPct,
-        urgentProfitPct: config.urgentProfitPct,
-      },
+      // stopped being evidence. The SAME object the rung funder prices with.
+      params,
       // The same numbers the broker charges, so the ladder is sized against
       // the costs it will actually pay rather than against a guess.
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.maxDcaPerToken + 1,
+      // What a slot's capital pays for: its first buy. The venue still holds
+      // four entries; the rungs are funded from the free capital as they fire.
+      reservedEntries: config.reservedEntries,
       // The ladder is sized for the rungs that can actually fill. Sizing for
       // ten while the venue holds six would reserve capital for four rungs
       // that are never coming.
@@ -923,9 +957,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // paying a throttled request to find out.
       barMs: config.barSize.timeframe === 'hour' ? 60 * 60 * 1000 : (config.barSize.aggregate ?? 1) * 60_000,
       // Recover the funds instead of holding a position that can neither buy
-      // nor sell. The token is not blacklisted: it goes back to the filtered
-      // pile and may be bought again the day it recovers.
+      // nor sell.
       exitOnFreeze: config.exitOnFreeze,
+      // And never buy it back: the token is blacklisted once its slot is
+      // released holding nothing — never at the verdict, while a sale may
+      // still be waiting to fill.
+      blacklistOnFreeze: config.blacklistOnFreeze,
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
       // The stop, composed HERE rather than defaulted in the orchestrator —
@@ -936,6 +973,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       maxCostSharePct: config.maxCostSharePct,
       rewardRiskRatio: config.rewardRiskRatio,
       breakEven: config.breakEven,
+      // *Poné el break-even en 7.5.* Arms at +7.5%, sells an armed position on
+      // a fall back to +7.5%. Composed here so the cycle's sweeps and the
+      // loop's read the same two lines.
+      breakEvenArmPct: config.breakEvenArmPct,
+      breakEvenFloorPct: config.breakEvenFloorPct,
       maxStopPct: config.maxStopPct,
       usdPerToken: config.usdPerToken,
       // *Para la primera compra: expansión del volumen más del 50% y tendencia

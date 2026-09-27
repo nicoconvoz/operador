@@ -18,7 +18,8 @@ import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
-import { commonFund, positionLedger, openLotCostsUsd, type PositionLedger } from './ledger.js'
+import { positionLedger, openLotCostsUsd, type PositionLedger } from './ledger.js'
+import { bookCapital } from './free-capital.js'
 import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
 import { DEFAULT_SIZING_POLICY, positionTollPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
@@ -222,8 +223,29 @@ export interface CycleConfig {
    * runner that went to +28%.
    */
   readonly breakEven?: boolean
+  /**
+   * Where the break-even arms and where an armed position sells, in percent
+   * over its average cost — both 7.5 in production: *poné el break-even en
+   * 7.5.* Absent: derived from the exit target and the round trip, as the
+   * ratchet first ran. See `ExitSizing.breakEvenArmPct`.
+   */
+  readonly breakEvenArmPct?: number
+  readonly breakEvenFloorPct?: number
   /** The widest the derived stop may ever be. See `ExitSizing.maxStopPct`. */
   readonly maxStopPct?: number
+  /**
+   * Entries' worth of capital a position is ALLOCATED, and so what the tick
+   * divides its capital by. One in production: the first buy, with each rung
+   * asking the free capital for its own when it fires. Absent: the whole
+   * ladder, `maxOpenEntries`, which is what every caller before this did.
+   */
+  readonly reservedEntries?: number
+  /**
+   * Blacklist a token when its frozen slot is released, so it is never bought
+   * back. Absent: off — the old behaviour, where a freeze-exited token was an
+   * ordinary candidate again from the next pass.
+   */
+  readonly blacklistOnFreeze?: boolean
 }
 
 /**
@@ -365,12 +387,22 @@ export async function runCycle(
    * eventually disagree about which rules a brand new position runs under,
    * which is the drift this codebase has paid for at every seam it has.
    */
+  // Entries' worth of capital a slot is ALLOCATED: one in production, the
+  // whole ladder when a caller says nothing. Never more than the venue holds.
+  const reservedEntries = Math.min(
+    config.reservedEntries ?? config.maxOpenEntries ?? PYRAMIDING,
+    config.maxOpenEntries ?? PYRAMIDING,
+  )
   const tickConfig = {
     params: config.params,
     ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
     ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
     ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
     ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
+    // What the slot's capital pays for: the tick divides by it. The SAME
+    // number the trim and the slot floor below read, or a slot would be sized
+    // for one entry and divided by four.
+    reservedEntries,
     // Absent means the reference exit target, so the parity harness keeps
     // meaning what it meant. Present, the tick derives the target from what
     // this pool actually charges to leave.
@@ -524,6 +556,32 @@ export async function runCycle(
   await sweep(marketPrices)
 
   /**
+   * The book as the sweeps LEFT it — the only version the next step may start
+   * from.
+   *
+   * A sweep writes: it arms the ratchet, and it raises a position's capital
+   * when a rung fires and takes its money from the free pool. Every snapshot
+   * taken before it is stale in exactly those fields, and the step after it
+   * saves the whole row. The ratchet survives that because the store keeps its
+   * flag with OR; the capital cannot be kept that way, because the trim
+   * lowers it on purpose. So the next step reads the store instead — the same
+   * lesson as "the trim wrote over what the tick had just decided", arriving
+   * from the sweep's side: a tick that saved its pre-sweep copy would put the
+   * capital back under what the rung had just put in the token, and the
+   * allocator would hand those dollars out again.
+   *
+   * One query, no network. Only positions this cycle already knows are
+   * refreshed; one closed by the sweep is simply gone from the store and is
+   * skipped as stopped.
+   */
+  const refreshFromStore = async () => {
+    for (const stored of await deps.store.loadPositions()) {
+      if (current.has(stored.id)) current.set(stored.id, stored)
+    }
+  }
+  await refreshFromStore()
+
+  /**
    * The same sweep, handed to the scan so a long sweep cannot hold the book
    * hostage — and RATE LIMITED, because it is not free.
    *
@@ -556,36 +614,39 @@ export async function runCycle(
   }
 
   for (const recovered of recovery.positions) {
-    if (latestClosedBar !== null && recovered.position.lastBarTime >= latestClosedBar) continue
+    // As the sweep left it, never as recovery first read it. See
+    // `refreshFromStore`.
+    const position = now(recovered.position.id, recovered.position)
+    if (latestClosedBar !== null && position.lastBarTime >= latestClosedBar) continue
     // Sold moments ago by the stop. Ticking it would advance a machine over a
     // position that no longer holds anything, and cost a candle download to
     // do it.
-    if (stopped.has(recovered.position.id)) continue
+    if (stopped.has(position.id)) continue
 
-    const candles = await deps.candlesFor(recovered.position)
+    const candles = await deps.candlesFor(position)
     if (!candles) {
       // Never silently. A position was skipped here without a word, and the
       // book drifted into bars four hours apart while every pass logged
       // healthy — the failure that looks exactly like nothing happening.
-      unreachableIds.push(recovered.position.id)
+      unreachableIds.push(position.id)
       const unreachable = alert(
         'provider-degraded',
-        `📡 ${recovered.position.symbol} sin datos`,
+        `📡 ${position.symbol} sin datos`,
         'No se pudieron traer sus velas, así que esta pasada no avanzó ni corrió su vigilancia de muerte. Suele ser un límite de tasa del proveedor; si se repite durante horas, la posición está sin vigilar.',
         at,
-        { position: recovered.position.id },
+        { position: position.id },
       )
-      if (throttle.shouldSend(unreachable, `unreachable:${recovered.position.id}`)) await deps.alerts.send(unreachable)
+      if (throttle.shouldSend(unreachable, `unreachable:${position.id}`)) await deps.alerts.send(unreachable)
       continue
     }
 
     const result = await tickPosition(
       {
-        position: recovered.position,
+        position,
         candles,
-        health: await deps.healthFor(recovered.position, candles),
-        broker: await deps.brokerFor(recovered.position),
-        marketPriceUsd: marketPrices.get(`${recovered.position.chain}:${recovered.position.tokenAddress}`) ?? null,
+        health: await deps.healthFor(position, candles),
+        broker: await deps.brokerFor(position),
+        marketPriceUsd: marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null,
       },
       tickConfig,
       deps.store,
@@ -593,7 +654,7 @@ export async function runCycle(
       throttle,
     )
     ticks.push(result)
-    current.set(recovered.position.id, result.position)
+    current.set(position.id, result.position)
   }
 
   // ── 3. Open new positions with what is genuinely free ──────────────────────
@@ -616,6 +677,10 @@ export async function runCycle(
     // necessary.
     const recalled = kind === 'watch' ? await deps.recall?.() : null
     const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind, betweenSteps)
+    // The scan handed the thread to the sweep, and the sweep may have funded a
+    // rung since the ticks ran. Everything below writes whole rows — the score
+    // baseline, the trim — so it starts from the store, not from the ticks.
+    await refreshFromStore()
     const candidates = found
       .filter((c) => !recovery.blacklisted.has(`${c.snapshot.chain}:${c.snapshot.address}`))
 
@@ -854,8 +919,10 @@ export async function runCycle(
     // thinks today. A position still HOLDING tokens is never touched: its slot
     // cannot come back without selling, and selling is the strategy's call.
     //
-    // Nothing is blacklisted here. The token did not fail a safety gate, it
-    // merely stopped being the best use of a slot, and it is welcome back.
+    // Nothing is blacklisted here, with ONE exception: a slot released because
+    // it froze (see below, where it is released). Every other token did not
+    // fail anything, it merely stopped being the best use of a slot, and it is
+    // welcome back.
     // Only on a full pass. Taking a slot off one token and giving it to another
     // is a judgement about which is better RIGHT NOW, and it deserves data
     // gathered right now. Filling a slot that is already empty does not.
@@ -925,10 +992,43 @@ export async function runCycle(
       }
       await deps.store.closePosition(holder.id)
       releasedIds.push(holder.id)
+
+      // ── A frozen token is never bought back ─────────────────────────────
+      //
+      // *No me gustó que las congeladas llegaran a valer 8 o 9 dólares ... y
+      // además que no pasen a la lista negra.* The operator, and the replay
+      // agreed: blacklisting after any freeze cost about $6 over 336 entries
+      // and removed GO — bought back thirty minutes after a half-liquidity
+      // freeze, now −54% — and ASTEROID, bought back and $9.29 more lost. A
+      // freeze is the one exit that says something about the TOKEN, and a
+      // token that froze once is not a stranger the scanner should meet fresh.
+      //
+      // HERE, at the release, and never at the verdict. When the freeze fires
+      // the position still holds its tokens, and `planRecovery` refuses to
+      // resume a blacklisted position — a freeze-exit sale waiting for the next
+      // open would be orphaned, the money neither sold nor watched. By the time
+      // the slot is released it holds nothing: the sale filled, or nothing was
+      // ever bought. Sell, close, THEN blacklist — the order `retire.ts` keeps
+      // for the same reason.
+      const known = recovery.positions.find((r) => r.position.id === holder.id)
+      const banned = config.blacklistOnFreeze === true && holder.frozen === true && holder.dead !== true
+      // The evidence is on the position itself — its death watch kept every
+      // observation that froze it — so the ban carries its reason for good.
+      const evidence = banned && known !== undefined ? freezeEvidence(now(holder.id, known.position)) : []
+      if (banned) {
+        await deps.store.blacklist(
+          holder.chain,
+          holder.tokenAddress,
+          `frozen: ${evidence.length > 0 ? evidence.join('; ') : 'no evidence recorded'}`,
+          at,
+        )
+      }
       const handed = alert(
         'token-retired',
-        `🔄 ${holder.symbol} cede su ranura`,
-        `${reason}. El capital y la ranura vuelven al reparto; el token no queda vetado y puede volver a entrar cuando sea el mejor candidato otra vez.`,
+        banned ? `❄️ ${holder.symbol} cede su ranura y queda vetado` : `🔄 ${holder.symbol} cede su ranura`,
+        banned
+          ? `${reason}. El capital y la ranura vuelven al reparto, y el token queda vetado: una moneda que se congeló no se vuelve a comprar.${evidence.length > 0 ? ` Por qué se congeló: ${evidence.join('; ')}.` : ''}`
+          : `${reason}. El capital y la ranura vuelven al reparto; el token no queda vetado y puede volver a entrar cuando sea el mejor candidato otra vez.`,
         at,
         { position: holder.id, token: holder.tokenAddress },
       )
@@ -949,9 +1049,15 @@ export async function runCycle(
     //
     // Never below what is already deployed: that money is in the token, and
     // pretending otherwise would let the same dollars be handed out twice.
+    //
+    // What a slot NEEDS is the entries it was allocated, not the ladder it may
+    // one day climb: one in production. A rung pays for itself out of the free
+    // capital when it fires, and the deployed floor keeps whatever it bought.
+    // Measured live before this: $2,887 committed against $1,395 deployed —
+    // half the book reserved against rungs that almost never fired.
     const ladderNeeds = ladderCapitalUsd(
       config.params,
-      config.maxOpenEntries ?? PYRAMIDING,
+      reservedEntries,
       config.gasUsdPerSwap ?? 0.05,
     )
     const kept: PersistedPosition[] = []
@@ -988,11 +1094,6 @@ export async function runCycle(
       kept.push(trimmed)
     }
 
-    // Capital committed to halted positions is NOT free. Treating it as free is
-    // how an engine quietly doubles its own exposure after a bad restart.
-    const committed =
-      kept.reduce((sum, p) => sum + p.capitalUsd, 0) +
-      recovery.halted.reduce((sum, r) => sum + r.position.capitalUsd, 0)
     // ── 3d. The common fund ──────────────────────────────────────────────────
     //
     // What the system has MADE is capital too, and it was being ignored: the
@@ -1000,8 +1101,19 @@ export async function runCycle(
     // profitable engine never got any bigger. Built from every fill ever
     // recorded, including those of positions that have closed and left — which
     // is most of it. Costs come out, because that cash is already gone.
-    const fund = commonFund(await deps.store.allFills())
-    const free = Math.max(0, config.portfolio.totalCapitalUsd + fund.netUsd - committed)
+    //
+    // `bookCapital` is the ONE definition of free, shared with the sweep that
+    // funds a rung when it fires. Two copies would each be right alone and
+    // spend the same dollar twice together.
+    //
+    // Capital committed to halted positions is NOT free. Treating it as free is
+    // how an engine quietly doubles its own exposure after a bad restart.
+    const book = bookCapital(
+      config.portfolio.totalCapitalUsd,
+      await deps.store.allFills(),
+      [...kept, ...recovery.halted.map((r) => r.position)],
+    )
+    const free = book.freeUsd
     // Zero is NOT a ceiling of zero — it means the capital decides, and that
     // meaning has to hold here as well as inside planPortfolio. Subtracting the
     // open positions from it gave MINUS FIVE with five open, and minus five
@@ -1033,8 +1145,9 @@ export async function runCycle(
     // The operator asked for *rotás a OTRA moneda*, and this is the word
     // "otra" being enforced rather than assumed.
     //
-    // Nothing is blacklisted, here or in the release path: the token failed no
-    // gate, it merely fell. It is an ordinary candidate again next pass.
+    // Nothing is blacklisted here: the token failed no gate, it merely fell,
+    // and it is an ordinary candidate again next pass. The one exception is a
+    // FROZEN slot, which the release path above banned for good.
     const justFreed = new Set([
       ...release.map((d) => `${d.holder.chain}:${d.holder.tokenAddress}`),
       ...stoppedTokens,
@@ -1059,7 +1172,7 @@ export async function runCycle(
           // position opened, and past a point it fell below what a ladder costs
           // and dragged the slot size to the gas floor: 40 positions where the
           // capital funds 31, the tail of them too small to hold a second rung.
-          concentrationBasisUsd: config.portfolio.totalCapitalUsd + fund.netUsd,
+          concentrationBasisUsd: book.totalUsd,
           // Back into planPortfolio's own convention on the way out.
           maxPositions: uncapped ? 0 : slotsLeft,
           // The floor is DERIVED, never remembered. `minPositionUsd` was 200
@@ -1101,9 +1214,12 @@ export async function runCycle(
           // shrinking with it. The operator asked for it in one line: *comprá
           // solo 15 usd por moneda.*
           targetPositionUsd: config.usdPerToken ?? (eligible.length > 0 ? free / eligible.length : ladderNeeds),
+          // Priced for the entries a slot is ALLOCATED, like the trim above: a
+          // floor priced for the whole ladder would refuse a slot that only
+          // ever has to pay for its first buy.
           minPositionUsd: slotFloorUsd(
             config.params,
-            config.maxOpenEntries ?? PYRAMIDING,
+            reservedEntries,
             config.gasUsdPerSwap ?? 0.05,
             (config.sizing ?? DEFAULT_SIZING_POLICY).minFillUsd,
           ),
@@ -1269,6 +1385,16 @@ export async function runCycle(
 }
 
 /**
+ * Why a position froze, newest first and without repeats — at most three, the
+ * same cut the dashboard shows under `❄️ congelada`. From its own death watch,
+ * which records every observation that produced a signal.
+ */
+function freezeEvidence(position: PersistedPosition): string[] {
+  const details = [...position.deathWatch.evidence].reverse().flatMap((record) => record.signals.map((signal) => signal.detail))
+  return [...new Set(details)].slice(0, 3)
+}
+
+/**
  * What the stop, the target and the ratchet are sized from — built in ONE
  * place because two callers need it: the cycle, and the loop between cycles.
  * Two copies of "where may this position live" would eventually disagree, and
@@ -1283,5 +1409,7 @@ export function exitSizingFrom(config: CycleConfig): ExitSizing {
     floorPct: config.params.minProfitPct,
     breakEven: config.breakEven === true,
     maxStopPct: config.maxStopPct,
+    breakEvenArmPct: config.breakEvenArmPct,
+    breakEvenFloorPct: config.breakEvenFloorPct,
   }
 }
