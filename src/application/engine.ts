@@ -634,7 +634,16 @@ export async function settle(
       continue
     }
 
-    const fills = broker.execute([order], price, time)
+    // The tape is in the order things HAPPENED. The tick stamps what it
+    // settles with the bar it decided on, up to half an hour behind the clock,
+    // while the sweep stamps its rungs with the clock. TEXTIT's sweep bought two
+    // rungs at 10:16 and 10:17 and the tick then sold them stamped 10:15, so
+    // every rebuild of the position, sorted by time, found them still held and
+    // the next exit sold them a second time. Never before the newest fill
+    // already recorded; the idempotency key still names the deciding bar.
+    const newest = (await store.fillsFor(position.id)).reduce((latest, f) => Math.max(latest, f.time), -Infinity)
+    const stamp = time > newest ? time : newest + 1
+    const fills = broker.execute([order], price, stamp)
     for (const [index, fill] of fills.entries()) {
       await store.recordFill({
         positionId: position.id,
