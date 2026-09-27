@@ -331,7 +331,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // the price ladder buys from the stop's sweep. Two paths buying rungs
     // would buy the same dip twice.
     minGapPct: 100,
-    // The floor of the exit's derived target: never sell under +20%.
+    // The floor of the exit's derived target: never sell under +10%.
     minProfitPct: config.minProfitPct,
     maxUsdPerLevel: config.maxUsdPerLevel,
     dropInitPct: config.dropInitPct,

@@ -58,9 +58,9 @@ describe('the break-even, through the path the engine runs', () => {
   })
 })
 
-describe('the take-profit waits for +20%, through the path the engine runs', () => {
-  // *Poné un mínimo de ganancia del 20%.* The strategy's own exit still sells
-  // when the impulse dies — only never under +20% over the average cost.
+describe('the take-profit waits for +10%, through the path the engine runs', () => {
+  // *Bajalas a 10.* The strategy's own exit still sells when the impulse
+  // dies — only never under +10% over the average cost.
   const tick = async (env: Record<string, string> = {}) => {
     const { deps, cycleConfig } = runtime(env)
     const bars = 300
@@ -77,12 +77,12 @@ describe('the take-profit waits for +20%, through the path the engine runs', () 
     )
   }
 
-  it('asks the exit for at least +20% when nothing is set', async () => {
-    expect((await tick()).minProfitPct).toBe(20)
+  it('asks the exit for at least +10% when nothing is set', async () => {
+    expect((await tick()).minProfitPct).toBe(10)
   })
 
   it('takes another floor from the environment', async () => {
-    expect((await tick({ OPERADOR_MIN_PROFIT_PCT: '12' })).minProfitPct).toBe(12)
+    expect((await tick({ OPERADOR_MIN_PROFIT_PCT: '20' })).minProfitPct).toBe(20)
   })
 })
 

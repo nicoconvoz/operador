@@ -232,15 +232,25 @@ export const DEFAULT_URGENT_PROFIT_PCT = 25
  * larger of this and what the pool's round trip demands — so the exit still
  * sells when the impulse dies, only never under it.
  *
- * TWENTY, with the break-even switched off: *sacá el break-even, pero poné un
- * mínimo de ganancia del 20%.* Measured on the first half day of ladder A: of
- * 49 break-even sales at +7.5%, 21 went on to +20% and 12 fell back to the
- * first rung. The reference's 2 stays in `DEFAULT_PARAMS`, which is evidence.
+ * TEN, with the break-even switched off. It was twenty for an hour: *sacá el
+ * break-even, pero poné un mínimo de ganancia del 20%* — the break-even armed
+ * and sold on the same +7.5% line, and of 49 such sales on the first half day
+ * of ladder A, 21 went on to +20%. Then the replay of the 336 real entries
+ * under ladder A priced the floor, and the operator took the answer — *bajalas
+ * a 10*:
  *
- * What it costs, stated: a winner that peaks at +15% and turns is no longer
- * taken; it is held, and the ladder averages it if it falls.
+ * | Floor | Result | Halves | Frozen | Peak capital |
+ * |---|---|---|---|---|
+ * | 7.5% | $520 | 264 / 270 | −$8 | $1,850 |
+ * | **10%** | **$538** | **251 / 302** | −$65 | $2,430 |
+ * | 15% | $451 | 286 / 193 | −$237 | $2,840 |
+ * | 20% | $451 | 362 / 104 | −$243 | $3,305 |
+ *
+ * Past ten, a position waits longer with up to $135 in it, and the freezes
+ * eat what the runners make. The reference's 2 stays in `DEFAULT_PARAMS`,
+ * which is evidence.
  */
-export const DEFAULT_MIN_PROFIT_PCT = 20
+export const DEFAULT_MIN_PROFIT_PCT = 10
 
 
 export interface ProductionLadder {

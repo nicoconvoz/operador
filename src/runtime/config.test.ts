@@ -334,10 +334,10 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     }
   })
 
-  it('asks the strategy exit for +20% by default, and reads another floor', () => {
-    expect(loadConfig(valid).minProfitPct).toBe(20)
-    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: '12' }).minProfitPct).toBe(12)
-    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'veinte' }).minProfitPct).toBe(20)
+  it('asks the strategy exit for +10% by default, and reads another floor', () => {
+    expect(loadConfig(valid).minProfitPct).toBe(10)
+    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: '20' }).minProfitPct).toBe(20)
+    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'diez' }).minProfitPct).toBe(10)
   })
 
   it('takes both lines from the environment, and never floors above the arm', () => {

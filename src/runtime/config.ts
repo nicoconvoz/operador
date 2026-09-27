@@ -511,7 +511,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // ON again, at 7.5: *poné el break-even en 7.5.* The operator's answer to a
     // fixed take-profit, which would have cut the runners the strategy exit
     // lives on.
-    // OFF again: *sacá el break-even, pero poné un mínimo de ganancia del 20%*
+    // OFF again: *sacá el break-even, pero poné un mínimo de ganancia* (10%)
     // — the strategy exit's floor, `minProfitPct`, does the job instead.
     // OPERADOR_BREAK_EVEN=1 brings it back at 7.5.
     breakEven: onlyIf(env, 'OPERADOR_BREAK_EVEN'),
