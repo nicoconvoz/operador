@@ -17,6 +17,7 @@ import { type Candles } from './replay.js'
 import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { fundRungsFromFreeCapital } from './free-capital.js'
 import { productionLadder } from './production-ladder.js'
+import { dcaScale } from '../domain/strategy/dca-scale.js'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
@@ -2689,5 +2690,57 @@ describe('runCycle — a rung funded between steps is never written back over', 
     // Forty dollars of capital, and the book may not have allocated more.
     const allocated = (await store.loadPositions()).reduce((s, p) => s + p.capitalUsd, 0)
     expect(allocated).toBeLessThanOrEqual(40)
+  })
+})
+
+describe('runCycle — the DCA scale is measured by the tick and survives the cycle', () => {
+  // *Aplicá el de en la línea, la propuesta.* The tick measures it from the
+  // candles it already holds; every step after the tick writes whole rows,
+  // some from snapshots read before it — the bug class this codebase keeps
+  // paying for. The store keeps the first value, and these prove the cycle
+  // cannot lose it.
+  const wild = (bars = 300): Candles => {
+    const close = Array.from({ length: bars }, (_, i) => (i % 2 === 0 ? 1 : 1.1))
+    return {
+      time: close.map((_, i) => i * HOUR), open: close, high: close.map((c) => c * 1.001),
+      low: close.map((c) => c * 0.999), close, volume: close.map(() => 10_000),
+    }
+  }
+  const WILD = dcaScale(Math.log(1.1) * 100)
+  const withEntry = async (store: MemoryStore, over: Partial<PersistedPosition> = {}) => {
+    await store.savePosition(position(over))
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', idempotencyKey: 'k1', side: 'buy',
+      qty: 10, price: 1, costUsd: 0.05, comment: 'Entry', time: 250 * HOUR,
+    })
+  }
+
+  it('gives a held position its scale, and a stale snapshot written back afterwards cannot erase it', async () => {
+    const { deps, store, throttle } = rig({ candlesFor: async () => wild() })
+    await withEntry(store)
+    const result = await runCycle(deps, { ...config, scoreStopPoints: 5 }, throttle)
+    expect((await store.loadPositions()).find((p) => p.id === 'pos-1')?.dcaScale).toBeCloseTo(WILD, 9)
+    // The snapshot recovery read before the tick — the one the trim once wrote
+    // back over everything the tick had decided.
+    const stale = result.recovery.positions.find((r) => r.position.id === 'pos-1')!.position
+    expect(stale.dcaScale ?? null).toBeNull()
+    await store.savePosition(stale)
+    expect((await store.loadPositions()).find((p) => p.id === 'pos-1')?.dcaScale).toBeCloseTo(WILD, 9)
+  })
+
+  it('gives a position opened this cycle its scale, from the day before its first buy', async () => {
+    const { deps, store, throttle } = rig({ candlesFor: async () => wild() })
+    const result = await runCycle(deps, config, throttle)
+    expect(result.opened.length).toBeGreaterThan(0)
+    for (const opened of result.opened) {
+      expect((await store.loadPositions()).find((p) => p.id === opened.id)?.dcaScale).toBeCloseTo(WILD, 9)
+    }
+  })
+
+  it('never re-measures: a stored scale survives a whole cycle over different candles', async () => {
+    const { deps, store, throttle } = rig({ candlesFor: async () => wild() })
+    await withEntry(store, { dcaScale: 2 })
+    await runCycle(deps, { ...config, scoreStopPoints: 5 }, throttle)
+    expect((await store.loadPositions()).find((p) => p.id === 'pos-1')?.dcaScale).toBe(2)
   })
 })

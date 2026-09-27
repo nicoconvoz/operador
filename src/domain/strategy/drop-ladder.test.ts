@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { nextDropRung } from './drop-ladder.js'
+import { dcaScale } from './dca-scale.js'
 
 /**
  * *Podés calibrar según los datos para que las ganancias sean las máximas y
@@ -80,5 +81,47 @@ describe('nextDropRung — measured from the PREVIOUS buy', () => {
   it('never buys without the previous price', () => {
     expect(nextDropRung({ entries: 2, firstBuyPrice: 1, priceUsd: 0.1 }, policy)).toBeNull()
     expect(nextDropRung({ entries: 2, firstBuyPrice: 1, lastBuyPrice: 0, priceUsd: 0.1 }, policy)).toBeNull()
+  })
+})
+
+describe('nextDropRung — at the token’s own scale', () => {
+  // *Aplicá el de en la línea, la propuesta.* The more a token moves, the
+  // closer its rungs: each drop times `dcaScale(volPct)`, never past 90%.
+  const policy = { maxEntries: 6, dropsPct: [10, 15, 20, 25, 30], from: 'previous' as const }
+  const at = (scale: number | undefined, priceUsd: number, entries = 1, lastBuyPrice = 1) =>
+    nextDropRung({ entries, firstBuyPrice: 1, lastBuyPrice, priceUsd, ...(scale === undefined ? {} : { scale }) }, policy)
+
+  it('buys DCA-1 of a token moving 10% a bar at −5.2%, and waits at −5%', () => {
+    expect(at(dcaScale(10), 0.95)).toBeNull()
+    expect(at(dcaScale(10), 0.948)).toBe(1)
+  })
+
+  it('waits for DCA-1 of a token moving 1% a bar at −16%, and buys at −16.5%', () => {
+    expect(at(dcaScale(1), 0.84)).toBeNull()
+    expect(at(dcaScale(1), 0.835)).toBe(1)
+  })
+
+  it('chains the scaled drop from the previous buy: DCA-2 of the wild one at 7.8% under DCA-1', () => {
+    // DCA-1 filled at 0.948; 15% × 0.52 = 7.79% under it is 0.8742.
+    expect(at(dcaScale(10), 0.875, 2, 0.948)).toBeNull()
+    expect(at(dcaScale(10), 0.874, 2, 0.948)).toBe(2)
+  })
+
+  it('never asks a rung for more than a 90% fall', () => {
+    // DCA-5 at three times 30% would be −90%, exactly the cap, and no deeper.
+    expect(at(3, 0.1001, 5)).toBeNull()
+    expect(at(3, 0.0999, 5)).toBe(5)
+    // Four times 30% would be −120%, a line under zero that no price reaches.
+    expect(at(4, 0.11, 5)).toBeNull()
+    expect(at(4, 0.0999, 5)).toBe(5)
+  })
+
+  it('uses the base drops with no scale, or with one nobody could have measured', () => {
+    expect(at(undefined, 0.9)).toBe(1)
+    expect(at(undefined, 0.91)).toBeNull()
+    for (const nonsense of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(at(nonsense, 0.9)).toBe(1)
+      expect(at(nonsense, 0.91)).toBeNull()
+    }
   })
 })

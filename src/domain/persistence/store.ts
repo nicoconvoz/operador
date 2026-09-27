@@ -114,6 +114,21 @@ export interface PersistedPosition {
    */
   readonly entryScore?: number | null
   /**
+   * What every drop of this position's DCA ladder is multiplied by: the more
+   * the token moved in the day before its first buy, the closer its rungs.
+   * *Aplicá el de en la línea, la propuesta.* See `domain/strategy/dca-scale.ts`.
+   *
+   * Written ONCE, like `entryScore`, and for the same reason: every step of
+   * the cycle writes the whole row, most of them from a snapshot read before
+   * the tick measured it, and a ladder whose spacing a stale write could erase
+   * would put its next rung back on the base line halfway down. Both stores
+   * keep the first non-null value.
+   *
+   * Absent until the tick has measured it; the ladder reads absent as one —
+   * the base drops.
+   */
+  readonly dcaScale?: number | null
+  /**
    * The stepped gain lock: the floor, in percent over the average cost, under
    * which this HOLDING may no longer close — and the time of the holding's
    * first buy, which is what makes it this holding's and not the last one's.

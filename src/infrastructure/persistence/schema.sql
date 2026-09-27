@@ -35,6 +35,11 @@ CREATE INDEX IF NOT EXISTS positions_token_idx ON positions (chain, token_addres
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS break_even_armed BOOLEAN NOT NULL DEFAULT false;
 -- The score a position was bought at: the baseline of the score stop.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_score DOUBLE PRECISION;
+-- What every drop of the position's DCA ladder is multiplied by: the more the
+-- token moved in the day before its first buy, the closer its rungs. Measured
+-- once by the tick and kept with COALESCE — the first value stays, and a stale
+-- snapshot without one never erases it. Null until measured: the base drops.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale DOUBLE PRECISION;
 -- The stepped gain lock: the floor over the average cost under which this
 -- holding may no longer close, and the time of the holding's first buy, which
 -- says WHICH holding earned it. Both null until a holding reaches +20%. The

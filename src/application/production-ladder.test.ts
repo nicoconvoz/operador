@@ -5,6 +5,7 @@ import {
   DEFAULT_MAX_USD_PER_LEVEL,
   DEFAULT_DCA_DROPS_PCT,
   DEFAULT_DCA_RUNGS_USD,
+  DEFAULT_DCA_ADAPTIVE,
 } from './production-ladder.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
@@ -16,7 +17,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     // capital for its own dollars when it fires.
     expect(productionLadder({})).toEqual({
       maxUsdPerLevel: 10, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', reservedEntries: 1,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: true, reservedEntries: 1,
     })
   })
 
@@ -179,5 +180,22 @@ describe('production ladder — a position reserves its FIRST buy, not the whole
     for (const raw of ['0', '-1', 'uno', '1.5']) {
       expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: raw }).reservedEntries).toBe(1)
     }
+  })
+})
+
+describe('production ladder — the rungs adapt to how much the token moves', () => {
+  // *Aplicá el de en la línea, la propuesta.* The more a token moves, the
+  // closer its rungs. ON unless switched off, one variable away.
+  it('is ON when nothing is set', () => {
+    expect(DEFAULT_DCA_ADAPTIVE).toBe(true)
+    expect(productionLadder({}).dcaAdaptive).toBe(true)
+  })
+
+  it('is OFF with 0, false or no — every position then uses the base drops', () => {
+    for (const off of ['0', 'false', 'no', ' NO ']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: off }).dcaAdaptive).toBe(false)
+  })
+
+  it('stays ON on anything else, a typo included', () => {
+    for (const on of ['1', 'true', 'yes', 'si', '']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: on }).dcaAdaptive).toBe(true)
   })
 })

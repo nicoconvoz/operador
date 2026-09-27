@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildRuntime } from './main.js'
 import { loadConfig } from './config.js'
-import { exitLevelsFor } from '../application/stop-sweep.js'
+import { exitLevelsFor, sweepStops } from '../application/stop-sweep.js'
 import { exitSizingFrom, tickConfigFrom } from '../application/orchestrator.js'
 import { capitalForFillsUsd, ladderCapitalUsd } from '../application/paper-run.js'
 import { tickPosition } from '../application/engine.js'
@@ -167,5 +167,48 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     const after = await deps.brokerFor({ ...held, capitalUsd: 31.73 })
     expect(after).not.toBe(before)
     expect(await deps.brokerFor({ ...held, capitalUsd: 31.73 })).toBe(after)
+  })
+})
+
+describe('the rungs follow each token’s volatility, through the path the engine runs', () => {
+  // *Aplicá el de en la línea, la propuesta.* The cycle's sweeps and the
+  // loop's both read `deps.dropLadder`, so the switch is asked there — and
+  // then the SAME sweep is run on a token moving 10% a bar, whose DCA-1 sits
+  // at −5.2% of its first buy instead of −10%.
+  const wild = { ...held, capitalUsd: 200, dcaScale: 0.52 }
+  const sweepAt = async (env: Record<string, string>, price: number) => {
+    const { deps, cycleConfig } = runtime(env)
+    const store = new MemoryStore()
+    await store.savePosition(wild)
+    await store.recordFill({
+      positionId: wild.id, orderId: 'Entry', side: 'buy', time: 0, price: 1, qty: 10, costUsd: 0.01,
+      comment: '🟢 Entry', idempotencyKey: `${wild.id}:0:Entry`,
+    })
+    // The runtime's own ladder, minus the free-capital funding that would ask
+    // the (empty) database: the slot already holds enough for one rung.
+    const { fund: _unfunded, ...ladder } = deps.dropLadder!
+    await sweepStops(
+      { ...deps, store, alerts: { send: async () => {} }, dropLadder: ladder },
+      (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)),
+      new AlertThrottle(0), [wild], new Map([['solana:T', price]]), 1_000,
+    )
+    return (await store.fillsFor(wild.id)).filter((f) => f.side === 'buy').map((f) => f.orderId)
+  }
+
+  it('is ON when nothing is set: DCA-1 of a wild token at −5.3%', async () => {
+    expect(runtime().deps.dropLadder?.adaptive).toBe(true)
+    expect(await sweepAt({}, 0.947)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('measures the scale over 15-minute bars: the tick is told the bar the engine trades', () => {
+    // The day before the first buy counts only the bars that had CLOSED by
+    // then, and which ones those are depends on how long a bar lasts.
+    expect(tickConfigFrom(runtime().cycleConfig).barMs).toBe(15 * 60_000)
+  })
+
+  it('is OFF with OPERADOR_DCA_ADAPTIVE=0: the same token waits for the base −10%', async () => {
+    expect(runtime({ OPERADOR_DCA_ADAPTIVE: '0' }).deps.dropLadder?.adaptive).toBe(false)
+    expect(await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.947)).toEqual(['Entry'])
+    expect(await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.899)).toEqual(['Entry', 'DCA-1'])
   })
 })

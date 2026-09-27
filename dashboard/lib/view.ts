@@ -90,7 +90,9 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       // to −30% of the FIRST buy — from the same module the engine reads, so
       // the screen draws each line where the sweep is actually looking and at
       // the size it will actually buy.
-      dropLadder: { dropsPct: ladder.dcaDropsPct, rungsUsd: ladder.dcaRungsUsd, from: ladder.dcaFrom },
+      // And at each position's own spacing, behind the same switch the sweep
+      // reads: the more a token moves, the closer its lines.
+      dropLadder: { dropsPct: ladder.dcaDropsPct, rungsUsd: ladder.dcaRungsUsd, from: ladder.dcaFrom, adaptive: ladder.dcaAdaptive },
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.
       tapeLength: 30,

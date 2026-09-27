@@ -16,6 +16,7 @@ import { orderKeyPart } from './recovery.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
 import { type Candles } from './replay.js'
 import { ladderCapitalUsd } from './paper-run.js'
+import { dcaScale } from '../domain/strategy/dca-scale.js'
 
 const HOUR = 3_600_000
 const quality: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
@@ -1177,3 +1178,85 @@ describe('refusesToSellAtALoss — the break-even exit is NOT a risk exit any mo
   })
 })
 
+
+describe('tickPosition — measures the DCA scale once, from the day before the first buy', () => {
+  // *Aplicá el de en la línea, la propuesta.* The more a token moved in the
+  // 24 hours of closed 15-minute bars before its first buy, the closer its
+  // rungs. The tick already holds those candles, so it measures and saves it.
+  const BAR = 15 * 60_000
+  const DAY = 24 * HOUR
+  const WILD = dcaScale(Math.log(1.1) * 100)
+  const CALM = dcaScale(Math.log(1.01) * 100)
+  /** Three days of 15m bars: wild (±10%) where `wild(i)` says so, calm (±1%) elsewhere. */
+  const bars = (wild: (i: number) => boolean, n = 288): Candles => {
+    const time = Array.from({ length: n }, (_, i) => i * BAR)
+    const close = time.map((_, i) => (i % 2 === 0 ? 1 : wild(i) ? 1.1 : 1.01))
+    return { time, open: close, high: close.map((c) => c * 1.001), low: close.map((c) => c * 0.999), close, volume: close.map(() => 10_000) }
+  }
+  const scaled: EngineConfig = { params: DEFAULT_PARAMS, barMs: BAR }
+  const entryAt = (time: number) => ({
+    positionId: 'pos-1', orderId: 'Entry', side: 'buy' as const, time, price: 1, qty: 10, costUsd: 0.01,
+    comment: '🟢 Entry', idempotencyKey: `pos-1:${time}:Entry`,
+  })
+  const run = async (candles: Candles, over: Partial<PersistedPosition>, fills: ReturnType<typeof entryAt>[], engine = scaled) => {
+    const r = rig()
+    const held = position({ lastBarTime: candles.time.at(-1)!, ...over })
+    await r.store.savePosition(held)
+    for (const f of fills) await r.store.recordFill(f)
+    const result = await tickPosition({ position: held, candles, health: null, broker: r.broker }, engine, r.store, r.alerts, r.throttle)
+    return { result, stored: (await r.store.loadPositions())[0]! }
+  }
+
+  it('saves the scale of the 24 hours before the first buy — even with no new bar to decide on', async () => {
+    // The first buy at bar 200: the day before it is bars 104..199, wild; the
+    // rest of the series is calm and must not count.
+    const candles = bars((i) => i >= 104 && i <= 199)
+    const { result, stored } = await run(candles, {}, [entryAt(200 * BAR)])
+    expect(result.skipped).toBe('already-processed')
+    expect(stored.dcaScale).toBeCloseTo(WILD, 9)
+    // Handed back too, so the cycle's own copy carries it into every later write.
+    expect(result.position.dcaScale).toBeCloseTo(WILD, 9)
+  })
+
+  it('reads the 24 hours before NOW for a position that has not bought yet', async () => {
+    const candles = bars((i) => i >= 192)
+    const { stored } = await run(candles, {}, [])
+    expect(stored.dcaScale).toBeCloseTo(WILD, 9)
+  })
+
+  it('reads the 24 hours before NOW when the first buy is older than the candles reach', async () => {
+    const candles = bars((i) => i >= 192)
+    const { stored } = await run(candles, {}, [entryAt(-10 * DAY)])
+    expect(stored.dcaScale).toBeCloseTo(WILD, 9)
+  })
+
+  it('never measures again: a position that has a scale keeps it', async () => {
+    const candles = bars(() => true)
+    const { result, stored } = await run(candles, { dcaScale: CALM }, [entryAt(200 * BAR)])
+    expect(stored.dcaScale).toBeCloseTo(CALM, 9)
+    expect(result.position.dcaScale).toBeCloseTo(CALM, 9)
+  })
+
+  it('saves nothing when nothing could be measured — silence is not a scale of one', async () => {
+    const candles = bars(() => true, 4)
+    const { stored } = await run(candles, {}, [])
+    expect(stored.dcaScale ?? null).toBeNull()
+  })
+
+  it('reads the bar width off the candles when the caller does not say it', async () => {
+    const candles = bars((i) => i >= 104 && i <= 199)
+    const { stored } = await run(candles, {}, [entryAt(200 * BAR)], { params: DEFAULT_PARAMS })
+    expect(stored.dcaScale).toBeCloseTo(WILD, 9)
+  })
+
+  it('carries the scale through a tick that decides — the row it writes keeps it', async () => {
+    const candles = bars((i) => i >= 192)
+    const r = rig()
+    const fresh = position({ lastBarTime: -1 })
+    await r.store.savePosition(fresh)
+    const result = await tickPosition({ position: fresh, candles, health: null, broker: r.broker }, scaled, r.store, r.alerts, r.throttle)
+    expect(result.skipped).toBeNull()
+    expect(result.position.dcaScale).toBeCloseTo(WILD, 9)
+    expect((await r.store.loadPositions())[0]!.dcaScale).toBeCloseTo(WILD, 9)
+  })
+})

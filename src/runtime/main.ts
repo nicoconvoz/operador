@@ -426,6 +426,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       policy: { maxEntries: config.maxDcaPerToken + 1, dropsPct: config.dcaDropsPct, from: config.dcaFrom },
       rungsUsd: config.dcaRungsUsd,
       fund: fundRung,
+      // *Aplicá el de en la línea, la propuesta.* Each position's drops times
+      // its own `dcaScale`, measured by the tick from the day before its first
+      // buy: the more the token moves, the closer its rungs. Here, once, so
+      // the cycle's sweeps and the loop's cannot disagree about the line.
+      adaptive: config.dcaAdaptive,
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,

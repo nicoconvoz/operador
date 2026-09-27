@@ -11,6 +11,7 @@ import { fundRungsFromFreeCapital } from './free-capital.js'
 import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { productionLadder } from './production-ladder.js'
+import { dcaScale } from '../domain/strategy/dca-scale.js'
 
 const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
 /** Ladder A, exactly as production reads it with no environment set. */
@@ -68,6 +69,11 @@ const rig = async (options: {
    * capital. Absent: the rung is bought out of what the position holds.
    */
   readonly bookUsd?: number
+  /**
+   * Whether ladder A's drops follow each position's `dcaScale`. Absent: what
+   * production reads with nothing set, `A.dcaAdaptive`.
+   */
+  readonly adaptive?: boolean
 } = {}) => {
   const store = new MemoryStore()
   const held = options.held ?? position()
@@ -105,6 +111,7 @@ const rig = async (options: {
           dropLadder: {
             policy: { maxEntries: A.maxOpenEntries, dropsPct: A.dcaDropsPct, from: A.dcaFrom },
             rungsUsd: A.dcaRungsUsd,
+            adaptive: options.adaptive ?? A.dcaAdaptive,
             ...(options.bookUsd !== undefined
               ? { fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd }) }
               : {}),
@@ -528,5 +535,56 @@ describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35'
     for (const price of LINES.slice(0, 3)) await run(price)
     expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('Compró $15.00')
     expect(sent.find((a) => a.title.includes('DCA-3'))?.body).toContain('Compró $25.00')
+  })
+})
+
+describe('ladder A at the token’s own scale: the more it moves, the closer its rungs', () => {
+  // *Aplicá el de en la línea, la propuesta.* A token moving 10% a bar has a
+  // scale of 0.52: DCA-1 at −5.2% of the first buy, DCA-2 at 7.8% under DCA-1.
+  const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
+  const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
+  const WILD = dcaScale(10)
+  const held = (dcaScale?: number) => position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.9, ...(dcaScale === undefined ? {} : { dcaScale }) })
+  const bought = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
+
+  it('is ON with nothing set', () => {
+    expect(A.dcaAdaptive).toBe(true)
+  })
+
+  it('buys DCA-1 of a wild token at −5.2%, and DCA-2 at 7.8% under what DCA-1 paid', async () => {
+    const { store, run } = await rig({ held: held(WILD), drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.95)
+    expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry'])
+    await run(0.947)
+    const [, dca1] = await bought(store)
+    expect(dca1?.orderId).toBe('DCA-1')
+    // 15% × 0.52 = 7.79% under what DCA-1 actually paid.
+    await run(dca1!.price * 0.925)
+    expect(await bought(store)).toHaveLength(2)
+    await run(dca1!.price * 0.92)
+    expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2'])
+  })
+
+  it('says in the alert the fall the rung waited for', async () => {
+    const { sent, run } = await rig({ held: held(WILD), drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.947)
+    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 5.2%')
+  })
+
+  it('uses the base drops for a position nobody has measured yet', async () => {
+    const { store, run } = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.947)
+    expect(await bought(store)).toHaveLength(1)
+    await run(0.899)
+    expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('uses the base drops for every position when the switch is off', async () => {
+    const { store, sent, run } = await rig({ held: held(WILD), drop: 'A', stop: NO_STOP, bookUsd: 1_000, adaptive: false })
+    await run(0.947)
+    expect(await bought(store)).toHaveLength(1)
+    await run(0.899)
+    expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 10%')
   })
 })

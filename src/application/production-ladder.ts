@@ -169,6 +169,29 @@ export const DEFAULT_DCA_RUNGS_USD: readonly number[] = [15, 20, 25, 30, 35]
 export const DEFAULT_DCA_FROM = 'previous' as const
 
 /**
+ * Each position's drops are multiplied by its own `dcaScale`: the more the
+ * token moved in the day before its first buy, the CLOSER its rungs. *Aplicá el
+ * de en la línea, la propuesta.* ON; `OPERADOR_DCA_ADAPTIVE=0` puts every
+ * position back on the base drops without touching what was measured.
+ *
+ * The same replay of the 336 real entries, every ladder chained from the
+ * previous buy, the exit at +10%:
+ *
+ * | | Result | train / test | frozen | worst token | peak capital | per $100 |
+ * |---|---|---|---|---|---|---|
+ * | fixed 10/15/20/25/30 (what ran) | $312 | 110 / 214 | −$37 | −$23 | $1,550 | 20.1 |
+ * | **closer rungs the more it moves** | **$394** | 178 / 230 | −$48 | −$30 | $1,405 | **28.0** |
+ *
+ * What it costs, stated: the frozen tail and the worst token both got a
+ * little worse, −$37 to −$48 and −$23 to −$30 — the likely mechanism being a
+ * volatile token that keeps falling, which now fills its rungs sooner. The
+ * freeze exit and the blacklist on freeze are what bound that,
+ * and both stay. See `domain/strategy/dca-scale.ts` for the rule and what was
+ * tried and not taken.
+ */
+export const DEFAULT_DCA_ADAPTIVE = true
+
+/**
  * How many entries' worth of capital a position is ALLOCATED when it opens.
  * ONE: the first buy. Each rung asks the book's free capital for its own
  * dollars at the moment it fires, and waits a sweep when there is none.
@@ -280,6 +303,8 @@ export interface ProductionLadder {
   readonly dcaRungsUsd: readonly number[]
   /** What each drop is measured from: the first buy, or the previous one. */
   readonly dcaFrom: 'first' | 'previous'
+  /** Whether each position's drops follow its own volatility (`dcaScale`). */
+  readonly dcaAdaptive: boolean
   /**
    * Entries' worth of capital a position is allocated when it opens. Never
    * more than `maxOpenEntries`; the rest is asked of the free capital when a
@@ -367,6 +392,9 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     dcaDropsPct,
     dcaRungsUsd: sizes(env.OPERADOR_DCA_RUNGS_USD, DEFAULT_DCA_RUNGS_USD, dcaDropsPct.length),
     dcaFrom: env.OPERADOR_DCA_FROM?.trim().toLowerCase() === 'first' ? 'first' : DEFAULT_DCA_FROM,
+    // Only 0, false and no turn it off; a typo leaves the operator's decision
+    // running rather than quietly running the one it replaced.
+    dcaAdaptive: ['0', 'false', 'no'].includes(env.OPERADOR_DCA_ADAPTIVE?.trim().toLowerCase() ?? '') ? false : DEFAULT_DCA_ADAPTIVE,
     // Capped by what the venue holds: reserving capital for an entry the
     // broker will refuse is capital held against nothing.
     reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),

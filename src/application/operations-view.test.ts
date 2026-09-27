@@ -6,6 +6,7 @@ import { startDeathWatch } from '../domain/risk/death-exit.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type PersistedFill, type PersistedPosition } from '../domain/persistence/store.js'
 import { productionLadder } from './production-ladder.js'
+import { dcaScale } from '../domain/strategy/dca-scale.js'
 
 const NOW = 1_800_000_000_000
 const MIN = 60_000
@@ -677,5 +678,45 @@ describe('buildOperations — ladder A, as the dashboard composes it', () => {
     const [p] = (await buildOperations(store, ladder)).positions
     expect(p!.ladder.every((r) => r.filled)).toBe(true)
     expect(p!.locks).toBeNull()
+  })
+})
+
+describe('buildOperations — ladder A at the token’s own scale', () => {
+  // *Aplicá el de en la línea, la propuesta.* The more a token moves, the
+  // closer its rungs — and the screen draws the lines the ENGINE buys on, so a
+  // wild token's DCA-1 sits at −5.2%, not at the −10% of the base list.
+  const A = productionLadder({})
+  const ladder = (adaptive: boolean) => ({
+    ...options,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
+    maxOpenEntries: A.maxOpenEntries,
+    dropLadder: { dropsPct: A.dcaDropsPct, rungsUsd: A.dcaRungsUsd, from: A.dcaFrom, adaptive },
+  })
+  const WILD = dcaScale(10)
+  const held = (over: Partial<PersistedPosition> = {}) => ({ cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.97, ...over })
+
+  it('draws each line at the base drop times the position’s scale, chained from the one before', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held({ dcaScale: WILD }))
+    const [p] = (await buildOperations(store, ladder(true))).positions
+    let line = 1
+    const expected = A.dcaDropsPct.map((drop) => (line = line * (1 - (drop * WILD) / 100)))
+    expect(p!.ladder.slice(1).map((r) => r.triggerPrice)).toEqual(expected.map((x) => expect.closeTo(x, 9)))
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.948, 3)
+  })
+
+  it('names the line the next rung is waiting for at the position’s scale', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held({ dcaScale: WILD }))
+    const [p] = (await buildOperations(store, ladder(true))).positions
+    expect(p!.locks![0]!.detail).toContain('0.9480')
+    expect(p!.locks![0]!.detail).toContain('5.2% bajo la compra anterior')
+  })
+
+  it('draws the base lines for a position with no scale yet, or with the switch off', async () => {
+    for (const [over, adaptive] of [[{}, true], [{ dcaScale: WILD }, false]] as const) {
+      const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held(over))
+      const [p] = (await buildOperations(store, ladder(adaptive))).positions
+      expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.9, 9)
+      expect(p!.locks![0]!.detail).toContain('10% bajo la compra anterior')
+    }
   })
 })

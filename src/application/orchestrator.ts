@@ -1405,6 +1405,10 @@ export function tickConfigFrom(config: CycleConfig): EngineConfig & { readonly r
     // meaning what it meant. Present, the tick derives the target from what
     // this pool actually charges to leave.
     ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
+    // The bar the engine trades, so the DCA scale is measured over the bars
+    // that had CLOSED before the first buy — not over a width guessed from
+    // the candles' own spacing.
+    ...(config.barMs !== undefined ? { barMs: config.barMs } : {}),
 
     ...(config.sizing ? { sizing: config.sizing } : {}),
   }

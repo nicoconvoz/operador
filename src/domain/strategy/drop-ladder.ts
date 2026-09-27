@@ -1,3 +1,5 @@
+import { scaledDropPct } from './dca-scale.js'
+
 /**
  * The DCA ladder on the PRICE alone: rung `n` once the price has fallen
  * `dropsPct[n-1]` under the FIRST buy.
@@ -52,6 +54,12 @@
  * capital) on a far smaller tail. The objection to chasing the last fill is
  * answered by the list itself: it has five numbers, so the ladder ends.
  *
+ * **At the token's own scale, in production.** *Aplicá el de en la línea, la
+ * propuesta.* Every drop is multiplied by the position's `dcaScale` — the more
+ * the token moves, the closer its rungs — and never asks for more than 90%.
+ * See `dca-scale.ts` for the replay that chose it: $394 against $312, on less
+ * peak capital.
+ *
  * Pure; the caller brings the buys and the live price.
  */
 export interface DropLadderPolicy {
@@ -79,14 +87,25 @@ export function nextDropRung(
     /** What the latest buy of the holding paid; needed when measuring from the previous buy. */
     readonly lastBuyPrice?: number
     readonly priceUsd: number
+    /**
+     * What every drop of THIS token's ladder is multiplied by — `dcaScale` of
+     * its volatility. Absent, or anything but a positive finite number: one,
+     * the base drops. A scale nobody could have measured is not evidence.
+     */
+    readonly scale?: number
   },
   policy: DropLadderPolicy,
 ): number | null {
   const { entries, priceUsd } = input
   if (entries < 1 || entries >= policy.maxEntries) return null
-  const drop = policy.dropsPct[entries - 1]
-  if (drop === undefined) return null
+  const base = policy.dropsPct[entries - 1]
+  if (base === undefined) return null
+  const drop = scaledDropPct(base, usableScale(input.scale))
   const anchor = policy.from === 'previous' ? input.lastBuyPrice : input.firstBuyPrice
   if (!(priceUsd > 0) || anchor === undefined || !(anchor > 0)) return null
   return priceUsd <= anchor * (1 - drop / 100) ? entries : null
 }
+
+/** A stored scale as the ladder may use it: positive and finite, or one. */
+export const usableScale = (scale: number | null | undefined): number =>
+  scale !== null && scale !== undefined && Number.isFinite(scale) && scale > 0 ? scale : 1

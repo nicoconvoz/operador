@@ -1,4 +1,6 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
+import { usableScale } from '../domain/strategy/drop-ladder.js'
+import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, positionLedger, holdingBuys } from './ledger.js'
@@ -164,6 +166,11 @@ export interface OperationsOptions {
     readonly rungsUsd?: readonly number[]
     /** What each drop is measured from, the way the engine buys it. Absent: the first buy. */
     readonly from?: 'first' | 'previous'
+    /**
+     * Whether each position's drops follow its own `dcaScale`, the way the
+     * sweep buys them. Absent: the base drops, every caller that predates it.
+     */
+    readonly adaptive?: boolean
   }
   readonly pressureLadder?: {
     readonly threshold: number
@@ -253,8 +260,11 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
     const drop = options.dropLadder
     const pressure = options.pressureLadder
+    // The position's own spacing, read exactly as the sweep reads it — one
+    // switch, one stored scale — so each line is drawn where it will be bought.
+    const scale = drop?.adaptive === true ? usableScale(position.dcaScale) : 1
     const ladder: LadderRung[] = drop
-      ? dropRungs(filledByLevel, fillable, drop, params, inFlight?.level ?? filledByLevel.size)
+      ? dropRungs(filledByLevel, fillable, drop, scale, params, inFlight?.level ?? filledByLevel.size)
       : pressure
       ? pressureRungs(filledByLevel, fillable, params, inFlight?.level ?? filledByLevel.size)
       : Array.from({ length: fillable }, (_, level) => {
@@ -287,7 +297,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       costsUsd,
       ladder,
       locks: drop
-        ? dropLocks(buys, price, fillable, drop, params)
+        ? dropLocks(buys, price, fillable, drop, scale, params)
         : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
@@ -348,11 +358,17 @@ const dropRungUsd = (ladder: DropLadderView, params: CascadeParams, level: numbe
  * drawn from a price the position never paid would put the rung somewhere the
  * sweep is not looking. A rung past the end of the list, or before any buy,
  * has no line.
+ *
+ * Each drop at the position's own scale when the ladder adapts: a token moving
+ * 10% a bar is bought at −5.2% and drawn there, never at the base list's −10%
+ * — the screen describing a line the sweep is not waiting on.
  */
 function dropRungs(
   filledByLevel: ReadonlyMap<number, PersistedFill>,
   fillable: number,
   ladder: DropLadderView,
+  /** The position's `dcaScale` when the ladder adapts, else one. */
+  scale: number,
   params: CascadeParams,
   waitingOn: number,
 ): LadderRung[] {
@@ -365,7 +381,7 @@ function dropRungs(
   for (let level = 1; level < fillable; level++) {
     const drop = ladder.dropsPct[level - 1]
     const base = ladder.from === 'previous' ? anchor : first
-    const line = base === null || drop === undefined ? null : base * (1 - drop / 100)
+    const line = base === null || drop === undefined ? null : base * (1 - scaledDropPct(drop, scale) / 100)
     lines.push(line)
     anchor = filledByLevel.get(level)?.price ?? line
   }
@@ -392,11 +408,14 @@ function dropLocks(
   price: number | null,
   fillable: number,
   ladder: DropLadderView,
+  scale: number,
   params: CascadeParams,
 ): readonly LadderLock[] | null {
   if (buys.length === 0 || buys.length >= fillable) return null
-  const drop = ladder.dropsPct[buys.length - 1]
-  if (drop === undefined) return null
+  const base = ladder.dropsPct[buys.length - 1]
+  if (base === undefined) return null
+  // At this position's scale: the fall the sweep is actually waiting for.
+  const drop = scaledDropPct(base, scale)
   const sorted = [...buys].sort((a, b) => a.time - b.time)
   const previous = ladder.from === 'previous'
   const anchor = previous ? sorted[sorted.length - 1]! : sorted[0]!
@@ -411,7 +430,7 @@ function dropLocks(
       held: reached,
       detail: reached
         ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra ${usd} en este barrido`
-        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} (${drop}% bajo ${since}); va en ${price === null ? '—' : price.toPrecision(4)}`,
+        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} (${dropLabel(drop)}% bajo ${since}); va en ${price === null ? '—' : price.toPrecision(4)}`,
     },
   ]
 }

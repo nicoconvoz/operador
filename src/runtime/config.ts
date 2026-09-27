@@ -246,6 +246,11 @@ export interface RuntimeConfig {
   readonly dcaRungsUsd: readonly number[]
   /** What each drop is measured from: the previous buy in production. */
   readonly dcaFrom: 'first' | 'previous'
+  /**
+   * Whether each position's drops follow its own `dcaScale` — the more the
+   * token moves, the closer its rungs. ON; OPERADOR_DCA_ADAPTIVE=0 turns it off.
+   */
+  readonly dcaAdaptive: boolean
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -598,6 +603,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     dcaDropsPct: productionLadder(env).dcaDropsPct,
     dcaRungsUsd: productionLadder(env).dcaRungsUsd,
     dcaFrom: productionLadder(env).dcaFrom,
+    dcaAdaptive: productionLadder(env).dcaAdaptive,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings

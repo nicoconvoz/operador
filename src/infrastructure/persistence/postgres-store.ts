@@ -65,6 +65,7 @@ interface PositionRow {
   updated_at: string | number
   break_even_armed?: boolean | null
   entry_score?: string | number | null
+  dca_scale?: string | number | null
   gain_lock_pct?: string | number | null
   gain_lock_since?: string | number | null
 }
@@ -115,6 +116,7 @@ export class PostgresStore implements StatePort {
       updatedAt: num(row.updated_at),
       breakEvenArmed: row.break_even_armed === true,
       entryScore: row.entry_score === null || row.entry_score === undefined ? null : num(row.entry_score),
+      dcaScale: present(row.dca_scale) ? num(row.dca_scale) : null,
       gainLock: gainLockOf(row),
     }))
   }
@@ -123,8 +125,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed, entry_score, gain_lock_pct, gain_lock_since)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -139,6 +141,9 @@ export class PostgresStore implements StatePort {
          break_even_armed = positions.break_even_armed OR EXCLUDED.break_even_armed,
          -- The score BASELINE, written once: the first non-null value stays.
          entry_score = COALESCE(positions.entry_score, EXCLUDED.entry_score),
+         -- The DCA SCALE, the same way: measured once, never erased by a
+         -- snapshot read before the tick measured it.
+         dca_scale = COALESCE(positions.dca_scale, EXCLUDED.dca_scale),
          -- The GAIN LOCK, a ratchet over a pair: keepGainLock, spelled in SQL. Every right-hand side reads the row as it WAS, so the two CASEs
          -- decide from the same stored pair. Same holding: the greater floor. A
          -- newer holding: its pair whole. An older holding, or a write with no
@@ -156,7 +161,7 @@ export class PostgresStore implements StatePort {
          END`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
-       p.breakEvenArmed === true, p.entryScore ?? null,
+       p.breakEvenArmed === true, p.entryScore ?? null, p.dcaScale ?? null,
        // Both or neither: a floor is meaningless without the holding it belongs to.
        p.gainLock ? p.gainLock.pct : null, p.gainLock ? p.gainLock.since : null],
     )

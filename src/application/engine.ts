@@ -19,6 +19,8 @@ import { SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { type Candles } from './replay.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { priceRatio, pricesDisagree } from '../domain/market/price-agreement.js'
+import { measuredDcaScale, volatilityBefore } from '../domain/strategy/dca-scale.js'
+import { holdingBuys } from './ledger.js'
 
 /**
  * One tick of the live engine, for one position.
@@ -103,6 +105,12 @@ export interface EngineConfig {
    * so the parity harness and the offline paths keep meaning what they meant.
    */
   readonly reservedEntries?: number
+  /**
+   * How long one bar lasts, in milliseconds — what decides which bars had
+   * CLOSED before a position's first buy when its DCA scale is measured.
+   * Absent: read off the candles, as the narrowest step between two of them.
+   */
+  readonly barMs?: number
 }
 
 export interface TickResult {
@@ -159,15 +167,19 @@ export const MAX_CATCH_UP_BARS = 96
  * already processed, and does nothing.
  */
 export async function tickPosition(
-  input: TickInput,
+  given: TickInput,
   config: EngineConfig,
   store: StatePort,
   alerts: AlertPort,
   throttle: AlertThrottle,
 ): Promise<TickResult> {
-  const { candles, broker } = input
+  const { candles, broker } = given
   const last = candles.time.length - 1
-  if (last < 0) return { position: input.position, orders: [], vetoed: [], skipped: 'no-bars', barsAdvanced: 0, minProfitPct: config.params.minProfitPct }
+  if (last < 0) return { position: given.position, orders: [], vetoed: [], skipped: 'no-bars', barsAdvanced: 0, minProfitPct: config.params.minProfitPct }
+
+  // Before anything else, and whatever else this tick goes on to do: the
+  // candles are here now, and every path below hands the position back.
+  const input = await withDcaScale(given, config, store)
 
   // ── A token it cannot PRICE is a token it does not trade ──────────────────
   //
@@ -357,6 +369,60 @@ export async function tickPosition(
   }
 
   return { position, orders, vetoed, skipped: null, barsAdvanced: last - first + 1, minProfitPct: params.minProfitPct }
+}
+
+/**
+ * The position with its DCA scale, measured and SAVED the first time a tick
+ * sees it without one — *aplicá el de en la línea, la propuesta*: the more the
+ * token moved in the day before its first buy, the closer its rungs. See
+ * `domain/strategy/dca-scale.ts`.
+ *
+ * Here because the tick already holds the candles — the sweep that buys the
+ * rungs runs every thirty seconds and holds none, and fetching them there
+ * would be a candle download per position per sweep to learn a number that
+ * never changes.
+ *
+ * Which day:
+ *
+ * - the 24 hours of CLOSED bars before the holding's first buy, which is what
+ *   the replay measured;
+ * - the 24 hours before the newest closed bar when there is no buy yet — the
+ *   first tick of a slot is the one that buys, so "before the first buy" and
+ *   "before now" are the same day — or when that day cannot be read, because
+ *   the first buy is older than the candles reach;
+ * - nothing at all when neither can be read. No scale is saved, the ladder
+ *   runs on the base drops, and the next tick asks again. Saving a one there
+ *   would write "this token is ordinary" on no evidence, and write it forever.
+ *
+ * Saved at once rather than left to the tick's own write, because a tick with
+ * no new bar and no health reading writes nothing. And ONCE: the store keeps
+ * the first value, so a stale snapshot written back later — the recurring bug
+ * of this codebase — can never erase it or replace it.
+ */
+async function withDcaScale(input: TickInput, config: EngineConfig, store: StatePort): Promise<TickInput> {
+  const { position, candles } = input
+  if (position.dcaScale !== null && position.dcaScale !== undefined) return input
+  const barMs = config.barMs ?? narrowestStep(candles.time)
+  if (barMs === null) return input
+  const first = holdingBuys(await store.fillsFor(position.id))[0]
+  const newestClose = candles.time[candles.time.length - 1]! + barMs
+  const scale =
+    (first ? measuredDcaScale(volatilityBefore(candles, first.time, barMs)) : null) ??
+    measuredDcaScale(volatilityBefore(candles, newestClose, barMs))
+  if (scale === null) return input
+  const measured: PersistedPosition = { ...position, dcaScale: scale }
+  await store.savePosition(measured)
+  return { ...input, position: measured }
+}
+
+/** The narrowest step between two consecutive bars: one bar, whatever gaps the series has. */
+function narrowestStep(times: readonly number[]): number | null {
+  let step: number | null = null
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i]! - times[i - 1]!
+    if (gap > 0 && (step === null || gap < step)) step = gap
+  }
+  return step
 }
 
 /**

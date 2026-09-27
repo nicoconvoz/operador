@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { PostgresStore, type SqlClient } from './postgres-store.js'
 import { initialState } from '../../domain/strategy/state.js'
 import { startDeathWatch } from '../../domain/risk/death-exit.js'
@@ -267,6 +268,39 @@ describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
     expect(scored!.entryScore).toBe(93.2)
     const [bare] = await new PostgresStore(fakeSql([[{ ...row, entry_score: null }]]).client).loadPositions()
     expect(bare!.entryScore).toBeNull()
+  })
+
+  it('keeps the first DCA scale — a stale snapshot without one never erases it', async () => {
+    // *Aplicá el de en la línea.* The scale is measured once, from the day
+    // before the first buy; every step of the cycle writes the whole row, and
+    // most of those rows were read before the tick measured it.
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition({ ...position, dcaScale: 0.52 })
+    expect(calls[0]!.sql).toContain('dca_scale = COALESCE(positions.dca_scale, EXCLUDED.dca_scale)')
+    expect(calls[0]!.sql).toContain('entry_score, dca_scale, gain_lock_pct, gain_lock_since')
+    expect(calls[0]!.params.slice(-3)).toEqual([0.52, null, null])
+    const { client: bare, calls: bareCalls } = fakeSql()
+    await new PostgresStore(bare).savePosition(position)
+    expect(bareCalls[0]!.params.slice(-3)).toEqual([null, null, null])
+  })
+
+  it('reads the DCA scale back as a number, and absent as null', async () => {
+    const row = {
+      id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
+      cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
+      capital_usd: '500', last_bar_time: '1', last_price_usd: '1', pending_orders: [],
+      opened_at: '1', updated_at: '1', break_even_armed: false,
+    }
+    const load = async (extra: Record<string, unknown>) =>
+      (await new PostgresStore(fakeSql([[{ ...row, ...extra }]]).client).loadPositions())[0]!.dcaScale
+    expect(await load({ dca_scale: '0.52' })).toBe(0.52)
+    expect(await load({ dca_scale: null })).toBeNull()
+    expect(await load({})).toBeNull()
+  })
+
+  it('adds the column to a table that already holds money, without a truncate', () => {
+    const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
+    expect(schema).toContain('ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale DOUBLE PRECISION;')
   })
 })
 

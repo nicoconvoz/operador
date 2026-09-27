@@ -46,9 +46,11 @@ export class MemoryStore implements StatePort {
     // The score baseline, kept exactly as the SQL keeps it: the first
     // non-null value, never moved by a later save.
     const entryScore = stored?.entryScore ?? position.entryScore ?? null
+    // The DCA scale, by the same rule: measured once, never erased.
+    const dcaScale = stored?.dcaScale ?? position.dcaScale ?? null
     // The gain lock, by the same rule the upsert spells out in its CASE.
     const gainLock = keepGainLock(stored?.gainLock, position.gainLock)
-    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed, entryScore, gainLock }))
+    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed, entryScore, dcaScale, gainLock }))
   }
 
   async closePosition(positionId: string): Promise<void> {

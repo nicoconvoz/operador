@@ -1,7 +1,8 @@
 import { alert, type AlertPort, type AlertThrottle } from '../domain/notifications/alerts.js'
 import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './ledger.js'
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
-import { nextDropRung, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
+import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
+import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
@@ -261,6 +262,18 @@ export interface DropLadder {
    * already holds, which is every caller that predates it.
    */
   readonly fund?: (position: PersistedPosition, entries: number) => Promise<PersistedPosition | null>
+  /**
+   * Whether each position's drops are multiplied by its own `dcaScale` — the
+   * more the token moved in the day before its first buy, the closer its
+   * rungs. *Aplicá el de en la línea, la propuesta.* See
+   * `domain/strategy/dca-scale.ts`.
+   *
+   * On this shape, not per caller, because the cycle's sweeps and the loop's
+   * both read it: a switch that only one of them saw would buy a rung at
+   * −5.2% between cycles and wait for −10% during one. Absent: off, every
+   * position on the base drops — every caller that predates it.
+   */
+  readonly adaptive?: boolean
 }
 
 export interface StopSweepDeps {
@@ -753,8 +766,12 @@ async function buyOnDrop(
   const first = buys[0]
   const last = buys[buys.length - 1]
   if (!first || !last) return
+  // The position's own spacing, or the base one when the switch is off or
+  // nothing has been measured yet. Read off the position the sweep was handed,
+  // which the store keeps write-once, so no stale row can move it mid-ladder.
+  const scale = ladder.adaptive === true ? usableScale(position.dcaScale) : 1
   const rung = nextDropRung(
-    { entries: buys.length, firstBuyPrice: first.price, lastBuyPrice: last.price, priceUsd: price },
+    { entries: buys.length, firstBuyPrice: first.price, lastBuyPrice: last.price, priceUsd: price, scale },
     ladder.policy,
   )
   if (rung === null) return
@@ -768,10 +785,14 @@ async function buyOnDrop(
   if (usd === undefined || !(usd > 0)) return
   const id = `DCA-${rung}`
   const fell = ((1 - price / anchor.price) * 100).toFixed(1)
+  // The fall THIS rung waited for, at this token's scale — the line the
+  // engine bought on, not the base list's, or a rung bought at −5.2% would be
+  // explained with a −10% nobody was waiting for.
+  const asked = dropLabel(scaledDropPct(ladder.policy.dropsPct[rung - 1]!, scale))
 
   const funded = ladder.fund ? await ladder.fund(position, buys.length + 1) : position
   if (funded === null) {
-    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde ${since}`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
+    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde ${since}, y este escalón pedía ${asked}%`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
     return
   }
 
@@ -790,7 +811,7 @@ async function buyOnDrop(
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `El precio cayó ${fell}% desde ${since} (${anchor.price}). Compró $${usd.toFixed(2)} a ${price}.`,
+    `El precio cayó ${fell}% desde ${since} (${anchor.price}), y este escalón pedía ${asked}%. Compró $${usd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )

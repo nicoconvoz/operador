@@ -102,6 +102,26 @@ describe('MemoryStore — the break-even ratchet', () => {
     const [loaded] = await store.loadPositions()
     expect(loaded!.entryScore).toBe(93.2)
   })
+
+  it('keeps the FIRST DCA scale a position was given — a stale snapshot without one never erases it', async () => {
+    // Exactly as the SQL keeps it: COALESCE, the first non-null value stays.
+    const store = new MemoryStore()
+    const base = {
+      id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+      cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+      quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+      capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+    }
+    await store.savePosition(base)
+    expect((await store.loadPositions())[0]!.dcaScale).toBeNull()
+    await store.savePosition({ ...base, dcaScale: 0.52 })
+    await store.savePosition({ ...base, dcaScale: 1.64 })
+    await store.savePosition({ ...base, lastBarTime: 1, dcaScale: null })
+    await store.savePosition({ ...base, lastBarTime: 2 })
+    const [loaded] = await store.loadPositions()
+    expect(loaded!.dcaScale).toBe(0.52)
+    expect(loaded!.lastBarTime).toBe(2)
+  })
 })
 
 describe('MemoryStore — the gain lock ratchets, and survives a stale snapshot', () => {
