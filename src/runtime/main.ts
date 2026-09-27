@@ -996,6 +996,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // loop's read the same two lines.
       breakEvenArmPct: config.breakEvenArmPct,
       breakEvenFloorPct: config.breakEvenFloorPct,
+      // *Si pasás el 20% de ganancia, break-even en el 10%.* The staircase, or
+      // null when switched off — composed here so the cycle's sweeps and the
+      // loop's read the same one.
+      gainLock: config.gainLock,
       maxStopPct: config.maxStopPct,
       usdPerToken: config.usdPerToken,
       // *Para la primera compra: expansión del volumen más del 50% y tendencia

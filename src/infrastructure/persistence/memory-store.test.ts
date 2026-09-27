@@ -104,3 +104,40 @@ describe('MemoryStore — the break-even ratchet', () => {
   })
 })
 
+describe('MemoryStore — the gain lock ratchets, and survives a stale snapshot', () => {
+  // *Con cada aumento de 20%, aumentar el break-even 10%.* A floor that only
+  // rises while the same holding lives — and every step of the cycle writes
+  // the whole row from a snapshot taken before the sweep raised it. The same
+  // rule as the SQL one, because a reference looser than production proves
+  // nothing.
+  const base = {
+    id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+    cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+    quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+    capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+  }
+  const lockAfter = async (...writes: Parameters<MemoryStore['savePosition']>[0][]) => {
+    const store = new MemoryStore()
+    for (const write of writes) await store.savePosition(write)
+    return (await store.loadPositions())[0]!.gainLock ?? null
+  }
+
+  it('keeps a lock when a stale snapshot without one is written over it', async () => {
+    expect(await lockAfter({ ...base, gainLock: { pct: 10, since: 5 } }, { ...base, lastBarTime: 1 })).toEqual({ pct: 10, since: 5 })
+  })
+
+  it('never lowers the floor of the same holding', async () => {
+    expect(await lockAfter({ ...base, gainLock: { pct: 20, since: 5 } }, { ...base, gainLock: { pct: 10, since: 5 } })).toEqual({ pct: 20, since: 5 })
+    expect(await lockAfter({ ...base, gainLock: { pct: 10, since: 5 } }, { ...base, gainLock: { pct: 30, since: 5 } })).toEqual({ pct: 30, since: 5 })
+  })
+
+  it('takes a newer holding’s lock whole, and refuses an older one', async () => {
+    expect(await lockAfter({ ...base, gainLock: { pct: 40, since: 5 } }, { ...base, gainLock: { pct: 10, since: 9 } })).toEqual({ pct: 10, since: 9 })
+    expect(await lockAfter({ ...base, gainLock: { pct: 10, since: 9 } }, { ...base, gainLock: { pct: 40, since: 5 } })).toEqual({ pct: 10, since: 9 })
+  })
+
+  it('stores none when none was ever written', async () => {
+    expect(await lockAfter(base, { ...base, lastBarTime: 1 })).toBeNull()
+  })
+})
+

@@ -6,6 +6,12 @@ import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
+import {
+  gainLockFloorPct,
+  gainLockStepPct,
+  GAIN_LOCK_COMMENT,
+  type GainLockPolicy,
+} from '../domain/risk/gain-lock.js'
 import type { BrokerPort } from '../domain/execution/broker.js'
 import type { PersistedFill, PersistedPosition, StatePort } from '../domain/persistence/store.js'
 import {
@@ -108,9 +114,15 @@ export interface ExitSizing {
    */
   readonly breakEvenArmPct: number | undefined
   readonly breakEvenFloorPct: number | undefined
+  /**
+   * The stepped gain lock, or null when it is off. *Si pasás el 20% de
+   * ganancia, break-even en el 10%; con cada aumento de 20%, aumentar el
+   * break-even 10%.* See `domain/risk/gain-lock.ts`.
+   */
+  readonly gainLock: GainLockPolicy | null
 }
 
-/** The three lines a position lives between, in percent of its average cost. */
+/** The lines a position lives between, in percent of its average cost. */
 export interface ExitLevels {
   /** How far it may fall before it is cut. */
   readonly stop: StopLossPolicy
@@ -121,6 +133,12 @@ export interface ExitLevels {
    * the sale nets about zero rather than about minus the toll.
    */
   readonly breakEvenPct: number
+  /**
+   * The staircase of floors a winner earns as it rises; null means off.
+   * Required, not optional: a field a caller could leave out is a rule a caller
+   * could switch off without saying so.
+   */
+  readonly gainLock: GainLockPolicy | null
 }
 
 /**
@@ -176,6 +194,9 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
     // very sweep that armed it — a take-profit wearing the ratchet's name,
     // which is the thing the operator declined.
     breakEvenPct: armAt === null ? floor : Math.min(floor, armAt),
+    // Not derived from the pool: the operator's staircase is in points of GAIN,
+    // and every floor on it is far above any round trip these pools charge.
+    gainLock: sizing.gainLock,
   }
 }
 
@@ -341,6 +362,28 @@ export async function sweepStops(
     const held = input.openQty > 0 && avg > 0 && price !== null && price > 0
 
     /**
+     * THE GAIN LOCK. *Por si algo es muy volátil y vuela para arriba, lo
+     * podemos atrapar si baja a toda velocidad.*
+     *
+     * First, before the break-even and before either ladder: a position at its
+     * floor is leaving, and a rung bought into it on the way out would be the
+     * ladder spending capital on a sale already decided. After the price guard
+     * above, like every sale here — a floor is only as good as the price it is
+     * compared with.
+     *
+     * A refused sale — a crash that gapped through the floor and under cost —
+     * changes nothing: the rest of the sweep runs as if the lock had not
+     * spoken, so the position is held, never closed with tokens in it, and the
+     * ladder may average it down.
+     */
+    if (held && levels.gainLock && (await lockGains(deps, levels.gainLock, position, fills, avg, price!, at, throttle)) === 'sold') {
+      // In the same list as the stops, for the same reason as the break-even:
+      // the caller keeps the token out of this cycle's allocation.
+      stopped.push(position.id)
+      continue
+    }
+
+    /**
      * THE RATCHET. *Estaban ganando un montón, retrocedieron hasta perder, y
      * cerraron en pérdida porque no tomaron la ganancia cuando pudieron.*
      *
@@ -465,6 +508,81 @@ export async function sweepStops(
   }
 
   return stopped
+}
+
+/**
+ * The stepped gain lock on one held position: raise its floor to the step the
+ * gain has reached, and sell the whole position once the price is back at it.
+ *
+ * The floor belongs to the HOLDING, not to the position id. A position that
+ * sold and bought back keeps its id and its tape, and a floor of +20% earned by
+ * the old holding would sell a re-entry up 5% at once. So a stored lock counts
+ * only when its `since` is this holding's first buy; any other is history, and
+ * the store replaces it the moment the new holding earns one of its own.
+ *
+ * Saved only when it RISES. The store ratchets the pair, so the snapshots the
+ * rest of the cycle writes back — the tick's, the trim's, a funded rung's —
+ * cannot lower it; saving an unchanged floor every thirty seconds would only
+ * be a write.
+ *
+ * Returns 'sold' when the position was closed; null when it holds — no floor
+ * yet, above its floor, or a sale the no-loss guard refused.
+ */
+async function lockGains(
+  deps: StopSweepDeps,
+  policy: GainLockPolicy,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  avgCostUsd: number,
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<'sold' | null> {
+  const first = holdingBuys(fills)[0]
+  if (!first) return null
+  const since = first.time
+  // Over the average cost of what is held NOW — the same basis the strategy's
+  // exit and the no-loss guard read, so the three cannot disagree about
+  // whether a position is winning.
+  const gainPct = (price / avgCostUsd - 1) * 100
+  const stored = position.gainLock !== null && position.gainLock !== undefined && position.gainLock.since === since ? position.gainLock.pct : null
+  const reached = gainLockFloorPct(gainPct, policy)
+  const lock = reached !== null && (stored === null || reached > stored) ? reached : stored
+  if (lock === null) return null
+  if (lock !== stored) await deps.store.savePosition({ ...position, gainLock: { pct: lock, since } })
+  // On the operator's numbers every floor is half the gain that set it, so a
+  // floor just raised is always under the price that raised it: this never
+  // sells on the sweep that set the line, which would be a take-profit wearing
+  // the lock's name.
+  if (gainPct > lock) return null
+
+  const broker = await deps.brokerFor(position)
+  // The SAME `settle` as every other exit, and NOT exempt from the no-loss
+  // guard: every floor is above cost, so a refusal means the price gapped
+  // under cost between two sweeps — and then the position is held.
+  const refused = await settle(
+    [{ kind: 'closeAll', comment: GAIN_LOCK_COMMENT }],
+    position.lastBarTime,
+    price,
+    at,
+    position,
+    broker,
+    deps.store,
+  )
+  if (refused) return null
+  await deps.store.closePosition(position.id)
+  // In the lines it ran on: how far it flew, the floor that left it, and where
+  // it actually sold — so the reader can see what was kept, not only that
+  // something sold.
+  const kept = alert(
+    'position-closed',
+    `🔐 ${position.symbol} vendida en su piso de ganancia`,
+    `Llegó a +${gainLockStepPct(lock, policy)}% sobre el costo promedio y su piso subió a +${lock}%. Volvió a +${gainPct.toFixed(2)}% y se vendió todo a ${price}: lo que ya había ganado no se devuelve.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(kept, `gain-lock:${position.id}`)) await deps.alerts.send(kept)
+  return 'sold'
 }
 
 /**

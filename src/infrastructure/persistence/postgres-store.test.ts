@@ -270,3 +270,60 @@ describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
   })
 })
 
+describe('PostgresStore — the gain lock ratchets in SQL', () => {
+  // *Con cada aumento de 20%, aumentar el break-even 10%.* The floor only ever
+  // rises while the same holding lives, and the tick, the trim and a funded
+  // rung all write the whole row from snapshots older than the sweep's. So the
+  // upsert decides, exactly as `keepGainLock` does in the MemoryStore:
+  // same holding → the greater floor; a newer holding → its pair; an older one,
+  // or none in the write → what is stored.
+  const upsert = async (p: PersistedPosition) => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition(p)
+    return calls[0]!
+  }
+  const squash = (sql: string) => sql.replace(/\s+/g, ' ')
+
+  it('writes the pair, and a missing lock as two nulls', async () => {
+    const locked = await upsert({ ...position, gainLock: { pct: 20, since: 1_700 } })
+    expect(locked.sql).toContain('gain_lock_pct, gain_lock_since')
+    expect(locked.params.slice(-2)).toEqual([20, 1_700])
+    expect((await upsert(position)).params.slice(-2)).toEqual([null, null])
+  })
+
+  it('keeps what is stored when the write carries no lock, or an OLDER holding’s', async () => {
+    const sql = squash((await upsert(position)).sql)
+    expect(sql).toContain('gain_lock_pct = CASE WHEN EXCLUDED.gain_lock_since IS NULL THEN positions.gain_lock_pct')
+    expect(sql).toContain('gain_lock_since = CASE WHEN EXCLUDED.gain_lock_since IS NULL THEN positions.gain_lock_since')
+    // Anything not newer and not the same holding falls through to the stored pair.
+    expect(sql).toMatch(/ELSE positions\.gain_lock_pct END/)
+    expect(sql).toMatch(/ELSE positions\.gain_lock_since END/)
+  })
+
+  it('takes a NEWER holding’s pair whole', async () => {
+    const sql = squash((await upsert(position)).sql)
+    expect(sql).toContain('WHEN positions.gain_lock_since IS NULL OR EXCLUDED.gain_lock_since > positions.gain_lock_since THEN EXCLUDED.gain_lock_pct')
+    expect(sql).toContain('WHEN positions.gain_lock_since IS NULL OR EXCLUDED.gain_lock_since > positions.gain_lock_since THEN EXCLUDED.gain_lock_since')
+  })
+
+  it('never lowers the floor of the same holding', async () => {
+    const sql = squash((await upsert(position)).sql)
+    expect(sql).toContain('WHEN EXCLUDED.gain_lock_since = positions.gain_lock_since THEN GREATEST(positions.gain_lock_pct, EXCLUDED.gain_lock_pct)')
+  })
+
+  it('reads the pair back as numbers, and a half-written or absent pair as no lock', async () => {
+    const row = {
+      id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
+      cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
+      capital_usd: '500', last_bar_time: '1', last_price_usd: '1', pending_orders: [],
+      opened_at: '1', updated_at: '1', break_even_armed: false,
+    }
+    const load = async (extra: Record<string, unknown>) =>
+      (await new PostgresStore(fakeSql([[{ ...row, ...extra }]]).client).loadPositions())[0]!.gainLock
+    expect(await load({ gain_lock_pct: 20, gain_lock_since: '1700' })).toEqual({ pct: 20, since: 1_700 })
+    expect(await load({ gain_lock_pct: null, gain_lock_since: null })).toBeNull()
+    expect(await load({ gain_lock_pct: 20, gain_lock_since: null })).toBeNull()
+    expect(await load({})).toBeNull()
+  })
+})
+

@@ -4,6 +4,7 @@ import { exitSizingFrom } from './orchestrator.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { FLAT_ONE_PCT_STOP } from '../domain/risk/stop-loss.js'
+import { DEFAULT_GAIN_LOCK_POLICY } from '../domain/risk/gain-lock.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
@@ -52,6 +53,7 @@ const sizing: ExitSizing = {
   maxStopPct: 10,
   breakEvenArmPct: undefined,
   breakEvenFloorPct: undefined,
+  gainLock: null,
 }
 
 describe('exitLevelsFor — the stop is sized from the toll the broker actually charges', () => {
@@ -184,5 +186,22 @@ describe('exitSizingFrom — the break-even lines reach the sweep', () => {
       breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5,
     }
     expect(exitSizingFrom(config)).toMatchObject({ breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 })
+  })
+})
+
+describe('exitSizingFrom — the gain lock reaches the sweep', () => {
+  // A wiring test, for the reason they all exist here: the sweep honours a
+  // staircase it is handed, and a builder that forgets to hand it over leaves
+  // every rocket unguarded while every unit test of the sweep stays green.
+  const base = { params: DEFAULT_PARAMS, portfolio: DEFAULT_PORTFOLIO_POLICY, heartbeatMs: 1 }
+
+  it('carries the staircase from the cycle config to the levels', () => {
+    expect(exitLevelsFor(position(quality(0.25, 1.1)), exitSizingFrom({ ...base, gainLock: DEFAULT_GAIN_LOCK_POLICY })).gainLock)
+      .toEqual(DEFAULT_GAIN_LOCK_POLICY)
+  })
+
+  it('is off when the config says nothing — the old behaviour exactly', () => {
+    expect(exitSizingFrom(base).gainLock).toBeNull()
+    expect(exitSizingFrom({ ...base, gainLock: null }).gainLock).toBeNull()
   })
 })

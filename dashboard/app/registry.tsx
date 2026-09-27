@@ -69,6 +69,10 @@ const SPANISH: Record<CloseAllOrder['comment'], string> = {
   '🔒 Break-even': '🔒 Salida en break-even',
   '📉 Sin compradores': '📉 Salida sin compradores',
   '📉 Cae el puntaje': '📉 Corte por caída de puntaje',
+  // A winner that flew past +20% and came back down to the floor it had
+  // earned. It says "piso" because that is what sold it: not the target, not
+  // a stop — the part of the gain that was already kept.
+  '🔐 Piso de ganancia': '🔐 Venta en el piso de ganancia',
 }
 // A DCA rung arrives as "➕ DCA-2" and an entry as "🟢 Entry" — neither is a
 // `closeAll` comment, so neither is in the union above. Anything unknown is

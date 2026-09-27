@@ -27,6 +27,7 @@ export interface CachedSecurity {
   readonly measuredAt: number
 }
 import { type DeathWatchState } from '../risk/death-exit.js'
+import { type GainLock } from '../risk/gain-lock.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
 import { type TokenSnapshot } from '../scanner/snapshot.js'
@@ -112,6 +113,20 @@ export interface PersistedPosition {
    * opened before it existed; the cycle gives those their first reading.
    */
   readonly entryScore?: number | null
+  /**
+   * The stepped gain lock: the floor, in percent over the average cost, under
+   * which this HOLDING may no longer close — and the time of the holding's
+   * first buy, which is what makes it this holding's and not the last one's.
+   *
+   * *Si pasás el 20% de ganancia, break-even en el 10%; con cada aumento de
+   * 20%, aumentar el break-even 10%.* See `domain/risk/gain-lock.ts`.
+   *
+   * A RATCHET, kept by the store with `keepGainLock`: the same holding keeps
+   * the greater floor, a newer holding replaces it, and a write with an older
+   * lock or none — every stale snapshot the cycle writes back — keeps what is
+   * stored. Absent: no floor yet.
+   */
+  readonly gainLock?: GainLock | null
   /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *

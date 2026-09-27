@@ -11,6 +11,7 @@ import {
 import { type Alert, type AlertKind, type AlertLevel } from '../../domain/notifications/alerts.js'
 import { type CascadeState } from '../../domain/strategy/state.js'
 import { type DeathWatchState } from '../../domain/risk/death-exit.js'
+import { type GainLock } from '../../domain/risk/gain-lock.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 
@@ -64,7 +65,21 @@ interface PositionRow {
   updated_at: string | number
   break_even_armed?: boolean | null
   entry_score?: string | number | null
+  gain_lock_pct?: string | number | null
+  gain_lock_since?: string | number | null
 }
+
+const present = (value: string | number | null | undefined): value is string | number => value !== null && value !== undefined
+
+/**
+ * The lock is a PAIR or nothing. A floor with no holding to belong to cannot be
+ * checked against the current one, and read as anyone's it would sell a
+ * re-entry under a floor it never reached.
+ */
+const gainLockOf = (row: PositionRow): GainLock | null =>
+  present(row.gain_lock_pct) && present(row.gain_lock_since)
+    ? { pct: num(row.gain_lock_pct), since: num(row.gain_lock_since) }
+    : null
 
 /**
  * Postgres returns NUMERIC and BIGINT as STRINGS, to avoid silently losing
@@ -100,6 +115,7 @@ export class PostgresStore implements StatePort {
       updatedAt: num(row.updated_at),
       breakEvenArmed: row.break_even_armed === true,
       entryScore: row.entry_score === null || row.entry_score === undefined ? null : num(row.entry_score),
+      gainLock: gainLockOf(row),
     }))
   }
 
@@ -107,8 +123,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed, entry_score)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+                              break_even_armed, entry_score, gain_lock_pct, gain_lock_since)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -122,10 +138,27 @@ export class PostgresStore implements StatePort {
          -- stale snapshot must never be able to turn this back off.
          break_even_armed = positions.break_even_armed OR EXCLUDED.break_even_armed,
          -- The score BASELINE, written once: the first non-null value stays.
-         entry_score = COALESCE(positions.entry_score, EXCLUDED.entry_score)`,
+         entry_score = COALESCE(positions.entry_score, EXCLUDED.entry_score),
+         -- The GAIN LOCK, a ratchet over a pair: keepGainLock, spelled in SQL. Every right-hand side reads the row as it WAS, so the two CASEs
+         -- decide from the same stored pair. Same holding: the greater floor. A
+         -- newer holding: its pair whole. An older holding, or a write with no
+         -- lock at all — every stale snapshot the cycle saves: what is stored.
+         gain_lock_pct = CASE
+           WHEN EXCLUDED.gain_lock_since IS NULL THEN positions.gain_lock_pct
+           WHEN positions.gain_lock_since IS NULL OR EXCLUDED.gain_lock_since > positions.gain_lock_since THEN EXCLUDED.gain_lock_pct
+           WHEN EXCLUDED.gain_lock_since = positions.gain_lock_since THEN GREATEST(positions.gain_lock_pct, EXCLUDED.gain_lock_pct)
+           ELSE positions.gain_lock_pct
+         END,
+         gain_lock_since = CASE
+           WHEN EXCLUDED.gain_lock_since IS NULL THEN positions.gain_lock_since
+           WHEN positions.gain_lock_since IS NULL OR EXCLUDED.gain_lock_since > positions.gain_lock_since THEN EXCLUDED.gain_lock_since
+           ELSE positions.gain_lock_since
+         END`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
-       p.breakEvenArmed === true, p.entryScore ?? null],
+       p.breakEvenArmed === true, p.entryScore ?? null,
+       // Both or neither: a floor is meaningless without the holding it belongs to.
+       p.gainLock ? p.gainLock.pct : null, p.gainLock ? p.gainLock.since : null],
     )
   }
 

@@ -5,6 +5,7 @@ import { productionDoors } from '../application/production-doors.js'
 import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
 import { FLAT_ONE_PCT_STOP, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { DEFAULT_MAX_SWAP_LOSS_PCT } from '../domain/risk/idle-slots.js'
+import { DEFAULT_GAIN_LOCK_POLICY, type GainLockPolicy } from '../domain/risk/gain-lock.js'
 
 /**
  * Dollars a single token gets, before the pool impact budget shrinks it.
@@ -272,6 +273,12 @@ export interface RuntimeConfig {
   readonly breakEvenArmPct: number
   /** Where an ARMED position sells. Never above the arm. */
   readonly breakEvenFloorPct: number
+  /**
+   * The stepped gain lock, or null when switched off. *Si pasás el 20% de
+   * ganancia, break-even en el 10%; con cada aumento de 20%, aumentar el
+   * break-even 10%.* See `domain/risk/gain-lock.ts`.
+   */
+  readonly gainLock: GainLockPolicy | null
   readonly maxStopPct: number
   /**
    * How much of a loss the allocator may pay to move a slot to a better token.
@@ -519,6 +526,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     breakEven: onlyIf(env, 'OPERADOR_BREAK_EVEN'),
     breakEvenArmPct,
     breakEvenFloorPct,
+    // ON: *si pasás el 20% de ganancia, break-even en el 10%; con cada aumento
+    // de 20%, aumentar el break-even 10% — por si algo es muy volátil y vuela
+    // para arriba, lo podemos atrapar si baja a toda velocidad.* A floor under
+    // a winner that only rises, and sells only on the way back down to it.
+    // Beside the strategy exit, not in place of it. OPERADOR_GAIN_LOCK=0 turns
+    // it off; a typo leaves it on, the safe side for a rule that only ever
+    // sells above cost.
+    gainLock: onUnless(env, 'OPERADOR_GAIN_LOCK') ? DEFAULT_GAIN_LOCK_POLICY : null,
     // *El operador pierde de a mucho, no funciona el SL.* The 1:4 multiplies
     // the toll by about seven with no ceiling of its own: fomopay was cut with
     // a 24% stop, a thin pool derives 51% on the old toll and 14.7% on the

@@ -35,6 +35,13 @@ CREATE INDEX IF NOT EXISTS positions_token_idx ON positions (chain, token_addres
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS break_even_armed BOOLEAN NOT NULL DEFAULT false;
 -- The score a position was bought at: the baseline of the score stop.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS entry_score DOUBLE PRECISION;
+-- The stepped gain lock: the floor over the average cost under which this
+-- holding may no longer close, and the time of the holding's first buy, which
+-- says WHICH holding earned it. Both null until a holding reaches +20%. The
+-- upsert ratchets the pair — same holding, the greater floor; a newer holding,
+-- its pair; an older one or none, what is stored.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS gain_lock_pct DOUBLE PRECISION;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS gain_lock_since BIGINT;
 
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure

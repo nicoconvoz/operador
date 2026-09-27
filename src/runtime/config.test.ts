@@ -334,6 +334,17 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     }
   })
 
+  it('keeps the gain lock ON by default — from +20%, a floor of +10% — and one variable turns it off', () => {
+    // *Si pasás el 20% de ganancia, break-even en el 10%; con cada aumento de
+    // 20%, aumentar el break-even 10%.*
+    expect(loadConfig(valid).gainLock).toEqual({ startPct: 20, stepPct: 20, firstFloorPct: 10, floorStepPct: 10 })
+    for (const off of ['0', 'false', 'no']) {
+      expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: off }).gainLock).toBeNull()
+    }
+    // A typo leaves it on: the safe direction for a rule that only ever sells a winner.
+    expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: 'nope' }).gainLock).not.toBeNull()
+  })
+
   it('asks the strategy exit for +10% by default, and reads another floor', () => {
     expect(loadConfig(valid).minProfitPct).toBe(10)
     expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: '20' }).minProfitPct).toBe(20)

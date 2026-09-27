@@ -58,6 +58,21 @@ describe('the break-even, through the path the engine runs', () => {
   })
 })
 
+describe('the gain lock, through the path the engine runs', () => {
+  // *Si pasás el 20% de ganancia, break-even en el 10%.* On unless switched
+  // off — and a switched-off rule must stay off through every path: the
+  // cycle's sweeps and the loop's both read `exitLevelsFor(position, exitSizingFrom(cycleConfig))`.
+  it('is ON when nothing is set, with the operator’s staircase', () => {
+    const { cycleConfig } = runtime()
+    expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).gainLock).toEqual({ startPct: 20, stepPct: 20, firstFloorPct: 10, floorStepPct: 10 })
+  })
+
+  it('is OFF through every path when the environment switches it off', () => {
+    const { cycleConfig } = runtime({ OPERADOR_GAIN_LOCK: '0' })
+    expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).gainLock).toBeNull()
+  })
+})
+
 describe('the take-profit waits for +10%, through the path the engine runs', () => {
   // *Bajalas a 10.* The strategy's own exit still sells when the impulse
   // dies — only never under +10% over the average cost.

@@ -140,7 +140,7 @@ const rig = async (options: {
           },
         }),
   }
-  const levels: ExitLevels = options.levels ?? { stop: options.stop ?? { ...DOLLAR_STOP, onlyWhenHistoryCovers: true }, armAtPct: null, breakEvenPct: 0 }
+  const levels: ExitLevels = options.levels ?? { stop: options.stop ?? { ...DOLLAR_STOP, onlyWhenHistoryCovers: true }, armAtPct: null, breakEvenPct: 0, gainLock: null }
   const run = (price: number) =>
     sweepStops(deps, () => levels, new AlertThrottle(0), [held], new Map([['solana:T', price]]), AT)
   return { store, sent, run, countRequests: () => countRequests }
@@ -301,14 +301,14 @@ describe('the break-even never closes in the red', () => {
   const armed = position({ breakEvenArmed: true, lastPriceUsd: 0.99 })
 
   it('holds an armed position whose sale would land under its cost — and keeps it open', async () => {
-    const { store, run } = await rig({ held: armed, ladder: false, levels: { stop: NO_STOP, armAtPct: 3, breakEvenPct: 0.5 } })
+    const { store, run } = await rig({ held: armed, ladder: false, levels: { stop: NO_STOP, armAtPct: 3, breakEvenPct: 0.5, gainLock: null } })
     expect(await run(0.99)).toEqual([])
     expect((await store.fillsFor(ID)).filter((f) => f.side === 'sell')).toEqual([])
     expect((await store.loadPositions()).map((p) => p.id)).toEqual([ID])
   })
 
   it('still sells an armed position back at its cost, once leaving nets at least that', async () => {
-    const { store, run } = await rig({ held: position({ breakEvenArmed: true, lastPriceUsd: 1.004 }), ladder: false, levels: { stop: NO_STOP, armAtPct: 3, breakEvenPct: 0.5 } })
+    const { store, run } = await rig({ held: position({ breakEvenArmed: true, lastPriceUsd: 1.004 }), ladder: false, levels: { stop: NO_STOP, armAtPct: 3, breakEvenPct: 0.5, gainLock: null } })
     expect(await run(1.004)).toEqual([ID])
     expect((await store.fillsFor(ID)).find((f) => f.side === 'sell')?.comment).toBe('🔒 Break-even')
   })
@@ -320,7 +320,7 @@ describe('the break-even never closes in the red', () => {
     const { store, run } = await rig({
       held: position({ breakEvenArmed: true, lastPriceUsd: 0.9 }),
       drop: true,
-      levels: { stop: NO_STOP, armAtPct: 7.5, breakEvenPct: 7.5 },
+      levels: { stop: NO_STOP, armAtPct: 7.5, breakEvenPct: 7.5, gainLock: null },
     })
     expect(await run(0.9)).toEqual([])
     expect((await store.fillsFor(ID)).filter((f) => f.side === 'sell')).toEqual([])

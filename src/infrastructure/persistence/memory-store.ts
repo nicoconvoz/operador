@@ -8,6 +8,7 @@ import {
 } from '../../domain/persistence/store.js'
 import { type Alert } from '../../domain/notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.js'
+import { keepGainLock } from '../../domain/risk/gain-lock.js'
 import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
 
 /**
@@ -45,7 +46,9 @@ export class MemoryStore implements StatePort {
     // The score baseline, kept exactly as the SQL keeps it: the first
     // non-null value, never moved by a later save.
     const entryScore = stored?.entryScore ?? position.entryScore ?? null
-    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed, entryScore }))
+    // The gain lock, by the same rule the upsert spells out in its CASE.
+    const gainLock = keepGainLock(stored?.gainLock, position.gainLock)
+    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed, entryScore, gainLock }))
   }
 
   async closePosition(positionId: string): Promise<void> {

@@ -13,6 +13,7 @@ import { tickPosition, type EngineConfig, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
 import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { scoreFell, SCORE_STOP_COMMENT } from '../domain/risk/score-stop.js'
+import { type GainLockPolicy } from '../domain/risk/gain-lock.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_LOSS, type StopLossPolicy } from '../domain/risk/stop-loss.js'
@@ -231,6 +232,14 @@ export interface CycleConfig {
    */
   readonly breakEvenArmPct?: number
   readonly breakEvenFloorPct?: number
+  /**
+   * The stepped gain lock: from +20%, a floor of +10% under the average cost,
+   * ten more for every twenty. *Si pasás el 20% de ganancia, break-even en el
+   * 10%; con cada aumento de 20%, aumentar el break-even 10%.* Absent or null:
+   * off — the old behaviour exactly, so a caller that says nothing is not
+   * handed a new exit. Production composes it ON in `main.ts`.
+   */
+  readonly gainLock?: GainLockPolicy | null
   /** The widest the derived stop may ever be. See `ExitSizing.maxStopPct`. */
   readonly maxStopPct?: number
   /**
@@ -1418,5 +1427,6 @@ export function exitSizingFrom(config: CycleConfig): ExitSizing {
     maxStopPct: config.maxStopPct,
     breakEvenArmPct: config.breakEvenArmPct,
     breakEvenFloorPct: config.breakEvenFloorPct,
+    gainLock: config.gainLock ?? null,
   }
 }

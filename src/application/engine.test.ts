@@ -1154,6 +1154,13 @@ describe('refusesToSellAtALoss — the break-even exit is NOT a risk exit any mo
     expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '📉 Sin compradores' }, 1, 1.02)).toBe(false)
   })
 
+  it('refuses the gain lock under cost — a floor for winners, never a stop', () => {
+    // Every floor it sets is above cost, so only a crash that gapped straight
+    // through it can land here — and then the position is held.
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🔐 Piso de ganancia' }, 1, 0.9)).toBe(true)
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🔐 Piso de ganancia' }, 1, 1.1)).toBe(false)
+  })
+
   it('lets the score stop through at any price — the operator asked for an SL', () => {
     expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '📉 Cae el puntaje' }, 1, 0.9)).toBe(false)
   })

@@ -106,8 +106,11 @@ export async function runLoop(
     // A dollar limit is a stop in its own right: with the percent at zero and
     // ten cents set, the book still has a stop and still needs watching.
     const stopOn = policy !== undefined && (policy.minStopPct > 0 || (policy.maxLossUsd ?? 0) > 0)
-    // The ladder rides on the same sweep, so it is reason enough too.
-    if (!stopOn && config.breakEven !== true && deps.pressureLadder === undefined && deps.dropLadder === undefined) return
+    // The ladder rides on the same sweep, so it is reason enough too — and so
+    // is the gain lock: a rocket that set its floor during a pass falls through
+    // it while the loop sleeps as easily as while it runs.
+    const lockOn = config.gainLock !== undefined && config.gainLock !== null
+    if (!stopOn && config.breakEven !== true && !lockOn && deps.pressureLadder === undefined && deps.dropLadder === undefined) return
     if (deps.marketPrices === undefined) return
     // The kill switch as the last pass found it. Its documented asymmetry is
     // that it stops OPENING and keeps protecting, so this would arguably run
