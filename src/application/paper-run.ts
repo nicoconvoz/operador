@@ -96,8 +96,22 @@ export function ladderCapitalUsd(
   gasUsdPerSwap: number,
 ): number {
   const rungs = Math.min(params.maxLevels + 1, maxOpenEntries)
-  const nominal = Array.from({ length: rungs }, (_, level) => usdForLevel(params, level)).reduce((a, b) => a + b, 0)
-  const swaps = rungs + 1 // the entries, and the one sell that closes them all
+  return capitalForFillsUsd(Array.from({ length: rungs }, (_, level) => usdForLevel(params, level)), gasUsdPerSwap)
+}
+
+/**
+ * The wallet a list of buys needs: their dollars grossed up for the price
+ * headroom, plus gas for every buy and the one sell that closes them all.
+ *
+ * `ladderCapitalUsd` is the case where every buy is the reference ladder's own
+ * level. Production's price ladder is not — ladder A buys $10 and then $15,
+ * $20, $25, $30 and $35 — so the rung funder prices the buys it will actually
+ * make, and it does it HERE: two copies of the allowance would disagree about
+ * what a rung costs, and the broker refuses the one the smaller answer funded.
+ */
+export function capitalForFillsUsd(fillsUsd: readonly number[], gasUsdPerSwap: number): number {
+  const nominal = fillsUsd.reduce((a, b) => a + b, 0)
+  const swaps = fillsUsd.length + 1 // the entries, and the one sell that closes them all
   return nominal / (1 - PRICE_HEADROOM_PCT / 100) + gasUsdPerSwap * swaps
 }
 

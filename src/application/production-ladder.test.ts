@@ -1,17 +1,29 @@
 import { describe, it, expect } from 'vitest'
-import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from './production-ladder.js'
+import {
+  productionLadder,
+  DEFAULT_MAX_DCA_PER_TOKEN,
+  DEFAULT_MAX_USD_PER_LEVEL,
+  DEFAULT_DCA_DROPS_PCT,
+  DEFAULT_DCA_RUNGS_USD,
+} from './production-ladder.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to a $15 buy and THREE rungs at −10, −20 and −30% of the first buy', () => {
-    // *Apliquemos la configuración completa.* The operator, on a replay of all
-    // 336 real entries: +$373 against +$71 for the one rung at half, and in
-    // both halves of a split in time. One entry reserved up front; each rung
-    // asks the free capital for its own fifteen dollars when it fires.
+  it('defaults to ladder A: a $10 buy, then FIVE rungs of $15..$35 at −10..−30% of it', () => {
+    // *Arriesguémonos, activá la A.* The operator, on a replay of all 336 real
+    // entries: +$520 against +$373 for three $15 rungs, and in both halves of a
+    // split in time. One entry reserved up front; each rung asks the free
+    // capital for its own dollars when it fires.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 15, maxOpenEntries: 4, dropInitPct: 0, impatientProfitPct: 10, urgentProfitPct: 25,
-      dcaDropsPct: [10, 20, 30], reservedEntries: 1,
+      maxUsdPerLevel: 10, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 20, impatientProfitPct: 10, urgentProfitPct: 25,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], reservedEntries: 1,
     })
+  })
+
+  it('puts at most $135 into one token — the cost the operator accepted', () => {
+    const ladder = productionLadder({})
+    const total = ladder.maxUsdPerLevel + ladder.dcaRungsUsd.reduce((a, b) => a + b, 0)
+    expect(total).toBe(135)
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -25,7 +37,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 15, maxOpenEntries: 4 })
+      .toMatchObject({ maxUsdPerLevel: 10, maxOpenEntries: 6 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -88,8 +100,8 @@ describe('production ladder — depth ZERO is one buy and nothing after it', () 
 
   it('still defaults to whatever the decision above says', () => {
     expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
-    // The entry and three rungs.
-    expect(productionLadder({}).maxOpenEntries).toBe(4)
+    // The entry and five rungs.
+    expect(productionLadder({}).maxOpenEntries).toBe(6)
   })
 
   it('still refuses nonsense rather than taking it', () => {
@@ -109,10 +121,40 @@ describe('production ladder — the rungs are a LIST of drops from the first buy
     // A ladder is one decision. Keeping the readable rungs of a mistyped list
     // would run a ladder nobody chose, and quietly — the failure that costs
     // the most, because everything keeps working.
-    const fallback = [10, 20, 30]
+    const fallback = DEFAULT_DCA_DROPS_PCT
+    expect(fallback).toEqual([10, 15, 20, 25, 30])
     for (const raw of ['', '   ', 'diez', '10,,20', '10,veinte', '0,10', '10,100', '-5,10', '30,20', '10,10']) {
       expect(productionLadder({ OPERADOR_DCA_DROPS_PCT: raw }).dcaDropsPct).toEqual(fallback)
     }
+  })
+})
+
+describe('production ladder — each rung buys its OWN size, paired with its drop', () => {
+  // Ladder A: DCA-1 buys $15 at −10%, DCA-5 buys $35 at −30%. The sizes grow as
+  // the price falls, so the deepest rungs carry the most weight in the average.
+  it('defaults to $15, $20, $25, $30 and $35', () => {
+    expect(DEFAULT_DCA_RUNGS_USD).toEqual([15, 20, 25, 30, 35])
+    expect(productionLadder({}).dcaRungsUsd).toEqual([15, 20, 25, 30, 35])
+  })
+
+  it('takes a comma list, in order: the first number is what DCA-1 buys', () => {
+    expect(productionLadder({ OPERADOR_DCA_RUNGS_USD: '12, 12, 20, 20, 40' }).dcaRungsUsd).toEqual([12, 12, 20, 20, 40])
+  })
+
+  it('pairs with an overridden drop list of the SAME length', () => {
+    expect(productionLadder({ OPERADOR_DCA_DROPS_PCT: '10,20,30', OPERADOR_DCA_RUNGS_USD: '15,15,15' }))
+      .toMatchObject({ dcaDropsPct: [10, 20, 30], dcaRungsUsd: [15, 15, 15] })
+  })
+
+  it('refuses nonsense WHOLE, as the drops do', () => {
+    for (const raw of ['', '   ', 'quince', '15,,20,25,30', '15,20,0,30,35', '15,-20,25,30,35', '15,20,veinte,30,35']) {
+      expect(productionLadder({ OPERADOR_DCA_RUNGS_USD: raw }).dcaRungsUsd).toEqual(DEFAULT_DCA_RUNGS_USD)
+    }
+  })
+
+  it('refuses a list whose length does not match the drops — each size belongs to one line', () => {
+    expect(productionLadder({ OPERADOR_DCA_RUNGS_USD: '15,20,25' }).dcaRungsUsd).toEqual(DEFAULT_DCA_RUNGS_USD)
+    expect(productionLadder({ OPERADOR_DCA_RUNGS_USD: '15,20,25,30,35,40' }).dcaRungsUsd).toEqual(DEFAULT_DCA_RUNGS_USD)
   })
 })
 
@@ -129,7 +171,7 @@ describe('production ladder — a position reserves its FIRST buy, not the whole
   })
 
   it('never reserves more entries than the venue will hold', () => {
-    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9' }).reservedEntries).toBe(4)
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9' }).reservedEntries).toBe(6)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '1' }).reservedEntries).toBe(2)
   })
 

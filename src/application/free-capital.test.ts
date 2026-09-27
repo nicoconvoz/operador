@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { bookCapital, fundRungsFromFreeCapital } from './free-capital.js'
-import { ladderCapitalUsd } from './paper-run.js'
+import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
@@ -87,5 +87,41 @@ describe('fundRungsFromFreeCapital — a rung takes its capital when it fires', 
     await store.recordFill(fill('old', 'buy', 1, 20, 0))
     await store.recordFill(fill('old', 'sell', 2, 20, 1))
     expect((await fund(position('T', ONE_ENTRY), 2))?.capitalUsd).toBeCloseTo(TWO_ENTRIES, 9)
+  })
+})
+
+describe('fundRungsFromFreeCapital — ladder A: each rung is priced at its OWN size', () => {
+  // *Arriesguémonos, activá la A.* A $10 first buy, then $15, $20, $25, $30 and
+  // $35. The capital `entries` entries need is the first buy plus the first
+  // `entries − 1` rungs, with the same gas and headroom the allocator uses.
+  const ten = { ...DEFAULT_PARAMS, maxUsdPerLevel: 10 }
+  const RUNGS = [15, 20, 25, 30, 35]
+  const FIRST = ladderCapitalUsd(ten, 1, GAS)
+  const rig = async (total: number, held: PersistedPosition) => {
+    const store = new MemoryStore()
+    await store.savePosition(held)
+    const fund = fundRungsFromFreeCapital({ store, totalCapitalUsd: total, params: ten, gasUsdPerSwap: GAS, rungsUsd: RUNGS })
+    return { store, fund }
+  }
+
+  it('allocates the one-entry slot at about $10.63 — the first buy alone', () => {
+    expect(FIRST).toBeCloseTo(capitalForFillsUsd([10], GAS), 9)
+    expect(FIRST).toBeCloseTo(10.63, 2)
+  })
+
+  it('raises a position to $10 + $15 for DCA-1, and to all $135 for DCA-5', async () => {
+    const { fund } = await rig(1_000, position('T', FIRST))
+    expect((await fund(position('T', FIRST), 2))?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15], GAS), 9)
+    expect((await fund(position('T', FIRST), 6))?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], GAS), 9)
+  })
+
+  it('asks the free capital for exactly the next rung’s share, and refuses when it is not there', async () => {
+    // Three entries funded ($10 + $15 + $20); DCA-3 adds $25 grossed up, about $26.37.
+    const three = capitalForFillsUsd([10, 15, 20], GAS)
+    const four = capitalForFillsUsd([10, 15, 20, 25], GAS)
+    const { fund } = await rig(four - 0.01, position('T', three))
+    expect(await fund(position('T', three), 4)).toBeNull()
+    const enough = await rig(four + 0.01, position('T', three))
+    expect((await enough.fund(position('T', three), 4))?.capitalUsd).toBeCloseTo(four, 9)
   })
 })

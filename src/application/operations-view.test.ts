@@ -5,6 +5,7 @@ import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type PersistedFill, type PersistedPosition } from '../domain/persistence/store.js'
+import { productionLadder } from './production-ladder.js'
 
 const NOW = 1_800_000_000_000
 const MIN = 60_000
@@ -560,10 +561,10 @@ describe('buildOperations — the ladder the ENGINE buys: buy pressure crossing 
   })
 })
 
-describe('buildOperations — the price ladder: three rungs at −10, −20, −30% of the FIRST buy', () => {
-  // *Apliquemos la configuración completa.* The screen draws every rung where
-  // the ENGINE will buy it — the first buy's price less its drop — and says how
-  // far the price still has to fall for the next one.
+describe('buildOperations — the price ladder, on an explicit policy: three rungs at −10, −20, −30% of the FIRST buy', () => {
+  // The screen draws every rung where the ENGINE will buy it — the first buy's
+  // price less its drop — and says how far the price still has to fall for the
+  // next one. No sizes given: each rung is drawn at the reference level's.
   const ladder = { ...options, maxOpenEntries: 4, dropLadder: { dropsPct: [10, 20, 30] } }
   const held = { cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.95 }
 
@@ -617,6 +618,54 @@ describe('buildOperations — the price ladder: three rungs at −10, −20, −
       fill('DCA-2', 0.8, 18, NOW - 15 * MIN), fill('DCA-3', 0.7, 21, NOW - 10 * MIN),
     ], held)
     const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.locks).toBeNull()
+  })
+})
+
+describe('buildOperations — ladder A, as the dashboard composes it', () => {
+  // *Arriesguémonos, activá la A.* Six boxes: the $10 entry, then DCA-1..5 at
+  // $15, $20, $25, $30 and $35, each at the first buy less its own drop — the
+  // same module the engine reads, so the screen draws each line where the sweep
+  // is actually looking and at the size it will actually buy.
+  const A = productionLadder({})
+  const ladder = {
+    ...options,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
+    maxOpenEntries: A.maxOpenEntries,
+    dropLadder: { dropsPct: A.dcaDropsPct, rungsUsd: A.dcaRungsUsd },
+  }
+  const held = { cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.95 }
+
+  it('draws six boxes, each at its own size and its own line', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held)
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder).toHaveLength(6)
+    expect(p!.ladder.map((r) => r.nominalUsd)).toEqual([10, 15, 20, 25, 30, 35])
+    expect(p!.ladder[0]!.triggerPrice).toBeNull()
+    expect(p!.ladder.slice(1).map((r) => r.triggerPrice)).toEqual([0.9, 0.85, 0.8, 0.75, 0.7].map((x) => expect.closeTo(x, 9)))
+    expect(p!.ladder.map((r) => r.pending)).toEqual([false, true, false, false, false, false])
+  })
+
+  it('names the next rung, what it buys and where', async () => {
+    const store = await seed([
+      fill('Entry', 1, 10, NOW - 30 * MIN), fill('DCA-1', 0.9, 15 / 0.9, NOW - 20 * MIN), fill('DCA-2', 0.85, 20 / 0.85, NOW - 10 * MIN),
+    ], held)
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder.map((r) => r.pending)).toEqual([false, false, false, true, false, false])
+    const detail = p!.locks![0]!.detail
+    expect(detail).toContain('DCA-3')
+    expect(detail).toContain('$25')
+    expect(detail).toContain('0.8000')
+    expect(detail).toContain('20% bajo la primera compra')
+  })
+
+  it('has nothing to wait on once all five are bought', async () => {
+    const store = await seed(
+      ['Entry', 'DCA-1', 'DCA-2', 'DCA-3', 'DCA-4', 'DCA-5'].map((id, i) => fill(id, 1 - i * 0.05, 10, NOW - (30 - i) * MIN)),
+      held,
+    )
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder.every((r) => r.filled)).toBe(true)
     expect(p!.locks).toBeNull()
   })
 })

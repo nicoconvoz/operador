@@ -17,6 +17,12 @@
  * the tape (+$71 simulated, +$37 real), and the chosen shape held in BOTH
  * halves of the split, which is the only reason to trust it over a lucky fit.
  *
+ * Then ladder A, on the same replay: *arriesguémonos, activá la A.* Five rungs
+ * at −10, −15, −20, −25 and −30% of a $10 first buy, sized $15 to $35 — **+$520**
+ * (264 / 270), 28.1 per $100 of peak capital. The deepest line did not move;
+ * the rungs between got denser and heavier. What each rung BUYS is not this
+ * function's business: it answers WHICH rung, and the caller sizes it.
+ *
  * **From the FIRST buy, not the last**, and that is what keeps the ladder
  * bounded: measured from the last fill each rung would chase the one before it,
  * and three rungs of 10% would reach −27% on a slow bleed and keep going on a

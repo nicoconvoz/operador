@@ -155,10 +155,11 @@ export interface OperationsOptions {
    */
   /**
    * The ladder on price: rung `n` once the price has fallen `dropsPct[n-1]`
-   * under the FIRST buy — the same list the engine buys on. Drawn instead of
-   * the pressure ladder when given.
+   * under the FIRST buy, buying `rungsUsd[n-1]` — the same lists the engine
+   * buys on. Drawn instead of the pressure ladder when given. Without sizes,
+   * each rung is drawn at the reference level's.
    */
-  readonly dropLadder?: { readonly dropsPct: readonly number[] }
+  readonly dropLadder?: { readonly dropsPct: readonly number[]; readonly rungsUsd?: readonly number[] }
   readonly pressureLadder?: {
     readonly threshold: number
     readonly pressureOf?: (position: PersistedPosition) => Promise<number | null>
@@ -248,7 +249,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const drop = options.dropLadder
     const pressure = options.pressureLadder
     const ladder: LadderRung[] = drop
-      ? dropRungs(filledByLevel, fillable, drop.dropsPct, params, inFlight?.level ?? filledByLevel.size)
+      ? dropRungs(filledByLevel, fillable, drop, params, inFlight?.level ?? filledByLevel.size)
       : pressure
       ? pressureRungs(filledByLevel, fillable, params, inFlight?.level ?? filledByLevel.size)
       : Array.from({ length: fillable }, (_, level) => {
@@ -281,7 +282,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       costsUsd,
       ladder,
       locks: drop
-        ? dropLocks(buys, price, fillable, drop.dropsPct)
+        ? dropLocks(buys, price, fillable, drop, params)
         : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
@@ -324,28 +325,40 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
 
 const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
 
+type DropLadderView = NonNullable<OperationsOptions['dropLadder']>
+
+/**
+ * What a price rung buys: its own size from the engine's list, the entry and
+ * any rung the list does not size at the reference level's. Ladder A drew a
+ * flat $10 box under a $35 DCA-5 until the sizes were passed in — the screen
+ * disagreeing with the engine about the size of a trade.
+ */
+const dropRungUsd = (ladder: DropLadderView, params: CascadeParams, level: number): number =>
+  (level > 0 ? ladder.rungsUsd?.[level - 1] : undefined) ?? usdForLevel(params, level)
+
 /**
  * The price ladder's rungs: rung `n` at the FIRST buy's price less
- * `dropsPct[n-1]` — exactly where the engine buys it. Anchored to what was
- * actually PAID for the entry, never to the plan: a line drawn from a price
- * the position never paid would put the rung somewhere the sweep is not
- * looking. A rung past the end of the list, or before any buy, has no line.
+ * `dropsPct[n-1]` — exactly where the engine buys it — at its own size.
+ * Anchored to what was actually PAID for the entry, never to the plan: a line
+ * drawn from a price the position never paid would put the rung somewhere the
+ * sweep is not looking. A rung past the end of the list, or before any buy,
+ * has no line.
  */
 function dropRungs(
   filledByLevel: ReadonlyMap<number, PersistedFill>,
   fillable: number,
-  dropsPct: readonly number[],
+  ladder: DropLadderView,
   params: CascadeParams,
   waitingOn: number,
 ): LadderRung[] {
   const first = filledByLevel.get(0)?.price ?? null
   return Array.from({ length: fillable }, (_, level) => {
     const fill = filledByLevel.get(level)
-    const drop = level === 0 ? undefined : dropsPct[level - 1]
+    const drop = level === 0 ? undefined : ladder.dropsPct[level - 1]
     return {
       level,
       triggerPrice: first === null || drop === undefined ? null : first * (1 - drop / 100),
-      nominalUsd: usdForLevel(params, level),
+      nominalUsd: dropRungUsd(ladder, params, level),
       filled: fill !== undefined,
       fillPrice: fill?.price ?? null,
       fillUsd: fill ? fill.price * fill.qty : null,
@@ -355,29 +368,31 @@ function dropRungs(
 }
 
 /**
- * What the NEXT price rung waits for: the first buy's price less its drop.
- * Null when flat, full, or past the end of the list.
+ * What the NEXT price rung waits for — the first buy's price less its drop —
+ * and what it will buy there. Null when flat, full, or past the end of the list.
  */
 function dropLocks(
   buys: readonly PersistedFill[],
   price: number | null,
   fillable: number,
-  dropsPct: readonly number[],
+  ladder: DropLadderView,
+  params: CascadeParams,
 ): readonly LadderLock[] | null {
   if (buys.length === 0 || buys.length >= fillable) return null
-  const drop = dropsPct[buys.length - 1]
+  const drop = ladder.dropsPct[buys.length - 1]
   if (drop === undefined) return null
   const first = [...buys].sort((a, b) => a.time - b.time)[0]!
   const line = first.price * (1 - drop / 100)
   const id = `DCA-${buys.length}`
+  const usd = `$${dropRungUsd(ladder, params, buys.length).toFixed(2)}`
   const reached = price !== null && price <= line
   return [
     {
       name: 'drop',
       held: reached,
       detail: reached
-        ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra en este barrido`
-        : `${id} compra si el precio cae a ${line.toPrecision(4)} (${drop}% bajo la primera compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
+        ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra ${usd} en este barrido`
+        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} (${drop}% bajo la primera compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
     },
   ]
 }

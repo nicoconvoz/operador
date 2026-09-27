@@ -217,13 +217,19 @@ export interface PressureLadder {
 
 /**
  * The DCA ladder on the PRICE alone: rung `n` once the price has fallen
- * `dropsPct[n-1]` under the FIRST buy — −10%, −20%, −30% in production. See
- * `drop-ladder.ts` for the replay that chose it.
+ * `dropsPct[n-1]` under the FIRST buy, buying `rungsUsd[n-1]` — ladder A in
+ * production: $15, $20, $25, $30 and $35 at −10, −15, −20, −25 and −30%. See
+ * `drop-ladder.ts` and `production-ladder.ts` for the replays that chose it.
  */
 export interface DropLadder {
   readonly policy: DropLadderPolicy
-  /** What the rung buys, in dollars. */
-  readonly rungUsd: number
+  /**
+   * What each rung buys, in dollars, DCA-1 first — paired one to one with
+   * `policy.dropsPct`. It was ONE size for every rung; ladder A grows them as
+   * the price falls. A rung with no size here is never bought: the ladder ends
+   * where the shorter of the two lists ends.
+   */
+  readonly rungsUsd: readonly number[]
   /**
    * Gives the position the capital of `entries` entries out of the book's free
    * capital, and returns it as saved — or null when nothing is free.
@@ -603,8 +609,9 @@ async function sayUnfunded(
 }
 
 /**
- * One rung, if the price has fallen far enough under the FIRST buy. Never into
- * a position the death watch has frozen or condemned.
+ * One rung, if the price has fallen far enough under the FIRST buy, at that
+ * rung's own size. Never into a position the death watch has frozen or
+ * condemned.
  *
  * The rung pays for itself: its capital is asked of the book's free capital
  * first (`DropLadder.fund`), and the broker is built from the position AS
@@ -629,6 +636,10 @@ async function buyOnDrop(
   if (!first) return
   const rung = nextDropRung({ entries: buys.length, firstBuyPrice: first.price, priceUsd: price }, ladder.policy)
   if (rung === null) return
+  // Its OWN size. A rung the list has no size for is not bought at some other
+  // rung's: that would be a trade nobody priced.
+  const usd = ladder.rungsUsd[rung - 1]
+  if (usd === undefined || !(usd > 0)) return
   const id = `DCA-${rung}`
   const fell = ((1 - price / first.price) * 100).toFixed(1)
 
@@ -641,7 +652,7 @@ async function buyOnDrop(
   const broker = await deps.brokerFor(funded)
   const before = fills.length
   await settle(
-    [{ kind: 'entry', id, level: rung, usd: ladder.rungUsd, qty: ladder.rungUsd / price, comment: id }],
+    [{ kind: 'entry', id, level: rung, usd, qty: usd / price, comment: id }],
     funded.lastBarTime,
     price,
     at,
@@ -653,7 +664,7 @@ async function buyOnDrop(
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `El precio cayó ${fell}% desde la primera compra (${first.price}). Compró $${ladder.rungUsd.toFixed(2)} a ${price}.`,
+    `El precio cayó ${fell}% desde la primera compra (${first.price}). Compró $${usd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )

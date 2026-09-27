@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at $15 by default — the size chosen for 15m bars', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(15)
+  it('caps each level at $10 by default — ladder A’s first buy; the rungs carry their own sizes', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(10)
   })
 
   it('scales up when the capital does, without touching the reference', () => {
@@ -196,13 +196,15 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token a fifteen-dollar first buy and three rungs at −10, −20, −30% of it', () => {
-    // *Apliquemos la configuración completa.* The slot is what ONE $15 buy
-    // needs once gas and the price headroom are reserved, so the first buy is
-    // exactly 15; each rung asks the free capital for its own when it fires.
+  it('gives every token ladder A: a ten-dollar first buy, then $15..$35 at −10..−30% of it', () => {
+    // *Arriesguémonos, activá la A.* The slot is what ONE $10 buy needs once
+    // gas and the price headroom are reserved, so the first buy is exactly 10;
+    // each rung asks the free capital for its own size when it fires.
     const config = loadConfig(valid)
-    expect(config.maxDcaPerToken).toBe(3)
-    expect(config.dcaDropsPct).toEqual([10, 20, 30])
+    expect(config.maxUsdPerLevel).toBe(10)
+    expect(config.maxDcaPerToken).toBe(5)
+    expect(config.dcaDropsPct).toEqual([10, 15, 20, 25, 30])
+    expect(config.dcaRungsUsd).toEqual([15, 20, 25, 30, 35])
     expect(config.reservedEntries).toBe(1)
     const deployable = deployableCapital({
       initialCapital: config.usdPerToken!,
@@ -210,8 +212,15 @@ describe('two rules stand, and the doors they need are separate switches', () =>
       maxOpenEntries: config.reservedEntries,
       params: DEFAULT_PARAMS,
     })
-    expect(deployable).toBeCloseTo(15, 9)
+    expect(deployable).toBeCloseTo(10, 9)
+    expect(config.usdPerToken).toBeCloseTo(10.63, 2)
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
+  })
+
+  it('reads the rung sizes from the environment, beside the drops', () => {
+    const config = loadConfig({ ...valid, OPERADOR_DCA_DROPS_PCT: '10,20,30', OPERADOR_DCA_RUNGS_USD: '15,15,15' })
+    expect(config.dcaDropsPct).toEqual([10, 20, 30])
+    expect(config.dcaRungsUsd).toEqual([15, 15, 15])
   })
 
   it('reserves the whole ladder again when asked — one variable away', () => {
@@ -223,7 +232,9 @@ describe('two rules stand, and the doors they need are separate switches', () =>
       maxOpenEntries: config.reservedEntries,
       params: DEFAULT_PARAMS,
     })
-    expect(deployable / 4).toBeCloseTo(15, 9)
+    // Four FIRST buys' worth, so the tick's first buy is still ten dollars;
+    // the rungs above it are still priced at their own sizes when they fire.
+    expect(deployable / 4).toBeCloseTo(10, 9)
   })
 
   it('blacklists a frozen token when its slot is released, unless told not to', () => {
@@ -313,15 +324,20 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_MAX_STOP_PCT: '15' }).maxStopPct).toBe(15)
   })
 
-  it('runs the break-even at 7.5 by default, and one variable turns it off', () => {
-    // *Poné el break-even en 7.5.* It arms at +7.5% over the average cost and,
-    // once armed, sells on a fall back to +7.5%. ON again, after a stretch
-    // OFF under *sólo salí si el TP se cumple* — the operator's choice over a
-    // fixed take-profit that would have cut the runners.
-    expect(loadConfig(valid)).toMatchObject({ breakEven: true, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 })
-    for (const off of ['0', 'false', 'no']) {
-      expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: off }).breakEven).toBe(false)
+  it('keeps the break-even OFF by default, and one variable brings it back at 7.5', () => {
+    // *Sacá el break-even, pero poné un mínimo de ganancia del 20%.* Measured
+    // on the first half day of ladder A: of 49 break-even sales at +7.5%, 21
+    // went on to +20% and 12 fell to the first rung.
+    expect(loadConfig(valid)).toMatchObject({ breakEven: false, breakEvenArmPct: 7.5, breakEvenFloorPct: 7.5 })
+    for (const on of ['1', 'true', 'yes']) {
+      expect(loadConfig({ ...valid, OPERADOR_BREAK_EVEN: on }).breakEven).toBe(true)
     }
+  })
+
+  it('asks the strategy exit for +20% by default, and reads another floor', () => {
+    expect(loadConfig(valid).minProfitPct).toBe(20)
+    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: '12' }).minProfitPct).toBe(12)
+    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'veinte' }).minProfitPct).toBe(20)
   })
 
   it('takes both lines from the environment, and never floors above the arm', () => {

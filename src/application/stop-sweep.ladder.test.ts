@@ -8,10 +8,14 @@ import { startDeathWatch } from '../domain/risk/death-exit.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
 import { fundRungsFromFreeCapital } from './free-capital.js'
-import { ladderCapitalUsd } from './paper-run.js'
+import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { productionLadder } from './production-ladder.js'
 
 const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+/** Ladder A, exactly as production reads it with no environment set. */
+const A = productionLadder({})
+const PARAMS_A = { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel }
 
 /**
  * *Agregá 5 escalones de DCA, pero pedí un piso lateral de 5 velas de 1 minuto
@@ -33,8 +37,8 @@ const position = (over: Partial<PersistedPosition> = {}): PersistedPosition => (
   ...over,
 })
 
-const buy = (positionId: string, price: number, time: number) => ({
-  positionId, orderId: 'Entry', side: 'buy' as const, time, price, qty: 15 / price, costUsd: 0.05,
+const buy = (positionId: string, price: number, time: number, usd = 15) => ({
+  positionId, orderId: 'Entry', side: 'buy' as const, time, price, qty: usd / price, costUsd: 0.05,
   comment: 'Entry', idempotencyKey: `${positionId}:buy:${time}`,
 })
 const sell = (positionId: string, price: number, qty: number, time: number) => ({
@@ -53,8 +57,12 @@ const rig = async (options: {
   readonly counts?: readonly ({ buys: number; sells: number } | null)[]
   readonly ladder?: boolean
   readonly levels?: ExitLevels
-  /** The price ladder — three rungs at −10/−20/−30% of the first buy — instead of the pressure ladder. */
-  readonly drop?: boolean
+  /**
+   * The price ladder instead of the pressure ladder: `true` is an explicit
+   * three $15 rungs at −10/−20/−30% of the first buy; `'A'` is production's
+   * own, read from `productionLadder({})`, with its $10 first buy.
+   */
+  readonly drop?: boolean | 'A'
   /**
    * The book's capital, when each rung must ask the free pool for its own
    * capital. Absent: the rung is bought out of what the position holds.
@@ -64,7 +72,7 @@ const rig = async (options: {
   const store = new MemoryStore()
   const held = options.held ?? position()
   await store.savePosition(held)
-  await store.recordFill(buy(ID, 1, 0))
+  await store.recordFill(buy(ID, 1, 0, options.drop === 'A' ? A.maxUsdPerLevel : 15))
   for (const fill of options.history ?? []) await store.recordFill(fill)
 
   const sent: Alert[] = []
@@ -80,18 +88,33 @@ const rig = async (options: {
       const key = `${p.id}:${p.capitalUsd}`
       let broker = brokers.get(key)
       if (!broker) {
-        broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: p.capitalUsd, maxOpenEntries: 6, quality: () => p.quality })
+        broker = new PaperBroker({
+          gasUsdPerSwap: 0.05,
+          initialCapital: p.capitalUsd,
+          maxOpenEntries: options.drop === 'A' ? A.maxOpenEntries : 6,
+          quality: () => p.quality,
+        })
         broker.seed(await store.fillsFor(p.id))
         brokers.set(key, broker)
       }
       return broker
     },
     now: () => AT,
-    ...(options.drop
+    ...(options.drop === 'A'
+      ? {
+          dropLadder: {
+            policy: { maxEntries: A.maxOpenEntries, dropsPct: A.dcaDropsPct },
+            rungsUsd: A.dcaRungsUsd,
+            ...(options.bookUsd !== undefined
+              ? { fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd }) }
+              : {}),
+          },
+        }
+      : options.drop
       ? {
           dropLadder: {
             policy: { maxEntries: 4, dropsPct: [10, 20, 30] },
-            rungUsd: 15,
+            rungsUsd: [15, 15, 15],
             ...(options.bookUsd !== undefined
               ? { fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: FLAT_15, gasUsdPerSwap: 0.05 }) }
               : {}),
@@ -305,10 +328,10 @@ describe('the break-even never closes in the red', () => {
   })
 })
 
-describe('the price ladder: three rungs at −10, −20 and −30% of the FIRST buy', () => {
-  // *Apliquemos la configuración completa.* The operator, on a replay of all
-  // 336 real entries: +$373 against +$71 for the one rung at half. The first
-  // buy in this rig is $15 at 1.00.
+describe('the price ladder, on an explicit policy: three rungs at −10, −20 and −30% of the FIRST buy', () => {
+  // The mechanism, on a policy stated here rather than production's: three $15
+  // rungs, the shape that ran before ladder A. The first buy in this rig is $15
+  // at 1.00.
   const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
   const at = (price: number, over: Partial<PersistedPosition> = {}) => position({ lastPriceUsd: price, ...over })
   const buys = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
@@ -435,5 +458,54 @@ describe('the pressure ladder pays for its rungs the same way', () => {
     await run(0.97)
     expect(await buys(store)).toHaveLength(1)
     expect(sent.some((a) => a.title.includes('sin capital libre para el escalón'))).toBe(true)
+  })
+})
+
+describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35', () => {
+  // *Arriesguémonos, activá la A.* The first buy is $10 at 1.00; DCA-n buys its
+  // own size at 1.00 less its drop — −10, −15, −20, −25 and −30%. Each rung
+  // asks the free capital for its share, and the broker holds six entries.
+  const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
+  const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
+  const held = position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.8 })
+  const buys = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
+  // Just under each line, so no rung rides on how 1 − 0.15 rounds.
+  const LINES = [0.899, 0.849, 0.799, 0.749, 0.699]
+
+  it('is what production reads with nothing set', () => {
+    expect(A.maxUsdPerLevel).toBe(10)
+    expect(A.maxOpenEntries).toBe(6)
+    expect(A.dcaDropsPct).toEqual([10, 15, 20, 25, 30])
+    expect(A.dcaRungsUsd).toEqual([15, 20, 25, 30, 35])
+  })
+
+  it('buys each rung at its own size, and DCA-5’s $35 goes through after DCA-1..4', async () => {
+    const { store, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    for (const price of LINES) await run(price)
+    const bought = await buys(store)
+    expect(bought.map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2', 'DCA-3', 'DCA-4', 'DCA-5'])
+    expect(bought.map((f) => f.price * f.qty)).toEqual([10, 15, 20, 25, 30, 35].map((usd) => expect.closeTo(usd, 0)))
+    // Funded to exactly the whole ladder: $135 grossed up, and seven swaps of gas.
+    expect((await store.loadPositions())[0]?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
+  })
+
+  it('stops at five rungs, however far the price falls after', async () => {
+    const { store, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    for (const price of [...LINES, 0.5, 0.3]) await run(price)
+    expect(await buys(store)).toHaveLength(6)
+  })
+
+  it('waits above a line: −12% is past DCA-1 and short of DCA-2', async () => {
+    const { store, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.88)
+    await run(0.88)
+    expect((await buys(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('says in the alert what the rung bought', async () => {
+    const { sent, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    for (const price of LINES.slice(0, 3)) await run(price)
+    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('Compró $15.00')
+    expect(sent.find((a) => a.title.includes('DCA-3'))?.body).toContain('Compró $25.00')
   })
 })

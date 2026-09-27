@@ -17,12 +17,44 @@
  * dragging the runtime into its build.
  */
 
-/** USD cap per rung. Flat at this size: `min(1000 × (1 + 1.2n), 15)` is 15 everywhere. */
-export const DEFAULT_MAX_USD_PER_LEVEL = 15
+/**
+ * USD cap per level of the reference ladder — which in production is the FIRST
+ * buy alone, because the cascade's own rungs are switched off and the sweep
+ * buys each DCA rung at its own size (`DEFAULT_DCA_RUNGS_USD`).
+ *
+ * TEN, with ladder A: *arriesguémonos, activá la A.* A smaller first buy and
+ * bigger rungs under it, so the money goes in where the price is lower. See
+ * `DEFAULT_MAX_DCA_PER_TOKEN` for the replay that chose it.
+ *
+ * It was fifteen, flat: `min(1000 × (1 + 1.2n), 15)` is 15 everywhere, and the
+ * rungs bought the same fifteen.
+ */
+export const DEFAULT_MAX_USD_PER_LEVEL = 10
 
 /**
  * DCA rungs production will fill, per token. The entry is not one of them, so
- * three means four open entries.
+ * five means six open entries.
+ *
+ * FIVE — ladder A: a $10 first buy, then $15, $20, $25, $30 and $35 at −10%,
+ * −15%, −20%, −25% and −30% of it. *Arriesguémonos, activá la A.* The same
+ * replay of all 336 real entries (09-23 → 09-27, 5-minute closes, 0.66% a
+ * fill, the real freezes applied per token, split in time):
+ *
+ * | | Result | train / test | frozen | per $100 of peak capital | peak capital |
+ * |---|---|---|---|---|---|
+ * | $15, then three $15 rungs at −10/−20/−30 (what ran) | +$373 | 185 / 203 | 8, −$44 | 23.3 | $1,605 |
+ * | **A**: $10, then $15/$20/$25/$30/$35 at −10/−15/−20/−25/−30 | **+$520** | 264 / 270 | 6, −$8 | **28.1** | $1,850 |
+ *
+ * Better in both halves of the split, and better per dollar of capital at its
+ * peak, not only in total — so it is not merely more money at risk earning
+ * more money.
+ *
+ * What it costs, stated and accepted knowingly: up to **$135 in one token**,
+ * against $60. A token that falls through the last rung and then freezes at
+ * −60% loses about **$66**, against about $31 on the ladder it replaces. The
+ * freeze exit and the blacklist on freeze are what bound that, and both stay.
+ *
+ * What came before, kept because each step had a reason:
  *
  * THREE, at −10%, −20% and −30% of the FIRST buy — see `DEFAULT_DCA_DROPS_PCT`.
  * *Podés calibrar según los datos para que las ganancias sean las máximas y las
@@ -91,12 +123,16 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
  * every thirty seconds, at half the last buy. It is the rule the replay above
  * measured against, and the one three rungs replaced.
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 3
+export const DEFAULT_MAX_DCA_PER_TOKEN = 5
 
 /**
- * How far under the FIRST buy each rung buys, in percent: DCA-1 at −10%, DCA-2
- * at −20%, DCA-3 at −30%. Here because the engine buys on it and the screen
- * draws it.
+ * How far under the FIRST buy each rung buys, in percent: DCA-1 at −10%, then
+ * every five points down to DCA-5 at −30%. Here because the engine buys on it
+ * and the screen draws it.
+ *
+ * Ladder A keeps the deepest line where it was, −30%, and puts two more rungs
+ * between the old three: the same fall is met more often and with more money
+ * the deeper it goes. It was [10, 20, 30] with three $15 rungs.
  *
  * It was ONE number, 50, measured from the LAST buy — *si el precio cae al 50%
  * de lo que vale, volver a comprar.* A list measured from the first is what
@@ -107,12 +143,26 @@ export const DEFAULT_MAX_DCA_PER_TOKEN = 3
  * there is none: a position under the last rung is held, and only the freeze
  * or the death exit may sell it at a loss.
  */
-export const DEFAULT_DCA_DROPS_PCT: readonly number[] = [10, 20, 30]
+export const DEFAULT_DCA_DROPS_PCT: readonly number[] = [10, 15, 20, 25, 30]
+
+/**
+ * What each rung buys, in dollars, DCA-1 first: $15, $20, $25, $30, $35 —
+ * paired one to one with `DEFAULT_DCA_DROPS_PCT`. Ladder A.
+ *
+ * Growing as the price falls, so the deeper a rung, the more of the average it
+ * pulls down. Every rung was the same $15 before, and so was the first buy.
+ *
+ * A LIST, and the same length as the drops, because each size belongs to one
+ * line: rung `n` buys `dcaRungsUsd[n-1]` at `dcaDropsPct[n-1]`. A shorter list
+ * would leave a rung with a line and no amount; a longer one would size a rung
+ * that has no line. Pairing half of each is a ladder nobody chose.
+ */
+export const DEFAULT_DCA_RUNGS_USD: readonly number[] = [15, 20, 25, 30, 35]
 
 /**
  * How many entries' worth of capital a position is ALLOCATED when it opens.
  * ONE: the first buy. Each rung asks the book's free capital for its own
- * fifteen dollars at the moment it fires, and waits a sweep when there is none.
+ * dollars at the moment it fires, and waits a sweep when there is none.
  *
  * Every position used to be allocated its WHOLE ladder up front. Live, with
  * one rung that almost never fired: **$2,887 committed against $1,395
@@ -121,6 +171,10 @@ export const DEFAULT_DCA_DROPS_PCT: readonly number[] = [10, 20, 30]
  * tokens, and the replay that chose the ladder assumed the book it had: rungs
  * are rare, most positions never buy one, and the capital belongs to the next
  * token rather than to a dip that may never come.
+ *
+ * Ladder A makes the argument stronger: its whole ladder is about $142 with
+ * gas and headroom, against about $10.63 for the first buy — reserving it up
+ * front would hold one token where thirteen fit.
  *
  * The cost, stated: a rung can find the book fully deployed and be skipped.
  * That is the cheaper failure — a rung not bought is a basis not improved,
@@ -172,9 +226,27 @@ export const DEFAULT_DROP_INIT_PCT = 0
 export const DEFAULT_IMPATIENT_PROFIT_PCT = 10
 export const DEFAULT_URGENT_PROFIT_PCT = 25
 
+/**
+ * The least the strategy's own exit may sell for, in percent over the average
+ * cost. It is the FLOOR of the derived target — `minProfitPctFor` takes the
+ * larger of this and what the pool's round trip demands — so the exit still
+ * sells when the impulse dies, only never under it.
+ *
+ * TWENTY, with the break-even switched off: *sacá el break-even, pero poné un
+ * mínimo de ganancia del 20%.* Measured on the first half day of ladder A: of
+ * 49 break-even sales at +7.5%, 21 went on to +20% and 12 fell back to the
+ * first rung. The reference's 2 stays in `DEFAULT_PARAMS`, which is evidence.
+ *
+ * What it costs, stated: a winner that peaks at +15% and turns is no longer
+ * taken; it is held, and the ladder averages it if it falls.
+ */
+export const DEFAULT_MIN_PROFIT_PCT = 20
+
 
 export interface ProductionLadder {
   readonly maxUsdPerLevel: number
+  /** The least the strategy exit sells for, in percent over the average cost. */
+  readonly minProfitPct: number
   /** Entries the venue holds open at once: the entry plus its DCA rungs. */
   readonly maxOpenEntries: number
   /** Drop from the swing high the classic entry demands, in percent. */
@@ -185,6 +257,8 @@ export interface ProductionLadder {
   readonly urgentProfitPct: number
   /** How far under the FIRST buy each rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
+  /** What each rung buys, in dollars, DCA-1 first — one per drop. */
+  readonly dcaRungsUsd: readonly number[]
   /**
    * Entries' worth of capital a position is allocated when it opens. Never
    * more than `maxOpenEntries`; the rest is asked of the free capital when a
@@ -228,6 +302,26 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     return valid ? values : fallback
   }
 
+  /**
+   * A comma list of rung sizes in dollars, each positive, and exactly as many
+   * as there are drops. Anything else falls back WHOLE, for the drops' reason:
+   * a ladder is one decision. The length is checked against the drops that
+   * will actually run, because rung `n` buys the `n`-th size at the `n`-th
+   * line — a size without a line, or a line without a size, is a rung nobody
+   * priced.
+   *
+   * The fallback is the default list whatever the drops say, so a drop list
+   * overridden to another length with no sizes beside it runs a ladder that
+   * ends where the SHORTER list ends: the sweep never buys a rung it has no
+   * size for.
+   */
+  const sizes = (raw: string | undefined, fallback: readonly number[], lines: number): readonly number[] => {
+    if (!raw?.trim()) return fallback
+    const values = raw.split(',').map((part) => (part.trim() === '' ? Number.NaN : Number(part.trim())))
+    const valid = values.length === lines && values.every((value) => Number.isFinite(value) && value > 0)
+    return valid ? values : fallback
+  }
+
   /** A whole number of entries, at least one. */
   const entries = (raw: string | undefined, fallback: number) => {
     const value = Number(raw?.trim())
@@ -235,19 +329,22 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
   }
 
   const maxOpenEntries = rungs(env.OPERADOR_MAX_DCA, DEFAULT_MAX_DCA_PER_TOKEN) + 1
+  const dcaDropsPct = drops(env.OPERADOR_DCA_DROPS_PCT, DEFAULT_DCA_DROPS_PCT)
 
   return {
     maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, DEFAULT_MAX_USD_PER_LEVEL),
     // ZERO is a real value: one entry and no ladder at all, which is the
     // operator's structural change. Read through `positive` it would fall back
-    // to the default and silently run a three-rung ladder — his decision
+    // to the default and silently run a five-rung ladder — his decision
     // discarded while everything kept working, which is the failure mode that
     // costs the most. `maxPositions: 0` and `dropInitPct` both taught this.
     maxOpenEntries,
     dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
+    minProfitPct: positive(env.OPERADOR_MIN_PROFIT_PCT, DEFAULT_MIN_PROFIT_PCT),
     impatientProfitPct: positive(env.OPERADOR_IMPATIENT_PROFIT_PCT, DEFAULT_IMPATIENT_PROFIT_PCT),
     urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),
-    dcaDropsPct: drops(env.OPERADOR_DCA_DROPS_PCT, DEFAULT_DCA_DROPS_PCT),
+    dcaDropsPct,
+    dcaRungsUsd: sizes(env.OPERADOR_DCA_RUNGS_USD, DEFAULT_DCA_RUNGS_USD, dcaDropsPct.length),
     // Capped by what the venue holds: reserving capital for an entry the
     // broker will refuse is capital held against nothing.
     reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),

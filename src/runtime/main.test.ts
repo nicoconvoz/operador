@@ -2,8 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { buildRuntime } from './main.js'
 import { loadConfig } from './config.js'
 import { exitLevelsFor } from '../application/stop-sweep.js'
-import { exitSizingFrom } from '../application/orchestrator.js'
-import { ladderCapitalUsd } from '../application/paper-run.js'
+import { exitSizingFrom, tickConfigFrom } from '../application/orchestrator.js'
+import { capitalForFillsUsd, ladderCapitalUsd } from '../application/paper-run.js'
+import { tickPosition } from '../application/engine.js'
+import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
+import { RecordingAlerts } from '../infrastructure/notifications/recording.js'
+import { AlertThrottle } from '../domain/notifications/alerts.js'
+import { type Candles } from '../application/replay.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
@@ -36,37 +41,101 @@ const held: PersistedPosition = {
   capitalUsd: 15.89, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
 }
 
-describe('the break-even at 7.5, through the path the engine runs', () => {
-  // *Poné el break-even en 7.5.* Arms at +7.5% over the average cost; once
-  // armed, sells on a fall back to +7.5%. The cycle's sweeps and the loop's
-  // both read `exitLevelsFor(position, exitSizingFrom(cycleConfig))`.
-  it('is ON with both lines at 7.5 when nothing is set', () => {
+describe('the break-even, through the path the engine runs', () => {
+  // *Sacá el break-even, pero poné un mínimo de ganancia del 20%.* The cycle's
+  // sweeps and the loop's both read `exitLevelsFor(position, exitSizingFrom(cycleConfig))`.
+  it('is OFF when nothing is set, through every path', () => {
     const { cycleConfig } = runtime()
+    expect(cycleConfig.breakEven).toBe(false)
+    expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).armAtPct).toBeNull()
+  })
+
+  it('comes back with both lines at 7.5 when the environment asks for it', () => {
+    const { cycleConfig } = runtime({ OPERADOR_BREAK_EVEN: '1' })
     const levels = exitLevelsFor(held, exitSizingFrom(cycleConfig))
     expect(levels.armAtPct).toBe(7.5)
     expect(levels.breakEvenPct).toBe(7.5)
   })
+})
 
-  it('stays OFF through every path when the environment turns it off', () => {
-    const { cycleConfig } = runtime({ OPERADOR_BREAK_EVEN: '0' })
-    expect(cycleConfig.breakEven).toBe(false)
-    expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).armAtPct).toBeNull()
+describe('the take-profit waits for +20%, through the path the engine runs', () => {
+  // *Poné un mínimo de ganancia del 20%.* The strategy's own exit still sells
+  // when the impulse dies — only never under +20% over the average cost.
+  const tick = async (env: Record<string, string> = {}) => {
+    const { deps, cycleConfig } = runtime(env)
+    const bars = 300
+    const flat = (price: number) => Array.from({ length: bars }, () => price)
+    const candles: Candles = {
+      time: Array.from({ length: bars }, (_, i) => i * 3_600_000),
+      open: flat(1), high: flat(1.005), low: flat(0.995), close: flat(1), volume: flat(10_000),
+    }
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: -1 }
+    return tickPosition(
+      { position: slot, candles, health: null, broker: await deps.brokerFor(slot), marketPriceUsd: 1 },
+      tickConfigFrom(cycleConfig),
+      new MemoryStore(), new RecordingAlerts(), new AlertThrottle(60_000),
+    )
+  }
+
+  it('asks the exit for at least +20% when nothing is set', async () => {
+    expect((await tick()).minProfitPct).toBe(20)
+  })
+
+  it('takes another floor from the environment', async () => {
+    expect((await tick({ OPERADOR_MIN_PROFIT_PCT: '12' })).minProfitPct).toBe(12)
   })
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('buys three rungs at −10, −20, −30% of the first buy, each funded from the free capital', () => {
+  it('buys ladder A: five rungs of $15..$35 at −10..−30% of the first buy, each funded from the free capital', () => {
+    // *Arriesguémonos, activá la A.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dropLadder?.policy).toEqual({ maxEntries: 4, dropsPct: [10, 20, 30] })
-    expect(deps.dropLadder?.rungUsd).toBe(15)
+    expect(deps.dropLadder?.policy).toEqual({ maxEntries: 6, dropsPct: [10, 15, 20, 25, 30] })
+    expect(deps.dropLadder?.rungsUsd).toEqual([15, 20, 25, 30, 35])
     expect(deps.dropLadder?.fund).toBeDefined()
-    expect(cycleConfig.maxOpenEntries).toBe(4)
+    expect(cycleConfig.maxOpenEntries).toBe(6)
   })
 
-  it('reserves one entry a slot, and the slot is exactly what one $15 buy needs', () => {
+  it('reserves one entry a slot, and the slot is exactly what one $10 buy needs', () => {
     const { cycleConfig } = runtime()
     expect(cycleConfig.reservedEntries).toBe(1)
-    expect(cycleConfig.usdPerToken).toBeCloseTo(ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }, 1, 0.05), 9)
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(10)
+    expect(cycleConfig.usdPerToken).toBeCloseTo(ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: 10 }, 1, 0.05), 9)
+  })
+
+  it('buys exactly ten dollars on the first tick of a slot the allocator sized', async () => {
+    // The path the engine runs: the cycle's own tick rules, a slot of
+    // `usdPerToken`, the broker `brokerFor` builds. Flat candles are enough —
+    // production enters on selection, with no indicator condition.
+    const { deps, cycleConfig } = runtime()
+    const bars = 300
+    const HOUR = 3_600_000
+    const flat = (price: number) => Array.from({ length: bars }, () => price)
+    const candles: Candles = {
+      time: Array.from({ length: bars }, (_, i) => i * HOUR),
+      open: flat(1), high: flat(1.005), low: flat(0.995), close: flat(1), volume: flat(10_000),
+    }
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: -1 }
+    const result = await tickPosition(
+      { position: slot, candles, health: null, broker: await deps.brokerFor(slot), marketPriceUsd: 1 },
+      tickConfigFrom(cycleConfig),
+      new MemoryStore(), new RecordingAlerts(), new AlertThrottle(60_000),
+    )
+    const entry = result.orders.find((o) => o.kind === 'entry')
+    expect(entry && entry.kind === 'entry' ? entry.usd : 0).toBeCloseTo(10, 6)
+  })
+
+  it('funds a rung at its own size: all six entries of ladder A cost $135 grossed up', async () => {
+    const { deps, cycleConfig } = runtime()
+    const funded = await deps.dropLadder!.fund!({ ...held, capitalUsd: cycleConfig.usdPerToken! }, 6)
+    expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
+  })
+
+  it('builds a broker that holds six entries — the first buy and five rungs — and refuses a seventh', async () => {
+    const { deps } = runtime()
+    const broker = await deps.brokerFor({ ...held, capitalUsd: 200 })
+    const entries = Array.from({ length: 7 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 10, qty: 10, comment: 'x' }))
+    expect(broker.execute(entries, 1, 0)).toHaveLength(6)
   })
 
   it('blacklists a frozen token on release unless told not to', () => {

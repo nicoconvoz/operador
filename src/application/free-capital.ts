@@ -1,6 +1,7 @@
 import { commonFund } from './ledger.js'
-import { ladderCapitalUsd } from './paper-run.js'
+import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { type CascadeParams } from '../domain/strategy/params.js'
+import { usdForLevel } from '../domain/strategy/ladder.js'
 import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -41,6 +42,33 @@ export interface RungFundingDeps {
   /** The production ladder: what a rung costs, and so what one more entry needs. */
   readonly params: CascadeParams
   readonly gasUsdPerSwap: number
+  /**
+   * What each rung buys, DCA-1 first, when the rungs are not the reference
+   * ladder's own levels — ladder A's $15, $20, $25, $30 and $35. The first buy
+   * is still `params`' level 0, the one the allocator sizes a slot with.
+   * Absent: every entry is priced as the reference ladder prices it, which is
+   * the pressure ladder's single size.
+   */
+  readonly rungsUsd?: readonly number[]
+}
+
+/**
+ * The capital `entries` entries need: the first buy plus the first
+ * `entries − 1` rungs, through the ONE allowance for gas and price headroom
+ * (`capitalForFillsUsd`) that sizes a slot too.
+ *
+ * With `entries` past the end of the list only what the list holds is priced,
+ * because the sweep never buys a rung it has no size for.
+ */
+export function entriesCapitalUsd(
+  params: CascadeParams,
+  rungsUsd: readonly number[] | undefined,
+  entries: number,
+  gasUsdPerSwap: number,
+): number {
+  if (rungsUsd === undefined) return ladderCapitalUsd(params, entries, gasUsdPerSwap)
+  if (entries < 1) return 0
+  return capitalForFillsUsd([usdForLevel(params, 0), ...rungsUsd.slice(0, entries - 1)], gasUsdPerSwap)
 }
 
 /**
@@ -51,10 +79,11 @@ export interface RungFundingDeps {
  * `DEFAULT_RESERVED_ENTRIES`). Allocating the whole ladder up front held $2,887
  * against $1,395 deployed — half the book parked against rungs that almost
  * never fired. So a rung pays for itself when it happens: the position is
- * raised to what `entries` entries need — the same `ladderCapitalUsd` the
- * allocator sizes a slot with, gas and price headroom included — and the
- * caller builds its broker from the position this returns, because the broker
- * refuses an entry the position's capital cannot cover.
+ * raised to what `entries` entries need — the first buy and each rung at its
+ * own size (`entriesCapitalUsd`), through the same allowance the allocator
+ * sizes a slot with, gas and price headroom included — and the caller builds
+ * its broker from the position this returns, because the broker refuses an
+ * entry the position's capital cannot cover.
  *
  * Null when the free capital cannot cover it: the rung waits for the next
  * sweep, and nothing is written.
@@ -76,7 +105,7 @@ export function fundRungsFromFreeCapital(
   return async (position, entries) => {
     const book = await deps.store.loadPositions()
     const stored = book.find((p) => p.id === position.id) ?? position
-    const needs = ladderCapitalUsd(deps.params, entries, deps.gasUsdPerSwap)
+    const needs = entriesCapitalUsd(deps.params, deps.rungsUsd, entries, deps.gasUsdPerSwap)
     if (stored.capitalUsd >= needs) return stored
 
     const extra = needs - stored.capitalUsd

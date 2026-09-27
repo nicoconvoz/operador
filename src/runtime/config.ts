@@ -161,6 +161,8 @@ export interface RuntimeConfig {
    * never does.
    */
   readonly dropInitPct: number
+  /** The least the strategy exit sells for, in percent over the average cost. */
+  readonly minProfitPct: number
   /** Gains at which the exit stops waiting for the impulse to die. */
   readonly impatientProfitPct: number
   readonly urgentProfitPct: number
@@ -176,15 +178,15 @@ export interface RuntimeConfig {
   readonly idleSlotHours: number
   /**
    * DCA rungs production will actually fill, per token. Entry is not one of
-   * them, so 3 means four open entries.
+   * them, so 5 means six open entries.
    *
    * NOT `PYRAMIDING`, which is 10 because that is what the `strategy()` header
    * ran and the parity harness asserts it. Evidence, not a preference.
    *
-   * THREE, at −10/−20/−30% of the first buy: the replay of all 336 real
-   * entries made +$373 with it against +$71 for the one rung at half. The
-   * history of the number, and why it moved each time, is in
-   * `application/production-ladder.ts`.
+   * FIVE — ladder A: $15, $20, $25, $30 and $35 at −10, −15, −20, −25 and −30%
+   * of a $10 first buy. The replay of all 336 real entries made +$520 with it
+   * against +$373 for three $15 rungs. The history of the number, and why it
+   * moved each time, is in `application/production-ladder.ts`.
    */
   readonly maxDcaPerToken: number
   /**
@@ -239,6 +241,8 @@ export interface RuntimeConfig {
   readonly pressure: boolean
   /** How far under the FIRST buy each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
+  /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
+  readonly dcaRungsUsd: readonly number[]
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -467,6 +471,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     blacklistOnFreeze: onUnless(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     dropInitPct: productionLadder(env).dropInitPct,
+    minProfitPct: productionLadder(env).minProfitPct,
     impatientProfitPct: productionLadder(env).impatientProfitPct,
     urgentProfitPct: productionLadder(env).urgentProfitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
@@ -487,7 +492,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // ON, and independently. Without it the executor's classic door decides,
     // and it refuses exactly what a wide shortlist is full of.
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
-    // Unset: what the RESERVED entries need, derived below — one $15 buy, its
+    // Unset: what the RESERVED entries need, derived below — one $10 buy, its
     // gas and the price headroom. The rungs are not in it: each asks the free
     // capital for its own when it fires.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
@@ -505,8 +510,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // back at its cost — protection, not the TP. OPERADOR_BREAK_EVEN=1 for it.
     // ON again, at 7.5: *poné el break-even en 7.5.* The operator's answer to a
     // fixed take-profit, which would have cut the runners the strategy exit
-    // lives on. OPERADOR_BREAK_EVEN=0 turns it off.
-    breakEven: onUnless(env, 'OPERADOR_BREAK_EVEN'),
+    // lives on.
+    // OFF again: *sacá el break-even, pero poné un mínimo de ganancia del 20%*
+    // — the strategy exit's floor, `minProfitPct`, does the job instead.
+    // OPERADOR_BREAK_EVEN=1 brings it back at 7.5.
+    breakEven: onlyIf(env, 'OPERADOR_BREAK_EVEN'),
     breakEvenArmPct,
     breakEvenFloorPct,
     // *El operador pierde de a mucho, no funciona el SL.* The 1:4 multiplies
@@ -569,8 +577,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // variable away each.
     rotateOnFilter: onlyIf(env, 'OPERADOR_ROTATE_ON_FILTER'),
     pressure: onlyIf(env, 'OPERADOR_PRESSURE'),
-    // The rungs' triggers, from the module the dashboard reads too.
+    // The rungs' triggers and sizes, from the module the dashboard reads too.
     dcaDropsPct: productionLadder(env).dcaDropsPct,
+    dcaRungsUsd: productionLadder(env).dcaRungsUsd,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings

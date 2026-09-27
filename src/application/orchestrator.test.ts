@@ -14,8 +14,9 @@ import { type MarketQuality } from '../domain/market/market-quality.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { type Candles } from './replay.js'
-import { ladderCapitalUsd } from './paper-run.js'
+import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { fundRungsFromFreeCapital } from './free-capital.js'
+import { productionLadder } from './production-ladder.js'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
@@ -2552,6 +2553,57 @@ describe('runCycle — a slot keeps its FIRST buy, not the ladder it might one d
   })
 })
 
+describe('runCycle — ladder A: the trim and the rung funder price the same ladder', () => {
+  // *Arriesguémonos, activá la A.* A slot is allocated its $10 first buy —
+  // about $10.63 with gas and the price headroom — and each rung raises it to
+  // the first buy plus the rungs so far, at their own sizes. The trim takes a
+  // position back down to that one entry, never under what it bought, and the
+  // next rung must still be fundable, and fillable, from there.
+  const A = productionLadder({})
+  const PARAMS_A = { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel }
+  const cfgA: CycleConfig = {
+    ...config, params: PARAMS_A, maxOpenEntries: A.maxOpenEntries, reservedEntries: A.reservedEntries, gasUsdPerSwap: 0.05,
+    portfolio: { ...config.portfolio, maxPositions: 0 },
+  }
+  const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
+  const bought = (orderId: string, price: number, usd: number, time: number) => ({
+    positionId: 'pos-1', orderId, side: 'buy' as const, time, price, qty: usd / price, costUsd: 0.05, comment: orderId, idempotencyKey: `pos-1:${orderId}`,
+  })
+
+  it('allocates one entry at about $10.63, and trims a rung funded but not bought back to it', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [] })
+    await store.savePosition(position({ capitalUsd: capitalForFillsUsd([10, 15], 0.05), lastBarTime: NOW }))
+    await store.recordFill(bought('Entry', 1, 10, NOW - HOUR))
+
+    await runCycle(deps, cfgA, throttle)
+
+    expect(ONE_ENTRY).toBeCloseTo(10.63, 2)
+    expect((await store.loadPositions())[0]?.capitalUsd).toBeCloseTo(ONE_ENTRY, 6)
+  })
+
+  it('never trims under what the rungs bought — and DCA-3 is funded and filled from there', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [] })
+    await store.savePosition(position({ capitalUsd: capitalForFillsUsd([10, 15, 20], 0.05), lastBarTime: NOW }))
+    await store.recordFill(bought('Entry', 1, 10, NOW - HOUR))
+    await store.recordFill(bought('DCA-1', 0.9, 15, NOW - HOUR / 2))
+    await store.recordFill(bought('DCA-2', 0.85, 20, NOW - HOUR / 4))
+
+    await runCycle(deps, cfgA, throttle)
+
+    const trimmed = (await store.loadPositions())[0]!
+    expect(trimmed.capitalUsd).toBeCloseTo(45, 6)
+
+    const fund = fundRungsFromFreeCapital({ store, totalCapitalUsd: 1_000, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd })
+    const funded = await fund(trimmed, 4)
+    expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25], 0.05), 9)
+
+    const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: funded!.capitalUsd, maxOpenEntries: A.maxOpenEntries, quality: () => quality })
+    broker.seed(await store.fillsFor('pos-1'))
+    const fills = broker.execute([{ kind: 'entry', id: 'DCA-3', level: 3, usd: 25, qty: 25 / 0.8, comment: 'DCA-3' }], 0.8, NOW)
+    expect(fills.map((f) => f.id)).toEqual(['DCA-3'])
+  })
+})
+
 describe('runCycle — a rung funded between steps is never written back over', () => {
   // The known bug class, from the side of the new funding: "the trim wrote over
   // what the tick had just decided". A sweep raises a position's capital when a
@@ -2587,7 +2639,7 @@ describe('runCycle — a rung funded between steps is never written back over', 
       ...built.deps,
       dropLadder: {
         policy: { maxEntries: 4, dropsPct: [10, 20, 30] },
-        rungUsd: 15,
+        rungsUsd: [15, 15, 15],
         fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: 40, params: FLAT_15, gasUsdPerSwap: 0.05 }),
       },
     }

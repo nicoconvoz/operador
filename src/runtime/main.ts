@@ -297,8 +297,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     const broker = new PaperBroker({
       gasUsdPerSwap: config.gasUsdPerSwap,
       initialCapital: position.capitalUsd,
-      // Three DCAs plus the entry. The reference's ten stays in PYRAMIDING,
-      // which the parity harness asserts; production composes its own.
+      // Five DCAs plus the entry — ladder A. The reference's ten stays in
+      // PYRAMIDING, which the parity harness asserts; production composes its
+      // own.
       maxOpenEntries: config.maxDcaPerToken + 1,
       quality: () => position.quality,
     })
@@ -330,6 +331,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // the price ladder buys from the stop's sweep. Two paths buying rungs
     // would buy the same dip twice.
     minGapPct: 100,
+    // The floor of the exit's derived target: never sell under +20%.
+    minProfitPct: config.minProfitPct,
     maxUsdPerLevel: config.maxUsdPerLevel,
     dropInitPct: config.dropInitPct,
     impatientProfitPct: config.impatientProfitPct,
@@ -341,8 +344,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    * the same definition of free the allocator opens positions with. A slot is
    * allocated its first buy only (`DEFAULT_RESERVED_ENTRIES`), so every rung,
    * on either ladder, pays for itself here or waits.
+   *
+   * Priced at the rungs' OWN sizes — ladder A's $15 to $35 — on top of the
+   * first buy `params` sizes. Priced as a flat ladder instead, DCA-5 would be
+   * funded for ten dollars and the broker would refuse its thirty-five.
    */
   const fundRung = fundRungsFromFreeCapital({
+    store,
+    totalCapitalUsd: config.totalCapitalUsd,
+    params,
+    gasUsdPerSwap: config.gasUsdPerSwap,
+    rungsUsd: config.dcaRungsUsd,
+  })
+  // The pressure ladder buys ONE size, `maxUsdPerLevel`, so it is priced flat:
+  // the same funding, without ladder A's list.
+  const fundPressureRung = fundRungsFromFreeCapital({
     store,
     totalCapitalUsd: config.totalCapitalUsd,
     params,
@@ -393,11 +409,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         previous: new Map<string, number>(),
         gone: new Set<string>(),
         gasUsdPerSwap: config.gasUsdPerSwap,
-        // Same funding as the price ladder: a slot holds its first buy only.
-        fund: fundRung,
+        // Same funding as the price ladder — a slot holds its first buy only —
+        // priced at this ladder's one size.
+        fund: fundPressureRung,
       } } : {}),
-    // *Apliquemos la configuración completa.* Three $15 rungs, at −10, −20
-    // and −30% of the FIRST buy, bought by the sweep every thirty seconds.
+    // *Arriesguémonos, activá la A.* Five rungs of $15, $20, $25, $30 and $35
+    // at −10, −15, −20, −25 and −30% of a $10 FIRST buy, bought by the sweep
+    // every thirty seconds. It was three $15 rungs at −10, −20 and −30%.
     //
     // Each pays for itself: a slot is allocated its first buy only, so a rung
     // asks the book's FREE capital for one more entry — the same definition
@@ -406,7 +424,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // both read these deps.
     dropLadder: {
       policy: { maxEntries: config.maxDcaPerToken + 1, dropsPct: config.dcaDropsPct },
-      rungUsd: config.maxUsdPerLevel,
+      rungsUsd: config.dcaRungsUsd,
       fund: fundRung,
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
@@ -945,7 +963,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.maxDcaPerToken + 1,
       // What a slot's capital pays for: its first buy. The venue still holds
-      // four entries; the rungs are funded from the free capital as they fire.
+      // six entries; the rungs are funded from the free capital as they fire.
       reservedEntries: config.reservedEntries,
       // The ladder is sized for the rungs that can actually fill. Sizing for
       // ten while the venue holds six would reserve capital for four rungs

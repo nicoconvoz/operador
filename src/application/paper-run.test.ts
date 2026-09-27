@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deployableCapital, ladderCapitalUsd, paperRun, scaledParams, slotFloorUsd, type PaperRunConfig } from './paper-run.js'
+import { capitalForFillsUsd, deployableCapital, ladderCapitalUsd, paperRun, scaledParams, slotFloorUsd, type PaperRunConfig } from './paper-run.js'
 import { sizeLadder, DEFAULT_SIZING_POLICY } from '../domain/economics/sizing.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { usdForLevel } from '../domain/strategy/ladder.js'
@@ -157,6 +157,26 @@ describe('ladderCapitalUsd — the wallet a ladder needs, and not a dollar more'
     const short = { ...flat15, maxLevels: 2 }
     // maxLevels 2 means the entry plus two rungs, whatever the venue allows.
     expect(ladderCapitalUsd(short, 10, 0)).toBeCloseTo(ladderCapitalUsd(short, 3, 0), 6)
+  })
+})
+
+describe('capitalForFillsUsd — the same allowance, for fills of any sizes', () => {
+  // Ladder A buys $10, then $15, $20, $25, $30 and $35: not a flat ladder, so
+  // it cannot be priced by `ladderCapitalUsd` alone. ONE formula for both, or
+  // the allocator and the rung funder disagree about what a rung costs.
+  const flat15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+
+  it('is what the flat ladder is priced with — the flat one is a special case', () => {
+    expect(ladderCapitalUsd(flat15, 4, 0.05)).toBeCloseTo(capitalForFillsUsd([15, 15, 15, 15], 0.05), 9)
+  })
+
+  it('grosses the fills up for the price headroom and adds gas for each buy and the one sell', () => {
+    // $10 + $15 is $25 of fills: 25 / 0.95, plus three swaps of gas.
+    expect(capitalForFillsUsd([10, 15], 0.05)).toBeCloseTo(25 / 0.95 + 0.15, 9)
+  })
+
+  it('prices the whole of ladder A at about $142', () => {
+    expect(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05)).toBeCloseTo(135 / 0.95 + 0.35, 9)
   })
 })
 

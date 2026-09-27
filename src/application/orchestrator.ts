@@ -9,7 +9,7 @@ import { type CascadeParams } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
 import { type Candles } from './replay.js'
 import { type EntryConfirmation } from './confirm-entry.js'
-import { tickPosition, type TickResult } from './engine.js'
+import { tickPosition, type EngineConfig, type TickResult } from './engine.js'
 import { releasableSlots, DEFAULT_IDLE_SLOT_POLICY, type IdleSlotPolicy } from '../domain/risk/idle-slots.js'
 import { rotateOnSwitchOff, ROTATION_EXIT_COMMENT, SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { scoreFell, SCORE_STOP_COMMENT } from '../domain/risk/score-stop.js'
@@ -379,37 +379,9 @@ export async function runCycle(
   }
 
   // ── 2. Advance every position that can be trusted ──────────────────────────
-  /**
-   * The rules a position runs under, assembled ONCE.
-   *
-   * Two tick sites read it now — the ordinary pass over the book, and the
-   * first tick of a position opened this same cycle. Two copies would
-   * eventually disagree about which rules a brand new position runs under,
-   * which is the drift this codebase has paid for at every seam it has.
-   */
-  // Entries' worth of capital a slot is ALLOCATED: one in production, the
-  // whole ladder when a caller says nothing. Never more than the venue holds.
-  const reservedEntries = Math.min(
-    config.reservedEntries ?? config.maxOpenEntries ?? PYRAMIDING,
-    config.maxOpenEntries ?? PYRAMIDING,
-  )
-  const tickConfig = {
-    params: config.params,
-    ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
-    ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
-    ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
-    ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
-    // What the slot's capital pays for: the tick divides by it. The SAME
-    // number the trim and the slot floor below read, or a slot would be sized
-    // for one entry and divided by four.
-    reservedEntries,
-    // Absent means the reference exit target, so the parity harness keeps
-    // meaning what it meant. Present, the tick derives the target from what
-    // this pool actually charges to leave.
-    ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
-
-    ...(config.sizing ? { sizing: config.sizing } : {}),
-  }
+  // The rules a position runs under, assembled ONCE — see `tickConfigFrom`.
+  const tickConfig = tickConfigFrom(config)
+  const { reservedEntries } = tickConfig
 
   const ticks: TickResult[] = []
   const unreachableIds: string[] = []
@@ -1392,6 +1364,41 @@ export async function runCycle(
 function freezeEvidence(position: PersistedPosition): string[] {
   const details = [...position.deathWatch.evidence].reverse().flatMap((record) => record.signals.map((signal) => signal.detail))
   return [...new Set(details)].slice(0, 3)
+}
+
+/**
+ * The rules a position runs under, assembled ONCE.
+ *
+ * Two tick sites read it — the ordinary pass over the book, and the first tick
+ * of a position opened this same cycle. Two copies would eventually disagree
+ * about which rules a brand new position runs under, which is the drift this
+ * codebase has paid for at every seam it has. Exported so the composition root
+ * is tested on the path the engine runs, not on a copy of it.
+ */
+export function tickConfigFrom(config: CycleConfig): EngineConfig & { readonly reservedEntries: number } {
+  // Entries' worth of capital a slot is ALLOCATED: one in production, the
+  // whole ladder when a caller says nothing. Never more than the venue holds.
+  const reservedEntries = Math.min(
+    config.reservedEntries ?? config.maxOpenEntries ?? PYRAMIDING,
+    config.maxOpenEntries ?? PYRAMIDING,
+  )
+  return {
+    params: config.params,
+    ...(config.deathPolicy ? { deathPolicy: config.deathPolicy } : {}),
+    ...(config.exitOnFreeze === true ? { exitOnFreeze: true } : {}),
+    ...(config.gasUsdPerSwap !== undefined ? { gasUsdPerSwap: config.gasUsdPerSwap } : {}),
+    ...(config.maxOpenEntries !== undefined ? { maxOpenEntries: config.maxOpenEntries } : {}),
+    // What the slot's capital pays for: the tick divides by it. The SAME
+    // number the trim and the slot floor read, or a slot would be sized for
+    // one entry and divided by six.
+    reservedEntries,
+    // Absent means the reference exit target, so the parity harness keeps
+    // meaning what it meant. Present, the tick derives the target from what
+    // this pool actually charges to leave.
+    ...(config.maxCostSharePct !== undefined ? { maxCostSharePct: config.maxCostSharePct } : {}),
+
+    ...(config.sizing ? { sizing: config.sizing } : {}),
+  }
 }
 
 /**
