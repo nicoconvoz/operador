@@ -16,7 +16,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     // capital for its own dollars when it fires.
     expect(productionLadder({})).toEqual({
       maxUsdPerLevel: 10, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], reservedEntries: 1,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', reservedEntries: 1,
     })
   })
 

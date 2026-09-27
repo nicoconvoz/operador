@@ -90,7 +90,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('buys ladder A: five rungs of $15..$35 at −10..−30% of the first buy, each funded from the free capital', () => {
     // *Arriesguémonos, activá la A.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dropLadder?.policy).toEqual({ maxEntries: 6, dropsPct: [10, 15, 20, 25, 30] })
+    expect(deps.dropLadder?.policy).toEqual({ maxEntries: 6, dropsPct: [10, 15, 20, 25, 30], from: 'previous' })
     expect(deps.dropLadder?.rungsUsd).toEqual([15, 20, 25, 30, 35])
     expect(deps.dropLadder?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(6)

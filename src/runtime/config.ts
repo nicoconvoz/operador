@@ -239,10 +239,12 @@ export interface RuntimeConfig {
   readonly rotateOnFilter: boolean
   /** Whether the buy-pressure ladder and its sale run at all. */
   readonly pressure: boolean
-  /** How far under the FIRST buy each DCA rung buys, in percent, DCA-1 first. */
+  /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
   readonly dcaRungsUsd: readonly number[]
+  /** What each drop is measured from: the previous buy in production. */
+  readonly dcaFrom: 'first' | 'previous'
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -580,6 +582,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // The rungs' triggers and sizes, from the module the dashboard reads too.
     dcaDropsPct: productionLadder(env).dcaDropsPct,
     dcaRungsUsd: productionLadder(env).dcaRungsUsd,
+    dcaFrom: productionLadder(env).dcaFrom,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings

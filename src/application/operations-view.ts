@@ -159,7 +159,12 @@ export interface OperationsOptions {
    * buys on. Drawn instead of the pressure ladder when given. Without sizes,
    * each rung is drawn at the reference level's.
    */
-  readonly dropLadder?: { readonly dropsPct: readonly number[]; readonly rungsUsd?: readonly number[] }
+  readonly dropLadder?: {
+    readonly dropsPct: readonly number[]
+    readonly rungsUsd?: readonly number[]
+    /** What each drop is measured from, the way the engine buys it. Absent: the first buy. */
+    readonly from?: 'first' | 'previous'
+  }
   readonly pressureLadder?: {
     readonly threshold: number
     readonly pressureOf?: (position: PersistedPosition) => Promise<number | null>
@@ -352,12 +357,23 @@ function dropRungs(
   waitingOn: number,
 ): LadderRung[] {
   const first = filledByLevel.get(0)?.price ?? null
+  // Measured from the previous buy, each line hangs off the rung before it:
+  // what that rung actually paid once it has filled, and its own line until
+  // then — where it would be if every rung filled exactly on its line.
+  const lines: (number | null)[] = [null]
+  let anchor = first
+  for (let level = 1; level < fillable; level++) {
+    const drop = ladder.dropsPct[level - 1]
+    const base = ladder.from === 'previous' ? anchor : first
+    const line = base === null || drop === undefined ? null : base * (1 - drop / 100)
+    lines.push(line)
+    anchor = filledByLevel.get(level)?.price ?? line
+  }
   return Array.from({ length: fillable }, (_, level) => {
     const fill = filledByLevel.get(level)
-    const drop = level === 0 ? undefined : ladder.dropsPct[level - 1]
     return {
       level,
-      triggerPrice: first === null || drop === undefined ? null : first * (1 - drop / 100),
+      triggerPrice: lines[level] ?? null,
       nominalUsd: dropRungUsd(ladder, params, level),
       filled: fill !== undefined,
       fillPrice: fill?.price ?? null,
@@ -381,18 +397,21 @@ function dropLocks(
   if (buys.length === 0 || buys.length >= fillable) return null
   const drop = ladder.dropsPct[buys.length - 1]
   if (drop === undefined) return null
-  const first = [...buys].sort((a, b) => a.time - b.time)[0]!
-  const line = first.price * (1 - drop / 100)
+  const sorted = [...buys].sort((a, b) => a.time - b.time)
+  const previous = ladder.from === 'previous'
+  const anchor = previous ? sorted[sorted.length - 1]! : sorted[0]!
+  const line = anchor.price * (1 - drop / 100)
   const id = `DCA-${buys.length}`
   const usd = `$${dropRungUsd(ladder, params, buys.length).toFixed(2)}`
   const reached = price !== null && price <= line
+  const since = previous ? 'la compra anterior' : 'la primera compra'
   return [
     {
       name: 'drop',
       held: reached,
       detail: reached
         ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra ${usd} en este barrido`
-        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} (${drop}% bajo la primera compra); va en ${price === null ? '—' : price.toPrecision(4)}`,
+        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} (${drop}% bajo ${since}); va en ${price === null ? '—' : price.toPrecision(4)}`,
     },
   ]
 }

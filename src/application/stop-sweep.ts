@@ -633,19 +633,27 @@ async function buyOnDrop(
   // starts its ladder again from the new entry.
   const buys = holdingBuys(fills)
   const first = buys[0]
-  if (!first) return
-  const rung = nextDropRung({ entries: buys.length, firstBuyPrice: first.price, priceUsd: price }, ladder.policy)
+  const last = buys[buys.length - 1]
+  if (!first || !last) return
+  const rung = nextDropRung(
+    { entries: buys.length, firstBuyPrice: first.price, lastBuyPrice: last.price, priceUsd: price },
+    ladder.policy,
+  )
   if (rung === null) return
+  // Said against the anchor the rule measured from, so the alert explains the
+  // rule that fired rather than another one.
+  const anchor = ladder.policy.from === 'previous' ? last : first
+  const since = ladder.policy.from === 'previous' ? 'la compra anterior' : 'la primera compra'
   // Its OWN size. A rung the list has no size for is not bought at some other
   // rung's: that would be a trade nobody priced.
   const usd = ladder.rungsUsd[rung - 1]
   if (usd === undefined || !(usd > 0)) return
   const id = `DCA-${rung}`
-  const fell = ((1 - price / first.price) * 100).toFixed(1)
+  const fell = ((1 - price / anchor.price) * 100).toFixed(1)
 
   const funded = ladder.fund ? await ladder.fund(position, buys.length + 1) : position
   if (funded === null) {
-    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde la primera compra`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
+    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde ${since}`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
     return
   }
 
@@ -664,7 +672,7 @@ async function buyOnDrop(
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `El precio cayó ${fell}% desde la primera compra (${first.price}). Compró $${usd.toFixed(2)} a ${price}.`,
+    `El precio cayó ${fell}% desde ${since} (${anchor.price}). Compró $${usd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )

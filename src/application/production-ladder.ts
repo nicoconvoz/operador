@@ -160,6 +160,15 @@ export const DEFAULT_DCA_DROPS_PCT: readonly number[] = [10, 15, 20, 25, 30]
 export const DEFAULT_DCA_RUNGS_USD: readonly number[] = [15, 20, 25, 30, 35]
 
 /**
+ * Each drop is measured from the PREVIOUS buy, not the first: *con respecto al
+ * anterior — aplicá mi lógica, aunque ganemos menos.* The lines land at −10,
+ * −23.5, −38.8, −54 and −68% of the first buy. See `drop-ladder.ts` for what
+ * the replay priced it at. `OPERADOR_DCA_FROM=first` puts them back on the
+ * first buy.
+ */
+export const DEFAULT_DCA_FROM = 'previous' as const
+
+/**
  * How many entries' worth of capital a position is ALLOCATED when it opens.
  * ONE: the first buy. Each rung asks the book's free capital for its own
  * dollars at the moment it fires, and waits a sweep when there is none.
@@ -265,10 +274,12 @@ export interface ProductionLadder {
   readonly impatientProfitPct: number
   /** Gain above which it waits none at all. */
   readonly urgentProfitPct: number
-  /** How far under the FIRST buy each rung buys, in percent, DCA-1 first. */
+  /** How far under its anchor each rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each rung buys, in dollars, DCA-1 first — one per drop. */
   readonly dcaRungsUsd: readonly number[]
+  /** What each drop is measured from: the first buy, or the previous one. */
+  readonly dcaFrom: 'first' | 'previous'
   /**
    * Entries' worth of capital a position is allocated when it opens. Never
    * more than `maxOpenEntries`; the rest is asked of the free capital when a
@@ -355,6 +366,7 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),
     dcaDropsPct,
     dcaRungsUsd: sizes(env.OPERADOR_DCA_RUNGS_USD, DEFAULT_DCA_RUNGS_USD, dcaDropsPct.length),
+    dcaFrom: env.OPERADOR_DCA_FROM?.trim().toLowerCase() === 'first' ? 'first' : DEFAULT_DCA_FROM,
     // Capped by what the venue holds: reserving capital for an entry the
     // broker will refuse is capital held against nothing.
     reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),

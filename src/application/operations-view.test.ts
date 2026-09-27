@@ -632,18 +632,28 @@ describe('buildOperations — ladder A, as the dashboard composes it', () => {
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
     maxOpenEntries: A.maxOpenEntries,
-    dropLadder: { dropsPct: A.dcaDropsPct, rungsUsd: A.dcaRungsUsd },
+    dropLadder: { dropsPct: A.dcaDropsPct, rungsUsd: A.dcaRungsUsd, from: A.dcaFrom },
   }
   const held = { cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.95 }
 
-  it('draws six boxes, each at its own size and its own line', async () => {
+  it('draws six boxes, each at its own size, each line under the one before', async () => {
+    // *Con respecto al anterior.* Nothing past DCA-1 is bought yet, so each
+    // later line is drawn under the line before it: where it would be if every
+    // rung filled exactly on its line.
     const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held)
     const [p] = (await buildOperations(store, ladder)).positions
     expect(p!.ladder).toHaveLength(6)
     expect(p!.ladder.map((r) => r.nominalUsd)).toEqual([10, 15, 20, 25, 30, 35])
     expect(p!.ladder[0]!.triggerPrice).toBeNull()
-    expect(p!.ladder.slice(1).map((r) => r.triggerPrice)).toEqual([0.9, 0.85, 0.8, 0.75, 0.7].map((x) => expect.closeTo(x, 9)))
+    expect(p!.ladder.slice(1).map((r) => r.triggerPrice)).toEqual([0.9, 0.765, 0.612, 0.459, 0.3213].map((x) => expect.closeTo(x, 9)))
     expect(p!.ladder.map((r) => r.pending)).toEqual([false, true, false, false, false, false])
+  })
+
+  it('measures the next line from what the last rung actually paid', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN), fill('DCA-1', 0.88, 15 / 0.88, NOW - 20 * MIN)], held)
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder[2]!.triggerPrice).toBeCloseTo(0.748, 9)
+    expect(p!.ladder[3]!.triggerPrice).toBeCloseTo(0.748 * 0.8, 9)
   })
 
   it('names the next rung, what it buys and where', async () => {
@@ -655,8 +665,8 @@ describe('buildOperations — ladder A, as the dashboard composes it', () => {
     const detail = p!.locks![0]!.detail
     expect(detail).toContain('DCA-3')
     expect(detail).toContain('$25')
-    expect(detail).toContain('0.8000')
-    expect(detail).toContain('20% bajo la primera compra')
+    expect(detail).toContain('0.6800')
+    expect(detail).toContain('20% bajo la compra anterior')
   })
 
   it('has nothing to wait on once all five are bought', async () => {

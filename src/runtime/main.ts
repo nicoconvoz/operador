@@ -423,7 +423,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // there is none. One `fund` for the cycle's sweeps and the loop's, since
     // both read these deps.
     dropLadder: {
-      policy: { maxEntries: config.maxDcaPerToken + 1, dropsPct: config.dcaDropsPct },
+      policy: { maxEntries: config.maxDcaPerToken + 1, dropsPct: config.dcaDropsPct, from: config.dcaFrom },
       rungsUsd: config.dcaRungsUsd,
       fund: fundRung,
     },

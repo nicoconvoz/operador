@@ -103,7 +103,7 @@ const rig = async (options: {
     ...(options.drop === 'A'
       ? {
           dropLadder: {
-            policy: { maxEntries: A.maxOpenEntries, dropsPct: A.dcaDropsPct },
+            policy: { maxEntries: A.maxOpenEntries, dropsPct: A.dcaDropsPct, from: A.dcaFrom },
             rungsUsd: A.dcaRungsUsd,
             ...(options.bookUsd !== undefined
               ? { fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd }) }
@@ -469,14 +469,35 @@ describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35'
   const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
   const held = position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.8 })
   const buys = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
-  // Just under each line, so no rung rides on how 1 − 0.15 rounds.
-  const LINES = [0.899, 0.849, 0.799, 0.749, 0.699]
+  // Just under each line, each measured from the rung before it — *con
+  // respecto al anterior*: 0.899, then 15% under that, 20% under the next…
+  const LINES = [0.899, 0.764, 0.611, 0.458, 0.32]
 
   it('is what production reads with nothing set', () => {
     expect(A.maxUsdPerLevel).toBe(10)
     expect(A.maxOpenEntries).toBe(6)
     expect(A.dcaDropsPct).toEqual([10, 15, 20, 25, 30])
     expect(A.dcaRungsUsd).toEqual([15, 20, 25, 30, 35])
+    expect(A.dcaFrom).toBe('previous')
+  })
+
+  it('waits for 15% under DCA-1, not for 15% under the first buy', async () => {
+    // WORLD, live: −44% in a minute bought all five rungs, each 5–6% under the
+    // one before. Measured from the previous buy, 0.80 is only 9% under DCA-1.
+    const { store, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.88)
+    await run(0.8)
+    expect((await buys(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    await run(0.748)
+    expect((await buys(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2'])
+  })
+
+  it('says how far it fell from the previous buy', async () => {
+    const { sent, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.88)
+    await run(0.748)
+    // The rung pays the spread on top of 0.88, so the fall reads a hair over 15%.
+    expect(sent.find((a) => a.title.includes('DCA-2'))?.body).toMatch(/15\.\d% desde la compra anterior/)
   })
 
   it('buys each rung at its own size, and DCA-5’s $35 goes through after DCA-1..4', async () => {
@@ -495,7 +516,7 @@ describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35'
     expect(await buys(store)).toHaveLength(6)
   })
 
-  it('waits above a line: −12% is past DCA-1 and short of DCA-2', async () => {
+  it('waits above a line: a price that holds after DCA-1 buys nothing more', async () => {
     const { store, run } = await rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
     await run(0.88)
     await run(0.88)
