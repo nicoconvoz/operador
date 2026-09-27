@@ -1,8 +1,16 @@
 /**
  * How far apart a token's DCA rungs are, from how much the token MOVES: the
- * more it moves, the CLOSER its rungs.
+ * more it moves, the WIDER its rungs.
  *
- * *Aplicá el de en la línea, la propuesta.* The operator, on a replay of the
+ * *Confío más en mi criterio que en tus cálculos: hacé que el piso de los DCA
+ * sea más largo y más separado para las volátiles, según detecte volatilidad, y
+ * más cortos y rápidos para las tranquilas.* The operator, overruling the
+ * replay below on purpose and with the number in front of him: the wider
+ * direction priced at $131–263 against $394. This is the square-root form, the
+ * least costly of his direction, and the live run is what will settle it.
+ *
+ * It shipped the other way first — *aplicá el de en la línea, la propuesta* —
+ * on this replay of the
  * 336 real entries (2026-09-23 → 09-27, 5-minute Jupiter closes, 0.66% a fill,
  * the real freezes applied, split in time at 09-25 05:30), the exit modelled
  * at +10%, every ladder chained from the previous buy:
@@ -25,19 +33,20 @@
  * NUMBER of rungs as well added $4, which is noise; waiting for a lateral base
  * before each rung lost in all nine definitions tried ($39–$155).
  *
- * `scale = clamp(sqrt(2.7 / volPct), 0.5, 3)`, and each rung's drop is
- * `min(90, dropsPct[n-1] × scale)` — the square root and the bounds are the
- * shape the replay priced, and 2.7% is the median volatility of the entries
- * it replayed, so a median token keeps the base ladder exactly.
+ * NOW: `scale = clamp(sqrt(volPct / 2.7), 0.5, 3)`, and each rung's drop is
+ * `min(90, dropsPct[n-1] × scale)`. 2.7% is the median volatility of the
+ * entries replayed, so a median token keeps the base ladder exactly; a calm
+ * one (1% a bar) buys at 6.1/9.1/12.2/15.2/18.3 and a wild one (10% a bar)
+ * waits at 19.2/28.9/38.5/48.1/57.7 under the previous buy.
  *
  * Pure: the caller brings the closes.
  */
 export interface DcaScalePolicy {
   /** The volatility at which the base drops apply unchanged, in percent a bar. */
   readonly medianVolPct: number
-  /** The tightest the ladder may get: half the base drops. */
+  /** The tightest the ladder may get — a calm token: half the base drops. */
   readonly minScale: number
-  /** The widest: three times the base drops. */
+  /** The widest — a wild token: three times the base drops. */
   readonly maxScale: number
   /** No rung ever waits for more than this fall, in percent. */
   readonly maxDropPct: number
@@ -82,7 +91,7 @@ export function dcaScale(volPct: number | null, policy: DcaScalePolicy = DEFAULT
  */
 export function measuredDcaScale(volPct: number | null, policy: DcaScalePolicy = DEFAULT_DCA_SCALE_POLICY): number | null {
   if (volPct === null || !Number.isFinite(volPct) || !(volPct > 0)) return null
-  const raw = Math.sqrt(policy.medianVolPct / volPct)
+  const raw = Math.sqrt(volPct / policy.medianVolPct)
   return Math.min(policy.maxScale, Math.max(policy.minScale, raw))
 }
 

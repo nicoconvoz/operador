@@ -2,38 +2,39 @@ import { describe, it, expect } from 'vitest'
 import { dcaScale, measuredDcaScale, dropLabel, scaledDropPct, volatilityPct, volatilityBefore, DEFAULT_DCA_SCALE_POLICY } from './dca-scale.js'
 
 /**
- * *Aplicá el de en la línea, la propuesta.* The more a token moves, the CLOSER
- * its rungs: `scale = clamp(sqrt(2.7 / vol), 0.5, 3)`, each drop times it,
- * never past 90%.
+ * *Confío más en mi criterio que en tus cálculos: hacé que el piso de los DCA
+ * sea más largo y más separado para las volátiles, y más cortos y rápidos para
+ * las tranquilas.* The more a token moves, the WIDER its rungs:
+ * `scale = clamp(sqrt(vol / 2.7), 0.5, 3)`, each drop times it, never past 90%.
  */
 const BASE = [10, 15, 20, 25, 30]
 const ladderAt = (volPct: number | null) => BASE.map((drop) => scaledDropPct(drop, dcaScale(volPct)))
 
-describe('dcaScale — the more it moves, the closer the rungs', () => {
+describe('dcaScale — the more it moves, the wider the rungs', () => {
   it('leaves the base drops alone at the median volatility, 2.7%', () => {
     expect(dcaScale(2.7)).toBe(1)
     expect(ladderAt(2.7)).toEqual(BASE)
   })
 
-  it('spreads a CALM token: 1% a bar waits at 16.4 / 24.6 / 32.9 / 41.1 / 49.3', () => {
-    expect(dcaScale(1)).toBeCloseTo(1.643, 3)
-    expect(ladderAt(1).map((d) => Number(d.toFixed(1)))).toEqual([16.4, 24.6, 32.9, 41.1, 49.3])
+  it('tightens a CALM token: 1% a bar buys at 6.1 / 9.1 / 12.2 / 15.2 / 18.3', () => {
+    expect(dcaScale(1)).toBeCloseTo(0.609, 3)
+    expect(ladderAt(1).map((d) => Number(d.toFixed(1)))).toEqual([6.1, 9.1, 12.2, 15.2, 18.3])
   })
 
-  it('tightens a VOLATILE token: 10% a bar buys at 5.2 / 7.8 / 10.4 / 13.0 / 15.6', () => {
-    expect(dcaScale(10)).toBeCloseTo(0.52, 3)
-    expect(ladderAt(10).map((d) => Number(d.toFixed(1)))).toEqual([5.2, 7.8, 10.4, 13.0, 15.6])
+  it('spreads a VOLATILE token: 10% a bar waits at 19.2 / 28.9 / 38.5 / 48.1 / 57.7', () => {
+    expect(dcaScale(10)).toBeCloseTo(1.925, 3)
+    expect(ladderAt(10).map((d) => Number(d.toFixed(1)))).toEqual([19.2, 28.9, 38.5, 48.1, 57.7])
   })
 
   it('caps the spread at three times, and no rung past 90%', () => {
-    expect(dcaScale(0.1)).toBe(3)
-    expect(ladderAt(0.1)).toEqual([30, 45, 60, 75, 90])
+    expect(dcaScale(50)).toBe(3)
+    expect(ladderAt(50)).toEqual([30, 45, 60, 75, 90])
     expect(scaledDropPct(40, 3)).toBe(90)
   })
 
   it('floors the tightening at half', () => {
-    expect(dcaScale(50)).toBe(0.5)
-    expect(ladderAt(50)).toEqual([5, 7.5, 10, 12.5, 15])
+    expect(dcaScale(0.1)).toBe(0.5)
+    expect(ladderAt(0.1)).toEqual([5, 7.5, 10, 12.5, 15])
   })
 
   it('is ONE when nothing was measured — silence is not evidence', () => {
@@ -49,7 +50,7 @@ describe('dcaScale — the more it moves, the closer the rungs', () => {
 
   it('tells a caller that stores it "nobody knows" apart from "measured, and ordinary"', () => {
     expect(measuredDcaScale(2.7)).toBe(1)
-    expect(measuredDcaScale(10)).toBeCloseTo(0.52, 3)
+    expect(measuredDcaScale(10)).toBeCloseTo(1.925, 3)
     for (const silent of [null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(measuredDcaScale(silent)).toBeNull()
   })
 })
@@ -57,8 +58,8 @@ describe('dcaScale — the more it moves, the closer the rungs', () => {
 describe('dropLabel — the line as the operator reads it', () => {
   it('keeps a whole number whole and rounds the rest to one decimal', () => {
     expect(dropLabel(10)).toBe('10')
-    expect(dropLabel(scaledDropPct(10, dcaScale(10)))).toBe('5.2')
-    expect(dropLabel(scaledDropPct(30, dcaScale(1)))).toBe('49.3')
+    expect(dropLabel(scaledDropPct(10, dcaScale(10)))).toBe('19.2')
+    expect(dropLabel(scaledDropPct(30, dcaScale(1)))).toBe('18.3')
   })
 })
 

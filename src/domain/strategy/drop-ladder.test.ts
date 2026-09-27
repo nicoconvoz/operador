@@ -85,26 +85,27 @@ describe('nextDropRung — measured from the PREVIOUS buy', () => {
 })
 
 describe('nextDropRung — at the token’s own scale', () => {
-  // *Aplicá el de en la línea, la propuesta.* The more a token moves, the
-  // closer its rungs: each drop times `dcaScale(volPct)`, never past 90%.
+  // *Más largo y más separado para las volátiles, más cortos y rápidos para
+  // las tranquilas.* The more a token moves, the WIDER its rungs: each drop
+  // times `dcaScale(volPct)`, never past 90%.
   const policy = { maxEntries: 6, dropsPct: [10, 15, 20, 25, 30], from: 'previous' as const }
   const at = (scale: number | undefined, priceUsd: number, entries = 1, lastBuyPrice = 1) =>
     nextDropRung({ entries, firstBuyPrice: 1, lastBuyPrice, priceUsd, ...(scale === undefined ? {} : { scale }) }, policy)
 
-  it('buys DCA-1 of a token moving 10% a bar at −5.2%, and waits at −5%', () => {
-    expect(at(dcaScale(10), 0.95)).toBeNull()
-    expect(at(dcaScale(10), 0.948)).toBe(1)
+  it('waits for DCA-1 of a token moving 10% a bar until −19.2%', () => {
+    expect(at(dcaScale(10), 0.808)).toBeNull()
+    expect(at(dcaScale(10), 0.807)).toBe(1)
   })
 
-  it('waits for DCA-1 of a token moving 1% a bar at −16%, and buys at −16.5%', () => {
-    expect(at(dcaScale(1), 0.84)).toBeNull()
-    expect(at(dcaScale(1), 0.835)).toBe(1)
+  it('buys DCA-1 of a token moving 1% a bar already at −6.1%', () => {
+    expect(at(dcaScale(1), 0.94)).toBeNull()
+    expect(at(dcaScale(1), 0.939)).toBe(1)
   })
 
-  it('chains the scaled drop from the previous buy: DCA-2 of the wild one at 7.8% under DCA-1', () => {
-    // DCA-1 filled at 0.948; 15% × 0.52 = 7.79% under it is 0.8742.
-    expect(at(dcaScale(10), 0.875, 2, 0.948)).toBeNull()
-    expect(at(dcaScale(10), 0.874, 2, 0.948)).toBe(2)
+  it('chains the scaled drop from the previous buy: DCA-2 of the wild one 28.9% under DCA-1', () => {
+    // DCA-1 filled at 0.807; 15% × 1.925 = 28.87% under it is 0.5740.
+    expect(at(dcaScale(10), 0.575, 2, 0.807)).toBeNull()
+    expect(at(dcaScale(10), 0.573, 2, 0.807)).toBe(2)
   })
 
   it('never asks a rung for more than a 90% fall', () => {

@@ -682,9 +682,9 @@ describe('buildOperations — ladder A, as the dashboard composes it', () => {
 })
 
 describe('buildOperations — ladder A at the token’s own scale', () => {
-  // *Aplicá el de en la línea, la propuesta.* The more a token moves, the
-  // closer its rungs — and the screen draws the lines the ENGINE buys on, so a
-  // wild token's DCA-1 sits at −5.2%, not at the −10% of the base list.
+  // *Más largo y más separado para las volátiles.* The more a token moves, the
+  // wider its rungs — and the screen draws the lines the ENGINE buys on, so a
+  // wild token's DCA-1 sits at −19.2%, not at the −10% of the base list.
   const A = productionLadder({})
   const ladder = (adaptive: boolean) => ({
     ...options,
@@ -701,14 +701,14 @@ describe('buildOperations — ladder A at the token’s own scale', () => {
     let line = 1
     const expected = A.dcaDropsPct.map((drop) => (line = line * (1 - (drop * WILD) / 100)))
     expect(p!.ladder.slice(1).map((r) => r.triggerPrice)).toEqual(expected.map((x) => expect.closeTo(x, 9)))
-    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.948, 3)
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.8075, 3)
   })
 
   it('names the line the next rung is waiting for at the position’s scale', async () => {
     const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held({ dcaScale: WILD }))
     const [p] = (await buildOperations(store, ladder(true))).positions
-    expect(p!.locks![0]!.detail).toContain('0.9480')
-    expect(p!.locks![0]!.detail).toContain('5.2% bajo la compra anterior')
+    expect(p!.locks![0]!.detail).toContain('0.807')
+    expect(p!.locks![0]!.detail).toContain('19.2% bajo la compra anterior')
   })
 
   it('draws the base lines for a position with no scale yet, or with the switch off', async () => {

@@ -538,9 +538,9 @@ describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35'
   })
 })
 
-describe('ladder A at the token’s own scale: the more it moves, the closer its rungs', () => {
-  // *Aplicá el de en la línea, la propuesta.* A token moving 10% a bar has a
-  // scale of 0.52: DCA-1 at −5.2% of the first buy, DCA-2 at 7.8% under DCA-1.
+describe('ladder A at the token’s own scale: the more it moves, the wider its rungs', () => {
+  // *Más largo y más separado para las volátiles.* A token moving 10% a bar has
+  // a scale of 1.925: DCA-1 at −19.2% of the first buy, DCA-2 28.9% under DCA-1.
   const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
   const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
   const WILD = dcaScale(10)
@@ -551,24 +551,24 @@ describe('ladder A at the token’s own scale: the more it moves, the closer its
     expect(A.dcaAdaptive).toBe(true)
   })
 
-  it('buys DCA-1 of a wild token at −5.2%, and DCA-2 at 7.8% under what DCA-1 paid', async () => {
+  it('waits for DCA-1 of a wild token until −19.2%, and DCA-2 28.9% under what DCA-1 paid', async () => {
     const { store, run } = await rig({ held: held(WILD), drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
-    await run(0.95)
+    await run(0.81)
     expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry'])
-    await run(0.947)
+    await run(0.806)
     const [, dca1] = await bought(store)
     expect(dca1?.orderId).toBe('DCA-1')
-    // 15% × 0.52 = 7.79% under what DCA-1 actually paid.
-    await run(dca1!.price * 0.925)
+    // 15% × 1.925 = 28.87% under what DCA-1 actually paid.
+    await run(dca1!.price * 0.72)
     expect(await bought(store)).toHaveLength(2)
-    await run(dca1!.price * 0.92)
+    await run(dca1!.price * 0.71)
     expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2'])
   })
 
   it('says in the alert the fall the rung waited for', async () => {
     const { sent, run } = await rig({ held: held(WILD), drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
-    await run(0.947)
-    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 5.2%')
+    await run(0.806)
+    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 19.2%')
   })
 
   it('uses the base drops for a position nobody has measured yet', async () => {
