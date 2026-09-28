@@ -30,6 +30,7 @@ export type AlertKind =
   | 'entry-refused'
   | 'order-refused'
   | 'resynced'
+  | 'pnl-unrecorded'
 
 export interface Alert {
   readonly kind: AlertKind
@@ -94,6 +95,10 @@ const LEVELS: Readonly<Record<AlertKind, AlertLevel>> = {
   // read it. An engine that looks busy and is completely still is the failure
   // this project keeps paying for.
   'order-refused': 'warn',
+  // INFO. The day log missed a reading: the Log tab is one sample short, and
+  // nothing was bought, sold or left unwatched. The next cycle writes the next
+  // one. Worth seeing in the feed, never worth a buzz.
+  'pnl-unrecorded': 'info',
 }
 
 export const alert = (kind: AlertKind, title: string, body: string, at: number, data?: Record<string, unknown>): Alert => ({

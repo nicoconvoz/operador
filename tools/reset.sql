@@ -18,6 +18,12 @@
 --
 --   `blacklist` holds the death-exit verdicts. Emptying it lets the scanner
 --   offer you a token that was already proven to be a rug.
+--
+--   `daily_pnl` is the Log tab: the book's result, day by day. It is built
+--   from the same figure the fills produce, so it goes WITH them — a log that
+--   survives the truncate goes on reporting a history the fills no longer hold,
+--   and the "funcionando hace…" counter falls back to it when there are no
+--   fills yet.
 
 -- NOTHING IN THIS FILE RUNS AS IT STANDS. Uncomment the ONE block you mean.
 --
@@ -31,14 +37,15 @@
 -- well it is commented above the line.
 
 -- ── Everything. A genuine fresh start. ──────────────────────────────────────
--- TRUNCATE TABLE positions, fills, checkpoint, blacklist, alerts;
+-- TRUNCATE TABLE positions, fills, checkpoint, blacklist, alerts, daily_pnl;
 -- TRUNCATE TABLE scans, pool_discovery, pool_history, token_security, pool_quiet;
 
 -- ── Or: start the book over, KEEP what was learned ──────────────────────────
 --
 -- Positions and their ladders go; the profit history, the death-exit verdicts
 -- and every cached measurement stay. This is usually what "let's start clean"
--- actually means: a fresh book, not an engine with amnesia.
+-- actually means: a fresh book, not an engine with amnesia. The day log stays
+-- too, because the fills it was measured from stay.
 --
 -- TRUNCATE TABLE positions, checkpoint;
 --

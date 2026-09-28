@@ -29,6 +29,8 @@ import { planRecovery, type OrderProbe, type RecoveredPosition, type RecoveryPla
 import { resyncCascade, RESYNC_TOLERANCE_PCT } from './resync.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 import { meetsAnyDoor, type ComponentFloors } from '../domain/scanner/opportunity.js'
+import { dailySample } from '../domain/reporting/daily-pnl.js'
+import { bookNetUsd } from './book-value.js'
 
 /**
  * The orchestrator — one cycle of the whole system.
@@ -1337,7 +1339,9 @@ export async function runCycle(
     ))
   }
 
-  // ── 4. Checkpoint, then say you are alive ──────────────────────────────────
+  // ── 4. Write the day down, checkpoint, then say you are alive ──────────────
+  await recordTheDay(deps, marketPrices, throttle)
+
   const lastCompletedBar = ticks.reduce((latest, t) => Math.max(latest, t.position.lastBarTime), recovery.resumedFromBar ?? 0)
   await deps.store.saveCheckpoint({ savedAt: at, lastCompletedBar, killSwitchEngaged: recovery.killSwitchEngaged })
 
@@ -1362,6 +1366,45 @@ export async function runCycle(
     unreachableIds,
     killSwitchEngaged: recovery.killSwitchEngaged,
     at,
+  }
+}
+
+/**
+ * One reading of the book's net, folded into today's row of the day log.
+ *
+ * *Un Log para llevar el control de cuánto va ganando cada día, el mínimo y el
+ * máximo de ese día también.* The ENGINE writes it because the dashboard has no
+ * write path, by design — and it writes the headline's own figure through
+ * `bookNetUsd`, the function the screen draws it with, so a row in the Log can
+ * never be a number the headline did not show.
+ *
+ * At the END of the pass, over the book as the pass left it: what the stop
+ * sold, what the tick filled and what 3e just bought are all in the fills by
+ * now. Valued at the prices this pass already fetched, not at a fresh request
+ * — a position opened this pass is not in that map and falls back to its last
+ * price, the same rule the screen follows when the feed is silent.
+ *
+ * NEVER fatal. A reading the Log misses costs the Log one sample of a thousand
+ * that day; a cycle that dies over it costs the book its watch. So a failure
+ * is said once, at info, and the pass goes on.
+ */
+async function recordTheDay(
+  deps: CycleDeps,
+  prices: ReadonlyMap<string, number>,
+  throttle: AlertThrottle,
+): Promise<void> {
+  const at = deps.now()
+  try {
+    const [book, tape] = await Promise.all([deps.store.loadPositions(), deps.store.allFills()])
+    await deps.store.recordDailyPnl(dailySample(bookNetUsd(book, tape, prices), at))
+  } catch (error) {
+    const missed = alert(
+      'pnl-unrecorded',
+      '📒 No se anotó el resultado de este ciclo',
+      `El Log del día queda con una lectura menos; el motor sigue y el próximo ciclo vuelve a anotarlo. ${String(error).slice(0, 200)}`,
+      at,
+    )
+    if (throttle.shouldSend(missed)) await deps.alerts.send(missed)
   }
 }
 

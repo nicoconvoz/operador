@@ -18,6 +18,8 @@ import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { fundRungsFromFreeCapital } from './free-capital.js'
 import { productionLadder } from './production-ladder.js'
 import { dcaScale } from '../domain/strategy/dca-scale.js'
+import { tradingDay } from '../domain/reporting/daily-pnl.js'
+import { buildOperations } from './operations-view.js'
 
 const NOW = 1_800_000_000_000
 const HOUR = 3_600_000
@@ -2742,5 +2744,73 @@ describe('runCycle — the DCA scale is measured by the tick and survives the cy
     await withEntry(store, { dcaScale: 2 })
     await runCycle(deps, { ...config, scoreStopPoints: 5 }, throttle)
     expect((await store.loadPositions()).find((p) => p.id === 'pos-1')?.dcaScale).toBe(2)
+  })
+})
+
+describe('runCycle — every pass writes the day’s result into the Log', () => {
+  // *Un Log para llevar el control de cuánto va ganando cada día, el mínimo y
+  // el máximo de ese día también.* The ENGINE writes it — the dashboard has no
+  // write path, by design — and it writes the headline's own figure, from the
+  // same function the screen draws it with.
+  const book = async (store: MemoryStore) => {
+    // One position still open, bought at 1 …
+    await store.savePosition(position())
+    await store.recordFill({
+      positionId: 'pos-1', orderId: 'Entry', idempotencyKey: 'open-buy', side: 'buy',
+      qty: 20, price: 1, costUsd: 0.1, comment: 'Entry', time: NOW - 3 * HOUR,
+    })
+    // … and one that closed with a sale, long gone from the working set.
+    await store.recordFill({
+      positionId: 'solana:Gone:1', orderId: 'Entry', idempotencyKey: 'gone-buy', side: 'buy',
+      qty: 10, price: 1, costUsd: 0.05, comment: 'Entry', time: NOW - 5 * HOUR,
+    })
+    await store.recordFill({
+      positionId: 'solana:Gone:1', orderId: 'Entry', idempotencyKey: 'gone-sell', side: 'sell',
+      qty: 10, price: 1.5, costUsd: 0.08, comment: '🏁 Exit', time: NOW - 4 * HOUR,
+    })
+  }
+  const prices = new Map([['solana:Held', 1.2]])
+
+  it('records exactly one sample per pass, and it is the headline’s net', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [], marketPrices: async () => prices })
+    await book(store)
+
+    await runCycle(deps, config, throttle)
+
+    const days = await store.dailyPnl(10)
+    expect(days).toHaveLength(1)
+    expect(days[0]!.day).toBe(tradingDay(NOW))
+    expect(days[0]!.samples).toBe(1)
+    // What the headline draws for this store at these prices, to the cent: the
+    // sale banked 5, the open twenty are up 0.2 each, and 0.23 went to the chain.
+    const headline = (await buildOperations(store, { now: () => NOW, params: DEFAULT_PARAMS, livePrices: async () => prices })).totals.netUsd
+    expect(days[0]!.closeUsd).toBe(headline)
+    expect(days[0]!.closeUsd).toBeCloseTo(5 + 20 * 0.2 - 0.23, 9)
+  })
+
+  it('a watch pass writes one too — the book’s value moves whether or not anything is scanned', async () => {
+    const { deps, store, throttle } = rig({ scan: async () => [], marketPrices: async () => prices })
+    await book(store)
+    await runCycle(deps, config, throttle, 'full')
+    await runCycle(deps, config, throttle, 'watch')
+    expect((await store.dailyPnl(10))[0]!.samples).toBe(2)
+  })
+
+  it('a sample that cannot be written costs the Log a reading, never the cycle', async () => {
+    const { deps, store, alerts, throttle } = rig({ scan: async () => [], marketPrices: async () => prices })
+    await book(store)
+    store.recordDailyPnl = async () => {
+      throw new Error('relation "daily_pnl" does not exist')
+    }
+
+    const result = await runCycle(deps, config, throttle)
+
+    expect(result.ticks.find((t) => t.position.id === 'pos-1')).toBeDefined()
+    expect((await store.loadCheckpoint())?.savedAt).toBe(NOW)
+    // Said, once, at info: nothing is at stake, so it never buzzes the phone.
+    const said = alerts.sent.filter((a) => a.kind === 'pnl-unrecorded')
+    expect(said).toHaveLength(1)
+    expect(said[0]!.level).toBe('info')
+    expect(said[0]!.body).toContain('daily_pnl')
   })
 })

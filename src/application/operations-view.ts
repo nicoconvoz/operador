@@ -3,7 +3,8 @@ import { usableScale } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
-import { realisedBySell, commonFund, positionLedger, holdingBuys } from './ledger.js'
+import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
+import { bookNetUsd, valuePosition } from './book-value.js'
 import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 
 /**
@@ -221,13 +222,10 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     // on the ladder: KITTY was drawn with its previous cycle's DCA-1 filled.
     const buys = holdingBuys(fills)
     const costsUsd = fills.reduce((sum, f) => sum + f.costUsd, 0)
-    const { qty, deployedUsd, avgCostUsd, realisedUsd } = positionLedger(fills)
-
-    const live = livePrices.get(`${position.chain}:${position.tokenAddress}`)
-    const priceIsLive = live !== undefined && live > 0
-    const price = priceIsLive ? live : position.lastPriceUsd
-    const marketValueUsd = price !== null && qty > 0 ? qty * price : null
-    const unrealisedUsd = marketValueUsd !== null && avgCostUsd !== null ? (price! - avgCostUsd) * qty : null
+    // Valued by the SAME function the engine's day log uses, so a row in the
+    // Log can never disagree with what this card drew.
+    const { qty, deployedUsd, avgCostUsd, realisedUsd, priceUsd: price, priceIsLive, marketValueUsd, unrealisedUsd } =
+      valuePosition(position, fills, livePrices)
 
     // The ladder: what the strategy planned, against what actually filled.
     const filledByLevel = new Map<number, PersistedFill>()
@@ -330,7 +328,11 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       // and ALSO reported on their own: netting them silently would hide the
       // single largest reason a small-cap strategy fails, which is that the
       // chain takes more than the edge.
-      netUsd: fund.netUsd + built.reduce((s, p) => s + (p.unrealisedUsd ?? 0), 0),
+      //
+      // `bookNetUsd`, never a sum written out here: the engine records this
+      // same figure into the day log every cycle, and two implementations of
+      // "how much are we up" is the drift this read model exists to prevent.
+      netUsd: bookNetUsd(positions, allFills, livePrices),
       buys: tape.filter((f) => f.side === 'buy').length,
       sells: tape.filter((f) => f.side === 'sell').length,
     },

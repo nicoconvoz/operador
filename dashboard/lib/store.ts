@@ -1,6 +1,7 @@
 import { Pool } from 'pg'
 import { PostgresStore } from '../../src/infrastructure/persistence/postgres-store.js'
 import { cacheFor, type CachedRead } from '../../src/application/read-cache.js'
+import { LOG_READ_DAYS } from '../../src/application/daily-log.js'
 
 /**
  * One pool for the whole app. Next.js reuses the module across requests, and
@@ -15,10 +16,11 @@ let cached: {
   positions: () => Promise<Awaited<ReturnType<PostgresStore['loadPositions']>>>
   fills: CachedRead<Awaited<ReturnType<PostgresStore['allFills']>>>
   checkpoint: () => Promise<Awaited<ReturnType<PostgresStore['loadCheckpoint']>>>
+  days: () => Promise<Awaited<ReturnType<PostgresStore['dailyPnl']>>>
 } | null = null
 
 /**
- * The SIX reads the dashboard makes, served from memory while their subject
+ * The SEVEN reads the dashboard makes, served from memory while their subject
  * cannot have changed.
  *
  * The page polls every ten seconds because that is how often the profit can
@@ -39,7 +41,7 @@ let cached: {
  * | Read | Window | Because |
  * |---|---|---|
  * | `latestScansByChain`, `latestScan`, `blacklisted` | 15 min | a scan happens once an HOUR; this still refreshes four times inside one |
- * | `loadPositions`, `allFills`, `loadCheckpoint` | 2 min | the engine ticks every FIVE minutes |
+ * | `loadPositions`, `allFills`, `loadCheckpoint`, `dailyPnl` | 2 min | the engine ticks every FIVE minutes |
  *
  * Both are finer than what they watch, and the arithmetic is what set them
  * rather than comfort: at 5 min and 60 s the bill came to 7.3 GB a month, which
@@ -108,7 +110,7 @@ export function openStore(): PostgresStore {
 
   // Wrapped once per module, not per request, so every viewer of every tab
   // shares the same answer. Cached per METHOD rather than around `buildView`,
-  // because the three builders ask for overlapping things and a cache around
+  // because the four builders ask for overlapping things and a cache around
   // the whole view would still pay for `loadPositions` three times.
   //
   // Only the reads. Nothing that WRITES is touched, and the engine does not use
@@ -121,6 +123,9 @@ export function openStore(): PostgresStore {
     positions: cacheFor(() => store.loadPositions(), CACHE_STATE_MS),
     fills: cacheFor(() => store.allFills(), CACHE_STATE_MS),
     checkpoint: cacheFor(() => store.loadCheckpoint(), CACHE_STATE_MS),
+    // The day log: ninety-one rows of eight numbers, a few kilobytes, written
+    // once a cycle — on the engine's clock, like the positions.
+    days: cacheFor(() => store.dailyPnl(LOG_READ_DAYS), CACHE_STATE_MS),
   }
   const memo = cached
   // Exported so the view can say how old the money figures are. It is the
@@ -136,6 +141,10 @@ export function openStore(): PostgresStore {
     loadPositions: memo.positions,
     allFills: memo.fills,
     loadCheckpoint: memo.checkpoint,
+    // Cached for the ONE read the Log makes. Any other limit goes to the
+    // database: answering it from a cache of a different size would hand back
+    // the wrong number of days without a word.
+    dailyPnl: (limit: number) => (limit === LOG_READ_DAYS ? memo.days() : store.dailyPnl(limit)),
   }) as PostgresStore
 }
 

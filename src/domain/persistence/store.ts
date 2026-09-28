@@ -28,6 +28,7 @@ export interface CachedSecurity {
 }
 import { type DeathWatchState } from '../risk/death-exit.js'
 import { type GainLock } from '../risk/gain-lock.js'
+import { type DailyPnl, type DailyPnlSample } from '../reporting/daily-pnl.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
 import { type TokenSnapshot } from '../scanner/snapshot.js'
@@ -309,6 +310,18 @@ export interface StatePort {
   /** Tokens the death exit has condemned. Never traded again. */
   blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void>
   blacklisted(): Promise<ReadonlySet<string>>
+
+  /**
+   * Folds one reading of the book's net into its day's row — the Log tab's
+   * whole source. The merge is `foldDailySample`: the open and the first time
+   * stay, the close and the last time move, the range widens, the count grows.
+   *
+   * One row per day rather than one per reading: a reading every eighty
+   * seconds is a thousand rows a day for four numbers anybody asks about.
+   */
+  recordDailyPnl(sample: DailyPnlSample): Promise<void>
+  /** The newest `limit` days, newest first. */
+  dailyPnl(limit: number): Promise<readonly DailyPnl[]>
 }
 
 /**

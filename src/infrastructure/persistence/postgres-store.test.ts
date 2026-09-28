@@ -361,3 +361,64 @@ describe('PostgresStore — the gain lock ratchets in SQL', () => {
   })
 })
 
+describe('PostgresStore — the day log merges in SQL, in one statement', () => {
+  // One write per cycle, and the merge happens where two writers cannot race
+  // it: the database. The same rule the MemoryStore runs in TypeScript.
+  const squash = (sql: string) => sql.replace(/\s+/g, ' ')
+  const T = Date.parse('2026-09-28T12:00:00Z')
+
+  it('the first sample of a day sets every field from the one reading', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).recordDailyPnl({ day: '2026-09-28', netUsd: 12.5, at: T })
+    const sql = squash(calls[0]!.sql)
+    expect(sql).toContain('INSERT INTO daily_pnl (day, open_usd, close_usd, min_usd, max_usd, first_at, last_at, samples)')
+    expect(sql).toContain('VALUES ($1, $2, $2, $2, $2, $3, $3, 1)')
+    expect(calls[0]!.params).toEqual(['2026-09-28', 12.5, T])
+  })
+
+  it('a later sample keeps the open, moves the close, widens the range and counts', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).recordDailyPnl({ day: '2026-09-28', netUsd: 1, at: T })
+    const sql = squash(calls[0]!.sql)
+    expect(sql).toContain('ON CONFLICT (day) DO UPDATE SET')
+    expect(sql).toContain('open_usd = CASE WHEN EXCLUDED.first_at < daily_pnl.first_at THEN EXCLUDED.open_usd ELSE daily_pnl.open_usd END')
+    expect(sql).toContain('first_at = LEAST(daily_pnl.first_at, EXCLUDED.first_at)')
+    expect(sql).toContain('close_usd = CASE WHEN EXCLUDED.last_at >= daily_pnl.last_at THEN EXCLUDED.close_usd ELSE daily_pnl.close_usd END')
+    expect(sql).toContain('last_at = GREATEST(daily_pnl.last_at, EXCLUDED.last_at)')
+    expect(sql).toContain('min_usd = LEAST(daily_pnl.min_usd, EXCLUDED.min_usd)')
+    expect(sql).toContain('max_usd = GREATEST(daily_pnl.max_usd, EXCLUDED.max_usd)')
+    expect(sql).toContain('samples = daily_pnl.samples + 1')
+  })
+
+  it('a sample on a new day starts a new row, because the day is the key', async () => {
+    const { client, calls } = fakeSql()
+    const store = new PostgresStore(client)
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 1, at: T })
+    await store.recordDailyPnl({ day: '2026-09-29', netUsd: 2, at: T + 86_400_000 })
+    expect(calls.map((c) => c.params[0])).toEqual(['2026-09-28', '2026-09-29'])
+    expect(squash(calls[1]!.sql)).toContain('VALUES ($1, $2, $2, $2, $2, $3, $3, 1)')
+  })
+
+  it('reads the newest days first, bounded, with NUMERIC and BIGINT parsed', async () => {
+    const { client, calls } = fakeSql([[
+      { day: '2026-09-28', open_usd: '10.5', close_usd: '9', min_usd: '3', max_usd: '14.25', first_at: String(T), last_at: String(T + 60_000), samples: '4' },
+    ]])
+    const days = await new PostgresStore(client).dailyPnl(91)
+    expect(squash(calls[0]!.sql)).toContain('FROM daily_pnl ORDER BY day DESC LIMIT $1')
+    expect(calls[0]!.params).toEqual([91])
+    expect(days).toEqual([
+      { day: '2026-09-28', openUsd: 10.5, closeUsd: 9, minUsd: 3, maxUsd: 14.25, firstAt: T, lastAt: T + 60_000, samples: 4 },
+    ])
+  })
+
+  it('the table is created on boot, without touching a table that holds money', () => {
+    const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
+    expect(squash(schema)).toContain('CREATE TABLE IF NOT EXISTS daily_pnl ( day TEXT PRIMARY KEY,')
+  })
+
+  it('the reset script clears it with the rest of the state, so a truncate starts the log over', () => {
+    const reset = readFileSync(new URL('../../../tools/reset.sql', import.meta.url), 'utf8')
+    const everything = reset.split('\n').find((line) => line.includes('TRUNCATE TABLE positions, fills'))
+    expect(everything).toContain('daily_pnl')
+  })
+})

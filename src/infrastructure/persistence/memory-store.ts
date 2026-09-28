@@ -10,6 +10,7 @@ import { type Alert } from '../../domain/notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.js'
 import { keepGainLock } from '../../domain/risk/gain-lock.js'
 import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
+import { foldDailySample, type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
 
 /**
  * In-memory StatePort — for tests, paper runs, and as the reference that
@@ -192,6 +193,21 @@ export class MemoryStore implements StatePort {
 
   async blacklisted(): Promise<ReadonlySet<string>> {
     return new Set(this.blacklistEntries.keys())
+  }
+
+  /** The day log, keyed by day. The same fold the SQL upsert spells out. */
+  private readonly days = new Map<string, DailyPnl>()
+
+  async recordDailyPnl(sample: DailyPnlSample): Promise<void> {
+    this.days.set(sample.day, foldDailySample(this.days.get(sample.day) ?? null, sample))
+  }
+
+  async dailyPnl(limit: number): Promise<readonly DailyPnl[]> {
+    // `YYYY-MM-DD` sorts the way the days do, exactly as `ORDER BY day` does.
+    return [...this.days.values()]
+      .sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0))
+      .slice(0, limit)
+      .map((day) => ({ ...day }))
   }
 
   /** Test helper: why a token was condemned. */

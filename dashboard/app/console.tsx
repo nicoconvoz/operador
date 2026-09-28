@@ -4,9 +4,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Universe } from './universe.js'
 import { Operations } from './operations.js'
 import { Registry } from './registry.js'
+import { DailyLog } from './log.js'
 import type { DashboardView } from '../../src/application/dashboard.js'
 import type { UniverseView } from '../../src/application/universe-view.js'
 import type { OperationsView } from '../../src/application/operations-view.js'
+import type { DailyLogView } from '../../src/application/daily-log.js'
 
 /**
  * The whole screen, and the thing that keeps it current.
@@ -25,6 +27,11 @@ export interface ConsoleData {
   readonly dashboard: DashboardView
   readonly universe: UniverseView
   readonly operations: OperationsView
+  /**
+   * The Log tab and the "funcionando hace…" counter. Optional because the demo
+   * has no engine writing days; absent reads as an empty log and no counter.
+   */
+  readonly log?: DailyLogView
   /**
    * When the fills behind every dollar figure were actually read, or null.
    *
@@ -69,12 +76,12 @@ const REFRESH_MS = 10_000
  */
 const TAB_KEY = 'operador:tab'
 const SCROLL_KEY = 'operador:scroll'
-type Tab = 'universe' | 'operations' | 'registry'
+type Tab = 'universe' | 'operations' | 'registry' | 'log'
 
 const rememberedTab = (): Tab | null => {
   try {
     const saved = sessionStorage.getItem(TAB_KEY)
-    return saved === 'operations' || saved === 'universe' || saved === 'registry' ? saved : null
+    return saved === 'operations' || saved === 'universe' || saved === 'registry' || saved === 'log' ? saved : null
   } catch {
     return null
   }
@@ -162,7 +169,7 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
     }
   }, [live])
 
-  const { dashboard, universe, operations } = data
+  const { dashboard, universe, operations, log } = data
   const open = operations.positions.length
   const { realisedUsd, unrealisedUsd, netUsd, costsUsd } = operations.totals
 
@@ -246,6 +253,13 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
             </span>
           )}
         </div>
+        {/* How long the figure above has been accumulating: since the first
+            fill after the last reset. Beside the headline because that is
+            what it qualifies — "+$45" means little until you know whether it
+            took five days or five hours. Hidden when nothing was recorded. */}
+        {log?.uptime != null && (
+          <div style={{ color: '#8b949e', fontSize: 12, marginTop: 8 }}>⏱️ {log.uptime}</div>
+        )}
       </section>
 
       {staleReason !== null && (
@@ -282,14 +296,19 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
         <Tab active={tab === 'registry'} onClick={() => showTab('registry')}>
           Registro {operations.recentFills.length > 0 && <Count>{operations.recentFills.length}</Count>}
         </Tab>
+        <Tab active={tab === 'log'} onClick={() => showTab('log')}>
+          Log {log !== undefined && log.days.length > 0 && <Count>{log.days.length}</Count>}
+        </Tab>
       </nav>
 
       {tab === 'universe' ? (
         <Universe view={universe} />
       ) : tab === 'operations' ? (
         <Operations view={operations} />
-      ) : (
+      ) : tab === 'registry' ? (
         <Registry view={operations} />
+      ) : (
+        <DailyLog view={log} />
       )}
 
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>

@@ -14,6 +14,7 @@ import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type GainLock } from '../../domain/risk/gain-lock.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
+import { type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
 
 /**
  * Postgres StatePort.
@@ -494,6 +495,57 @@ export class PostgresStore implements StatePort {
   async blacklisted(): Promise<ReadonlySet<string>> {
     const { rows } = await this.sql.query<{ chain: string; token_address: string }>('SELECT chain, token_address FROM blacklist')
     return new Set(rows.map((row) => `${row.chain}:${row.token_address}`))
+  }
+
+  /**
+   * One reading folded into its day, in ONE statement — `foldDailySample`,
+   * spelled in SQL, so the merge happens where two writers cannot race it.
+   *
+   * The first reading of a day is the whole row. Every later one moves the
+   * close, widens the range and counts. "First" and "last" are by the
+   * reading's TIME: in order — a single engine, cycle after cycle — the open
+   * keeps the first value and the close takes the new one, and a late, older
+   * write cannot drag the close back to where the book was a minute ago.
+   * Every right-hand side reads the row as it WAS, so the CASEs and the
+   * LEAST/GREATEST pairs decide from the same stored times.
+   */
+  async recordDailyPnl(sample: DailyPnlSample): Promise<void> {
+    await this.sql.query(
+      `INSERT INTO daily_pnl (day, open_usd, close_usd, min_usd, max_usd, first_at, last_at, samples)
+       VALUES ($1, $2, $2, $2, $2, $3, $3, 1)
+       ON CONFLICT (day) DO UPDATE SET
+         open_usd = CASE WHEN EXCLUDED.first_at < daily_pnl.first_at THEN EXCLUDED.open_usd ELSE daily_pnl.open_usd END,
+         first_at = LEAST(daily_pnl.first_at, EXCLUDED.first_at),
+         close_usd = CASE WHEN EXCLUDED.last_at >= daily_pnl.last_at THEN EXCLUDED.close_usd ELSE daily_pnl.close_usd END,
+         last_at = GREATEST(daily_pnl.last_at, EXCLUDED.last_at),
+         min_usd = LEAST(daily_pnl.min_usd, EXCLUDED.min_usd),
+         max_usd = GREATEST(daily_pnl.max_usd, EXCLUDED.max_usd),
+         samples = daily_pnl.samples + 1`,
+      [sample.day, sample.netUsd, sample.at],
+    )
+  }
+
+  /**
+   * The newest days first, bounded. The Log tab shows ninety and reads one
+   * more, so the oldest row on screen still has a previous day to be measured
+   * against. `YYYY-MM-DD` sorts the way the days do.
+   */
+  async dailyPnl(limit: number): Promise<readonly DailyPnl[]> {
+    const { rows } = await this.sql.query<Record<string, string | number>>(
+      `SELECT day, open_usd, close_usd, min_usd, max_usd, first_at, last_at, samples
+       FROM daily_pnl ORDER BY day DESC LIMIT $1`,
+      [limit],
+    )
+    return rows.map((row) => ({
+      day: String(row.day),
+      openUsd: num(row.open_usd),
+      closeUsd: num(row.close_usd),
+      minUsd: num(row.min_usd),
+      maxUsd: num(row.max_usd),
+      firstAt: num(row.first_at),
+      lastAt: num(row.last_at),
+      samples: num(row.samples),
+    }))
   }
 }
 

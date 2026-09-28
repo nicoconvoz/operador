@@ -2,6 +2,7 @@ import { lastFillsReadAt } from './store.js'
 import { buildDashboard } from '../../src/application/dashboard.js'
 import { buildUniverse } from '../../src/application/universe-view.js'
 import { buildOperations } from '../../src/application/operations-view.js'
+import { buildDailyLog } from '../../src/application/daily-log.js'
 import { productionLadder } from '../../src/application/production-ladder.js'
 import { productionDoors } from '../../src/application/production-doors.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
@@ -33,6 +34,11 @@ export interface ViewData {
   readonly dashboard: Awaited<ReturnType<typeof buildDashboard>>
   readonly universe: Awaited<ReturnType<typeof buildUniverse>>
   readonly operations: Awaited<ReturnType<typeof buildOperations>>
+  /**
+   * The Log tab and the "funcionando hace…" counter. Built HERE, beside the
+   * rest, so the first frame and the poll cannot disagree about it either.
+   */
+  readonly log: Awaited<ReturnType<typeof buildDailyLog>>
   /** When the fills behind the money figures were read, or null before the first read. */
   readonly moneyReadAt: number | null
 }
@@ -53,7 +59,7 @@ export async function buildView(store: StatePort): Promise<ViewData> {
   // builder exists to prevent.
   const markets = liveMarkets(store)
 
-  const [dashboard, universe, operations] = await Promise.all([
+  const [dashboard, universe, operations, log] = await Promise.all([
     buildDashboard(store, { now }),
     // The same floors the engine ranks on. A screen that drew a token as
     // eligible while the book would refuse it is the exact drift this single
@@ -102,11 +108,15 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         return prices
       },
     }),
+    // What the ENGINE wrote, day by day — never recomputed here. The rows are
+    // the headline's own figure as the engine sampled it; recomputing them on
+    // the screen would be a second implementation of "how much are we up".
+    buildDailyLog(store, { now }),
   ])
 
   // How old the money is, read AFTER the builders so it reflects the value
   // they actually walked rather than a refetch they triggered.
-  return { dashboard, universe, operations, moneyReadAt: lastFillsReadAt() }
+  return { dashboard, universe, operations, log, moneyReadAt: lastFillsReadAt() }
 }
 
 /**

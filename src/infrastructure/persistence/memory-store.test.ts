@@ -161,3 +161,51 @@ describe('MemoryStore — the gain lock ratchets, and survives a stale snapshot'
   })
 })
 
+describe('MemoryStore — the day log folds each reading into its day', () => {
+  // The same merge the SQL upsert runs, because the tests run on this store and
+  // a reference looser than production proves nothing.
+  const T = Date.parse('2026-09-28T12:00:00Z')
+
+  it('the first sample of a day sets every field', async () => {
+    const store = new MemoryStore()
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 10, at: T })
+    expect(await store.dailyPnl(10)).toEqual([
+      { day: '2026-09-28', openUsd: 10, closeUsd: 10, minUsd: 10, maxUsd: 10, firstAt: T, lastAt: T, samples: 1 },
+    ])
+  })
+
+  it('later samples keep the open and first time, move the close, widen the range and count', async () => {
+    const store = new MemoryStore()
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 10, at: T })
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 3, at: T + 60_000 })
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 14, at: T + 120_000 })
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 9, at: T + 180_000 })
+    expect(await store.dailyPnl(10)).toEqual([
+      { day: '2026-09-28', openUsd: 10, closeUsd: 9, minUsd: 3, maxUsd: 14, firstAt: T, lastAt: T + 180_000, samples: 4 },
+    ])
+  })
+
+  it('a sample on a new day starts a new row, and the newest day comes first', async () => {
+    const store = new MemoryStore()
+    await store.recordDailyPnl({ day: '2026-09-27', netUsd: 5, at: T - 86_400_000 })
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 8, at: T })
+    const days = await store.dailyPnl(10)
+    expect(days.map((d) => d.day)).toEqual(['2026-09-28', '2026-09-27'])
+    expect(days[0]).toMatchObject({ openUsd: 8, closeUsd: 8, samples: 1 })
+    expect(days[1]).toMatchObject({ openUsd: 5, closeUsd: 5, samples: 1 })
+  })
+
+  it('honours the limit, keeping the newest days', async () => {
+    const store = new MemoryStore()
+    for (let d = 1; d <= 5; d++) await store.recordDailyPnl({ day: `2026-09-0${d}`, netUsd: d, at: T + d })
+    expect((await store.dailyPnl(2)).map((d) => d.day)).toEqual(['2026-09-05', '2026-09-04'])
+  })
+
+  it('hands back copies, so a caller cannot edit the log', async () => {
+    const store = new MemoryStore()
+    await store.recordDailyPnl({ day: '2026-09-28', netUsd: 10, at: T })
+    const [row] = await store.dailyPnl(1)
+    ;(row as { closeUsd: number }).closeUsd = 999
+    expect((await store.dailyPnl(1))[0]!.closeUsd).toBe(10)
+  })
+})

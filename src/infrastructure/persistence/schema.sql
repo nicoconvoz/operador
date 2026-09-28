@@ -114,6 +114,29 @@ CREATE TABLE IF NOT EXISTS alerts (
 
 CREATE INDEX IF NOT EXISTS alerts_level_idx ON alerts (level, seq);
 
+-- The book's result, one row per day — what the dashboard's Log tab reads.
+--
+-- Every cycle the engine folds one reading of the headline figure (cobrada +
+-- sin cobrar − costos) into the row of the day it was taken on: the day's first
+-- reading, its last, its lowest and its highest. The readings themselves are
+-- not kept; at one every eighty seconds that is a thousand rows a day for four
+-- numbers anybody asks about.
+--
+-- `day` is the calendar day in Buenos Aires as 'YYYY-MM-DD' — the operator's
+-- day, not the runner's — and a string that sorts the way the days do. It is
+-- STATE, not a cache: truncate it with the rest when the book starts over, or
+-- the Log goes on reporting a history the fills no longer hold.
+CREATE TABLE IF NOT EXISTS daily_pnl (
+  day       TEXT PRIMARY KEY,
+  open_usd  DOUBLE PRECISION NOT NULL,
+  close_usd DOUBLE PRECISION NOT NULL,
+  min_usd   DOUBLE PRECISION NOT NULL,
+  max_usd   DOUBLE PRECISION NOT NULL,
+  first_at  BIGINT           NOT NULL,
+  last_at   BIGINT           NOT NULL,
+  samples   INTEGER          NOT NULL
+);
+
 -- How much history a pool has, so we stop asking.
 --
 -- Counting a pool's bars costs a full candle download — a thousand rows to
