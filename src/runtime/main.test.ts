@@ -11,7 +11,7 @@ import { AlertThrottle } from '../domain/notifications/alerts.js'
 import { type Candles } from '../application/replay.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { initialState } from '../domain/strategy/state.js'
-import { startDeathWatch } from '../domain/risk/death-exit.js'
+import { startDeathWatch, assessAssetHealth } from '../domain/risk/death-exit.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type SqlClient } from '../infrastructure/persistence/postgres-store.js'
 
@@ -40,6 +40,27 @@ const held: PersistedPosition = {
   quality: { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 },
   capitalUsd: 15.89, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
 }
+
+describe('abandonment freezes at TWO hours, through the path the engine runs', () => {
+  // *Las que no tengan barras en 2h, congelarlas y recuperar el dinero.* A
+  // freeze with `exitOnFreeze` on sells the position and the release bans it.
+  const quiet = (hoursSinceLastTrade: number) => ({
+    observedAt: 0, source: 'test', sellQuote: 'ok' as const, liquidityUsd: 1_000_000, lpStatus: 'locked' as const,
+    mintAuthorityActive: false, freezeAuthorityActive: false, safetyFailed: [], transfersBlocked: false,
+    topHolderMovedPct: null, hoursSinceLastTrade,
+  })
+
+  it('freezes a position whose token has not traded for two hours', () => {
+    const policy = tickConfigFrom(runtime().cycleConfig).deathPolicy!
+    expect(policy.abandonmentFreezeHours).toBe(2)
+    expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(1.9)).state.stage).toBe('healthy')
+    expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(2)).state.stage).toBe('frozen')
+  })
+
+  it('takes another threshold from the environment', () => {
+    expect(tickConfigFrom(runtime({ OPERADOR_ABANDON_FREEZE_HOURS: '3' }).cycleConfig).deathPolicy!.abandonmentFreezeHours).toBe(3)
+  })
+})
 
 describe('the break-even, through the path the engine runs', () => {
   // *Sacá el break-even, pero poné un mínimo de ganancia del 20%.* The cycle's

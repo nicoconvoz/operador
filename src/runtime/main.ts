@@ -7,6 +7,7 @@ import { DEFAULT_GATE_POLICY, minAgeForHistory, type GatePolicy } from '../domai
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
+import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
 import { DEFAULT_COMPONENT_FLOORS } from '../application/production-doors.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { ladderCapitalUsd } from '../application/paper-run.js'
@@ -986,6 +987,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // released holding nothing — never at the verdict, while a sale may
       // still be waiting to fill.
       blacklistOnFreeze: config.blacklistOnFreeze,
+      // Two hours without a trade freezes it, and the freeze sells it.
+      deathPolicy: { ...DEFAULT_DEATH_EXIT_POLICY, abandonmentFreezeHours: config.abandonFreezeHours },
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
       // The stop, composed HERE rather than defaulted in the orchestrator —
