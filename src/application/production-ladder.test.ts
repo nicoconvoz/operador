@@ -6,6 +6,7 @@ import {
   DEFAULT_DCA_DROPS_PCT,
   DEFAULT_DCA_RUNGS_USD,
   DEFAULT_DCA_ADAPTIVE,
+  DEFAULT_DCA_REALTIME,
 } from './production-ladder.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
@@ -17,7 +18,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     // capital for its own dollars when it fires.
     expect(productionLadder({})).toEqual({
       maxUsdPerLevel: 10, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: true, reservedEntries: 1,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: true, dcaRealtime: true, reservedEntries: 1,
     })
   })
 
@@ -197,5 +198,29 @@ describe('production ladder — the rungs adapt to how much the token moves', ()
 
   it('stays ON on anything else, a typo included', () => {
     for (const on of ['1', 'true', 'yes', 'si', '']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: on }).dcaAdaptive).toBe(true)
+  })
+})
+
+describe('productionLadder — the NEXT rung spaced by the last hour, in real time', () => {
+  // *Que el próximo escalón DCA lo calcule por la cantidad de volatilidad que
+  // tenga en ese preciso momento la moneda.* Then *tiempo real.* ON unless
+  // switched off, one variable away — and only ever inside the adaptive
+  // switch: with OPERADOR_DCA_ADAPTIVE=0 nothing is scaled at all.
+  it('is ON when nothing is set', () => {
+    expect(DEFAULT_DCA_REALTIME).toBe(true)
+    expect(productionLadder({}).dcaRealtime).toBe(true)
+  })
+
+  it('is OFF with 0, false or no — every rung then uses the scale measured at the buy', () => {
+    for (const off of ['0', 'false', 'no', ' NO ']) expect(productionLadder({ OPERADOR_DCA_REALTIME: off }).dcaRealtime).toBe(false)
+  })
+
+  it('stays ON on anything else, a typo included', () => {
+    for (const on of ['1', 'true', 'yes', 'si', '']) expect(productionLadder({ OPERADOR_DCA_REALTIME: on }).dcaRealtime).toBe(true)
+  })
+
+  it('is its own switch: turning it off leaves the adaptive spacing alone', () => {
+    const ladder = productionLadder({ OPERADOR_DCA_REALTIME: '0' })
+    expect(ladder.dcaAdaptive).toBe(true)
   })
 })

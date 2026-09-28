@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { JupiterCharts, JUPITER_CHARTS_BASE } from './jupiter-charts.js'
-import { FIFTEEN_MINUTES, ONE_HOUR } from '../geckoterminal/geckoterminal.js'
+import { FIFTEEN_MINUTES, FIVE_MINUTES, ONE_HOUR } from '../geckoterminal/geckoterminal.js'
 import { type HttpGet } from '../../http.js'
 
 /**
@@ -77,6 +77,17 @@ describe('JupiterCharts — the same candles the engine always read', () => {
     expect(asked[0]).toBe(`${JUPITER_CHARTS_BASE}/v2/charts/Mint1?interval=15_MINUTE&to=${NOW}&candles=1000&type=price`)
     expect(asked[1]).toContain('/v2/charts/Mint2?interval=1_HOUR')
     expect(asked[1]).toContain('candles=60')
+  })
+
+  it('asks for 5-minute bars as 5_MINUTE, and drops the one still being built', async () => {
+    // The real-time DCA spacing reads the last hour of CLOSED 5-minute bars.
+    const forming = NOW - 3 * MIN
+    const closed = forming - 5 * MIN
+    const { http, asked } = answer([bar(closed, 1), bar(forming, 5)])
+    const candles = await new JupiterCharts(http, { now: () => NOW }).candles('solana', 'Mint', FIVE_MINUTES, 16)
+    expect(asked[0]).toContain('interval=5_MINUTE')
+    expect(asked[0]).toContain('candles=16')
+    expect(candles.time).toEqual([closed])
   })
 
   it('THROWS when it could not answer, so the caller can fall back', async () => {

@@ -278,10 +278,10 @@ describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
     await new PostgresStore(client).savePosition({ ...position, dcaScale: 0.52 })
     expect(calls[0]!.sql).toContain('dca_scale = COALESCE(positions.dca_scale, EXCLUDED.dca_scale)')
     expect(calls[0]!.sql).toContain('entry_score, dca_scale, gain_lock_pct, gain_lock_since')
-    expect(calls[0]!.params.slice(-3)).toEqual([0.52, null, null])
+    expect(calls[0]!.params.slice(-5, -2)).toEqual([0.52, null, null])
     const { client: bare, calls: bareCalls } = fakeSql()
     await new PostgresStore(bare).savePosition(position)
-    expect(bareCalls[0]!.params.slice(-3)).toEqual([null, null, null])
+    expect(bareCalls[0]!.params.slice(-5, -2)).toEqual([null, null, null])
   })
 
   it('reads the DCA scale back as a number, and absent as null', async () => {
@@ -304,6 +304,59 @@ describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
   })
 })
 
+describe('PostgresStore — the real-time DCA scale: the NEWER reading wins, in SQL', () => {
+  // *Tiempo real.* The sweep writes what it measured from the last hour; the
+  // tick, the trim and a funded rung write the whole row back from snapshots
+  // read before it. So the upsert decides, exactly as the MemoryStore does:
+  // the pair with the newer `dca_scale_now_at` wins, and a write with an older
+  // pair or none keeps what is stored.
+  const upsert = async (p: PersistedPosition) => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition(p)
+    return calls[0]!
+  }
+  const squash = (sql: string) => sql.replace(/\s+/g, ' ')
+  const row = {
+    id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
+    cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
+    capital_usd: '500', last_bar_time: '1', last_price_usd: '1', pending_orders: [],
+    opened_at: '1', updated_at: '1', break_even_armed: false,
+  }
+  const load = async (extra: Record<string, unknown>) => {
+    const [loaded] = await new PostgresStore(fakeSql([[{ ...row, ...extra }]]).client).loadPositions()
+    return [loaded!.dcaScaleNow, loaded!.dcaScaleNowAt]
+  }
+
+  it('writes the pair last, and a missing or half reading as two nulls', async () => {
+    const measured = await upsert({ ...position, dcaScaleNow: 2.1, dcaScaleNowAt: 1_700 })
+    expect(measured.sql).toContain('gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at')
+    expect(measured.sql).toContain('$21')
+    expect(measured.params.slice(-2)).toEqual([2.1, 1_700])
+    expect((await upsert(position)).params.slice(-2)).toEqual([null, null])
+    expect((await upsert({ ...position, dcaScaleNow: 2.1, dcaScaleNowAt: null })).params.slice(-2)).toEqual([null, null])
+  })
+
+  it('takes the written pair only when it is NEWER than the stored one', async () => {
+    const sql = squash((await upsert(position)).sql)
+    const newer = 'WHEN EXCLUDED.dca_scale_now_at IS NOT NULL AND (positions.dca_scale_now_at IS NULL OR EXCLUDED.dca_scale_now_at > positions.dca_scale_now_at)'
+    expect(sql).toContain(`dca_scale_now = CASE ${newer} THEN EXCLUDED.dca_scale_now ELSE positions.dca_scale_now END`)
+    expect(sql).toContain(`dca_scale_now_at = CASE ${newer} THEN EXCLUDED.dca_scale_now_at ELSE positions.dca_scale_now_at END`)
+  })
+
+  it('reads the pair back as numbers, and anything less than both as nothing', async () => {
+    expect(await load({ dca_scale_now: '2.1', dca_scale_now_at: '1700' })).toEqual([2.1, 1_700])
+    expect(await load({ dca_scale_now: null, dca_scale_now_at: null })).toEqual([null, null])
+    expect(await load({ dca_scale_now: '2.1', dca_scale_now_at: null })).toEqual([null, null])
+    expect(await load({})).toEqual([null, null])
+  })
+
+  it('adds both columns to a table that already holds money, without a truncate', () => {
+    const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
+    expect(schema).toContain('ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now DOUBLE PRECISION;')
+    expect(schema).toContain('ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now_at BIGINT;')
+  })
+})
+
 describe('PostgresStore — the gain lock ratchets in SQL', () => {
   // *Con cada aumento de 20%, aumentar el break-even 10%.* The floor only ever
   // rises while the same holding lives, and the tick, the trim and a funded
@@ -321,8 +374,8 @@ describe('PostgresStore — the gain lock ratchets in SQL', () => {
   it('writes the pair, and a missing lock as two nulls', async () => {
     const locked = await upsert({ ...position, gainLock: { pct: 20, since: 1_700 } })
     expect(locked.sql).toContain('gain_lock_pct, gain_lock_since')
-    expect(locked.params.slice(-2)).toEqual([20, 1_700])
-    expect((await upsert(position)).params.slice(-2)).toEqual([null, null])
+    expect(locked.params.slice(-4, -2)).toEqual([20, 1_700])
+    expect((await upsert(position)).params.slice(-4, -2)).toEqual([null, null])
   })
 
   it('keeps what is stored when the write carries no lock, or an OLDER holding’s', async () => {

@@ -47,6 +47,13 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale DOUBLE PRECISION;
 -- its pair; an older one or none, what is stored.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS gain_lock_pct DOUBLE PRECISION;
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS gain_lock_since BIGINT;
+-- The real-time DCA scale: the spacing the sweep measured for the NEXT rung
+-- from the token's last hour of closed 5-minute bars, and when. For the
+-- screen, which draws the line the sweep is waiting on. The upsert keeps the
+-- pair with the NEWER time, so a snapshot written back by a later step never
+-- puts an older reading, or none, over a fresher one. Null until measured.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now DOUBLE PRECISION;
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now_at BIGINT;
 
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure

@@ -260,6 +260,12 @@ export interface RuntimeConfig {
    * token moves, the closer its rungs. ON; OPERADOR_DCA_ADAPTIVE=0 turns it off.
    */
   readonly dcaAdaptive: boolean
+  /**
+   * Whether the NEXT rung is spaced by the token's last hour of 5-minute bars,
+   * decided when the sweep looks at it. ON; OPERADOR_DCA_REALTIME=0 turns it
+   * off. Only inside `dcaAdaptive`: with that off, nothing is scaled at all.
+   */
+  readonly dcaRealtime: boolean
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -614,6 +620,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     dcaRungsUsd: productionLadder(env).dcaRungsUsd,
     dcaFrom: productionLadder(env).dcaFrom,
     dcaAdaptive: productionLadder(env).dcaAdaptive,
+    dcaRealtime: productionLadder(env).dcaRealtime,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings

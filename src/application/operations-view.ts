@@ -172,6 +172,12 @@ export interface OperationsOptions {
      * sweep buys them. Absent: the base drops, every caller that predates it.
      */
     readonly adaptive?: boolean
+    /**
+     * Whether the NEXT line follows the token's last hour — the real-time
+     * scale the sweep measured and wrote onto the position — while that
+     * reading is fresh. Only inside `adaptive`, as in the sweep. Absent: off.
+     */
+    readonly realtime?: boolean
   }
   readonly pressureLadder?: {
     readonly threshold: number
@@ -258,9 +264,10 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
     const drop = options.dropLadder
     const pressure = options.pressureLadder
-    // The position's own spacing, read exactly as the sweep reads it — one
-    // switch, one stored scale — so each line is drawn where it will be bought.
-    const scale = drop?.adaptive === true ? usableScale(position.dcaScale) : 1
+    // The position's own spacing, read exactly as the sweep reads it — the
+    // same switches, the same stored scales — so each line is drawn where it
+    // will be bought, and the lock says which volatility put it there.
+    const { scale, why } = drop ? ladderScale(position, drop, generatedAt) : { scale: 1, why: '' }
     const ladder: LadderRung[] = drop
       ? dropRungs(filledByLevel, fillable, drop, scale, params, inFlight?.level ?? filledByLevel.size)
       : pressure
@@ -295,7 +302,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       costsUsd,
       ladder,
       locks: drop
-        ? dropLocks(buys, price, fillable, drop, scale, params)
+        ? dropLocks(buys, price, fillable, drop, scale, why, params)
         : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
@@ -345,6 +352,38 @@ const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
 type DropLadderView = NonNullable<OperationsOptions['dropLadder']>
 
 /**
+ * How long the sweep's real-time reading still describes the line it is
+ * waiting on: three 5-minute bars.
+ *
+ * The sweep measures the last hour only for a position at or under the
+ * shallowest line any spacing could draw, and again on every new bar while it
+ * stays there. So a reading older than this means the price moved away and the
+ * sweep stopped asking — and a line drawn from a volatility three bars stale
+ * is the present painted with the past. The at-buy scale is drawn instead,
+ * named as such, until the price comes back and the sweep measures again.
+ */
+const REALTIME_SCALE_FRESH_MS = 15 * 60_000
+
+/**
+ * The scale the NEXT line is drawn at, and the words that say which: the last
+ * hour's while fresh, else the one measured at the buy, else one — the sweep's
+ * own order of preference, behind the sweep's own switches.
+ */
+function ladderScale(position: PersistedPosition, ladder: DropLadderView, now: number): { readonly scale: number; readonly why: string } {
+  if (ladder.adaptive !== true) return { scale: 1, why: '' }
+  const measuredAt = position.dcaScaleNowAt
+  if (
+    ladder.realtime === true &&
+    position.dcaScaleNow !== null && position.dcaScaleNow !== undefined &&
+    measuredAt !== null && measuredAt !== undefined && now - measuredAt < REALTIME_SCALE_FRESH_MS
+  ) {
+    return { scale: usableScale(position.dcaScaleNow), why: ' (volatilidad de la última hora)' }
+  }
+  const atBuy = usableScale(position.dcaScale)
+  return { scale: atBuy, why: atBuy !== 1 ? ' (volatilidad al comprar)' : '' }
+}
+
+/**
  * What a price rung buys: its own size from the engine's list, the entry and
  * any rung the list does not size at the reference level's. Ladder A drew a
  * flat $10 box under a $35 DCA-5 until the sizes were passed in — the screen
@@ -369,7 +408,7 @@ function dropRungs(
   filledByLevel: ReadonlyMap<number, PersistedFill>,
   fillable: number,
   ladder: DropLadderView,
-  /** The position's `dcaScale` when the ladder adapts, else one. */
+  /** The scale the sweep would space this position's next rung at — see `ladderScale`. */
   scale: number,
   params: CascadeParams,
   waitingOn: number,
@@ -411,6 +450,8 @@ function dropLocks(
   fillable: number,
   ladder: DropLadderView,
   scale: number,
+  /** Which volatility drew the line, in the operator's words; empty for the base drops. */
+  why: string,
   params: CascadeParams,
 ): readonly LadderLock[] | null {
   if (buys.length === 0 || buys.length >= fillable) return null
@@ -432,7 +473,7 @@ function dropLocks(
       held: reached,
       detail: reached
         ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra ${usd} en este barrido`
-        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} (${dropLabel(drop)}% bajo ${since}); va en ${price === null ? '—' : price.toPrecision(4)}`,
+        : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} — ${dropLabel(drop)}% bajo ${since}${why}; va en ${price === null ? '—' : price.toPrecision(4)}`,
     },
   ]
 }

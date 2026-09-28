@@ -2,7 +2,8 @@ import { alert, type AlertPort, type AlertThrottle } from '../domain/notificatio
 import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './ledger.js'
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
-import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
+import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
+import { type RecentVolatility } from './recent-volatility.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
@@ -274,6 +275,23 @@ export interface DropLadder {
    * position on the base drops — every caller that predates it.
    */
   readonly adaptive?: boolean
+  /**
+   * The token's volatility over the LAST HOUR of closed 5-minute bars, which
+   * spaces the NEXT rung at the moment the sweep looks at it. *Que el próximo
+   * escalón DCA lo calcule por la cantidad de volatilidad que tenga en ese
+   * preciso momento la moneda.* See `realtimeDcaScale` in
+   * `domain/strategy/dca-scale.ts` for the replay that chose it.
+   *
+   * Asked only when `adaptive` is on, and only for a position already at or
+   * under the shallowest line any spacing could draw — never for the book at
+   * large, which is nearly all of it on nearly every sweep. Null, or a throw,
+   * when the hour cannot be measured: the rung falls back to the position's
+   * at-buy `dcaScale`, then to one.
+   *
+   * Absent: the real-time switch is off, and every rung is spaced by the scale
+   * measured at the buy — every caller that predates it.
+   */
+  readonly recentVolatility?: (position: PersistedPosition) => Promise<RecentVolatility | null>
 }
 
 export interface StopSweepDeps {
@@ -740,6 +758,82 @@ async function sayUnfunded(
 }
 
 /**
+ * What the next rung's drops are multiplied by, and — in the operator's words,
+ * for the alert — which volatility said so. Null when no spacing at all could
+ * put a rung under this price, so nothing is worth asking.
+ *
+ * Three answers, in order, and each one only when the one before is silent:
+ *
+ * 1. **The last hour, now** (`recentVolatility`). *Tiempo real.* While a token
+ *    is crashing its last hour explodes and the rung waits far deeper; calm,
+ *    it sits close and buys the small dips.
+ * 2. **The day before the first buy** (`position.dcaScale`), measured once by
+ *    the tick. What ran before, and the fallback when the hour cannot be read.
+ * 3. **One** — the base drops. Silence is not evidence.
+ *
+ * With `adaptive` off it is one, always, and nothing is asked: a switch that
+ * turns the spacing off has to turn every spacing off.
+ */
+async function spacingFor(
+  deps: StopSweepDeps,
+  ladder: DropLadder,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  where: Omit<Parameters<typeof nextDropRung>[0], 'scale'>,
+): Promise<{ readonly scale: number; readonly why: string } | null> {
+  if (ladder.adaptive !== true) return { scale: 1, why: '' }
+  // Read off the position the sweep was handed, which the store keeps
+  // write-once, so no stale row can move it mid-ladder.
+  const atBuy = usableScale(position.dcaScale)
+  const fallback = { scale: atBuy, why: atBuy !== 1 ? ' (volatilidad al comprar)' : '' }
+  if (!ladder.recentVolatility) return fallback
+
+  // The cheapest question first. Half the base drop — or less, for a stored
+  // scale under that — is as close as any spacing can put this rung; a price
+  // above that line cannot buy whatever the hour says, so the hour is not
+  // fetched. That is nearly the whole book on nearly every sweep.
+  const shallowest = Math.min(REALTIME_DCA_SCALE_POLICY.minScale, atBuy)
+  if (nextDropRung({ ...where, scale: shallowest }, ladder.policy) === null) return null
+
+  let measured: RecentVolatility | null
+  try {
+    measured = await ladder.recentVolatility(position)
+  } catch {
+    // A refusal is not a reading.
+    measured = null
+  }
+  const now = measured === null ? null : realtimeDcaScale(measured.volPct)
+  if (measured === null || now === null) return fallback
+
+  await rememberReading(deps, position, fills, now, measured.measuredAt)
+  return { scale: now, why: ` (volatilidad de la última hora: ${measured.volPct.toFixed(1)}%)` }
+}
+
+/**
+ * Writes the real-time scale onto the position, so the screen draws the line
+ * the sweep is actually waiting on — once per reading, never once per sweep:
+ * a reading the position already carries is not written again.
+ *
+ * The whole row goes back, from the snapshot this sweep was handed, and two
+ * things keep that safe. The store keeps the NEWER reading, so no later stale
+ * write can put an older one over it. And the write waits when this pass has
+ * already bought for this position — a pressure rung earlier in the same
+ * sweep raised the row's capital in the store, and the snapshot would lower it
+ * again. The next sweep reads the row fresh and writes it then.
+ */
+async function rememberReading(
+  deps: StopSweepDeps,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  scale: number,
+  measuredAt: number,
+): Promise<void> {
+  if (position.dcaScaleNowAt !== null && position.dcaScaleNowAt !== undefined && position.dcaScaleNowAt >= measuredAt) return
+  if ((await deps.store.fillsFor(position.id)).length !== fills.length) return
+  await deps.store.savePosition({ ...position, dcaScaleNow: scale, dcaScaleNowAt: measuredAt })
+}
+
+/**
  * One rung, if the price has fallen far enough under the FIRST buy, at that
  * rung's own size. Never into a position the death watch has frozen or
  * condemned.
@@ -766,14 +860,11 @@ async function buyOnDrop(
   const first = buys[0]
   const last = buys[buys.length - 1]
   if (!first || !last) return
-  // The position's own spacing, or the base one when the switch is off or
-  // nothing has been measured yet. Read off the position the sweep was handed,
-  // which the store keeps write-once, so no stale row can move it mid-ladder.
-  const scale = ladder.adaptive === true ? usableScale(position.dcaScale) : 1
-  const rung = nextDropRung(
-    { entries: buys.length, firstBuyPrice: first.price, lastBuyPrice: last.price, priceUsd: price, scale },
-    ladder.policy,
-  )
+  const where = { entries: buys.length, firstBuyPrice: first.price, lastBuyPrice: last.price, priceUsd: price }
+  const spacing = await spacingFor(deps, ladder, position, fills, where)
+  if (spacing === null) return
+  const { scale, why } = spacing
+  const rung = nextDropRung({ ...where, scale }, ladder.policy)
   if (rung === null) return
   // Said against the anchor the rule measured from, so the alert explains the
   // rule that fired rather than another one.
@@ -792,7 +883,7 @@ async function buyOnDrop(
 
   const funded = ladder.fund ? await ladder.fund(position, buys.length + 1) : position
   if (funded === null) {
-    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde ${since}, y este escalón pedía ${asked}%`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
+    await sayUnfunded(deps, position, id, `El precio cayó ${fell}% desde ${since}, y este escalón pedía ${asked}%${why}`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
     return
   }
 
@@ -811,7 +902,7 @@ async function buyOnDrop(
   const bought = alert(
     'dca-filled',
     `🪜 ${position.symbol} promedió — ${id}`,
-    `El precio cayó ${fell}% desde ${since} (${anchor.price}), y este escalón pedía ${asked}%. Compró $${usd.toFixed(2)} a ${price}.`,
+    `El precio cayó ${fell}% desde ${since} (${anchor.price}), y este escalón pedía ${asked}%${why}. Compró $${usd.toFixed(2)} a ${price}.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )

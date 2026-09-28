@@ -720,3 +720,55 @@ describe('buildOperations — ladder A at the token’s own scale', () => {
     }
   })
 })
+
+describe('buildOperations — the next line from the token’s last hour, while the reading is fresh', () => {
+  // *Tiempo real.* The sweep spaces the next rung by the last hour of 5-minute
+  // bars and writes what it measured onto the position; the screen draws the
+  // line from THAT while it is under fifteen minutes old — three bars — and
+  // says which volatility drew it.
+  const A = productionLadder({})
+  const ladder = (drop: { adaptive: boolean; realtime: boolean }) => ({
+    ...options,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
+    maxOpenEntries: A.maxOpenEntries,
+    dropLadder: { dropsPct: A.dcaDropsPct, rungsUsd: A.dcaRungsUsd, from: A.dcaFrom, ...drop },
+  })
+  const ON = { adaptive: true, realtime: true }
+  const WILD_AT_BUY = dcaScale(10)
+  const held = (over: Partial<PersistedPosition> = {}) => ({ cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.97, ...over })
+  const reading = (scale: number, ageMs: number) => ({ dcaScale: WILD_AT_BUY, dcaScaleNow: scale, dcaScaleNowAt: NOW - ageMs })
+
+  it('draws the next line from the last hour while the reading is fresh, and says so', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held(reading(2, 5 * MIN)))
+    const [p] = (await buildOperations(store, ladder(ON))).positions
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.8, 9)
+    expect(p!.locks![0]!.detail).toContain('20% bajo la compra anterior (volatilidad de la última hora)')
+  })
+
+  it('draws it from the scale measured at the buy once the reading is fifteen minutes old', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held(reading(2, 15 * MIN)))
+    const [p] = (await buildOperations(store, ladder(ON))).positions
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(1 - (10 * WILD_AT_BUY) / 100, 9)
+    expect(p!.locks![0]!.detail).toContain('19.2% bajo la compra anterior (volatilidad al comprar)')
+  })
+
+  it('draws the base line, and names no volatility, when nothing was ever measured', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held())
+    const [p] = (await buildOperations(store, ladder(ON))).positions
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.9, 9)
+    expect(p!.locks![0]!.detail).toContain('10% bajo la compra anterior;')
+  })
+
+  it('ignores a fresh reading when the real-time switch is off', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held(reading(2, 5 * MIN)))
+    const [p] = (await buildOperations(store, ladder({ adaptive: true, realtime: false }))).positions
+    expect(p!.locks![0]!.detail).toContain('19.2% bajo la compra anterior (volatilidad al comprar)')
+  })
+
+  it('scales nothing, real time included, when the ladder does not adapt', async () => {
+    const store = await seed([fill('Entry', 1, 10, NOW - 30 * MIN)], held(reading(2, 5 * MIN)))
+    const [p] = (await buildOperations(store, ladder({ adaptive: false, realtime: true }))).positions
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.9, 9)
+    expect(p!.locks![0]!.detail).toContain('10% bajo la compra anterior;')
+  })
+})

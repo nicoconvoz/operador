@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { dcaScale, measuredDcaScale, dropLabel, scaledDropPct, volatilityPct, volatilityBefore, DEFAULT_DCA_SCALE_POLICY } from './dca-scale.js'
+import {
+  dcaScale, measuredDcaScale, dropLabel, scaledDropPct, volatilityPct, volatilityBefore, DEFAULT_DCA_SCALE_POLICY,
+  realtimeDcaScale, lastHourVolatilityPct, MEDIAN_VOL_5M_PCT, REALTIME_BAR_MS, REALTIME_DCA_SCALE_POLICY,
+} from './dca-scale.js'
 
 /**
  * *Confío más en mi criterio que en tus cálculos: hacé que el piso de los DCA
@@ -120,5 +123,72 @@ describe('volatilityBefore — only the bars that had CLOSED in the 24 hours bef
   it('looks back 24 hours by default', () => {
     expect(DEFAULT_DCA_SCALE_POLICY.windowMs).toBe(DAY)
     expect(DEFAULT_DCA_SCALE_POLICY.medianVolPct).toBe(2.7)
+  })
+})
+
+describe('realtimeDcaScale — the next rung, from how much the token moves NOW', () => {
+  // *Que el próximo escalón DCA lo calcule por la cantidad de volatilidad que
+  // tenga en ese preciso momento la moneda — si es mucha, escalón bien largo;
+  // si es poca, escalón corto.* Then *tiempo real*: the last hour of CLOSED
+  // 5-minute bars, against the median of that measure over the 336 entries.
+  it('leaves the base drops alone at the median, 2.17% a 5-minute bar', () => {
+    expect(MEDIAN_VOL_5M_PCT).toBe(2.17)
+    expect(realtimeDcaScale(2.17)).toBe(1)
+  })
+
+  it('doubles the spacing at four times the median: sqrt(8.68 / 2.17) = 2', () => {
+    expect(realtimeDcaScale(8.68)).toBeCloseTo(2, 12)
+  })
+
+  it('caps at three times the base drops and floors at half', () => {
+    expect(realtimeDcaScale(100)).toBe(3)
+    expect(realtimeDcaScale(0.01)).toBe(0.5)
+  })
+
+  it('is null when nothing was measured, so the caller falls back — silence is not evidence', () => {
+    for (const silent of [null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) expect(realtimeDcaScale(silent)).toBeNull()
+  })
+})
+
+describe('lastHourVolatilityPct — the 5-minute bars that CLOSED in the last hour', () => {
+  const BAR = 5 * 60_000
+  const HOUR = 60 * 60_000
+  // Two hours of 5-minute bars: calm (±1%) the first hour, wild (±10%) the second.
+  const bars = 24
+  const time = Array.from({ length: bars }, (_, i) => i * BAR)
+  const close = time.map((_, i) => (i < 12 ? (i % 2 === 0 ? 1 : 1.01) : (i % 2 === 0 ? 1 : 1.1)))
+
+  it('bars five minutes long, an hour back', () => {
+    expect(REALTIME_BAR_MS).toBe(BAR)
+    expect(REALTIME_DCA_SCALE_POLICY.windowMs).toBe(HOUR)
+    expect(REALTIME_DCA_SCALE_POLICY.medianVolPct).toBe(MEDIAN_VOL_5M_PCT)
+  })
+
+  it('reads the calm hour at the end of it, and the wild one at the end of that', () => {
+    expect(lastHourVolatilityPct({ time, close }, HOUR)).toBeCloseTo(Math.log(1.01) * 100, 9)
+    expect(lastHourVolatilityPct({ time, close }, 2 * HOUR)).toBeCloseTo(Math.log(1.1) * 100, 9)
+  })
+
+  it('never reads the bar still being built', () => {
+    // The bar opening at 1:00 closes at 1:05; asked at 1:04 it is still moving,
+    // and a spike inside it is not yet a fact about the token.
+    const spike: number[] = [...close]
+    spike[12] = 100
+    expect(lastHourVolatilityPct({ time, close: spike }, HOUR + 4 * 60_000)).toBeCloseTo(Math.log(1.01) * 100, 9)
+  })
+
+  it('never reads a bar that closed more than an hour ago', () => {
+    // At 2:00 the bar that closed at 1:00 is an hour old and out; a crash in it
+    // is the past, not the present.
+    const old: number[] = [...close]
+    old[11] = 100
+    expect(lastHourVolatilityPct({ time, close: old }, 2 * HOUR)).toBeCloseTo(Math.log(1.1) * 100, 9)
+  })
+
+  it('needs five returns in the hour, or it says nothing', () => {
+    // Six closes in the hour: five returns, enough. Five closes: not.
+    expect(lastHourVolatilityPct({ time: time.slice(0, 6), close: close.slice(0, 6) }, 6 * BAR)).not.toBeNull()
+    expect(lastHourVolatilityPct({ time: time.slice(0, 5), close: close.slice(0, 5) }, 5 * BAR)).toBeNull()
+    expect(lastHourVolatilityPct({ time: [], close: [] }, HOUR)).toBeNull()
   })
 })

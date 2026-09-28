@@ -130,6 +130,22 @@ export interface PersistedPosition {
    */
   readonly dcaScale?: number | null
   /**
+   * The spacing the sweep measured for the NEXT rung from the token's last hour
+   * of closed 5-minute bars, and when — so the screen can draw the line the
+   * sweep is actually waiting on. *Tiempo real.* See `realtimeDcaScale` in
+   * `domain/strategy/dca-scale.ts`.
+   *
+   * A reading, not a baseline: it moves every new bar while the price is near
+   * its line. A PAIR, kept by both stores by one rule — the pair with the NEWER
+   * `dcaScaleNowAt` wins — because every step of the cycle writes the whole row
+   * back from a snapshot read before the sweep measured, and a stale snapshot
+   * must never put an older reading, or none, over a fresher one. Absent: the
+   * sweep has not measured it, and the screen draws the at-buy `dcaScale`.
+   */
+  readonly dcaScaleNow?: number | null
+  /** When `dcaScaleNow` was measured, in epoch milliseconds. Both or neither. */
+  readonly dcaScaleNowAt?: number | null
+  /**
    * The stepped gain lock: the floor, in percent over the average cost, under
    * which this HOLDING may no longer close — and the time of the holding's
    * first buy, which is what makes it this holding's and not the last one's.

@@ -12,6 +12,13 @@ import { keepGainLock } from '../../domain/risk/gain-lock.js'
 import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
 import { foldDailySample, type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
 
+/** A position's real-time DCA scale as a whole pair, or null. */
+const readingOf = (position: PersistedPosition | undefined): { scale: number; at: number } | null =>
+  position?.dcaScaleNow !== null && position?.dcaScaleNow !== undefined &&
+  position.dcaScaleNowAt !== null && position.dcaScaleNowAt !== undefined
+    ? { scale: position.dcaScaleNow, at: position.dcaScaleNowAt }
+    : null
+
 /**
  * In-memory StatePort — for tests, paper runs, and as the reference that
  * defines what "correct" means for the Postgres implementation.
@@ -51,7 +58,15 @@ export class MemoryStore implements StatePort {
     const dcaScale = stored?.dcaScale ?? position.dcaScale ?? null
     // The gain lock, by the same rule the upsert spells out in its CASE.
     const gainLock = keepGainLock(stored?.gainLock, position.gainLock)
-    this.positions.set(position.id, structuredClone({ ...position, breakEvenArmed: armed, entryScore, dcaScale, gainLock }))
+    // The real-time DCA scale, by the rule the upsert spells out in its CASE:
+    // the NEWER pair wins, and a half pair is no reading at all.
+    const written = readingOf(position)
+    const kept = readingOf(stored)
+    const now = written !== null && (kept === null || written.at > kept.at) ? written : kept
+    this.positions.set(position.id, structuredClone({
+      ...position, breakEvenArmed: armed, entryScore, dcaScale, gainLock,
+      dcaScaleNow: now?.scale ?? null, dcaScaleNowAt: now?.at ?? null,
+    }))
   }
 
   async closePosition(positionId: string): Promise<void> {

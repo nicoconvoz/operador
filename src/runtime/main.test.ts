@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { buildRuntime } from './main.js'
 import { loadConfig } from './config.js'
 import { exitLevelsFor, sweepStops } from '../application/stop-sweep.js'
@@ -26,8 +26,17 @@ import { type SqlClient } from '../infrastructure/persistence/postgres-store.js'
  * back out of it, the way a cycle and the loop between cycles do.
  *
  * No network: nothing here fetches, and the store answers every query empty.
+ * The sweep CAN fetch now — the last hour of 5-minute bars for a rung that
+ * could fire — so `fetch` itself refuses, and the tests that want an answer
+ * stub one.
  */
 const quiet: SqlClient = { query: async () => ({ rows: [] }) }
+beforeEach(() => {
+  vi.stubGlobal('fetch', async () => { throw new Error('no network in this test') })
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 const runtime = (env: Record<string, string> = {}) =>
   buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', ...env }), {
     sql: quiet,
@@ -231,5 +240,72 @@ describe('the rungs follow each token’s volatility, through the path the engin
     expect(runtime({ OPERADOR_DCA_ADAPTIVE: '0' }).deps.dropLadder?.adaptive).toBe(false)
     expect(await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.947)).toEqual(['Entry'])
     expect(await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.899)).toEqual(['Entry', 'DCA-1'])
+  })
+})
+
+describe('the NEXT rung follows the token’s last hour, through the path the engine runs', () => {
+  // *Que el próximo escalón DCA lo calcule por la cantidad de volatilidad que
+  // tenga en ese preciso momento la moneda.* Then *tiempo real.* The cycle's
+  // sweeps and the loop's both read `deps.dropLadder`, so the switch is asked
+  // there — and the SAME sweep is run against a Jupiter answering a wild hour
+  // of 5-minute bars, on a position measured calm-ish at the buy (DCA-1 at
+  // −5.2%). The hour says −29%.
+  const BAR = 5 * 60_000
+  const wild = { ...held, capitalUsd: 200, dcaScale: 0.52 }
+  const asked: string[] = []
+  beforeEach(() => {
+    asked.length = 0
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked.push(url)
+      if (!url.includes('/v2/charts/')) throw new Error('no network in this test')
+      // Sixteen closed 5-minute bars swinging 20% every bar.
+      const start = Math.floor(Date.now() / BAR) * BAR - 16 * BAR
+      const candles = Array.from({ length: 16 }, (_, i) => {
+        const close = i % 2 === 0 ? 1 : 1.2
+        return { time: (start + i * BAR) / 1000, open: close, high: close, low: close, close, volume: 100 }
+      })
+      return new Response(JSON.stringify({ candles }), { status: 200 })
+    })
+  })
+
+  const sweepAt = async (env: Record<string, string>, price: number) => {
+    const { deps, cycleConfig } = runtime(env)
+    const store = new MemoryStore()
+    await store.savePosition(wild)
+    await store.recordFill({
+      positionId: wild.id, orderId: 'Entry', side: 'buy', time: 0, price: 1, qty: 10, costUsd: 0.01,
+      comment: '🟢 Entry', idempotencyKey: `${wild.id}:0:Entry`,
+    })
+    const { fund: _unfunded, ...ladder } = deps.dropLadder!
+    await sweepStops(
+      { ...deps, store, alerts: { send: async () => {} }, dropLadder: ladder },
+      (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)),
+      new AlertThrottle(0), [wild], new Map([['solana:T', price]]), 1_000,
+    )
+    const [after] = await store.loadPositions()
+    return { buys: (await store.fillsFor(wild.id)).filter((f) => f.side === 'buy').map((f) => f.orderId), after: after! }
+  }
+
+  it('is ON when nothing is set: the wild hour holds DCA-1 back, and asks Jupiter for 5-minute bars by mint', async () => {
+    expect(runtime().deps.dropLadder?.recentVolatility).toBeDefined()
+    const { buys, after } = await sweepAt({}, 0.9)
+    expect(buys).toEqual(['Entry'])
+    expect(asked.some((url) => url.includes('/v2/charts/T?interval=5_MINUTE'))).toBe(true)
+    // Written down for the screen: sqrt(ln(1.2)×100 / 2.17) ≈ 2.9.
+    expect(after.dcaScaleNow).toBeCloseTo(Math.sqrt((Math.log(1.2) * 100) / 2.17), 9)
+  })
+
+  it('is OFF with OPERADOR_DCA_REALTIME=0: the same token buys on the scale measured at the buy', async () => {
+    expect(runtime({ OPERADOR_DCA_REALTIME: '0' }).deps.dropLadder?.recentVolatility).toBeUndefined()
+    const { buys } = await sweepAt({ OPERADOR_DCA_REALTIME: '0' }, 0.9)
+    expect(buys).toEqual(['Entry', 'DCA-1'])
+    expect(asked).toEqual([])
+  })
+
+  it('scales nothing with OPERADOR_DCA_ADAPTIVE=0, real time included: the base −10%, and no hour asked', async () => {
+    // Neither the −5.2% measured at the buy nor the −29% of the wild hour.
+    expect((await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.93)).buys).toEqual(['Entry'])
+    expect((await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.899)).buys).toEqual(['Entry', 'DCA-1'])
+    expect(asked).toEqual([])
   })
 })

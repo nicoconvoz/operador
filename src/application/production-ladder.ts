@@ -192,6 +192,31 @@ export const DEFAULT_DCA_FROM = 'previous' as const
 export const DEFAULT_DCA_ADAPTIVE = true
 
 /**
+ * The NEXT rung is spaced by the token's volatility over the LAST HOUR of
+ * closed 5-minute bars, decided at the moment the sweep looks at it — not by
+ * the scale measured once, the day before the first buy. *Que el próximo
+ * escalón DCA lo calcule por la cantidad de volatilidad que tenga en ese
+ * preciso momento la moneda — si es mucha, escalón bien largo; si es poca,
+ * escalón corto.* Then *tiempo real.*
+ *
+ * The same replay of the 336 real entries, rungs of $15 to $35 from the
+ * previous buy, the exit at +10%:
+ *
+ * | Spacing measured | Result | frozen | worst token | peak capital |
+ * |---|---|---|---|---|
+ * | once, at the buy (what ran) | $263 | −$52 | −$25 | $1,725 |
+ * | **in real time, the last hour of 5m bars** | **$324** | **−$30** | **−$17.31** | $2,060 |
+ *
+ * ON; `OPERADOR_DCA_REALTIME=0` puts every rung back on the at-buy scale. A
+ * switch INSIDE `DEFAULT_DCA_ADAPTIVE`, never beside it: with
+ * `OPERADOR_DCA_ADAPTIVE=0` nothing is scaled at all, real time included. When
+ * the hour cannot be measured the rung falls back to the at-buy scale, then to
+ * one. See `realtimeDcaScale` in `domain/strategy/dca-scale.ts` for the whole
+ * table and why the shorter window wins.
+ */
+export const DEFAULT_DCA_REALTIME = true
+
+/**
  * How many entries' worth of capital a position is ALLOCATED when it opens.
  * ONE: the first buy. Each rung asks the book's free capital for its own
  * dollars at the moment it fires, and waits a sweep when there is none.
@@ -305,6 +330,8 @@ export interface ProductionLadder {
   readonly dcaFrom: 'first' | 'previous'
   /** Whether each position's drops follow its own volatility (`dcaScale`). */
   readonly dcaAdaptive: boolean
+  /** Whether the next rung follows the token's LAST HOUR, inside `dcaAdaptive`. */
+  readonly dcaRealtime: boolean
   /**
    * Entries' worth of capital a position is allocated when it opens. Never
    * more than `maxOpenEntries`; the rest is asked of the free capital when a
@@ -395,6 +422,10 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // Only 0, false and no turn it off; a typo leaves the operator's decision
     // running rather than quietly running the one it replaced.
     dcaAdaptive: ['0', 'false', 'no'].includes(env.OPERADOR_DCA_ADAPTIVE?.trim().toLowerCase() ?? '') ? false : DEFAULT_DCA_ADAPTIVE,
+    // Read on its own, and the same way: the adaptive switch is what gates it,
+    // in the sweep and on the screen, so an operator who turns the spacing off
+    // does not also have to remember this one.
+    dcaRealtime: ['0', 'false', 'no'].includes(env.OPERADOR_DCA_REALTIME?.trim().toLowerCase() ?? '') ? false : DEFAULT_DCA_REALTIME,
     // Capped by what the venue holds: reserving capital for an entry the
     // broker will refuse is capital held against nothing.
     reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),

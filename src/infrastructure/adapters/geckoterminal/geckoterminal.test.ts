@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { GeckoTerminal, GECKOTERMINAL_BASE, FIFTEEN_MINUTES, ONE_HOUR, barSizeMs } from './geckoterminal.js'
+import { GeckoTerminal, GECKOTERMINAL_BASE, FIFTEEN_MINUTES, FIVE_MINUTES, ONE_HOUR, barSizeMs } from './geckoterminal.js'
 import { stubHttp } from '../../http.js'
 /** * How many lists `discoverPools` sweeps. * * Named so a test can say "two pages per list" instead of a number that breaks * every time the breadth changes — which it did the day `pools` gained a * volume and a transaction-count ordering. */const LISTS = 5
 
@@ -205,6 +205,14 @@ describe('GeckoTerminal — bar sizes', () => {
     await new GeckoTerminal(http).candles('solana', POOL, FIFTEEN_MINUTES)
     expect(http.calls[0]).toContain('/ohlcv/minute?')
     expect(http.calls[0]).toContain('aggregate=15')
+  })
+
+  it('sends the aggregate for 5-minute bars, the real-time DCA spacing’s', async () => {
+    const http = stubHttp({ [url15]: { body: live } })
+    await new GeckoTerminal(http).candles('solana', POOL, FIVE_MINUTES)
+    expect(http.calls[0]).toContain('/ohlcv/minute?')
+    expect(http.calls[0]).toContain('aggregate=5')
+    expect(barSizeMs(FIVE_MINUTES)).toBe(300_000)
   })
 
   it('sends no aggregate for hourly bars', async () => {

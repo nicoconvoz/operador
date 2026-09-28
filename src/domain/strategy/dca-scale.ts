@@ -150,3 +150,91 @@ export function volatilityBefore(
   }
   return volatilityPct(closes, policy)
 }
+
+/**
+ * The median of the last hour's volatility (`lastHourVolatilityPct`) across
+ * the 336 entries replayed, in percent per 5-minute bar: a median token keeps
+ * the base ladder exactly. See `realtimeDcaScale`.
+ */
+export const MEDIAN_VOL_5M_PCT = 2.17
+
+/** The bar the real-time volatility is measured on: five minutes. */
+export const REALTIME_BAR_MS = 5 * 60_000
+
+/** The at-buy policy on the real-time measure: the same bounds, the last hour, its own median. */
+export const REALTIME_DCA_SCALE_POLICY: DcaScalePolicy = {
+  ...DEFAULT_DCA_SCALE_POLICY,
+  medianVolPct: MEDIAN_VOL_5M_PCT,
+  windowMs: 60 * 60_000,
+}
+
+/**
+ * The NEXT rung's spacing, from how much the token moves NOW: the last hour of
+ * closed 5-minute bars, decided at the moment the sweep looks at the rung.
+ *
+ * *Que el próximo escalón DCA lo calcule por la cantidad de volatilidad que
+ * tenga en ese preciso momento la moneda — si es mucha, escalón bien largo; si
+ * es poca, escalón corto.* Then *tiempo real.* The operator. The at-buy scale
+ * above answered the same question once, from the day BEFORE the first buy,
+ * and kept that answer for the life of the position — so a token that turned
+ * wild an hour after it was bought went on buying rungs at its calm spacing,
+ * straight down the fall.
+ *
+ * The same replay of the 336 real entries (2026-09-23 → 09-27, 5-minute
+ * Jupiter closes, 0.66% a fill, the real freezes applied, the exit modelled at
+ * +10%, rungs of $15 to $35 each measured from the previous buy):
+ *
+ * | Spacing measured | Result | train / test | frozen | worst token | peak capital |
+ * |---|---|---|---|---|---|
+ * | fixed 10/15/20/25/30 | $312 | 110 / 214 | −$37 | −$23 | $1,550 |
+ * | once, at the buy — 24h of 15m bars (what ran) | $263 | 111 / 156 | −$52 | −$25 | $1,725 |
+ * | in real time, over the last 24h | $243 | | | | |
+ * | in real time, over the last 4h | $209 | | | | |
+ * | **in real time, over the last HOUR of 5m bars** | **$324** | 124 / 212 | **−$30** | **−$17.31** | $2,060 |
+ *
+ * Why it works: while a token is crashing its last-hour volatility explodes,
+ * so the next rung waits far deeper — it does not buy in the middle of the
+ * fall. Calm, the rung sits close and buys the small dips. The longer windows
+ * lose because they mix the past into the present: a day of history still
+ * reads calm an hour into a crash, and still reads wild an hour after it ended,
+ * so the line reacts late in both directions.
+ *
+ * What it costs, stated: more capital at the peak, $2,060 against $1,725 — the
+ * likely mechanism being calm hours, whose rungs sit closer and fill more
+ * often. And a fetch on every new bar for each position near its line, which
+ * the sweep caps at one per token per bar.
+ *
+ * Same shape as the at-buy scale — `clamp(sqrt(vol / median), 0.5, 3)`, each
+ * drop times it, never past 90% — against the median of THIS measure: 2.17%
+ * per 5-minute bar across the entries replayed. Null when nothing was
+ * measured, so the caller can fall back to the at-buy scale and then to one:
+ * silence is not evidence.
+ */
+export function realtimeDcaScale(volPct5m: number | null, policy: DcaScalePolicy = REALTIME_DCA_SCALE_POLICY): number | null {
+  return measuredDcaScale(volPct5m, policy)
+}
+
+/**
+ * How much the token has moved in the LAST HOUR, in percent per 5-minute bar:
+ * the root mean square of the log returns between the closes of the bars that
+ * closed in the hour up to `at` — the same RMS-around-zero as `volatilityPct`,
+ * and null under five returns.
+ *
+ * A bar counts once it has CLOSED (`time + barMs <= at`) and only while its
+ * close is inside the hour (`time + barMs > at − 1h`). The bar still being
+ * built is a running quote, not a fact about the token; one that closed more
+ * than an hour ago is the past this measure exists to leave out.
+ */
+export function lastHourVolatilityPct(
+  candles: { readonly time: readonly number[]; readonly close: readonly number[] },
+  at: number,
+  policy: DcaScalePolicy = REALTIME_DCA_SCALE_POLICY,
+  barMs: number = REALTIME_BAR_MS,
+): number | null {
+  const closes: number[] = []
+  for (let i = 0; i < candles.time.length; i++) {
+    const closedAt = candles.time[i]! + barMs
+    if (closedAt <= at && closedAt > at - policy.windowMs) closes.push(candles.close[i]!)
+  }
+  return volatilityPct(closes, policy)
+}

@@ -40,6 +40,11 @@ export interface BarSize {
 
 export const ONE_HOUR: BarSize = { timeframe: 'hour' }
 export const FIFTEEN_MINUTES: BarSize = { timeframe: 'minute', aggregate: 15 }
+/**
+ * The bar the real-time DCA spacing is measured on: the last hour of CLOSED
+ * 5-minute bars. See `realtimeDcaScale` in `domain/strategy/dca-scale.ts`.
+ */
+export const FIVE_MINUTES: BarSize = { timeframe: 'minute', aggregate: 5 }
 export const ONE_MINUTE: BarSize = { timeframe: 'minute', aggregate: 1 }
 
 /** How many minutes one bar covers. Lets a caller turn a bar count into an age. */

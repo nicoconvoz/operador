@@ -124,6 +124,54 @@ describe('MemoryStore — the break-even ratchet', () => {
   })
 })
 
+describe('MemoryStore — the real-time DCA scale: the NEWER reading wins', () => {
+  // *Tiempo real.* The sweep writes the scale it measured from the last hour
+  // onto the position, for the screen; every other step of the cycle writes
+  // the whole row back from a snapshot read before that. Exactly as the SQL
+  // keeps it: the pair with the newer `dcaScaleNowAt` wins.
+  const base = {
+    id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+    cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+    quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+    capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+  }
+  const reading = async (store: MemoryStore) => {
+    const [loaded] = await store.loadPositions()
+    return [loaded!.dcaScaleNow, loaded!.dcaScaleNowAt]
+  }
+
+  it('is absent until a sweep measures it', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(base)
+    expect(await reading(store)).toEqual([null, null])
+  })
+
+  it('takes a newer reading over an older one', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, dcaScaleNow: 2.1, dcaScaleNowAt: 1_000 })
+    await store.savePosition({ ...base, dcaScaleNow: 0.7, dcaScaleNowAt: 2_000 })
+    expect(await reading(store)).toEqual([0.7, 2_000])
+  })
+
+  it('never lets a stale snapshot overwrite a fresher reading — older, or none at all', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, dcaScaleNow: 2.1, dcaScaleNowAt: 2_000 })
+    await store.savePosition({ ...base, dcaScaleNow: 0.7, dcaScaleNowAt: 1_000 })
+    await store.savePosition({ ...base, lastBarTime: 1, dcaScaleNow: null, dcaScaleNowAt: null })
+    await store.savePosition({ ...base, lastBarTime: 2 })
+    expect(await reading(store)).toEqual([2.1, 2_000])
+    expect((await store.loadPositions())[0]!.lastBarTime).toBe(2)
+  })
+
+  it('keeps the pair whole: a scale with no time, or a time with no scale, is not a reading', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, dcaScaleNow: 2.1, dcaScaleNowAt: 1_000 })
+    await store.savePosition({ ...base, dcaScaleNow: 0.7, dcaScaleNowAt: null })
+    await store.savePosition({ ...base, dcaScaleNow: null, dcaScaleNowAt: 5_000 })
+    expect(await reading(store)).toEqual([2.1, 1_000])
+  })
+})
+
 describe('MemoryStore — the gain lock ratchets, and survives a stale snapshot', () => {
   // *Con cada aumento de 20%, aumentar el break-even 10%.* A floor that only
   // rises while the same holding lives — and every step of the cycle writes

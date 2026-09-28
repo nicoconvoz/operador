@@ -69,6 +69,8 @@ interface PositionRow {
   dca_scale?: string | number | null
   gain_lock_pct?: string | number | null
   gain_lock_since?: string | number | null
+  dca_scale_now?: string | number | null
+  dca_scale_now_at?: string | number | null
 }
 
 const present = (value: string | number | null | undefined): value is string | number => value !== null && value !== undefined
@@ -119,6 +121,11 @@ export class PostgresStore implements StatePort {
       entryScore: row.entry_score === null || row.entry_score === undefined ? null : num(row.entry_score),
       dcaScale: present(row.dca_scale) ? num(row.dca_scale) : null,
       gainLock: gainLockOf(row),
+      // A pair or nothing, like the gain lock: a scale with no time cannot be
+      // told fresh from stale, and the screen would draw it as the present.
+      ...(present(row.dca_scale_now) && present(row.dca_scale_now_at)
+        ? { dcaScaleNow: num(row.dca_scale_now), dcaScaleNowAt: num(row.dca_scale_now_at) }
+        : { dcaScaleNow: null, dcaScaleNowAt: null }),
     }))
   }
 
@@ -126,8 +133,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -159,12 +166,30 @@ export class PostgresStore implements StatePort {
            WHEN EXCLUDED.gain_lock_since IS NULL THEN positions.gain_lock_since
            WHEN positions.gain_lock_since IS NULL OR EXCLUDED.gain_lock_since > positions.gain_lock_since THEN EXCLUDED.gain_lock_since
            ELSE positions.gain_lock_since
+         END,
+         -- The REAL-TIME DCA SCALE, a reading over a pair: the NEWER pair wins.
+         -- The sweep writes what it measured from the last hour; the tick, the
+         -- trim and a funded rung write the row back from snapshots read
+         -- before it, and none of those may put an older reading, or none,
+         -- over a fresher one. Both CASEs ask the same question of the row as
+         -- it WAS, so the pair moves together or not at all.
+         dca_scale_now = CASE
+           WHEN EXCLUDED.dca_scale_now_at IS NOT NULL
+            AND (positions.dca_scale_now_at IS NULL OR EXCLUDED.dca_scale_now_at > positions.dca_scale_now_at)
+           THEN EXCLUDED.dca_scale_now ELSE positions.dca_scale_now
+         END,
+         dca_scale_now_at = CASE
+           WHEN EXCLUDED.dca_scale_now_at IS NOT NULL
+            AND (positions.dca_scale_now_at IS NULL OR EXCLUDED.dca_scale_now_at > positions.dca_scale_now_at)
+           THEN EXCLUDED.dca_scale_now_at ELSE positions.dca_scale_now_at
          END`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
        p.breakEvenArmed === true, p.entryScore ?? null, p.dcaScale ?? null,
        // Both or neither: a floor is meaningless without the holding it belongs to.
-       p.gainLock ? p.gainLock.pct : null, p.gainLock ? p.gainLock.since : null],
+       p.gainLock ? p.gainLock.pct : null, p.gainLock ? p.gainLock.since : null,
+       // Both or neither, for the lock's reason: a scale with no time is no reading.
+       ...(present(p.dcaScaleNow) && present(p.dcaScaleNowAt) ? [p.dcaScaleNow, p.dcaScaleNowAt] : [null, null])],
     )
   }
 

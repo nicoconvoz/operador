@@ -20,7 +20,7 @@ import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
-import { GeckoTerminal, barMinutes, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { GeckoTerminal, barMinutes, FIVE_MINUTES, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
@@ -29,6 +29,7 @@ import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens
 import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
 import { tokenCandles } from '../application/candle-source.js'
+import { lastHourVolatility } from '../application/recent-volatility.js'
 import { patientSellProbe } from '../application/patient-sell-probe.js'
 import { PRESSURE_THRESHOLD } from '../domain/strategy/pressure-ladder.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
@@ -143,6 +144,20 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   const candlesOf = tokenCandles({
     byMint: (chain, mint, size: BarSize, limit) => jupiterCharts.candles(chain, mint, size, limit),
     byPool: (chain, pool, size: BarSize, limit) => gecko.candles(chain, pool, size, limit),
+  })
+  /**
+   * The last hour of CLOSED 5-minute bars, for the real-time DCA spacing —
+   * through the same route as the tick's candles, Jupiter by mint first and
+   * GeckoTerminal behind it, so the rung and the strategy read one feed.
+   *
+   * Sixteen bars: the twelve of the hour, the forming one the adapters drop,
+   * and room for a provider a bar behind. ONE instance, shared by the cycle's
+   * sweeps and the loop's, so its per-bar memory is one memory: the 30-second
+   * sweep asks each token once per 5-minute bar, never once per pass.
+   */
+  const recentVolatility = lastHourVolatility({
+    candles: (position) => candlesOf(position.chain, position.tokenAddress, position.pairAddress, FIVE_MINUTES, 16),
+    now: () => Date.now(),
   })
   const sourcesFor = (chain: Chain) =>
     chain === 'solana'
@@ -432,6 +447,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // buy: the more the token moves, the closer its rungs. Here, once, so
       // the cycle's sweeps and the loop's cannot disagree about the line.
       adaptive: config.dcaAdaptive,
+      // *Tiempo real.* The NEXT rung spaced by the token's last hour, decided
+      // when the sweep looks at it; the at-buy scale is the fallback when the
+      // hour cannot be read. Only inside `adaptive` — the sweep never asks
+      // with that off. Absent with OPERADOR_DCA_REALTIME=0.
+      ...(config.dcaRealtime ? { recentVolatility } : {}),
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,

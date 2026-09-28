@@ -11,7 +11,8 @@ import { fundRungsFromFreeCapital } from './free-capital.js'
 import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { productionLadder } from './production-ladder.js'
-import { dcaScale } from '../domain/strategy/dca-scale.js'
+import { dcaScale, MEDIAN_VOL_5M_PCT } from '../domain/strategy/dca-scale.js'
+import { type RecentVolatility } from './recent-volatility.js'
 
 const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
 /** Ladder A, exactly as production reads it with no environment set. */
@@ -74,6 +75,11 @@ const rig = async (options: {
    * production reads with nothing set, `A.dcaAdaptive`.
    */
   readonly adaptive?: boolean
+  /**
+   * The last hour's volatility of the token, as the runtime wires it when the
+   * real-time spacing is on. Absent: the switch is off.
+   */
+  readonly recentVolatility?: (position: PersistedPosition) => Promise<RecentVolatility | null>
 } = {}) => {
   const store = new MemoryStore()
   const held = options.held ?? position()
@@ -112,6 +118,7 @@ const rig = async (options: {
             policy: { maxEntries: A.maxOpenEntries, dropsPct: A.dcaDropsPct, from: A.dcaFrom },
             rungsUsd: A.dcaRungsUsd,
             adaptive: options.adaptive ?? A.dcaAdaptive,
+            ...(options.recentVolatility ? { recentVolatility: options.recentVolatility } : {}),
             ...(options.bookUsd !== undefined
               ? { fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd }) }
               : {}),
@@ -586,5 +593,156 @@ describe('ladder A at the token’s own scale: the more it moves, the wider its 
     await run(0.899)
     expect((await bought(store)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
     expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 10%')
+  })
+})
+
+describe('the NEXT rung, spaced by the token’s last hour — in real time', () => {
+  // *Que el próximo escalón DCA lo calcule por la cantidad de volatilidad que
+  // tenga en ese preciso momento la moneda — si es mucha, escalón bien largo;
+  // si es poca, escalón corto.* Then *tiempo real.* The sweep asks for the last
+  // hour of 5-minute bars when a rung could fire, and spaces THAT rung by it.
+  const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
+  const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
+  const WILD_AT_BUY = dcaScale(10)
+  const held = (dcaScale?: number) => position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.9, ...(dcaScale === undefined ? {} : { dcaScale }) })
+  const bought = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy').map((f) => f.orderId)
+  // Four times the median is a scale of two: DCA-1 at −20%. A quarter of it is
+  // the floor, a half: DCA-1 at −5%.
+  const WILD_HOUR = MEDIAN_VOL_5M_PCT * 4
+  const CALM_HOUR = MEDIAN_VOL_5M_PCT / 4
+  const lastHour = (volPct: number | null, measuredAt = AT) => {
+    const asked: string[] = []
+    const read = async (p: PersistedPosition) => {
+      asked.push(p.id)
+      return volPct === null ? null : { volPct, measuredAt }
+    }
+    return { read, asked }
+  }
+
+  it('waits deeper after a wild hour than after a calm one, from the same previous buy', async () => {
+    const calm = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: lastHour(CALM_HOUR).read })
+    await calm.run(0.951)
+    expect(await bought(calm.store)).toEqual(['Entry'])
+    await calm.run(0.949)
+    expect(await bought(calm.store)).toEqual(['Entry', 'DCA-1'])
+
+    const wild = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: lastHour(WILD_HOUR).read })
+    await wild.run(0.949)
+    await wild.run(0.801)
+    expect(await bought(wild.store)).toEqual(['Entry'])
+    await wild.run(0.799)
+    expect(await bought(wild.store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('outranks the scale measured at the buy: a token calm then and crashing now waits', async () => {
+    // Measured calm the day before it was bought, and falling hard this hour:
+    // the at-buy spacing would buy the middle of the fall.
+    const { store, run } = await rig({ held: held(dcaScale(1)), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: lastHour(WILD_HOUR).read })
+    await run(0.93)
+    expect(await bought(store)).toEqual(['Entry'])
+  })
+
+  it('says in the alert the fall the rung waited for and the volatility it used', async () => {
+    const { sent, run } = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: lastHour(WILD_HOUR).read })
+    await run(0.79)
+    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 20% (volatilidad de la última hora: 8.7%)')
+  })
+
+  it('falls back to the scale measured at the buy when the last hour cannot be measured', async () => {
+    const { store, sent, run } = await rig({ held: held(WILD_AT_BUY), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: lastHour(null).read })
+    await run(0.81)
+    expect(await bought(store)).toEqual(['Entry'])
+    await run(0.806)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+    expect(sent.find((a) => a.title.includes('DCA-1'))?.body).toContain('este escalón pedía 19.2% (volatilidad al comprar)')
+  })
+
+  it('falls back to the base drops when nothing was measured at all', async () => {
+    const { store, run } = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: lastHour(null).read })
+    await run(0.901)
+    expect(await bought(store)).toEqual(['Entry'])
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('falls back the same way when asking THROWS — a refusal is not a reading', async () => {
+    const { store, run } = await rig({
+      held: held(WILD_AT_BUY), drop: 'A', stop: NO_STOP, bookUsd: 1_000,
+      recentVolatility: async () => { throw new Error('HTTP 503') },
+    })
+    await run(0.806)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('never asks for a position above the shallowest line any spacing could draw', async () => {
+    // Half the base drop is as close as a rung can ever sit: −5% for DCA-1.
+    // Above it no reading of the hour can buy anything, so none is fetched.
+    const hour = lastHour(CALM_HOUR)
+    const { run } = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: hour.read })
+    await run(1.2)
+    await run(0.951)
+    expect(hour.asked).toEqual([])
+    await run(0.95)
+    expect(hour.asked).toEqual([ID])
+  })
+
+  it('writes the reading onto the position for the screen — once per reading', async () => {
+    const hour = lastHour(WILD_HOUR, AT - 1_000)
+    const { store, run } = await rig({ held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: hour.read })
+    let saves = 0
+    const save = store.savePosition.bind(store)
+    store.savePosition = async (p) => { saves++; await save(p) }
+    await run(0.9)
+    const [after] = await store.loadPositions()
+    expect(after!.dcaScaleNow).toBeCloseTo(2, 12)
+    expect(after!.dcaScaleNowAt).toBe(AT - 1_000)
+    expect(saves).toBe(1)
+  })
+
+  it('does not write a reading the position already carries', async () => {
+    const hour = lastHour(WILD_HOUR, AT - 1_000)
+    const carrying = position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.9, dcaScaleNow: 2, dcaScaleNowAt: AT - 1_000 })
+    const { store, run } = await rig({ held: carrying, drop: 'A', stop: NO_STOP, bookUsd: 1_000, recentVolatility: hour.read })
+    let saves = 0
+    const save = store.savePosition.bind(store)
+    store.savePosition = async (p) => { saves++; await save(p) }
+    await run(0.9)
+    expect(hour.asked).toEqual([ID])
+    expect(saves).toBe(0)
+  })
+
+  it('waits to write when this pass has already bought for the position — the snapshot is stale', async () => {
+    // A pressure rung earlier in the same sweep raised the row's capital in the
+    // store; writing the sweep's snapshot back would lower it again.
+    let store: MemoryStore | undefined
+    const { store: s, run } = await rig({
+      held: held(), drop: 'A', stop: NO_STOP, bookUsd: 1_000,
+      recentVolatility: async () => {
+        await store!.recordFill(buy(ID, 0.9, 1, 15))
+        return { volPct: WILD_HOUR, measuredAt: AT }
+      },
+    })
+    store = s
+    await run(0.9)
+    expect((await s.loadPositions())[0]!.dcaScaleNow).toBeNull()
+  })
+
+  it('uses only the scale measured at the buy when the real-time switch is off', async () => {
+    // Off is the dependency absent: nothing asks for the hour at all.
+    const { store, run } = await rig({ held: held(WILD_AT_BUY), drop: 'A', stop: NO_STOP, bookUsd: 1_000 })
+    await run(0.9)
+    expect(await bought(store)).toEqual(['Entry'])
+    await run(0.806)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('scales nothing at all, real time included, when the ladder does not adapt', async () => {
+    const hour = lastHour(CALM_HOUR)
+    const { store, run } = await rig({ held: held(WILD_AT_BUY), drop: 'A', stop: NO_STOP, bookUsd: 1_000, adaptive: false, recentVolatility: hour.read })
+    await run(0.901)
+    expect(await bought(store)).toEqual(['Entry'])
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+    expect(hour.asked).toEqual([])
   })
 })
