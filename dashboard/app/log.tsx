@@ -16,9 +16,13 @@ import type { DailyLogView } from '../../src/application/daily-log.js'
  * only lays them out. A second calculation of "how much are we up" on the
  * screen is the drift this project keeps paying for.
  *
- * A table and not the Registro's two-line rows: five short figures fit across
- * a phone, and a day is read ACROSS — what it made, where it ended, how low and
- * how high it went — which is exactly what columns are for.
+ * One CARD per day, not a table row. It started as a five-column table, and
+ * the operator read it off his screen: *se ve todo muy junto, muy pegado, y
+ * para cantidades más grandes de dinero ni siquiera va a entrar.* Five figures
+ * across a phone leave each one about sixty pixels, which a four-digit profit
+ * with its sign and cents already overflows. So the day's result leads, large,
+ * and the three readings under it sit in boxes that wrap to fewer columns when
+ * the screen is narrow — a figure never has to share its line with four others.
  */
 
 const UP = '#63e6a5'
@@ -56,18 +60,42 @@ const card = (): React.CSSProperties => ({
   background: 'rgba(13,17,23,0.6)',
 })
 
-const cell = (align: 'left' | 'right' = 'right'): React.CSSProperties => ({
-  textAlign: align,
-  padding: '7px 4px',
-  whiteSpace: 'nowrap',
-})
+const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+
+/** One reading under the day's result: a label, and room for any amount. */
+function Reading({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={{ border: '1px solid #1b2129', borderRadius: 8, padding: '10px 12px', background: 'rgba(22,27,34,0.55)', minWidth: 0 }}>
+      <div style={{ color: DIM, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
+      <div style={{ color: tone(value), fontSize: 16, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' }}>
+        {signed(value)}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Where the day ended between its low and its high. A bar, because "it closed
+ * near the top of its range" is a shape, and three numbers make the reader
+ * draw it in their head. Nothing when the day never moved.
+ */
+function Range({ min, max, close }: { min: number; max: number; close: number }) {
+  const span = max - min
+  if (!(span > 0)) return null
+  const at = Math.min(100, Math.max(0, ((close - min) / span) * 100))
+  return (
+    <div aria-hidden style={{ position: 'relative', height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${DOWN}55, ${UP}55)` }}>
+      <div style={{ position: 'absolute', top: -3, left: `calc(${at}% - 6px)`, width: 12, height: 12, borderRadius: '50%', background: '#e6edf3', border: '2px solid #0d1117' }} />
+    </div>
+  )
+}
 
 export function DailyLog({ view }: { view: DailyLogView | undefined }) {
   const days = view?.days ?? []
 
   return (
     <section style={card()}>
-      <div style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>
+      <div style={{ color: DIM, fontSize: 12, marginBottom: 14 }}>
         ganancia por día, hora de Buenos Aires — la de hoy se actualiza en cada ciclo del motor
       </div>
 
@@ -77,43 +105,53 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
           cuanto termine una pasada.
         </div>
       ) : (
-        // Scrolls sideways rather than squeezing, on a phone narrow enough to
-        // need it: a figure cut in half is worse than one a swipe away.
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>
-            <thead>
-              <tr style={{ color: DIM, fontSize: 11 }}>
-                <th style={{ ...cell('left'), fontWeight: 'normal' }}>Día</th>
-                {/* Allowed to wrap: the longest header must not be what pushes
-                    the table off a phone. */}
-                <th style={{ ...cell(), fontWeight: 'normal', whiteSpace: 'normal' }}>Resultado del día</th>
-                <th style={{ ...cell(), fontWeight: 'normal' }}>Acumulado</th>
-                <th style={{ ...cell(), fontWeight: 'normal' }}>Mínimo</th>
-                <th style={{ ...cell(), fontWeight: 'normal' }}>Máximo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {days.map((d) => (
-                <tr key={d.day} style={{ borderTop: '1px solid #14181f' }}>
-                  <td style={{ ...cell('left'), color: d.isToday ? '#e6edf3' : DIM }}>{dayLabel(d.day, d.isToday)}</td>
-                  <td style={{ ...cell(), color: tone(d.resultUsd), fontSize: 13 }}>{signed(d.resultUsd)}</td>
-                  <td style={{ ...cell(), color: tone(d.closeUsd) }}>{signed(d.closeUsd)}</td>
-                  <td style={{ ...cell(), color: tone(d.minUsd) }}>{signed(d.minUsd)}</td>
-                  <td style={{ ...cell(), color: tone(d.maxUsd) }}>{signed(d.maxUsd)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ display: 'grid', gap: 14 }}>
+          {days.map((d) => (
+            <article
+              key={d.day}
+              style={{
+                border: `1px solid ${d.isToday ? '#2d3a45' : '#1b2129'}`,
+                borderRadius: 10,
+                padding: 16,
+                display: 'grid',
+                gap: 14,
+                background: d.isToday ? 'rgba(99,230,165,0.04)' : 'transparent',
+              }}
+            >
+              {/* The day and what it made, on one line that wraps before it
+                  squeezes: a long result drops under the date instead of
+                  overflowing the card. */}
+              <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px 16px' }}>
+                <div style={{ color: d.isToday ? '#e6edf3' : DIM, fontSize: 14, fontWeight: 600 }}>{dayLabel(d.day, d.isToday)}</div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ color: DIM, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase' }}>Resultado del día</div>
+                  <div style={{ color: tone(d.resultUsd), fontSize: 22, fontWeight: 700, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' }}>
+                    {signed(d.resultUsd)}
+                  </div>
+                </div>
+              </header>
+
+              {/* Three boxes that fall to two, then one, as the screen narrows —
+                  never five figures sharing a phone's width. */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                <Reading label="Acumulado" value={d.closeUsd} />
+                <Reading label="Mínimo" value={d.minUsd} />
+                <Reading label="Máximo" value={d.maxUsd} />
+              </div>
+
+              <Range min={d.minUsd} max={d.maxUsd} close={d.closeUsd} />
+            </article>
+          ))}
         </div>
       )}
 
-      {/* What each column IS, said once. "Resultado" and "Acumulado" are two
+      {/* What each figure IS, said once. "Resultado" and "Acumulado" are two
           readings of the same running figure, and a reader who takes one for
           the other adds a day's gain to itself. */}
-      <div style={{ color: DIM, fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>
+      <div style={{ color: DIM, fontSize: 11, marginTop: 14, lineHeight: 1.6 }}>
         Acumulado: la ganancia total (cobrada + sin cobrar − costos) en la última lectura del día. Resultado del día: el
         acumulado menos el del día anterior; el primer día registrado se mide desde su primera lectura. Mínimo y máximo:
-        lo más bajo y lo más alto que tocó el acumulado ese día.
+        lo más bajo y lo más alto que tocó el acumulado ese día; la barra marca dónde cerró el día entre los dos.
       </div>
     </section>
   )

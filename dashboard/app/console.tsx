@@ -286,7 +286,11 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
         <Stat label="En lista negra" value={String(dashboard.blacklistedCount)} />
       </section>
 
-      <nav style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+      {/* Four tabs, one row, always inside the screen: equal columns that
+          share whatever width the phone has, the count under the name rather
+          than beside it. A flex row of natural widths pushed Log off a phone
+          the day it became the fourth tab. */}
+      <nav style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6, marginBottom: 12 }}>
         <Tab active={tab === 'universe'} onClick={() => showTab('universe')}>
           Universo <Count>{universe.tokens.length}</Count>
         </Tab>
@@ -352,10 +356,20 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
       onClick={onClick}
       style={{
         all: 'unset',
+        boxSizing: 'border-box',
         cursor: 'pointer',
-        padding: '7px 14px',
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+        padding: '8px 4px',
         borderRadius: 8,
-        fontSize: 13,
+        textAlign: 'center',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        fontSize: 'clamp(11px, 3.3vw, 13px)',
         border: `1px solid ${active ? '#58a6ff' : '#21262d'}`,
         background: active ? 'rgba(88,166,255,0.12)' : 'transparent',
         color: active ? '#e6e6e6' : '#8b949e',
