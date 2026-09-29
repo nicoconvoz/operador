@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { OperationsView, PositionOperations, LadderRung } from '../../src/application/operations-view.js'
 import { alphabetical } from '../../src/application/position-order.js'
+import { pageOf, type Page } from '../../src/application/pagination.js'
 
 /**
  * The broker at work.
@@ -48,14 +49,28 @@ export function Operations({
   const positions = useMemo(() => alphabetical(given), [given])
   const [open, setOpen] = useState<string | null>(positions[0]?.id ?? null)
 
+  // Fifty cards at a time, never the whole book: see `pageOf`. A new search
+  // starts again on page one; a poll keeps the page the reader is on.
+  const [pageAt, setPageAt] = useState(0)
+  const page = pageOf(positions, pageAt)
+
   // A new search opens the first card it found, the way the first card of the
   // whole book opens without one: the token just asked for is the one to read.
   const first = positions[0]?.id ?? null
   useEffect(() => {
     setOpen(first)
+    setPageAt(0)
     // Only when the QUERY changes. A poll hands over fresh objects every ten
     // seconds, and a card the reader closed must not spring open again.
   }, [query])
+
+  // Turning the page closes the open card: nothing below the fold is rendered
+  // open, and the page the reader lands on starts at its top.
+  const turn = (to: number) => {
+    setPageAt(to)
+    setOpen(null)
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0 })
+  }
 
   if (view.positions.length === 0) {
     return (
@@ -98,9 +113,13 @@ export function Operations({
         </section>
       )}
 
-      {positions.map((position) => (
+      <Pager page={page} onTurn={turn} />
+
+      {page.items.map((position) => (
         <Position key={position.id} position={position} open={open === position.id} onToggle={() => setOpen(open === position.id ? null : position.id)} />
       ))}
+
+      <Pager page={page} onTurn={turn} />
 
     </>
   )
@@ -266,3 +285,43 @@ const card = (): React.CSSProperties => ({
   padding: 14,
   background: 'rgba(13,17,23,0.6)',
 })
+
+/**
+ * « Anterior · página 2 de 5 (51–100 de 250) · Siguiente ». Drawn above and
+ * below the cards; nothing at all when the book fits on one page. Buttons are
+ * 44 px tall so a thumb finds them.
+ */
+function Pager({ page, onTurn }: { page: Page<PositionOperations>; onTurn: (to: number) => void }) {
+  if (page.pages <= 1) return null
+  const button = (label: string, to: number, enabled: boolean) => (
+    <button
+      type="button"
+      disabled={!enabled}
+      onClick={() => onTurn(to)}
+      style={{
+        minHeight: 44,
+        minWidth: 44,
+        padding: '0 14px',
+        borderRadius: 8,
+        border: '1px solid #30363d',
+        background: enabled ? 'rgba(22,27,34,0.9)' : 'transparent',
+        color: enabled ? '#e6edf3' : '#484f58',
+        fontSize: 14,
+        cursor: enabled ? 'pointer' : 'default',
+      }}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <nav aria-label="Páginas de posiciones" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, margin: '8px 0' }}>
+      {button('« Anterior', page.page - 1, page.page > 0)}
+      <span style={{ color: DIM, fontSize: 12, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+        página {page.page + 1} de {page.pages}
+        <br />
+        {page.from}–{page.to} de {page.total}
+      </span>
+      {button('Siguiente »', page.page + 1, page.page < page.pages - 1)}
+    </nav>
+  )
+}
