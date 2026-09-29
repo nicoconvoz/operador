@@ -22,7 +22,7 @@ import {
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the numbers that differ', () => {
-  it('defaults to TWENTY buys of $1, every one on a 3% dip and a 2% bounce', () => {
+  it('defaults to TWENTY buys of $5, every one on a 3% dip and a 2% bounce', () => {
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — then *disminuí los
     // escalones a 20.* The slot reserves the whole ladder, exactly steps ×
@@ -30,24 +30,24 @@ describe('productionLadder — one place for the numbers that differ', () => {
     // the deep rung, the chained drop ladder, its volatility spacing, the
     // liquidity brake and the cascade's own doors. The TP stays at 10%.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 1, maxOpenEntries: 20, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
+      maxUsdPerLevel: 5, maxOpenEntries: 20, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 1, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 20, cascadeEntries: false,
+      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 100, cascadeEntries: false,
     })
-    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT]).toEqual([1, 20, 3, 2])
+    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT]).toEqual([5, 20, 3, 2])
   })
 
-  it('puts at most $20 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
+  it('puts at most $100 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
     const ladder = productionLadder({})
-    expect(ladder.maxSteps * ladder.stepUsd).toBe(20)
-    expect(ladder.slotUsd).toBe(20)
+    expect(ladder.maxSteps * ladder.stepUsd).toBe(100)
+    expect(ladder.slotUsd).toBe(100)
     expect(ladder.maxOpenEntries).toBe(20)
   })
 
   it('derives the slot from the two variables, never from a constant', () => {
-    expect(productionLadder({ OPERADOR_MAX_STEPS: '50' }).slotUsd).toBe(50)
+    expect(productionLadder({ OPERADOR_MAX_STEPS: '50' }).slotUsd).toBe(250)
     expect(productionLadder({ OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '2' }))
       .toMatchObject({ slotUsd: 100, maxOpenEntries: 50, reservedEntries: 50, maxUsdPerLevel: 2 })
   })
@@ -60,7 +60,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
   it('keeps the operator’s numbers on nonsense rather than trading on it', () => {
     for (const bad of ['tres', '0', '-3', '100', ' ']) expect(productionLadder({ OPERADOR_DIP_PCT: bad }).dipPct, bad).toBe(3)
     for (const bad of ['dos', '0', '-2', ' ']) expect(productionLadder({ OPERADOR_BOUNCE_PCT: bad }).bouncePct, bad).toBe(2)
-    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(1)
+    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(5)
     for (const bad of ['veinte', '0', '-1', '2.5', ' ']) expect(productionLadder({ OPERADOR_MAX_STEPS: bad }).maxSteps, bad).toBe(20)
   })
 
@@ -86,7 +86,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 1, maxOpenEntries: 20 })
+      .toMatchObject({ maxUsdPerLevel: 5, maxOpenEntries: 20 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -210,7 +210,7 @@ describe('production ladder — each rung buys its OWN size, paired with its dro
 describe('production ladder — a position reserves its WHOLE ladder', () => {
   // With $1 steps a slot reserving one buy would open a thousand positions and
   // drown the providers in candle requests. So a slot reserves every step it
-  // can buy, and the capital bounds the book: capital / $20.
+  // can buy, and the capital bounds the book: capital / $100.
   it('reserves every step by default', () => {
     expect(productionLadder({}).reservedEntries).toBe(20)
   })

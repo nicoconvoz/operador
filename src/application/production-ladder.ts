@@ -22,9 +22,11 @@ import { DEFAULT_DIP_BOUNCE_POLICY } from '../domain/strategy/dip-bounce.js'
 
 /**
  * What every buy of a holding is, in dollars, the first included. *Comprá 1
- * USD, y armá escalones de 1 USD con la misma regla.* The operator.
+ * USD, y armá escalones de 1 USD con la misma regla.* The operator — then
+ * *en vez de 1 USD que sean 5 por escalón, todo lo demás igual.* A slot is
+ * therefore twenty steps of $5, $100, and the book holds capital / $100.
  */
-export const DEFAULT_STEP_USD = 1
+export const DEFAULT_STEP_USD = 5
 
 /**
  * Buys per holding, the first included: $20 a token at a dollar a step. It was

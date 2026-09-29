@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at ONE STEP by default — the dollar every dip-bounce buy is', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(1)
+  it('caps each level at ONE STEP by default — the $5 every dip-bounce buy is', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(5)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,20 +194,20 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token twenty $1 steps on a 3% dip and a 2% bounce, and a slot of exactly $20', () => {
+  it('gives every token twenty $5 steps on a 3% dip and a 2% bounce, and a slot of exactly $100', () => {
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD* —
     // *disminuí los escalones a 20.* The slot reserves the whole ladder, steps
     // × step, with nothing grossed up: *el tope son 5000 dividido 50.*
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 1, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 20 })
+    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 100 })
     expect(config.maxDcaPerToken + 1).toBe(20)
     expect(config.reservedEntries).toBe(20)
-    expect(config.usdPerToken).toBe(20)
+    expect(config.usdPerToken).toBe(100)
     // Nothing else buys: the deep rung, the chained ladder, its spacing, the
     // brake, the pressure ladder and the cascade's own doors.
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
-    expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50' })).toMatchObject({ slotUsd: 50, usdPerToken: 50, reservedEntries: 50 })
+    expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50' })).toMatchObject({ slotUsd: 250, usdPerToken: 250, reservedEntries: 50 })
   })
 
   it('keeps the take-profit at +10% over the average: no toll-derived target lifts it', () => {
