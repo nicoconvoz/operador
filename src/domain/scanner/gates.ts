@@ -114,6 +114,16 @@ export interface GatePolicy {
    */
   readonly maxBarAgeHours: number
   /**
+   * How much a candidate must move every five minutes, in percent, over the
+   * last six hours — `volatility5mPct`. Zero is off.
+   *
+   * *Que la puerta de entrada haga pasar los mejores tokens, los de mayor
+   * volatilidad.* The operator. A DOOR, not a safety gate: it decides what may
+   * enter and never touches what is held, and it asks for evidence — a token
+   * nobody measured does not pass it.
+   */
+  readonly minVolatility5mPct: number
+  /**
    * How far the candle price and the market price may diverge before neither is
    * trusted, as a ratio either way.
    *
@@ -394,6 +404,9 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // still downloaded, because `priceMismatch` and `history` read them.
   // STRICT keeps the hour; a number here brings it back.
   maxBarAgeHours: Infinity,
+  // Off here: production composes the operator's threshold
+  // (OPERADOR_MIN_VOLATILITY_PCT, 1 by default) where the scan can measure it.
+  minVolatility5mPct: 0,
   maxPriceRatio: 5,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
   // Ten percent is already far beyond anything the 1%-per-fill and 3%-exit
@@ -490,6 +503,7 @@ export type GateName =
   | 'history'
   | 'staleBars'
   | 'priceMismatch'
+  | 'volatility'
 
 export interface GateFailure {
   readonly gate: GateName
@@ -670,7 +684,7 @@ export function forgivableFailures(gates: GateResult): readonly GateFailure[] | 
 }
 
 export function evaluateSafetyGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
-  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history'])
+  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history', 'volatility'])
   const { failures } = evaluateGates(snapshot, policy)
   const kept = failures.filter((failure) => !opportunityOnly.has(failure.gate))
   return { passed: kept.length === 0, failures: kept }
@@ -790,6 +804,17 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
     if (ratio > policy.maxPriceRatio) {
       failures.push(fail('priceMismatch', 'failed',
         `el mercado dice $${snapshot.priceUsd} y las velas dicen $${candlePrice} — ${ratio.toFixed(0)}× de diferencia, no se puede operar lo que no se puede precificar`))
+    }
+  }
+
+  // Does it MOVE? The operator's door: only when it is on, and only on a
+  // measurement — silence is refused here, because a door asks for evidence.
+  if (policy.minVolatility5mPct > 0) {
+    const vol = snapshot.volatility5mPct
+    if (vol === undefined || vol === null) {
+      failures.push(fail('volatility', 'unknown', 'volatilidad de 5 minutos sin medir'))
+    } else if (vol < policy.minVolatility5mPct) {
+      failures.push(fail('volatility', 'failed', `se mueve ${vol.toFixed(2)}% cada 5 minutos < ${policy.minVolatility5mPct}%`))
     }
   }
 

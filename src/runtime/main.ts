@@ -27,6 +27,7 @@ import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens
 import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
 import { tokenCandles } from '../application/candle-source.js'
+import { volatilityProbe, VOLATILITY_CANDLES } from '../application/volatility-probe.js'
 import { lastHourVolatility } from '../application/recent-volatility.js'
 import { recentLiquidityChange } from '../application/liquidity-change.js'
 import { type LiquidityReading } from '../domain/strategy/liquidity-brake.js'
@@ -163,6 +164,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    * sweeps and the loop's, so its per-bar memory is one memory: the 30-second
    * sweep asks each token once per 5-minute bar, never once per pass.
    */
+  /**
+   * How much a stranger moves every five minutes, for the volatility door: six
+   * hours of closed 5-minute bars through the same route as every other candle.
+   * ONE instance, so an answer stands ten minutes across passes instead of
+   * costing a chart request every pass while slots are free.
+   */
+  const moves = volatilityProbe({
+    // No source answering is a failure, not a verdict: thrown, never remembered.
+    candles: async (t) => {
+      const series = await candlesOf(t.chain, t.address, t.pairAddress, FIVE_MINUTES, VOLATILITY_CANDLES + 1)
+      if (series === null) throw new Error(`no candle source answered for ${t.address}`)
+      return series
+    },
+    now: () => Date.now(),
+  })
   const recentVolatility = lastHourVolatility({
     candles: (position) => candlesOf(position.chain, position.tokenAddress, position.pairAddress, FIVE_MINUTES, 16),
     now: () => Date.now(),
@@ -206,6 +222,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // Never lowers the standing 24h floor — that answers a different question.
   const gates: GatePolicy = {
     ...DEFAULT_GATE_POLICY,
+    // The operator's volatility door: only tokens that MOVE may enter.
+    minVolatility5mPct: config.minVolatilityPct,
     minAgeHours: Math.max(
       DEFAULT_GATE_POLICY.minAgeHours,
       minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, barMinutes(config.barSize)),
@@ -970,6 +988,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                       gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, POOL_CANDLES),
                   }
                 : {}),
+              // The volatility door, measured before anything is paid for.
+              volatility5m: moves,
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

@@ -960,3 +960,38 @@ describe('staleBars — off in production, the operator’s call', () => {
     expect(old.failures.map((f) => `${f.gate}:${f.reason}`)).toContain('staleBars:failed')
   })
 })
+
+describe('volatility — a door that asks the token to MOVE', () => {
+  // *Que la puerta de entrada haga pasar los mejores tokens, los de mayor
+  // volatilidad.* The operator. A token must move at least `minVolatility5mPct`
+  // every five minutes, over the last six hours. It asks for EVIDENCE, like the
+  // rising door: a token nobody measured does not pass it.
+  const door = { ...DEFAULT_GATE_POLICY, minVolatility5mPct: 1 }
+  const gatesOf = (over: Partial<TokenSnapshot>) => evaluateGates(clean(over), door).failures.map((f) => `${f.gate}:${f.reason}`)
+
+  it('is off by default, so nothing that never measured it changes', () => {
+    expect(DEFAULT_GATE_POLICY.minVolatility5mPct).toBe(0)
+    expect(evaluateGates(clean(), DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('lets through a token that moves enough, the threshold included', () => {
+    expect(gatesOf({ volatility5mPct: 2.7 })).toEqual([])
+    expect(gatesOf({ volatility5mPct: 1 })).toEqual([])
+  })
+
+  it('refuses a calm token and says how calm', () => {
+    const calm = evaluateGates(clean({ volatility5mPct: 0.6 }), door)
+    expect(calm.failures.map((f) => `${f.gate}:${f.reason}`)).toEqual(['volatility:failed'])
+    expect(calm.failures[0]!.detail).toContain('0.60%')
+  })
+
+  it('refuses a token nobody measured, or one with too few candles to measure', () => {
+    expect(gatesOf({})).toEqual(['volatility:unknown'])
+    expect(gatesOf({ volatility5mPct: null })).toEqual(['volatility:unknown'])
+  })
+
+  it('is never a SAFETY gate: it decides what enters, never what is held', () => {
+    expect(evaluateSafetyGates(clean({ volatility5mPct: 0.1 }), door).passed).toBe(true)
+    expect(evaluateSafetyGates(clean(), door).passed).toBe(true)
+  })
+})

@@ -116,6 +116,16 @@ export interface TokenSnapshot {
   readonly lastTradeAgoHours?: number | null
 
   /**
+   * How much the price moves every five minutes, in percent: the root mean
+   * square of the log returns over the last six hours of closed 5-minute bars.
+   * Null when the feed had too few bars to call it a measurement.
+   *
+   * Absent means nobody measured it. The volatility DOOR refuses both: it asks
+   * for evidence that the token moves, like the rising door asks for a rise.
+   */
+  readonly volatility5mPct?: number | null
+
+  /**
    * The newest candle's close, from the CANDLE provider.
    *
    * It exists to be compared against `priceUsd`, which comes from the MARKET

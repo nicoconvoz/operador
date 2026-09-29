@@ -6,6 +6,7 @@ import {
   DEFAULT_ENTRY_DOORS,
   DEFAULT_CANDIDATE_ORDER,
   DEFAULT_MIN_COST_EDGE_PCT,
+  DEFAULT_MIN_VOLATILITY_PCT,
   DEFAULT_ENTRY_RISING,
 } from './production-doors.js'
 import { meetsMinimums } from '../domain/scanner/opportunity.js'
@@ -116,6 +117,28 @@ describe('productionDoors — who wins when there are more candidates than slots
     expect(productionDoors({ OPERADOR_MIN_COST_EDGE_PCT: '0' }).minCostEdgePct).toBe(0)
     for (const bad of ['diez', '-1', '100', '']) {
       expect(productionDoors({ OPERADOR_MIN_COST_EDGE_PCT: bad }).minCostEdgePct, bad).toBe(10)
+    }
+  })
+})
+
+describe('productionDoors — only tokens that move may enter', () => {
+  // *Que la puerta de entrada haga pasar los mejores tokens, los de mayor
+  // volatilidad.* The operator. At least 1% every five minutes, over the last
+  // six hours: about where the fiftieth most volatile liquid token sat the day
+  // it was measured.
+  it('asks for 1% by default', () => {
+    expect(DEFAULT_MIN_VOLATILITY_PCT).toBe(1)
+    expect(productionDoors({}).minVolatilityPct).toBe(1)
+  })
+
+  it('moves with OPERADOR_MIN_VOLATILITY_PCT, and zero turns it off', () => {
+    expect(productionDoors({ OPERADOR_MIN_VOLATILITY_PCT: '2.5' }).minVolatilityPct).toBe(2.5)
+    expect(productionDoors({ OPERADOR_MIN_VOLATILITY_PCT: '0' }).minVolatilityPct).toBe(0)
+  })
+
+  it('keeps the default on a value that is not a threshold', () => {
+    for (const bad of ['uno', '-1', '', 'Infinity']) {
+      expect(productionDoors({ OPERADOR_MIN_VOLATILITY_PCT: bad }).minVolatilityPct, bad).toBe(1)
     }
   })
 })

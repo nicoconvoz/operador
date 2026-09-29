@@ -902,7 +902,10 @@ describe('the ONE entry door is rising in the last hour, through the shelf the e
     honeypot: false, mintAuthorityActive: false, freezeAuthorityActive: false, transferTaxPct: 0,
     hasBlacklist: false, lpLockedPct: 100, topHoldersPct: 20, creatorPct: 1, verifiedSource: null, isProxy: null,
   }
-  const token = (address: string, h1: number | null, liquidityUsd: number): TokenSnapshot => ({
+  // Measured by the scan that stored them: 2% every five minutes clears the
+  // volatility door unless a token says otherwise.
+  const token = (address: string, h1: number | null, liquidityUsd: number, vol: number | null | 'unmeasured' = 2): TokenSnapshot => ({
+    ...(vol !== 'unmeasured' ? { volatility5mPct: vol } : {}),
     chain: 'solana', address, symbol: address, pairAddress: `pair-${address}`, observedAt: Date.now() - 60_000,
     priceUsd: 1, liquidityUsd, fdvUsd: 5_000_000,
     volumeUsd: { h1: 60_000, h6: 300_000, h24: 875_000 },
@@ -915,6 +918,8 @@ describe('the ONE entry door is rising in the last hour, through the shelf the e
   const shelf = [
     token('R150', 5, 150_000), token('R300', 8, 300_000), token('R600', 1, 600_000), token('UP03', 0.3, 200_000),
     token('DOWN', -0.1, 5_000_000), token('FLAT', 0, 4_000_000), token('QUIET', null, 3_000_000),
+    // Rising, cheap, and CALM — or never measured. The volatility door's.
+    token('CALM', 5, 900_000, 0.4), token('BLIND', 4, 800_000, 'unmeasured'),
   ]
   const recalled = async (slots: number, env: Record<string, string> = {}) => {
     const sql: SqlClient = {
@@ -940,6 +945,15 @@ describe('the ONE entry door is rising in the last hour, through the shelf the e
   it('orders by cost efficiency and cuts to the free slots AFTER the door — the cheapest risers, not the cheapest tokens', async () => {
     expect(await recalled(10)).toEqual(['R600', 'R300', 'UP03', 'R150'])
     expect(await recalled(2)).toEqual(['R600', 'R300'])
+  })
+
+  it('refuses a riser that does not MOVE 1% every five minutes, or that nobody measured — OPERADOR_MIN_VOLATILITY_PCT', async () => {
+    const found = await recalled(10)
+    expect(found).not.toContain('CALM')
+    expect(found).not.toContain('BLIND')
+    const open = await recalled(10, { OPERADOR_MIN_VOLATILITY_PCT: '0' })
+    expect(open).toContain('CALM')
+    expect(open).toContain('BLIND')
   })
 
   it('takes the cheapest tokens again with the door off — OPERADOR_ENTRY_RISING=0', async () => {

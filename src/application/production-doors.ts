@@ -149,6 +149,23 @@ export const DEFAULT_CANDIDATE_ORDER: CandidateOrder = 'costEfficiency'
 export const DEFAULT_MIN_COST_EDGE_PCT = 10
 
 /**
+ * How much a candidate must move every five minutes, in percent, over the last
+ * six hours, to enter at all.
+ *
+ * *Que la puerta de entrada haga pasar los mejores tokens, los de mayor
+ * volatilidad.* The operator, and then: *no necesito ordenar nada — cuando se
+ * llenen con tokens prometedores los puestos se detiene el escaneo.* A DOOR,
+ * not an order: the scan measures each stranger before paying for it and stops
+ * once the free slots are covered, exactly as before.
+ *
+ * One percent is where the fiftieth most volatile liquid Solana token sat on
+ * 2026-09-29: of 179 measured, 51 cleared it, 24 of them rising at that
+ * moment, while the book's own median was 0.88%. `OPERADOR_MIN_VOLATILITY_PCT`
+ * moves it; zero turns it off.
+ */
+export const DEFAULT_MIN_VOLATILITY_PCT = 1
+
+/**
  * The lowest total score the book will open a position on.
  *
  * The operator's number, and it is deliberately read against the RESTORED
@@ -221,6 +238,8 @@ export interface ProductionDoors {
   readonly order: CandidateOrder
   /** Points of cost efficiency a waiting candidate must beat a reservation by. See `DEFAULT_MIN_COST_EDGE_PCT`. */
   readonly minCostEdgePct: number
+  /** Percent a candidate must move every five minutes. Zero is off. See `DEFAULT_MIN_VOLATILITY_PCT`. */
+  readonly minVolatilityPct: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -255,6 +274,11 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const edge = Number(edgeRaw)
   const minCostEdgePct = edgeRaw && Number.isFinite(edge) && edge >= 0 && edge < 100 ? edge : DEFAULT_MIN_COST_EDGE_PCT
 
+  // Zero is a real value: the door is off.
+  const volRaw = env.OPERADOR_MIN_VOLATILITY_PCT?.trim()
+  const vol = Number(volRaw)
+  const minVolatilityPct = volRaw && Number.isFinite(vol) && vol >= 0 ? vol : DEFAULT_MIN_VOLATILITY_PCT
+
   return {
     minComponents,
     entryDoors: DEFAULT_ENTRY_DOORS,
@@ -262,5 +286,6 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
     reserve: env.OPERADOR_RESERVE?.trim() === '1',
     order,
     minCostEdgePct,
+    minVolatilityPct,
   }
 }

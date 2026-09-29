@@ -241,6 +241,8 @@ export interface RuntimeConfig {
   readonly order: CandidateOrder
   /** Points of cost efficiency a waiting candidate must beat a reservation by. */
   readonly minCostEdgePct: number
+  /** Percent a candidate must move every five minutes to enter. Zero is off. See `DEFAULT_MIN_VOLATILITY_PCT`. */
+  readonly minVolatilityPct: number
   /**
    * How far a scan may read the permanent registry, busiest first — an upper
    * bound, never a read size: it reads a page at a time and only while the
@@ -609,6 +611,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     cascadeEntries: productionLadder(env).cascadeEntries,
     order: productionDoors(env).order,
     minCostEdgePct: productionDoors(env).minCostEdgePct,
+    minVolatilityPct: productionDoors(env).minVolatilityPct,
     registryTokens: env.OPERADOR_REGISTRY_TOKENS?.trim() ? number(env, 'OPERADOR_REGISTRY_TOKENS', 1) : Number.POSITIVE_INFINITY,
     // Only an explicit "0" or "false" turns these off. A misspelt value must
     // not silently disable the strategy the engine is running, which is the
