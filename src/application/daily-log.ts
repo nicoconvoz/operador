@@ -1,5 +1,7 @@
 import { tradingDay, type DailyPnl } from '../domain/reporting/daily-pnl.js'
 import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
+import { DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT } from '../domain/risk/death-exit.js'
+import { GAIN_LOCK_COMMENT } from '../domain/risk/gain-lock.js'
 
 /**
  * The read model behind the Log tab and the "funcionando hace…" counter.
@@ -30,6 +32,81 @@ export interface DailyLogRow {
   readonly closeUsd: number
   readonly minUsd: number
   readonly maxUsd: number
+  /** What the day DID: buys, and closes by the exit that took them. See `dayActivity`. */
+  readonly activity: DayActivity
+}
+
+/**
+ * What a day did, counted off the tape.
+ *
+ * *Debe haber alguna clase de promedio de operaciones por día que vamos a
+ * descubrir.* The operator. A BUY is one fill. A CLOSE is one position leaving
+ * at one instant, however many lots it sold: SDOG's take-profit wrote five sell
+ * fills, one per lot, and it is one close. Each close is named by the exit that
+ * took it, read off the order comment the engine typed.
+ */
+export interface DayActivity {
+  readonly buys: number
+  readonly closes: number
+  readonly tp: number
+  readonly gainLock: number
+  readonly frozen: number
+  readonly death: number
+  readonly other: number
+}
+
+const NO_ACTIVITY: DayActivity = { buys: 0, closes: 0, tp: 0, gainLock: 0, frozen: 0, death: 0, other: 0 }
+
+const exitKind = (comment: string): 'tp' | 'gainLock' | 'frozen' | 'death' | 'other' =>
+  comment === '🏁 Exit' ? 'tp'
+    : comment === GAIN_LOCK_COMMENT ? 'gainLock'
+      : comment === FROZEN_EXIT_COMMENT ? 'frozen'
+        : comment === DEATH_EXIT_COMMENT ? 'death'
+          : 'other'
+
+/** Every Buenos Aires day that has a fill, with what it did. Days with none are absent. */
+export function dayActivity(fills: readonly PersistedFill[]): Map<string, DayActivity> {
+  const days = new Map<string, DayActivity>()
+  const bump = (day: string, change: Partial<Record<keyof DayActivity, number>>) => {
+    const was = days.get(day) ?? NO_ACTIVITY
+    const next = { ...was }
+    for (const [key, by] of Object.entries(change) as [keyof DayActivity, number][]) next[key] = was[key] + by
+    days.set(day, next)
+  }
+  const closes = new Set<string>()
+  for (const fill of fills) {
+    const day = tradingDay(fill.time)
+    if (fill.side === 'buy') {
+      bump(day, { buys: 1 })
+      continue
+    }
+    // One position, one instant: one close, whatever number of lots it sold.
+    const close = `${fill.positionId}@${fill.time}`
+    if (closes.has(close)) continue
+    closes.add(close)
+    bump(day, { closes: 1, [exitKind(fill.comment)]: 1 })
+  }
+  return days
+}
+
+/**
+ * The average FINISHED day: buys, closes, take-profits and frozen exits, over
+ * every day in the log but today. A day half done is not a day, and counting it
+ * would drag the average down every morning. Null until one day has finished.
+ */
+export interface ActivityAverages {
+  readonly days: number
+  readonly buys: number
+  readonly closes: number
+  readonly tp: number
+  readonly frozen: number
+}
+
+export function activityAverages(rows: readonly DailyLogRow[]): ActivityAverages | null {
+  const done = rows.filter((row) => !row.isToday)
+  if (done.length === 0) return null
+  const mean = (pick: (a: DayActivity) => number) => done.reduce((sum, row) => sum + pick(row.activity), 0) / done.length
+  return { days: done.length, buys: mean((a) => a.buys), closes: mean((a) => a.closes), tp: mean((a) => a.tp), frozen: mean((a) => a.frozen) }
 }
 
 /**
@@ -62,6 +139,8 @@ export interface DailyLogView {
   readonly runningSince: number | null
   /** "Funcionando hace N días H h sin reiniciar", or null to hide it. */
   readonly uptime: string | null
+  /** The average finished day, or null before the first one ends. */
+  readonly averages: ActivityAverages | null
 }
 
 /**
@@ -79,7 +158,12 @@ export interface DailyLogView {
  * made what it made before the first reading, and that is in the Acumulado,
  * not in the day's result.
  */
-export function dailyLogRows(records: readonly DailyPnl[], today: string, limit = LOG_DAYS): DailyLogRow[] {
+export function dailyLogRows(
+  records: readonly DailyPnl[],
+  today: string,
+  limit = LOG_DAYS,
+  activity: ReadonlyMap<string, DayActivity> = new Map(),
+): DailyLogRow[] {
   const oldestFirst = [...records].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
   const rows = oldestFirst.map((record, i) => {
     const previous = oldestFirst[i - 1]
@@ -90,6 +174,7 @@ export function dailyLogRows(records: readonly DailyPnl[], today: string, limit 
       closeUsd: record.closeUsd,
       minUsd: record.minUsd,
       maxUsd: record.maxUsd,
+      activity: activity.get(record.day) ?? NO_ACTIVITY,
     }
   })
   return rows.reverse().slice(0, limit)
@@ -143,9 +228,11 @@ export async function buildDailyLog(store: StatePort, options: { readonly now: (
   // it comes out of the same cache — this costs the database nothing extra.
   const [records, fills] = await Promise.all([store.dailyPnl(LOG_READ_DAYS), store.allFills()])
   const runningSince = dataSince(fills, records)
+  const days = dailyLogRows(records, tradingDay(now), LOG_DAYS, dayActivity(fills))
   return {
-    days: dailyLogRows(records, tradingDay(now)),
+    days,
     runningSince,
     uptime: uptimeText(runningSince, now),
+    averages: activityAverages(days),
   }
 }

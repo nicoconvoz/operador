@@ -1,6 +1,6 @@
 'use client'
 
-import { DAY_BAR_EDGE_USD, resultAt, type DailyLogView } from '../../src/application/daily-log.js'
+import { DAY_BAR_EDGE_USD, resultAt, type ActivityAverages, type DayActivity, type DailyLogView } from '../../src/application/daily-log.js'
 
 /**
  * The Log: what the book made, day by day.
@@ -113,6 +113,50 @@ function ResultBar({ resultUsd }: { resultUsd: number }) {
   )
 }
 
+// "1 compra", "3 compras": a count with its noun, in the reader's language.
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/**
+ * What the day DID, in one line: buys, then closes and the exits that took
+ * them. Exits with nothing to report are left out, so a quiet day reads short.
+ */
+function Activity({ activity }: { activity: DayActivity }) {
+  const exits = [
+    activity.tp > 0 && `${activity.tp} TP`,
+    activity.gainLock > 0 && `${activity.gainLock} piso de ganancia`,
+    activity.frozen > 0 && count(activity.frozen, 'congelada', 'congeladas'),
+    activity.death > 0 && count(activity.death, 'muerta', 'muertas'),
+    activity.other > 0 && count(activity.other, 'otra', 'otras'),
+  ].filter(Boolean)
+  const closes = activity.closes === 0 ? 'sin cierres' : `${count(activity.closes, 'cierre', 'cierres')}: ${exits.join(' · ')}`
+  return (
+    <div style={{ color: DIM, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+      {count(activity.buys, 'compra', 'compras')} · {closes}
+    </div>
+  )
+}
+
+// One decimal: an average of whole trades is still an average.
+const avg = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 1 })
+
+/**
+ * The average finished day. *Debe haber alguna clase de promedio de
+ * operaciones por día que vamos a descubrir.* Today is left out: a day half
+ * done would drag it down every morning.
+ */
+function Averages({ averages }: { averages: ActivityAverages }) {
+  return (
+    <div style={{ border: '1px solid #1b2129', borderRadius: 10, padding: 14, marginBottom: 14, background: 'rgba(22,27,34,0.55)' }}>
+      <div style={{ color: DIM, fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 6 }}>
+        Promedio por día · {count(averages.days, 'día completo', 'días completos')}
+      </div>
+      <div style={{ color: '#e6edf3', fontSize: 14, fontFamily: MONO, fontVariantNumeric: 'tabular-nums', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
+        {avg(averages.buys)} compras · {avg(averages.closes)} cierres · {avg(averages.tp)} TP · {avg(averages.frozen)} congeladas
+      </div>
+    </div>
+  )
+}
+
 export function DailyLog({ view }: { view: DailyLogView | undefined }) {
   const days = view?.days ?? []
 
@@ -121,6 +165,8 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
       <div style={{ color: DIM, fontSize: 12, marginBottom: 14 }}>
         ganancia por día, hora de Buenos Aires — la de hoy se actualiza en cada ciclo del motor
       </div>
+
+      {view?.averages && <Averages averages={view.averages} />}
 
       {days.length === 0 ? (
         <div style={{ color: DIM, fontSize: 12 }}>
@@ -161,6 +207,8 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
                 <Reading label="Mínimo" value={d.minUsd} />
                 <Reading label="Máximo" value={d.maxUsd} />
               </div>
+
+              <Activity activity={d.activity} />
 
               <ResultBar resultUsd={d.resultUsd} />
             </article>

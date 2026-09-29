@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDailyLog, dailyLogRows, dataSince, resultAt, uptimeText, DAY_BAR_EDGE_USD, LOG_DAYS, LOG_READ_DAYS } from './daily-log.js'
+import { buildDailyLog, dailyLogRows, dataSince, dayActivity, activityAverages, resultAt, uptimeText, DAY_BAR_EDGE_USD, LOG_DAYS, LOG_READ_DAYS } from './daily-log.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { type DailyPnl } from '../domain/reporting/daily-pnl.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
@@ -117,7 +117,7 @@ describe('buildDailyLog — what the Log tab and the counter read', () => {
 
   it('an untouched store has no days and no counter', async () => {
     const log = await buildDailyLog(new MemoryStore(), { now: () => now })
-    expect(log).toEqual({ days: [], runningSince: null, uptime: null })
+    expect(log).toEqual({ days: [], runningSince: null, uptime: null, averages: null })
   })
 
   it(`asks the store for ${LOG_READ_DAYS} days, one more than it shows`, async () => {
@@ -157,5 +157,66 @@ describe('resultAt — where the day’s result sits on a bar from −100 to +10
   it('a day past either edge stays on the edge', () => {
     expect(resultAt(250)).toBe(100)
     expect(resultAt(-180)).toBe(0)
+  })
+})
+
+describe('dayActivity — what each day DID, read off the tape', () => {
+  // *Debe haber alguna clase de promedio de operaciones por día que vamos a
+  // descubrir.* The operator. Counted from the fills the screen already reads,
+  // so it needs no engine change and no relaunch.
+  const at = (iso: string) => Date.parse(iso)
+  const buy = (id: string, time: number): PersistedFill => ({
+    positionId: id, orderId: 'Entry', side: 'buy', time, price: 1, qty: 5, costUsd: 0.04, comment: '🟢 Entry', idempotencyKey: `${id}:b:${time}`,
+  })
+  const sell = (id: string, time: number, comment: string, lot = 'Entry'): PersistedFill => ({
+    positionId: id, orderId: lot, side: 'sell', time, price: 1.1, qty: 5, costUsd: 0.04, comment, idempotencyKey: `${id}:s:${lot}:${time}`,
+  })
+
+  it('counts each buy, and a sale of five lots at one instant as ONE close', () => {
+    // SDOG sold its five lots in one TP: five sell fills, one close.
+    const close = at('2026-09-29T19:45:00Z')
+    const fills = [
+      buy('sdog', at('2026-09-29T18:29:00Z')), buy('sdog', at('2026-09-29T18:42:00Z')), buy('sdog', at('2026-09-29T18:58:00Z')),
+      ...['Entry', 'DCA-1', 'DCA-2', 'DCA-3', 'DCA-4'].map((lot) => sell('sdog', close, '🏁 Exit', lot)),
+    ]
+    expect(dayActivity(fills).get('2026-09-29')).toEqual({ buys: 3, closes: 1, tp: 1, gainLock: 0, frozen: 0, death: 0, other: 0 })
+  })
+
+  it('names each close by the exit that took it', () => {
+    const t = at('2026-09-29T15:00:00Z')
+    const fills = [
+      sell('a', t, '🏁 Exit'), sell('b', t + 1, '🔐 Piso de ganancia'), sell('c', t + 2, '❄️ Salida por congelamiento'),
+      sell('d', t + 3, '☠️ Death Exit'), sell('e', t + 4, '🔁 Rotación'),
+    ]
+    expect(dayActivity(fills).get('2026-09-29')).toEqual({ buys: 0, closes: 5, tp: 1, gainLock: 1, frozen: 1, death: 1, other: 1 })
+  })
+
+  it('files a fill under its Buenos Aires day, like the result it sits beside', () => {
+    // 02:00 UTC on the 30th is still the 29th in Buenos Aires.
+    const days = dayActivity([buy('x', at('2026-09-30T02:00:00Z')), buy('y', at('2026-09-30T04:00:00Z'))])
+    expect(days.get('2026-09-29')!.buys).toBe(1)
+    expect(days.get('2026-09-30')!.buys).toBe(1)
+  })
+
+  it('hangs the counts on each day of the log, zeros where nothing happened', () => {
+    const activity = dayActivity([buy('x', at('2026-09-28T15:00:00Z'))])
+    const rows = dailyLogRows([day('2026-09-27', 0, 1), day('2026-09-28', 1, 2)], '2026-09-28', LOG_DAYS, activity)
+    expect(rows[0]!.activity).toEqual({ buys: 1, closes: 0, tp: 0, gainLock: 0, frozen: 0, death: 0, other: 0 })
+    expect(rows[1]!.activity).toEqual({ buys: 0, closes: 0, tp: 0, gainLock: 0, frozen: 0, death: 0, other: 0 })
+  })
+})
+
+describe('activityAverages — the average day, over FINISHED days only', () => {
+  const act = (buys: number, closes: number, tp: number) => ({ buys, closes, tp, gainLock: 0, frozen: closes - tp, death: 0, other: 0 })
+  const row = (d: string, isToday: boolean, a: ReturnType<typeof act>) => ({ day: d, isToday, resultUsd: 0, closeUsd: 0, minUsd: 0, maxUsd: 0, activity: a })
+
+  it('averages the finished days and leaves today out — a day half done is not a day', () => {
+    const avg = activityAverages([row('2026-10-01', true, act(99, 99, 99)), row('2026-09-30', false, act(40, 10, 8)), row('2026-09-29', false, act(20, 6, 4))])
+    expect(avg).toEqual({ days: 2, buys: 30, closes: 8, tp: 6, frozen: 2 })
+  })
+
+  it('is null until one day has finished', () => {
+    expect(activityAverages([row('2026-09-29', true, act(5, 1, 1))])).toBeNull()
+    expect(activityAverages([])).toBeNull()
   })
 })
