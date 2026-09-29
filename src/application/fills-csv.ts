@@ -1,4 +1,5 @@
 import { realisedBySell } from './ledger.js'
+import { matchesToken, normaliseTokenQuery } from './token-search.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 /**
@@ -46,6 +47,45 @@ export function fillsInRange(
   const end = to === null ? Number.POSITIVE_INFINITY : to + DAY_MS - 1
   if (start > end) return []
   return fills.filter((fill) => fill.time >= start && fill.time <= end)
+}
+
+/**
+ * The fills of the token the search box holds, or all of them when it is empty.
+ *
+ * The same matcher every tab uses, so the file and the screen cannot disagree
+ * about which token was asked for. A position is kept or dropped WHOLE — every
+ * fill of one position shares its id — so what each sale made is still walked
+ * from its own buys, exactly as in the unfiltered file.
+ *
+ * `symbolFor` names a position, including one that has closed; the address
+ * inside its id finds it either way.
+ */
+export function fillsForToken(
+  fills: readonly PersistedFill[],
+  query: string,
+  symbolFor: (positionId: string) => string | null,
+): readonly PersistedFill[] {
+  if (normaliseTokenQuery(query) === '') return fills
+  return fills.filter((fill) => matchesToken(query, { symbol: symbolFor(fill.positionId), positionId: fill.positionId }))
+}
+
+/** A base58 address, the longest thing worth naming a file after. */
+const TAG_MAX = 44
+
+/**
+ * The token searched for, fit for a file name: empty when there is none.
+ *
+ * It goes into `content-disposition`, where a quote or a line break is a
+ * broken header rather than a strange name, and onto a disk where a slash is a
+ * folder. So anything beyond letters, digits, dot, dash and underscore becomes
+ * an underscore, and a query with nothing printable left — an emoji symbol —
+ * says "token" rather than nothing.
+ */
+export function tokenFileTag(query: string): string {
+  const q = normaliseTokenQuery(query)
+  if (q === '') return ''
+  const tag = q.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, TAG_MAX)
+  return tag === '' ? 'token' : tag
 }
 
 export function fillsCsv(

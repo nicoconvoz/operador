@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { UniverseToken, UniverseView, TokenTier } from '../../src/application/universe-view.js'
 import { describeHoldBack } from '../../src/application/hold-back.js'
+import { matchesToken } from '../../src/application/token-search.js'
 
 /**
  * The universe.
@@ -118,6 +119,24 @@ const TIER_ORDER: TokenTier[] = ['held', 'prime', 'eligible', 'reserve', 'pendin
  */
 const COLLAPSED_TIERS: readonly TokenTier[] = ['reserve', 'pending', 'unsafe', 'filtered']
 
+/**
+ * A search that finds this many tokens or fewer draws every one of them, named,
+ * whatever its tier.
+ *
+ * The clusters exist because nobody acts on eighty tokens one by one; a search
+ * is exactly the reader saying which one they mean. Drawing it as "1 filtrada"
+ * inside a cluster would hide the answer behind a tap. A search as loose as a
+ * single letter still clusters, so the sky does not flood.
+ */
+const SEARCH_EXPANDS = 24
+
+/**
+ * At most this many matches are also listed as buttons above the sky. A body
+ * in orbit is a moving target for a thumb; a button with the symbol on it is
+ * not, and a single match is the one most worth reaching in one tap.
+ */
+const SEARCH_BUTTONS = 8
+
 interface Cluster {
   readonly tier: TokenTier
   readonly chain: string
@@ -173,7 +192,8 @@ function makeGlowSprite(rgb: string, size: number): HTMLCanvasElement {
   return sprite
 }
 
-export function Universe({ view }: { view: UniverseView }) {
+/** `query` is the page's search box, shared by every tab; empty draws everything. */
+export function Universe({ view, query = '' }: { view: UniverseView; query?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   // Selection is an ID, not the token object. The view is replaced wholesale
   // every time fresh data arrives, and a selection holding the OLD object
@@ -229,36 +249,48 @@ export function Universe({ view }: { view: UniverseView }) {
     return () => window.removeEventListener('resize', check)
   }, [])
 
+  const searching = query.trim() !== ''
   const matches = (t: UniverseToken) =>
-    (chainFilter === 'all' || t.chain === chainFilter) && (tierFilter === 'all' || t.tier === tierFilter)
+    (chainFilter === 'all' || t.chain === chainFilter) &&
+    (tierFilter === 'all' || t.tier === tierFilter) &&
+    matchesToken(query, t)
+
+  // Everything the filters and the search let through, before any of it is
+  // collapsed or capped. The clusters and the labels are built from THIS, so
+  // they follow the search rather than counting tokens it excluded.
+  const found = useMemo(() => view.tokens.filter(matches), [view.tokens, chainFilter, tierFilter, query])
+  const expandAll = searching && found.length <= SEARCH_EXPANDS
+  // Filtering TO a collapsed tier expands it: that is the whole point of the
+  // cluster being tappable. A narrow search expands every tier at once.
+  const collapsed = (t: UniverseToken) => COLLAPSED_TIERS.includes(t.tier) && tierFilter !== t.tier && !expandAll
 
   const visible = useMemo(() => {
-    const filtered = view.tokens.filter(
-      // Filtering TO a collapsed tier expands it: that is the whole point of
-      // the cluster being tappable.
-      (t) => matches(t) && !(COLLAPSED_TIERS.includes(t.tier) && tierFilter !== t.tier),
-    )
     // Tokens arrive brightest-first, so a cap keeps what matters and drops the
     // noise a small screen could not render legibly anyway. The count of what
     // it dropped is shown, because a screen that silently renders a third of
     // the universe is telling you the scanner found a third of the universe.
-    return filtered.slice(0, compact ? BODY_CAP_COMPACT : BODY_CAP)
-  }, [view.tokens, chainFilter, tierFilter, compact])
+    return found.filter((t) => !collapsed(t)).slice(0, compact ? BODY_CAP_COMPACT : BODY_CAP)
+  }, [found, tierFilter, expandAll, compact])
 
   const clusters = useMemo<Cluster[]>(() => {
     const counted = new Map<string, Cluster>()
-    for (const token of view.tokens) {
-      if (!COLLAPSED_TIERS.includes(token.tier) || tierFilter === token.tier) continue
-      if (!matches(token)) continue
+    for (const token of found) {
+      if (!collapsed(token)) continue
       const key = `${token.tier}:${token.chain}`
       const held = counted.get(key)
       counted.set(key, { tier: token.tier, chain: token.chain, count: (held?.count ?? 0) + 1 })
     }
     // Biggest first, so the ring reads left to right by weight.
     return [...counted.values()].sort((a, b) => b.count - a.count)
-  }, [view.tokens, chainFilter, tierFilter])
+  }, [found, tierFilter, expandAll])
 
-  const matching = useMemo(() => view.tokens.filter(matches).length, [view.tokens, chainFilter, tierFilter])
+  const matching = found.length
+  // A search that found nothing here may still find something the chain or
+  // tier chips are hiding, and the fix for that is a different tap.
+  const foundElsewhere = useMemo(
+    () => searching && found.length === 0 && view.tokens.some((t) => matchesToken(query, t)),
+    [searching, found, view.tokens, query],
+  )
   // What the CAP dropped. Clustered tokens are represented, not hidden.
   const clustered = clusters.reduce((sum, c) => sum + c.count, 0)
   const hidden = matching - visible.length - clustered
@@ -563,8 +595,11 @@ export function Universe({ view }: { view: UniverseView }) {
         // The clutter that argument was protecting against is now navigable:
         // the sky zooms, and the tiers that come in dozens are collapsed into
         // clusters rather than drawn one by one.
+        //
+        // And every body a narrow search found, whatever its tier: the reader
+        // named the token, so the sky names it back.
         const NAMED: readonly TokenTier[] = ['held', 'prime', 'eligible']
-        const labelled = isHovered || isSelected || alarmed || NAMED.includes(tier)
+        const labelled = isHovered || isSelected || alarmed || expandAll || NAMED.includes(tier)
         if (labelled) {
           // Held keeps the brightest label: it is the only tier with money in
           // it, and at a glance that distinction has to survive the crowd.
@@ -592,7 +627,7 @@ export function Universe({ view }: { view: UniverseView }) {
       window.removeEventListener('resize', resize)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [bodies, selectedId, hoveredId, paused, compact])
+  }, [bodies, selectedId, hoveredId, paused, compact, expandAll])
 
   const pickAt = (clientX: number, clientY: number, rect: DOMRect): Body | null => {
     const x = clientX - rect.left
@@ -677,6 +712,22 @@ export function Universe({ view }: { view: UniverseView }) {
           </Chip>
         )}
       </div>
+
+      {searching && found.length === 0 && (
+        <div style={{ color: '#8b949e', fontSize: 13, marginBottom: 10, overflowWrap: 'anywhere' }}>
+          Ningún token coincide con «{query.trim()}»{foundElsewhere ? ' con estos filtros — tocá «todas»' : ''}
+        </div>
+      )}
+
+      {searching && found.length > 0 && found.length <= SEARCH_BUTTONS && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {found.map((token) => (
+            <Chip key={token.id} active={selectedId === token.id} onClick={() => setSelectedId(token.id)} color={TIER_STYLE[token.tier].core}>
+              {token.chain === 'bsc' ? '◆' : '●'} {token.symbol}
+            </Chip>
+          ))}
+        </div>
+      )}
 
       <canvas
         ref={canvasRef}
@@ -789,6 +840,12 @@ function Chip({ children, active, onClick, color }: { children: React.ReactNode;
         cursor: 'pointer',
         // Comfortable to tap without a magnifying glass.
         minHeight: 32,
+        // A long symbol in a search result is cut, never allowed to push the
+        // page sideways on a phone.
+        maxWidth: '100%',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
       }}
     >
       {children}

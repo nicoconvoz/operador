@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Universe } from './universe.js'
 import { Operations } from './operations.js'
-import { Registry } from './registry.js'
+import { Registry, REGISTRY_ROWS } from './registry.js'
 import { DailyLog } from './log.js'
+import { matchesToken, normaliseTokenQuery, searchTape } from '../../src/application/token-search.js'
 import type { DashboardView } from '../../src/application/dashboard.js'
 import type { UniverseView } from '../../src/application/universe-view.js'
 import type { OperationsView } from '../../src/application/operations-view.js'
@@ -76,6 +77,11 @@ const REFRESH_MS = 10_000
  */
 const TAB_KEY = 'operador:tab'
 const SCROLL_KEY = 'operador:scroll'
+/**
+ * The search box, kept like the tab: a page load in the middle of looking at
+ * one token should land on that token again, not on the whole book.
+ */
+const QUERY_KEY = 'operador:query'
 type Tab = 'universe' | 'operations' | 'registry' | 'log'
 
 const rememberedTab = (): Tab | null => {
@@ -93,9 +99,23 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
   // Read AFTER mounting, never during render: the server has no sessionStorage,
   // so reading it in the initial state would render one tree on the server and
   // a different one in the browser, and React would throw out the hydration.
+  // What the search box holds. ONE query for every tab, held here rather than in
+  // any tab: the tabs unmount when they are left, and the poll replaces the
+  // data every ten seconds without touching this.
+  const [query, setQuery] = useState('')
+
   useEffect(() => {
     const saved = rememberedTab()
     if (saved) setTab(saved)
+
+    // The search first, so the page is filtered — and the right height — before
+    // the scroll position below is restored inside it.
+    try {
+      const searched = sessionStorage.getItem(QUERY_KEY)
+      if (searched) setQuery(searched)
+    } catch {
+      // Nothing remembered. An empty box shows everything.
+    }
 
     // And back to where they were reading. After the tab is restored, so the
     // page is the right height to scroll within.
@@ -133,6 +153,17 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
       // Remembering is a convenience; failing to remember is not an error.
     }
   }
+
+  const search = (next: string) => {
+    setQuery(next)
+    try {
+      if (next === '') sessionStorage.removeItem(QUERY_KEY)
+      else sessionStorage.setItem(QUERY_KEY, next)
+    } catch {
+      // As with the tab: a convenience, never an error.
+    }
+  }
+
   const [data, setData] = useState(initial)
   /** null while everything is fine; the reason when it is not. */
   const [staleReason, setStaleReason] = useState<string | null>(null)
@@ -170,8 +201,24 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
   }, [live])
 
   const { dashboard, universe, operations, log } = data
-  const open = operations.positions.length
   const { realisedUsd, unrealisedUsd, netUsd, costsUsd } = operations.totals
+
+  // What each tab shows for the search, computed once so the counts on the tabs
+  // and the tabs themselves cannot disagree. The totals and the headline are
+  // NOT filtered: they are the whole book's, and a figure that shrank to one
+  // token's would read as money that vanished.
+  const q = normaliseTokenQuery(query)
+  const searching = q !== ''
+  const tokensFound = useMemo(() => universe.tokens.filter((token) => matchesToken(q, token)).length, [universe, q])
+  const shownPositions = useMemo(
+    () => operations.positions.filter((position) => matchesToken(q, { symbol: position.symbol, positionId: position.id })),
+    [operations, q],
+  )
+  const tapeRows = useMemo(
+    () => searchTape({ recentFills: operations.recentFills, positions: operations.positions, tokens: universe.tokens }, q, REGISTRY_ROWS),
+    [operations, universe, q],
+  )
+  const open = shownPositions.length
 
   // Which way it last moved, so the figure can be SEEN changing.
   //
@@ -290,29 +337,45 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
           *arriba Universo y Log, abajo Operaciones y Registro.* A flex row of
           natural widths pushed Log off a phone the day it became the fourth
           tab; two equal columns leave every name room for its count. */}
+      {/* Above the tabs, because it is not any one tab's: *un buscador del
+          token que funcione para todos los sectores de la página*. The counts
+          on the tabs below follow it, so a single glance says which of them
+          has the token — a zero is an answer too. */}
+      <SearchBox value={query} onChange={search} />
+
       <nav style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, marginBottom: 12 }}>
         <Tab active={tab === 'universe'} onClick={() => showTab('universe')}>
-          Universo <Count>{universe.tokens.length}</Count>
+          Universo <Count>{searching ? tokensFound : universe.tokens.length}</Count>
         </Tab>
         <Tab active={tab === 'log'} onClick={() => showTab('log')}>
           Log {log !== undefined && log.days.length > 0 && <Count>{log.days.length}</Count>}
         </Tab>
         <Tab active={tab === 'operations'} onClick={() => showTab('operations')}>
-          Operaciones {open > 0 && <Count>{open}</Count>}
+          Operaciones {(open > 0 || searching) && <Count>{open}</Count>}
         </Tab>
         <Tab active={tab === 'registry'} onClick={() => showTab('registry')}>
-          Registro {operations.recentFills.length > 0 && <Count>{operations.recentFills.length}</Count>}
+          Registro {(tapeRows.length > 0 || searching) && <Count>{tapeRows.length}</Count>}
         </Tab>
       </nav>
 
       {tab === 'universe' ? (
-        <Universe view={universe} />
+        <Universe view={universe} query={q} />
       ) : tab === 'operations' ? (
-        <Operations view={operations} />
+        <Operations view={operations} positions={shownPositions} query={q} />
       ) : tab === 'registry' ? (
-        <Registry view={operations} />
+        <Registry rows={tapeRows} query={q} />
       ) : (
-        <DailyLog view={log} />
+        <>
+          {/* Not hidden and not filtered: a day's figure is the whole book's
+              and cannot be split by token. Saying so beats a Log that looks
+              like it answered the search. */}
+          {searching && (
+            <div style={{ color: '#8b949e', fontSize: 12, marginBottom: 10 }}>
+              El Log es del total de la cartera; la búsqueda no lo filtra.
+            </div>
+          )}
+          <DailyLog view={log} />
+        </>
       )}
 
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
@@ -376,6 +439,89 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
     >
       {children}
     </button>
+  )
+}
+
+/**
+ * The page's one search box.
+ *
+ * Built for the phone it is mostly read on:
+ *
+ *  - 16px text, because iOS zooms the whole page into any field smaller than
+ *    that and leaves it zoomed after the keyboard closes.
+ *  - No autocapitalise and no autocorrect: an address is case-sensitive base58,
+ *    and a keyboard "fixing" its first letter is a search for another token.
+ *  - A text field with a search keyboard rather than `type="search"`, which
+ *    draws its own clear mark in WebKit beside ours — two ✕ for one action.
+ *  - Its own × at a thumb's size, Escape to clear, Enter to put the keyboard
+ *    away. The border lights while a search is on: it survives tabs and page
+ *    loads, and a filter nobody can see is a page that looks half empty.
+ */
+function SearchBox({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const active = value.trim() !== ''
+  return (
+    <div style={{ position: 'relative', marginBottom: 8, minWidth: 0 }}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onChange('')
+          else if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+        placeholder="Buscar token (símbolo o dirección)"
+        aria-label="Buscar token por símbolo o dirección"
+        inputMode="search"
+        enterKeyHint="search"
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        style={{
+          display: 'block',
+          width: '100%',
+          boxSizing: 'border-box',
+          minWidth: 0,
+          // Proportional, unlike the rest of the page: thirty-four monospace
+          // characters of placeholder at 16px do not fit a 360px phone. Safe
+          // for an address, because base58 leaves out 0, O, I and l.
+          fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          fontSize: 16,
+          lineHeight: 1.3,
+          // Room for the × only while it is there.
+          padding: `10px ${value === '' ? 12 : 46}px 10px 12px`,
+          borderRadius: 8,
+          border: `1px solid ${active ? '#58a6ff' : '#21262d'}`,
+          background: '#0d1117',
+          color: '#e6edf3',
+          outline: 'none',
+          colorScheme: 'dark',
+        }}
+      />
+      {value !== '' && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          aria-label="Borrar búsqueda"
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            bottom: 0,
+            width: 44,
+            border: 'none',
+            background: 'transparent',
+            color: '#8b949e',
+            font: 'inherit',
+            fontSize: 22,
+            lineHeight: 1,
+            cursor: 'pointer',
+          }}
+        >
+          ×
+        </button>
+      )}
+    </div>
   )
 }
 

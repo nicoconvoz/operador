@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { OperationsView, PositionOperations, LadderRung } from '../../src/application/operations-view.js'
 
 /**
@@ -28,8 +28,31 @@ const UP = '#63e6a5'
 const DOWN = '#ff6b6b'
 const DIM = '#8b949e'
 
-export function Operations({ view }: { view: OperationsView }) {
-  const [open, setOpen] = useState<string | null>(view.positions[0]?.id ?? null)
+/**
+ * `positions` is what the search box lets through; `view` is still the whole
+ * book, and its totals stay the whole book's. A search narrows what is LISTED,
+ * never what the book is worth — a total that shrank to one token's would read
+ * as money that vanished.
+ */
+export function Operations({
+  view,
+  positions = view.positions,
+  query = '',
+}: {
+  view: OperationsView
+  positions?: readonly PositionOperations[]
+  query?: string
+}) {
+  const [open, setOpen] = useState<string | null>(positions[0]?.id ?? null)
+
+  // A new search opens the first card it found, the way the first card of the
+  // whole book opens without one: the token just asked for is the one to read.
+  const first = positions[0]?.id ?? null
+  useEffect(() => {
+    setOpen(first)
+    // Only when the QUERY changes. A poll hands over fresh objects every ten
+    // seconds, and a card the reader closed must not spring open again.
+  }, [query])
 
   if (view.positions.length === 0) {
     return (
@@ -58,7 +81,21 @@ export function Operations({ view }: { view: OperationsView }) {
         <Figure label="ejecuciones" value={`${totals.buys} compra / ${totals.sells} venta`} color={DIM} />
       </section>
 
-      {view.positions.map((position) => (
+      {query && (
+        <div style={{ color: DIM, fontSize: 12, margin: '0 0 8px', overflowWrap: 'anywhere' }}>
+          mostrando {positions.length} de {view.positions.length} posiciones · los totales son de toda la cartera
+        </div>
+      )}
+
+      {query && positions.length === 0 && (
+        <section style={{ ...card(), marginBottom: 8 }}>
+          <div style={{ color: DIM, fontSize: 13, overflowWrap: 'anywhere' }}>
+            Ninguna posición abierta coincide con «{query}».
+          </div>
+        </section>
+      )}
+
+      {positions.map((position) => (
         <Position key={position.id} position={position} open={open === position.id} onToggle={() => setOpen(open === position.id ? null : position.id)} />
       ))}
 

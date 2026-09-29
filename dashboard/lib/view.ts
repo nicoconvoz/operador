@@ -108,9 +108,13 @@ export async function buildView(store: StatePort): Promise<ViewData> {
             },
           }
         : {}),
-      // Thirty, for the Registro tab. The tape grows without bound and the
-      // screen does not.
-      tapeLength: 30,
+      // A hundred, of which the Registro DRAWS thirty. The tape grows without
+      // bound and the screen does not — but the search box filters before the
+      // cut, so the rows it can reach are the rows shipped here. About twelve
+      // hours of fills at the current pace, and a few kilobytes compressed per
+      // poll; no extra database read, because every fill is read anyway. Open
+      // positions need none of it: each carries its whole history already.
+      tapeLength: 100,
       livePrices: async () => {
         const prices = new Map<string, number>()
         for (const [key, market] of await markets) prices.set(key, market.priceUsd)

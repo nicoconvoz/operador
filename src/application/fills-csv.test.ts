@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fillsCsv, fillsInRange } from './fills-csv.js'
+import { fillsCsv, fillsForToken, fillsInRange, tokenFileTag } from './fills-csv.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
 const NOW = 1_800_000_000_000
@@ -98,5 +98,77 @@ describe('fillsInRange — a date the operator picked, not a timestamp they gues
     // "here is what you asked for" about something nobody asked for.
     const kept = fillsInRange([on('2026-09-05T12:00:00Z')], Date.parse('2026-09-10T00:00:00Z'), Date.parse('2026-09-01T00:00:00Z'))
     expect(kept).toHaveLength(0)
+  })
+})
+
+describe('fillsForToken — the download follows the search box', () => {
+  const MINT = 'Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8MxYzT'
+  const OTHER = 'HqT4v7WcRkN2pZs8LmXy3fGjBd6eKaU1oVi9tPrQwEhC'
+  const mine = `solana:${MINT}:7`
+  const theirs = `solana:${OTHER}:1`
+  const symbols = new Map([[mine, 'USELESS'], [theirs, 'BONK']])
+  const symbolFor = (id: string) => symbols.get(id) ?? null
+  const book = [
+    fill({ positionId: mine, side: 'buy', price: 0.01, qty: 1_000, time: NOW - 2000, idempotencyKey: 'b' }),
+    fill({ positionId: theirs, side: 'buy', time: NOW - 1500, idempotencyKey: 'x' }),
+    fill({ positionId: mine, side: 'sell', price: 0.012, qty: 1_000, time: NOW - 1000, idempotencyKey: 's' }),
+  ]
+
+  it('keeps every fill when no token is asked for, blank or absent', () => {
+    expect(fillsForToken(book, '', symbolFor)).toHaveLength(3)
+    expect(fillsForToken(book, '   ', symbolFor)).toHaveLength(3)
+  })
+
+  it('keeps only the fills of the token whose symbol matches, in any case', () => {
+    expect(fillsForToken(book, 'use', symbolFor).map((f) => f.idempotencyKey)).toEqual(['b', 's'])
+  })
+
+  it('finds a closed position — no symbol left — by the address in its id', () => {
+    const kept = fillsForToken(book, 'Q9NzkBcCsu', () => null)
+    expect(kept.map((f) => f.idempotencyKey)).toEqual(['b', 's'])
+  })
+
+  it('keeps a position whole, so what each sale made is still walked from its own buys', () => {
+    // Bought 1,000 at 0.01 and sold them at 0.012 → +$2, as in the unfiltered file.
+    expect(fillsCsv(fillsForToken(book, 'useless', symbolFor), symbolFor)).toContain('2.0000')
+  })
+
+  it('composes with the date range: both apply, and neither widens the other', () => {
+    const DAY = 86_400_000
+    const inRange = fillsInRange(book, NOW - 1200, null)
+    expect(fillsForToken(inRange, 'use', symbolFor).map((f) => f.idempotencyKey)).toEqual(['s'])
+    expect(fillsForToken(fillsInRange(book, NOW + DAY, null), 'use', symbolFor)).toHaveLength(0)
+  })
+
+  it('returns nothing, not everything, when no token matches', () => {
+    expect(fillsForToken(book, 'nothing-like-this', symbolFor)).toHaveLength(0)
+  })
+})
+
+describe('tokenFileTag — the file says which token it holds', () => {
+  it('is empty when no token is asked for', () => {
+    expect(tokenFileTag('')).toBe('')
+    expect(tokenFileTag('  ')).toBe('')
+  })
+
+  it('keeps a symbol or a whole address as it is', () => {
+    expect(tokenFileTag('USELESS')).toBe('USELESS')
+    const address = 'Dz9mQ9NzkBcCsuGPFJ3r1bS4wgqKMHBPiVuniW8MxYzT'
+    expect(tokenFileTag(address)).toBe(address)
+  })
+
+  it('replaces whatever a header or a file system would choke on', () => {
+    // A quote or a line break in content-disposition is a broken header, and
+    // a slash is a folder on half the systems the file lands on.
+    expect(tokenFileTag('e/acc')).toBe('e_acc')
+    expect(tokenFileTag('a"b' + chr10() + 'c')).toBe('a_b_c')
+  })
+
+  it('says "token" when nothing printable is left', () => {
+    expect(tokenFileTag('🐸')).toBe('token')
+  })
+
+  it('is never longer than an address', () => {
+    expect(tokenFileTag('A'.repeat(80))).toHaveLength(44)
   })
 })

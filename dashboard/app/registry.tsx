@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import type { OperationsView } from '../../src/application/operations-view.js'
+import type { TapeRow } from '../../src/application/token-search.js'
 import type { CloseAllOrder } from '../../src/domain/strategy/state.js'
 
 /**
@@ -18,7 +18,15 @@ import type { CloseAllOrder } from '../../src/domain/strategy/state.js'
  * looks at it — so the download sits at the TOP, before the rows, because
  * somebody who came here for the file should not have to scroll past thirty
  * lines to find it.
+ *
+ * The rows arrive already searched (`searchTape`): filtered by the search box
+ * FIRST and cut to `REGISTRY_ROWS` second, so a token's older fills are found
+ * instead of only those among the book's last thirty. The download follows the
+ * same search.
  */
+
+/** How many fills the tab draws. The view ships more, so a search can reach past them. */
+export const REGISTRY_ROWS = 30
 
 const money = (n: number, digits = 2) =>
   `$${n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`
@@ -124,17 +132,23 @@ const field = (): React.CSSProperties => ({
   colorScheme: 'dark',
 })
 
-export function Registry({ view }: { view: OperationsView }) {
+/** A searched-for address is 44 characters with no space to break at; a phone must still fit it. */
+const BREAKS: React.CSSProperties = { overflowWrap: 'anywhere' }
+
+export function Registry({ rows, query = '' }: { rows: readonly TapeRow[]; query?: string }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
 
   // Empty ends mean "no bound", which is what an untouched picker should mean:
   // arriving here and pressing download must give the whole history, not an
   // error about a form nobody filled in.
-  const query = new URLSearchParams()
-  if (from) query.set('from', from)
-  if (to) query.set('to', to)
-  const href = query.toString() ? `/api/fills?${query}` : '/api/fills'
+  const params = new URLSearchParams()
+  if (from) params.set('from', from)
+  if (to) params.set('to', to)
+  // The file follows the search box, so it holds what the screen is showing
+  // — and all of it, where the screen stops at thirty.
+  if (query) params.set('token', query)
+  const href = params.toString() ? `/api/fills?${params}` : '/api/fills'
 
   return (
     <>
@@ -165,23 +179,29 @@ export function Registry({ view }: { view: OperationsView }) {
             ⤓ descargar registro
           </a>
         </div>
-        <div style={{ color: DIM, fontSize: 11, marginTop: 8 }}>
+        <div style={{ color: DIM, fontSize: 11, marginTop: 8, ...BREAKS }}>
           Sin fechas descarga todo. Ambos extremos incluyen el día entero.
+          {query && ` Solo las operaciones de «${query}».`}
         </div>
       </section>
 
       <section style={card()}>
-        <div style={{ color: DIM, fontSize: 12, marginBottom: 8 }}>
-          últimas {view.recentFills.length} operaciones
+        <div style={{ color: DIM, fontSize: 12, marginBottom: 8, ...BREAKS }}>
+          últimas {rows.length} operaciones{query && ` de «${query}»`}
         </div>
 
-        {view.recentFills.length === 0 ? (
+        {rows.length === 0 && query ? (
+          <div style={{ color: DIM, fontSize: 12, ...BREAKS }}>
+            Ninguna operación de «{query}» entre las que muestra la pantalla. La descarga de arriba trae su historial
+            completo.
+          </div>
+        ) : rows.length === 0 ? (
           <div style={{ color: DIM, fontSize: 12 }}>
             Todavía no hay compras ni ventas. El motor abre una posición cuando un token pasa todos los filtros y se
             disparan las condiciones de entrada.
           </div>
         ) : (
-          view.recentFills.map((fill) => (
+          rows.map((fill) => (
             /*
              * TWO LINES, not one row of fixed columns.
              *
