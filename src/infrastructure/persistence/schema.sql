@@ -54,6 +54,14 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS gain_lock_since BIGINT;
 -- puts an older reading, or none, over a fresher one. Null until measured.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now DOUBLE PRECISION;
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now_at BIGINT;
+-- The liquidity watch: the brake on the DCA ladder as a state — the pool's peak
+-- and minimum since the holding began or last bounced, whether rungs on the
+-- price line are held back, the holding it belongs to, and when it last moved.
+-- A rung waits while the pool drains 5%, and the next one is bought on a 5%
+-- bounce off the minimum while the position is still at a loss. The upsert
+-- keeps the watch with the NEWER time, so a snapshot written back by a later
+-- step never lifts a brake, or puts one back. Null until the sweep watches it.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS liquidity_watch JSONB;
 
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure

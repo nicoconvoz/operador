@@ -18,7 +18,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
     // capital for its own dollars when it fires.
     expect(productionLadder({})).toEqual({
       maxUsdPerLevel: 10, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: true, dcaRealtime: true, reservedEntries: 1,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: true, dcaRealtime: true, liquidityBrakePct: 5, reservedEntries: 1,
     })
   })
 
@@ -222,5 +222,23 @@ describe('productionLadder — the NEXT rung spaced by the last hour, in real ti
   it('is its own switch: turning it off leaves the adaptive spacing alone', () => {
     const ladder = productionLadder({ OPERADOR_DCA_REALTIME: '0' })
     expect(ladder.dcaAdaptive).toBe(true)
+  })
+})
+
+describe('productionLadder — the brake on a draining pool', () => {
+  // *Freno en tiempo real por cambio de liquidez inmediata que supere el 5%* —
+  // *5 minutos o 1 hora.* ON at five unless switched off, one variable away.
+  it('brakes at 5% when nothing is set', () => {
+    expect(productionLadder({}).liquidityBrakePct).toBe(5)
+  })
+
+  it('takes another threshold, and ZERO turns it off rather than falling back', () => {
+    // Zero is a real value here, the third time this file has had to say so.
+    expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: '8' }).liquidityBrakePct).toBe(8)
+    expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: '0' }).liquidityBrakePct).toBe(0)
+  })
+
+  it('keeps the operator’s five on nonsense — a typo never switches the brake off', () => {
+    for (const bad of ['abc', '-5', '100', ' ']) expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: bad }).liquidityBrakePct).toBe(5)
   })
 })

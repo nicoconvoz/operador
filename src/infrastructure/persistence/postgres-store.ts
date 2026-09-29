@@ -12,6 +12,7 @@ import { type Alert, type AlertKind, type AlertLevel } from '../../domain/notifi
 import { type CascadeState } from '../../domain/strategy/state.js'
 import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type GainLock } from '../../domain/risk/gain-lock.js'
+import { type LiquidityWatch } from '../../domain/strategy/liquidity-brake.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 import { type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
@@ -71,6 +72,7 @@ interface PositionRow {
   gain_lock_since?: string | number | null
   dca_scale_now?: string | number | null
   dca_scale_now_at?: string | number | null
+  liquidity_watch?: unknown
 }
 
 const present = (value: string | number | null | undefined): value is string | number => value !== null && value !== undefined
@@ -84,6 +86,29 @@ const gainLockOf = (row: PositionRow): GainLock | null =>
   present(row.gain_lock_pct) && present(row.gain_lock_since)
     ? { pct: num(row.gain_lock_pct), since: num(row.gain_lock_since) }
     : null
+
+/**
+ * The liquidity watch as the JSONB column holds it — parsed by the driver, or a
+ * string from one that does not — and only if it is whole. A watch with a
+ * field missing cannot say whether the brake is on, and read as off it would
+ * buy a rung the brake was holding back.
+ */
+const liquidityWatchOf = (raw: unknown): LiquidityWatch | null => {
+  let value = raw
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  if (value === null || typeof value !== 'object') return null
+  const w = value as Record<string, unknown>
+  const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+  return finite(w.peakUsd) && finite(w.minUsd) && typeof w.braked === 'boolean' && finite(w.holdingSince) && finite(w.at)
+    ? { peakUsd: w.peakUsd, minUsd: w.minUsd, braked: w.braked, holdingSince: w.holdingSince, at: w.at }
+    : null
+}
 
 /**
  * Postgres returns NUMERIC and BIGINT as STRINGS, to avoid silently losing
@@ -126,6 +151,7 @@ export class PostgresStore implements StatePort {
       ...(present(row.dca_scale_now) && present(row.dca_scale_now_at)
         ? { dcaScaleNow: num(row.dca_scale_now), dcaScaleNowAt: num(row.dca_scale_now_at) }
         : { dcaScaleNow: null, dcaScaleNowAt: null }),
+      liquidityWatch: liquidityWatchOf(row.liquidity_watch),
     }))
   }
 
@@ -133,8 +159,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at, liquidity_watch)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -182,6 +208,17 @@ export class PostgresStore implements StatePort {
            WHEN EXCLUDED.dca_scale_now_at IS NOT NULL
             AND (positions.dca_scale_now_at IS NULL OR EXCLUDED.dca_scale_now_at > positions.dca_scale_now_at)
            THEN EXCLUDED.dca_scale_now_at ELSE positions.dca_scale_now_at
+         END,
+         -- The LIQUIDITY WATCH, a state the sweep moves: the NEWER watch wins,
+         -- by its own time. The tick, the trim and a funded rung write the row
+         -- back from snapshots read before the sweep moved it, and none of
+         -- those may lift a brake — or put one back — by writing an older
+         -- watch, or none, over it.
+         liquidity_watch = CASE
+           WHEN EXCLUDED.liquidity_watch IS NOT NULL
+            AND (positions.liquidity_watch IS NULL
+                 OR (EXCLUDED.liquidity_watch->>'at')::bigint > (positions.liquidity_watch->>'at')::bigint)
+           THEN EXCLUDED.liquidity_watch ELSE positions.liquidity_watch
          END`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
@@ -189,7 +226,8 @@ export class PostgresStore implements StatePort {
        // Both or neither: a floor is meaningless without the holding it belongs to.
        p.gainLock ? p.gainLock.pct : null, p.gainLock ? p.gainLock.since : null,
        // Both or neither, for the lock's reason: a scale with no time is no reading.
-       ...(present(p.dcaScaleNow) && present(p.dcaScaleNowAt) ? [p.dcaScaleNow, p.dcaScaleNowAt] : [null, null])],
+       ...(present(p.dcaScaleNow) && present(p.dcaScaleNowAt) ? [p.dcaScaleNow, p.dcaScaleNowAt] : [null, null]),
+       p.liquidityWatch ? JSON.stringify(p.liquidityWatch) : null],
     )
   }
 

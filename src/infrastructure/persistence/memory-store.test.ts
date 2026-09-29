@@ -257,3 +257,41 @@ describe('MemoryStore — the day log folds each reading into its day', () => {
     expect((await store.dailyPnl(1))[0]!.closeUsd).toBe(10)
   })
 })
+
+describe('MemoryStore — the liquidity watch: the NEWER watch wins', () => {
+  // *Siempre esperar la recuperación del 5% de liquidez a partir del mínimo.*
+  // The sweep moves the watch — braked, its minimum, the bounce — and every
+  // other step of the cycle writes the whole row back from a snapshot read
+  // before that. Exactly as the SQL keeps it: the watch with the newer `at`.
+  const base = {
+    id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+    cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+    quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+    capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+  }
+  const watch = (at: number, braked: boolean) => ({ peakUsd: 100_000, minUsd: 90_000, braked, holdingSince: 1, at })
+  const stored = async (store: MemoryStore) => (await store.loadPositions())[0]!.liquidityWatch
+
+  it('is absent until a sweep writes one', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(base)
+    expect(await stored(store)).toBeNull()
+  })
+
+  it('takes a newer watch over an older one', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, liquidityWatch: watch(1_000, false) })
+    await store.savePosition({ ...base, liquidityWatch: watch(2_000, true) })
+    expect(await stored(store)).toEqual(watch(2_000, true))
+  })
+
+  it('never lets a stale snapshot revert it — an older watch, or none at all', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, liquidityWatch: watch(2_000, true) })
+    await store.savePosition({ ...base, liquidityWatch: watch(1_000, false) })
+    await store.savePosition({ ...base, lastBarTime: 1, liquidityWatch: null })
+    await store.savePosition({ ...base, lastBarTime: 2 })
+    expect(await stored(store)).toEqual(watch(2_000, true))
+    expect((await store.loadPositions())[0]!.lastBarTime).toBe(2)
+  })
+})

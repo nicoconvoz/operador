@@ -17,6 +17,8 @@
  * dragging the runtime into its build.
  */
 
+import { DEFAULT_LIQUIDITY_BRAKE_PCT } from '../domain/strategy/liquidity-brake.js'
+
 /**
  * USD cap per level of the reference ladder — which in production is the FIRST
  * buy alone, because the cascade's own rungs are switched off and the sweep
@@ -333,6 +335,12 @@ export interface ProductionLadder {
   /** Whether the next rung follows the token's LAST HOUR, inside `dcaAdaptive`. */
   readonly dcaRealtime: boolean
   /**
+   * How far, in percent, a pool may have lost liquidity over the last five
+   * minutes or the last hour before a rung at its line waits. Zero: off. See
+   * `domain/strategy/liquidity-brake.ts`.
+   */
+  readonly liquidityBrakePct: number
+  /**
    * Entries' worth of capital a position is allocated when it opens. Never
    * more than `maxOpenEntries`; the rest is asked of the free capital when a
    * rung fires.
@@ -426,6 +434,11 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // in the sweep and on the screen, so an operator who turns the spacing off
     // does not also have to remember this one.
     dcaRealtime: ['0', 'false', 'no'].includes(env.OPERADOR_DCA_REALTIME?.trim().toLowerCase() ?? '') ? false : DEFAULT_DCA_REALTIME,
+    // *Freno en tiempo real por cambio de liquidez inmediata que supere el
+    // 5%.* Zero is a REAL value — the switch off — so it reads through
+    // `percent`, never `positive`; anything unreadable keeps the operator's five
+    // rather than quietly running without the brake.
+    liquidityBrakePct: percent(env.OPERADOR_LIQUIDITY_BRAKE_PCT, DEFAULT_LIQUIDITY_BRAKE_PCT),
     // Capped by what the venue holds: reserving capital for an entry the
     // broker will refuse is capital held against nothing.
     reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),

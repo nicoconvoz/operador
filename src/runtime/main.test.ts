@@ -27,8 +27,8 @@ import { type SqlClient } from '../infrastructure/persistence/postgres-store.js'
  *
  * No network: nothing here fetches, and the store answers every query empty.
  * The sweep CAN fetch now — the last hour of 5-minute bars for a rung that
- * could fire — so `fetch` itself refuses, and the tests that want an answer
- * stub one.
+ * could fire, and the book's pools for the liquidity watch — so `fetch` itself
+ * refuses, and the tests that want an answer stub one.
  */
 const quiet: SqlClient = { query: async () => ({ rows: [] }) }
 beforeEach(() => {
@@ -268,6 +268,10 @@ describe('the NEXT rung follows the token’s last hour, through the path the en
     })
   })
 
+  // The hour of 5-minute bars, and only that: a rung that fires also asks the
+  // pool's liquidity change for the brake, which is a different question.
+  const barsAsked = () => asked.filter((url) => url.includes('/v2/charts/'))
+
   const sweepAt = async (env: Record<string, string>, price: number) => {
     const { deps, cycleConfig } = runtime(env)
     const store = new MemoryStore()
@@ -299,13 +303,102 @@ describe('the NEXT rung follows the token’s last hour, through the path the en
     expect(runtime({ OPERADOR_DCA_REALTIME: '0' }).deps.dropLadder?.recentVolatility).toBeUndefined()
     const { buys } = await sweepAt({ OPERADOR_DCA_REALTIME: '0' }, 0.9)
     expect(buys).toEqual(['Entry', 'DCA-1'])
-    expect(asked).toEqual([])
+    expect(barsAsked()).toEqual([])
   })
 
   it('scales nothing with OPERADOR_DCA_ADAPTIVE=0, real time included: the base −10%, and no hour asked', async () => {
     // Neither the −5.2% measured at the buy nor the −29% of the wild hour.
     expect((await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.93)).buys).toEqual(['Entry'])
     expect((await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.899)).buys).toEqual(['Entry', 'DCA-1'])
-    expect(asked).toEqual([])
+    expect(barsAsked()).toEqual([])
+  })
+})
+
+describe('the liquidity watch, through the path the engine runs', () => {
+  // *Freno en tiempo real por cambio de liquidez inmediata que supere el 5%* —
+  // *5 minutos o 1 hora* — and *siempre esperar la recuperación del 5% de
+  // liquidez a partir del mínimo.* The cycle's sweeps and the loop's both read
+  // `deps.dropLadder`, so the switch is asked there — and then the SAME sweep
+  // is run against a Jupiter answering the pool, a minute apart each time, on
+  // a book read back from the store the way production reads it.
+  const flat = { ...held, capitalUsd: 200, lastPriceUsd: 0.9 }
+  const searched: string[] = []
+  let pool = { usd: 92_000, m5: -1, h1: -8 }
+  beforeEach(() => {
+    searched.length = 0
+    pool = { usd: 92_000, m5: -1, h1: -8 }
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(1_800_000_000_000)
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (!url.includes('/tokens/v2/search')) throw new Error('no network in this test')
+      searched.push(url)
+      const token = {
+        id: 'T', name: 'T', symbol: 'T', decimals: 6, usdPrice: 0.9, liquidity: pool.usd,
+        stats5m: { liquidityChange: pool.m5 }, stats1h: { liquidityChange: pool.h1 },
+      }
+      return new Response(JSON.stringify([token]), { status: 200 })
+    })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const book = async (env: Record<string, string> = {}) => {
+    const { deps, cycleConfig } = runtime(env)
+    const store = new MemoryStore()
+    await store.savePosition(flat)
+    await store.recordFill({
+      positionId: flat.id, orderId: 'Entry', side: 'buy', time: 0, price: 1, qty: 10, costUsd: 0.01,
+      comment: '🟢 Entry', idempotencyKey: `${flat.id}:0:Entry`,
+    })
+    const { fund: _unfunded, ...ladder } = deps.dropLadder!
+    const sent: string[] = []
+    const sweep = async (price: number, { later = true } = {}) => {
+      await sweepStops(
+        { ...deps, store, alerts: { send: async (a) => { sent.push(a.title) } }, dropLadder: ladder },
+        (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)),
+        new AlertThrottle(0), await store.loadPositions(), new Map([['solana:T', price]]), Date.now(),
+      )
+      if (later) vi.setSystemTime(Date.now() + 61_000)
+    }
+    const buys = async () => (await store.fillsFor(flat.id)).filter((f) => f.side === 'buy').map((f) => f.orderId)
+    return { sweep, buys, sent }
+  }
+
+  it('is ON at 5% when nothing is set: a pool down 8% in the hour holds DCA-1 back at its line', async () => {
+    expect(runtime().deps.dropLadder?.liquidityBrakePct).toBe(5)
+    expect(runtime().deps.dropLadder?.liquidityChange).toBeDefined()
+    const { sweep, buys, sent } = await book()
+    await sweep(0.899)
+    expect(await buys()).toEqual(['Entry'])
+    expect(sent).toContain('🧊 T: escalón frenado')
+    expect(searched.some((url) => url.includes('query=T'))).toBe(true)
+  })
+
+  it('buys the next rung on a 5% bounce off the minimum while still at a loss, above its line', async () => {
+    const { sweep, buys, sent } = await book()
+    await sweep(0.97)
+    pool = { usd: 96_700, m5: 5, h1: -3 }
+    await sweep(0.97)
+    expect(await buys()).toEqual(['Entry', 'DCA-1'])
+    expect(sent.some((title) => title.startsWith('🌱 T: la liquidez se recuperó 5% desde el mínimo'))).toBe(true)
+  })
+
+  it('asks Jupiter once a minute for the book, however many sweeps look', async () => {
+    const { sweep } = await book()
+    await sweep(0.95, { later: false })
+    await sweep(0.95, { later: false })
+    await sweep(0.95)
+    expect(searched).toHaveLength(1)
+    await sweep(0.95)
+    expect(searched).toHaveLength(2)
+  })
+
+  it('is OFF with OPERADOR_LIQUIDITY_BRAKE_PCT=0: the same draining pool buys on the line, and nothing is asked', async () => {
+    expect(runtime({ OPERADOR_LIQUIDITY_BRAKE_PCT: '0' }).deps.dropLadder?.liquidityBrakePct).toBe(0)
+    const { sweep, buys } = await book({ OPERADOR_LIQUIDITY_BRAKE_PCT: '0' })
+    await sweep(0.899)
+    expect(await buys()).toEqual(['Entry', 'DCA-1'])
+    expect(searched).toEqual([])
   })
 })

@@ -2,6 +2,7 @@ import { NO_THROTTLE, type HttpGet, type Throttle } from '../../http.js'
 import { type Chain, type SecurityReport } from '../../../domain/scanner/snapshot.js'
 import { type DecimalsPort } from '../../../application/scan.js'
 import { type MarketSnapshot } from '../dexscreener/dexscreener.js'
+import { type LiquidityReading } from '../../../domain/strategy/liquidity-brake.js'
 import { JUPITER_LITE_BASE } from './jupiter.js'
 
 /**
@@ -56,6 +57,17 @@ export interface JupiterWindow {
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 const change = (w: JupiterWindow | undefined): number | null =>
   typeof w?.priceChange === 'number' && Number.isFinite(w.priceChange) ? w.priceChange : null
+/** A window's liquidity change; unreported is null, never zero. */
+const liquidityChangeOf = (w: JupiterWindow | undefined): number | null =>
+  typeof w?.liquidityChange === 'number' && Number.isFinite(w.liquidityChange) ? w.liquidityChange : null
+/**
+ * The liquidity now, in dollars, for the brake's watch; null when unreported
+ * OR zero. A token we hold with no depth at all is a feed that did not say —
+ * and a zero taken as the pool's minimum would make every later reading a
+ * bounce off it.
+ */
+const depthOf = (info: JupiterTokenInfo): number | null =>
+  typeof info.liquidity === 'number' && Number.isFinite(info.liquidity) && info.liquidity > 0 ? info.liquidity : null
 
 /**
  * The market half of a snapshot, from Jupiter — the same shape DexScreener's
@@ -100,9 +112,7 @@ export function jupiterMarket(info: JupiterTokenInfo, observedAt: number): Marke
     },
     // Measured by Jupiter over the hour. Unreported is null, never zero: a flat
     // hour and a silent one are different answers.
-    liquidityChangePct: {
-      h1: typeof info.stats1h?.liquidityChange === 'number' && Number.isFinite(info.stats1h.liquidityChange) ? info.stats1h.liquidityChange : null,
-    },
+    liquidityChangePct: { h1: liquidityChangeOf(info.stats1h) },
     pairCreatedAt: Number.isFinite(created) ? created : null,
   }
 }
@@ -145,21 +155,60 @@ export class JupiterTokens implements DecimalsPort {
   async prefetch(mints: readonly string[], options: { readonly refresh?: boolean } = {}): Promise<void> {
     const unique = [...new Set(mints)]
     const missing = options.refresh === true ? unique : unique.filter((m) => this.fresh(m) === undefined)
-    for (let i = 0; i < missing.length; i += 100) {
-      const batch = missing.slice(i, i + 100)
-      await this.throttle.wait()
-      const response = await this.http(`${this.base}/tokens/v2/search?query=${batch.map(encodeURIComponent).join(',')}`)
-      // A refused request is not an answer about any mint: nothing cached.
-      if (response.status !== 200) continue
-      const body = (await response.json()) as unknown
-      const found = new Map<string, JupiterTokenInfo>()
-      for (const token of Array.isArray(body) ? (body as JupiterTokenInfo[]) : []) {
-        if (typeof token.id === 'string') found.set(token.id, token)
-      }
-      // Search is fuzzy, so only an exact id counts — and a mint it did not
-      // return is remembered as unknown rather than re-asked one by one.
-      for (const mint of batch) this.remember(mint, found.get(mint) ?? null)
+    for (let i = 0; i < missing.length; i += 100) await this.search(missing.slice(i, i + 100))
+  }
+
+  /**
+   * ONE search request for up to a hundred mints: what it found by exact id,
+   * or null when the request was refused. Every answer is remembered, so a
+   * reader that asks fresh still leaves the cache fresher for the others.
+   */
+  private async search(batch: readonly string[]): Promise<Map<string, JupiterTokenInfo> | null> {
+    await this.throttle.wait()
+    const response = await this.http(`${this.base}/tokens/v2/search?query=${batch.map(encodeURIComponent).join(',')}`)
+    // A refused request is not an answer about any mint: nothing cached.
+    if (response.status !== 200) return null
+    const body = (await response.json()) as unknown
+    const found = new Map<string, JupiterTokenInfo>()
+    for (const token of Array.isArray(body) ? (body as JupiterTokenInfo[]) : []) {
+      if (typeof token.id === 'string') found.set(token.id, token)
     }
+    // Search is fuzzy, so only an exact id counts — and a mint it did not
+    // return is remembered as unknown rather than re-asked one by one.
+    for (const mint of batch) this.remember(mint, found.get(mint) ?? null)
+    return found
+  }
+
+  /**
+   * How much each mint's pools have gained or lost in liquidity over the last
+   * five minutes and the last hour, in percent, and how deep they are now in
+   * dollars — for the brake on the ladder: *freno en tiempo real por cambio de
+   * liquidez inmediata que supere el 5%*, lifted by a 5% bounce off the
+   * minimum.
+   *
+   * Always asked FRESH, a hundred mints a request. A change is only worth
+   * anything while it is current, so how long one may stand is the caller's
+   * decision, not the scan's minute-long cache.
+   *
+   * A mint Jupiter did not return is ABSENT, and so is every mint of a refused
+   * request: nobody answered about them, and the caller must be able to tell
+   * that from an answer. A window it did not report is null, never zero — a
+   * flat pool and a silent feed are different answers, and only one of them
+   * may hold a rung back.
+   */
+  async liquidityChanges(mints: readonly string[]): Promise<Map<string, LiquidityReading>> {
+    const unique = [...new Set(mints)]
+    const out = new Map<string, LiquidityReading>()
+    for (let i = 0; i < unique.length; i += 100) {
+      const batch = unique.slice(i, i + 100)
+      const found = await this.search(batch)
+      if (found === null) continue
+      for (const mint of batch) {
+        const info = found.get(mint)
+        if (info) out.set(mint, { m5: liquidityChangeOf(info.stats5m), h1: liquidityChangeOf(info.stats1h), usd: depthOf(info) })
+      }
+    }
+    return out
   }
 
   /**

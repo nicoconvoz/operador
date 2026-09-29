@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { sweepStops, type ExitLevels, type StopSweepDeps } from './stop-sweep.js'
+import { sweepStops, type DropLadder, type ExitLevels, type StopSweepDeps } from './stop-sweep.js'
+import { type LiquidityReading } from '../domain/strategy/liquidity-brake.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { AlertThrottle, type Alert } from '../domain/notifications/alerts.js'
@@ -80,6 +81,21 @@ const rig = async (options: {
    * real-time spacing is on. Absent: the switch is off.
    */
   readonly recentVolatility?: (position: PersistedPosition) => Promise<RecentVolatility | null>
+  /**
+   * The book's pool readings, one call a sweep, as the runtime wires them for
+   * the liquidity watch. Absent: no brake, every caller that predates it.
+   */
+  readonly liquidityChange?: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>
+  /** The brake's threshold in percent; zero is off. Absent: the operator's five. */
+  readonly liquidityBrakePct?: number
+  /** One throttle for every sweep of the rig. Absent: a fresh one per sweep, which sends everything. */
+  readonly throttle?: AlertThrottle
+  /**
+   * Each sweep reads the book from the store, as production does, so what one
+   * sweep saved — the liquidity watch — is what the next one sees. Absent: the
+   * position the rig was built with, every sweep.
+   */
+  readonly reload?: boolean
 } = {}) => {
   const store = new MemoryStore()
   const held = options.held ?? position()
@@ -89,6 +105,13 @@ const rig = async (options: {
 
   const sent: Alert[] = []
   let countRequests = 0
+  let fundCalls = 0
+  // Counted, so a test can say the free capital was never even ASKED — not
+  // only that nothing moved.
+  const counted = (fund: NonNullable<DropLadder['fund']>): NonNullable<DropLadder['fund']> => async (p, entries) => {
+    fundCalls++
+    return fund(p, entries)
+  }
   // Keyed by the CAPITAL as well as the id, the way production rebuilds a
   // broker once a rung has raised it: a broker built for the old capital
   // refuses the rung for funds.
@@ -119,8 +142,10 @@ const rig = async (options: {
             rungsUsd: A.dcaRungsUsd,
             adaptive: options.adaptive ?? A.dcaAdaptive,
             ...(options.recentVolatility ? { recentVolatility: options.recentVolatility } : {}),
+            ...(options.liquidityChange ? { liquidityChange: options.liquidityChange } : {}),
+            ...(options.liquidityBrakePct !== undefined ? { liquidityBrakePct: options.liquidityBrakePct } : {}),
             ...(options.bookUsd !== undefined
-              ? { fund: fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd }) }
+              ? { fund: counted(fundRungsFromFreeCapital({ store, totalCapitalUsd: options.bookUsd, params: PARAMS_A, gasUsdPerSwap: 0.05, rungsUsd: A.dcaRungsUsd })) }
               : {}),
           },
         }
@@ -155,9 +180,16 @@ const rig = async (options: {
         }),
   }
   const levels: ExitLevels = options.levels ?? { stop: options.stop ?? { ...DOLLAR_STOP, onlyWhenHistoryCovers: true }, armAtPct: null, breakEvenPct: 0, gainLock: null }
-  const run = (price: number) =>
-    sweepStops(deps, () => levels, new AlertThrottle(0), [held], new Map([['solana:T', price]]), AT)
-  return { store, sent, run, countRequests: () => countRequests }
+  let sweeps = 0
+  const run = async (price: number) =>
+    sweepStops(
+      deps, () => levels, options.throttle ?? new AlertThrottle(0),
+      options.reload === true ? await store.loadPositions() : [held],
+      new Map([['solana:T', price]]),
+      // A minute apart, the way the watch sees the pool move.
+      options.reload === true ? AT + MIN * sweeps++ : AT,
+    )
+  return { store, sent, run, countRequests: () => countRequests, fundCalls: () => fundCalls }
 }
 
 describe('the stop, when the token has paid for the loss — and only then', () => {
@@ -744,5 +776,167 @@ describe('the NEXT rung, spaced by the token’s last hour — in real time', ()
     await run(0.899)
     expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
     expect(hour.asked).toEqual([])
+  })
+})
+
+describe('the liquidity watch: braked while the pool drains, a rung on the bounce', () => {
+  // *Freno en tiempo real por cambio de liquidez inmediata que supere el 5%* —
+  // *5 minutos o 1 hora.* PAID froze with its pool at 41% of its entry
+  // liquidity after the ladder had bought DCA-2 and DCA-3 into it (−$16.96).
+  // Then: *si la liquidez desde el punto más bajo aumenta un 5%, activar la
+  // compra del escalón si está en negativo todavía… pero siempre esperar la
+  // recuperación del 5% de liquidez a partir del mínimo.*
+  //
+  // Ladder A: a $10 first buy at 1.00, DCA-1 on the line at 0.9.
+  const NO_STOP = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }
+  const ONE_ENTRY = ladderCapitalUsd(PARAMS_A, 1, 0.05)
+  const held = position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.9 })
+  const bought = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy').map((f) => f.orderId)
+  const draining = (usd: number, h1 = -8): LiquidityReading => ({ usd, m5: -1, h1 })
+  const calm = (usd: number): LiquidityReading => ({ usd, m5: 0, h1: 0 })
+  /** The pool each sweep sees, in order; the last repeats. Null: nobody answered. */
+  const pool = (...seen: (LiquidityReading | null)[]) => {
+    const asked: string[][] = []
+    const read = async (positions: readonly PersistedPosition[]) => {
+      asked.push(positions.map((p) => p.id))
+      const reading = seen[Math.min(asked.length - 1, seen.length - 1)]!
+      return new Map(reading === null ? [] : [['solana:T', reading] as const])
+    }
+    return { read, asked }
+  }
+  const watched = (liquidity: ReturnType<typeof pool>, over: Parameters<typeof rig>[0] = {}) =>
+    rig({ held, drop: 'A', stop: NO_STOP, bookUsd: 1_000, reload: true, liquidityChange: liquidity.read, ...over })
+  const titled = (sent: readonly Alert[], text: string) => sent.filter((a) => a.title.includes(text))
+
+  it('holds a rung at its line back while the pool drains 8% in the hour, and says why', async () => {
+    const { store, sent, run } = await watched(pool(draining(92_000)))
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry'])
+    const said = titled(sent, 'escalón frenado')
+    expect(said).toHaveLength(1)
+    expect(said[0]!.title).toBe('🧊 T: escalón frenado')
+    expect(said[0]!.level).toBe('info')
+    expect(said[0]!.body).toContain('La liquidez del pool cayó 8.0% en la última hora')
+    expect(said[0]!.body).toContain('DCA-1')
+    expect(said[0]!.body).toContain('no se compra hasta que deje de caer')
+  })
+
+  it('names both windows when both fell', async () => {
+    const { sent, run } = await watched(pool({ usd: 80_000, m5: -6, h1: -19.3 }))
+    await run(0.899)
+    expect(titled(sent, 'escalón frenado')[0]!.body).toContain('cayó 6.0% en los últimos 5 minutos y 19.3% en la última hora')
+  })
+
+  it('keeps the brake on however deep the price goes, and says so once', async () => {
+    const { store, sent, run } = await watched(pool(draining(92_000), draining(85_000), draining(70_000)))
+    for (const price of [0.899, 0.8, 0.6]) await run(price)
+    expect(await bought(store)).toEqual(['Entry'])
+    expect(titled(sent, 'escalón frenado')).toHaveLength(1)
+  })
+
+  it('is not lifted by the hour going quiet — only by a 5% bounce off the minimum', async () => {
+    // The drain stopped; the pool did not come back. That is not the signal.
+    const { store, run } = await watched(pool(draining(92_000), calm(92_000), { usd: 96_500, m5: 3, h1: -2 }))
+    await run(0.899)
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry'])
+    // +4.9% off 92,000: still not the bounce.
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry'])
+  })
+
+  it('buys the NEXT rung on the bounce while still at a loss — above its price line', async () => {
+    // 0.97 is only 3% under the first buy, far above DCA-1's line at 0.9 — but
+    // under the average cost, and the pool bounced 5.1% off its low.
+    const { store, sent, run } = await watched(pool(draining(92_000), calm(96_700)))
+    await run(0.97)
+    expect(await bought(store)).toEqual(['Entry'])
+    await run(0.97)
+    const fills = (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
+    expect(fills.map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    // DCA-1's own size, at the live price.
+    expect(fills[1]!.price * fills[1]!.qty).toBeCloseTo(15, 0)
+    const said = titled(sent, 'la liquidez se recuperó')
+    expect(said).toHaveLength(1)
+    // Down from 100,000 — where the hour said the pool was — to 92,000.
+    expect(said[0]!.title).toBe('🌱 T: la liquidez se recuperó 5% desde el mínimo (había caído 8.0%) — compra DCA-1')
+    expect(said[0]!.level).toBe('info')
+  })
+
+  it('buys nothing on a bounce that finds the position in profit — the brake just lifts', async () => {
+    const { store, run } = await watched(pool(draining(92_000), calm(96_700), calm(96_700)))
+    await run(0.97)
+    await run(1.02)
+    expect(await bought(store)).toEqual(['Entry'])
+    // Lifted: the price line buys again as it always did.
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('buys ONE rung on the bounce, however many lines the price has crossed', async () => {
+    const { store, run } = await watched(pool(draining(92_000), calm(96_700)))
+    await run(0.5)
+    await run(0.5)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('buys nothing on the bounce into a FROZEN position, and names no rung the brake holds', async () => {
+    const frozen = position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.9, deathWatch: { ...startDeathWatch(1, 0), stage: 'frozen' } })
+    const { store, sent, run } = await watched(pool(draining(92_000), calm(96_700)), { held: frozen })
+    await run(0.97)
+    expect(titled(sent, 'escalón frenado')).toEqual([])
+    await run(0.97)
+    expect(await bought(store)).toEqual(['Entry'])
+  })
+
+  it('never asks the free capital for a rung the brake holds back — no capital moves', async () => {
+    const { store, run, fundCalls } = await watched(pool(draining(92_000), draining(88_000)))
+    await run(0.899)
+    await run(0.8)
+    expect(fundCalls()).toBe(0)
+    expect((await store.loadPositions())[0]?.capitalUsd).toBeCloseTo(ONE_ENTRY, 9)
+  })
+
+  it('writes the watch onto the position, so the next sweep — or the next process — holds the brake', async () => {
+    const { store, run } = await watched(pool(draining(92_000)))
+    await run(0.95)
+    expect((await store.loadPositions())[0]!.liquidityWatch).toMatchObject({ braked: true, minUsd: 92_000, holdingSince: 0 })
+  })
+
+  it('changes nothing on silence: no reading brakes nothing, and lifts nothing', async () => {
+    const unknown = await watched(pool(null))
+    await unknown.run(0.899)
+    expect(await bought(unknown.store)).toEqual(['Entry', 'DCA-1'])
+
+    const braked = await watched(pool(draining(92_000), null, { usd: null, m5: 9, h1: 9 }))
+    for (const price of [0.97, 0.97, 0.899]) await braked.run(price)
+    expect(await bought(braked.store)).toEqual(['Entry'])
+
+    const refused = await watched(pool(), { liquidityChange: async () => { throw new Error('HTTP 503') } })
+    await refused.run(0.899)
+    expect(await bought(refused.store)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('watches every held position on every sweep, in ONE call for the book', async () => {
+    // The bounce does not wait for the price line, so neither does the watch.
+    const liquidity = pool(calm(100_000))
+    const { run } = await watched(liquidity)
+    await run(1.2)
+    await run(0.95)
+    expect(liquidity.asked).toEqual([[ID], [ID]])
+  })
+
+  it('asks nothing, holds nothing and buys on the line as always with the switch off', async () => {
+    const liquidity = pool(draining(92_000))
+    const { store, run } = await watched(liquidity, { liquidityBrakePct: 0 })
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry', 'DCA-1'])
+    expect(liquidity.asked).toEqual([])
+  })
+
+  it('brakes at the operator’s five when no threshold is given', async () => {
+    const { store, run } = await watched(pool({ usd: 94_900, m5: 0, h1: -5.1 }))
+    await run(0.899)
+    expect(await bought(store)).toEqual(['Entry'])
   })
 })

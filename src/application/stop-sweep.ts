@@ -4,6 +4,14 @@ import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, t
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
+import {
+  liquidityFell,
+  liquidityWatchMoved,
+  nextLiquidityWatch,
+  DEFAULT_LIQUIDITY_BRAKE_PCT,
+  DEFAULT_LIQUIDITY_WATCH_POLICY,
+  type LiquidityReading,
+} from '../domain/strategy/liquidity-brake.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
@@ -292,6 +300,40 @@ export interface DropLadder {
    * measured at the buy — every caller that predates it.
    */
   readonly recentVolatility?: (position: PersistedPosition) => Promise<RecentVolatility | null>
+  /**
+   * The book's pools, read for the LIQUIDITY WATCH: the change over the last
+   * five minutes and the last hour, and the depth in dollars, keyed
+   * `chain:token` like the prices. *Freno en tiempo real por cambio de liquidez
+   * inmediata que supere el 5% — 5 minutos o 1 hora*, and *siempre esperar la
+   * recuperación del 5% de liquidez a partir del mínimo.* See
+   * `nextLiquidityWatch` in `domain/strategy/liquidity-brake.ts`.
+   *
+   * Asked ONCE per sweep, for the whole book, and folded into every held
+   * position's watch — not only the ones near a line, because the bounce that
+   * buys a rung does not wait for the price. A token missing from the answer,
+   * or a throw, is silence: the watch changes nothing on it.
+   *
+   * On this shape for the reason `adaptive` is: the cycle's sweeps and the
+   * loop's both read it. Absent: no watch — every caller that predates it.
+   */
+  readonly liquidityChange?: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>
+  /**
+   * How far, in percent, the pool may drain in either window before the ladder
+   * brakes. Zero: the whole watch off — nothing asked, nothing held, nothing
+   * bought on a bounce. Absent with `liquidityChange` present: the operator's
+   * five, `DEFAULT_LIQUIDITY_BRAKE_PCT`.
+   */
+  readonly liquidityBrakePct?: number
+}
+
+/** What the liquidity watch said about one position on this sweep. */
+interface LiquidityVerdict {
+  /** Rungs on the price line are held back. */
+  readonly braked: boolean
+  /** The pool just bounced 5% off its minimum: the next rung, if still at a loss. */
+  readonly bounced: boolean
+  /** On a bounce, how far the pool had fallen from its peak, in percent. */
+  readonly fellPct: number | null
 }
 
 export interface StopSweepDeps {
@@ -320,6 +362,8 @@ export async function sweepStops(
   // The whole tape, read only when a stop would fire and the rule needs the
   // token's history — never on a quiet sweep, which is nearly all of them.
   let tape: readonly PersistedFill[] | null = null
+  // The book's pools, in one call for every position this sweep may touch.
+  const pools = await readPools(deps.dropLadder, positions.filter((p) => p.pendingOrders.length === 0))
 
   for (const position of positions) {
     // In flight means unresolved means halted. Never guess on top of it.
@@ -393,6 +437,15 @@ export async function sweepStops(
     const held = input.openQty > 0 && avg > 0 && price !== null && price > 0
 
     /**
+     * THE LIQUIDITY WATCH, on every held position, every sweep — braked or
+     * not, near a line or not — because the bounce that buys a rung does not
+     * wait for the price. After the price guard: a bounce acts at the live
+     * price, and a price nobody confirms is one no rung is bought at. What it
+     * decides is read by the price ladder below, on whichever path reaches it.
+     */
+    const liquidity = held && pools !== null ? await watchLiquidity(deps, pools, position, fills, at, throttle) : null
+
+    /**
      * THE GAIN LOCK. *Por si algo es muy volátil y vuela para arriba, lo
      * podemos atrapar si baja a toda velocidad.*
      *
@@ -464,7 +517,7 @@ export async function sweepStops(
           stopped.push(position.id)
           continue
         }
-        if (deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle)
+        if (deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle, liquidity)
         continue
       }
       await deps.store.closePosition(position.id)
@@ -499,7 +552,7 @@ export async function sweepStops(
         stopped.push(position.id)
         continue
       }
-      if (held && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle)
+      if (held && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle, liquidity)
       continue
     }
 
@@ -833,10 +886,184 @@ async function rememberReading(
   await deps.store.savePosition({ ...position, dcaScaleNow: scale, dcaScaleNowAt: measuredAt })
 }
 
+/** The book's pool readings for one sweep, and the switch they were read under. */
+interface PoolReadings {
+  readonly ladder: DropLadder
+  readonly brakePct: number
+  readonly readings: ReadonlyMap<string, LiquidityReading>
+}
+
+/**
+ * The whole book's pools, in ONE call per sweep — or null when there is no
+ * watch: no reader wired, or the switch at zero. Off asks nothing: a switch
+ * that still spends a request is half off.
+ *
+ * A throw is silence for every token: the watches change nothing on it, and a
+ * braked one stays braked. One refused request neither brakes a pool nor
+ * counts as its bounce.
+ */
+async function readPools(ladder: DropLadder | undefined, positions: readonly PersistedPosition[]): Promise<PoolReadings | null> {
+  if (!ladder?.liquidityChange) return null
+  const brakePct = ladder.liquidityBrakePct ?? DEFAULT_LIQUIDITY_BRAKE_PCT
+  if (!(brakePct > 0)) return null
+  if (positions.length === 0) return { ladder, brakePct, readings: new Map() }
+  try {
+    return { ladder, brakePct, readings: await ladder.liquidityChange(positions) }
+  } catch {
+    return { ladder, brakePct, readings: new Map() }
+  }
+}
+
+/**
+ * One held position's liquidity watch, moved by this sweep's reading and
+ * written down when it matters. *Freno en tiempo real por cambio de liquidez
+ * inmediata que supere el 5%* — then *siempre esperar la recuperación del 5% de
+ * liquidez a partir del mínimo.*
+ *
+ * PAID froze with its pool at 41% of its entry liquidity after the ladder had
+ * bought DCA-2 and DCA-3 into it: the price fell because the pool was
+ * emptying, and a ladder that reads only the price bought the emptying. So a
+ * drain BRAKES the ladder, the brake is a state that survives the sweep and
+ * the process, and only a 5% bounce off the minimum lifts it.
+ *
+ * Written from the snapshot this sweep was handed — the first write any step
+ * of this pass makes for the position — and only when `liquidityWatchMoved`
+ * says so. Every later write in the pass, and every stale snapshot the cycle
+ * saves, carries an older watch or none, and the store keeps the newer one.
+ */
+async function watchLiquidity(
+  deps: StopSweepDeps,
+  pools: PoolReadings,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  at: number,
+  throttle: AlertThrottle,
+): Promise<LiquidityVerdict | null> {
+  const buys = holdingBuys(fills)
+  const first = buys[0]
+  if (!first) return null
+  const stored = position.liquidityWatch ?? null
+  const reading = pools.readings.get(`${position.chain}:${position.tokenAddress}`) ?? null
+  const policy = { ...DEFAULT_LIQUIDITY_WATCH_POLICY, brakePct: pools.brakePct }
+  const step = nextLiquidityWatch(stored, reading, policy, { since: first.time, at })
+  if (step.watch !== null && liquidityWatchMoved(stored, step.watch)) {
+    await deps.store.savePosition({ ...position, liquidityWatch: step.watch })
+  }
+  if (step.action === 'brake' && reading !== null) await sayBraked(deps, pools, position, buys.length, reading, at, throttle)
+  return { braked: step.watch?.braked === true, bounced: step.action === 'buy', fellPct: step.fellPct }
+}
+
+/**
+ * The brake engaged: which rung it holds, and why. Said ONCE, on the sweep
+ * that braked — the state is written down, so the next sweeps know it is
+ * already on — and only when there is a next rung to hold.
+ *
+ * INFO, like a rung with no capital: nothing was bought and nothing is at
+ * risk. A buzz for a rung on hold is how the phone gets muted.
+ */
+async function sayBraked(
+  deps: StopSweepDeps,
+  pools: PoolReadings,
+  position: PersistedPosition,
+  entries: number,
+  reading: LiquidityReading,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<void> {
+  const { ladder, brakePct } = pools
+  // A frozen or condemned position buys no rung anyway: saying the brake holds
+  // one back would name the wrong reason.
+  if (position.deathWatch.stage !== 'healthy') return
+  if (entries >= ladder.policy.maxEntries || ladder.rungsUsd[entries - 1] === undefined) return
+  const id = `DCA-${entries}`
+  // Every window that fell, in the order a reader thinks of them: the sudden
+  // pull first, then the slow one.
+  const fell = [
+    ...(liquidityFell(reading.m5, brakePct) ? [`${Math.abs(reading.m5!).toFixed(1)}% en los últimos 5 minutos`] : []),
+    ...(liquidityFell(reading.h1, brakePct) ? [`${Math.abs(reading.h1!).toFixed(1)}% en la última hora`] : []),
+  ].join(' y ')
+  const recover = DEFAULT_LIQUIDITY_WATCH_POLICY.recoverPct
+  const braked = alert(
+    'entry-refused',
+    `🧊 ${position.symbol}: escalón frenado`,
+    `La liquidez del pool cayó ${fell}; ${id} no se compra hasta que deje de caer y rebote ${recover}% desde el mínimo.`,
+    at,
+    { position: position.id, token: position.tokenAddress, liquidity: reading },
+  )
+  if (throttle.shouldSend(braked, `brake:${position.id}:${id}`)) await deps.alerts.send(braked)
+}
+
+/**
+ * The rung the bounce buys. *Activar la compra del escalón si está en negativo
+ * todavía.* The NEXT rung, at its own size, at the live price — whatever its
+ * price line says, because the signal here is the pool, not the chart.
+ *
+ * Only while the position is still at a LOSS: a bounce that finds it in
+ * profit has nothing to average, and it is only the brake lifting
+ * ('released'), after which the price line buys as it always did. Likewise
+ * when the ladder is full or the rung has no size. Anything else is this
+ * sweep's one rung: bought, or waiting on capital — the bounce is spent either
+ * way, like a crossing of the pressure ladder.
+ */
+async function buyOnBounce(
+  deps: StopSweepDeps,
+  ladder: DropLadder,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  entries: number,
+  price: number,
+  fellPct: number | null,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<'bought' | 'released'> {
+  const avgCost = positionLedger(fills).avgCostUsd
+  if (avgCost === null || !(price < avgCost)) return 'released'
+  if (entries >= ladder.policy.maxEntries) return 'released'
+  const rung = entries
+  const usd = ladder.rungsUsd[rung - 1]
+  if (usd === undefined || !(usd > 0)) return 'released'
+  const id = `DCA-${rung}`
+  const recover = DEFAULT_LIQUIDITY_WATCH_POLICY.recoverPct
+  const fell = (fellPct ?? 0).toFixed(1)
+
+  const funded = ladder.fund ? await ladder.fund(position, entries + 1) : position
+  if (funded === null) {
+    await sayUnfunded(
+      deps, position, id,
+      `La liquidez se recuperó ${recover}% desde el mínimo (había caído ${fell}%) y la posición sigue en pérdida`,
+      'El escalón vuelve a esperar su línea de precio.', at, throttle,
+    )
+    return 'bought'
+  }
+  const broker = await deps.brokerFor(funded)
+  const before = fills.length
+  await settle(
+    [{ kind: 'entry', id, level: rung, usd, qty: usd / price, comment: id }],
+    funded.lastBarTime,
+    price,
+    at,
+    funded,
+    broker,
+    deps.store,
+  )
+  if ((await deps.store.fillsFor(position.id)).length === before) return 'bought'
+  const under = ((1 - price / avgCost) * 100).toFixed(1)
+  const bought = alert(
+    'dca-filled',
+    `🌱 ${position.symbol}: la liquidez se recuperó ${recover}% desde el mínimo (había caído ${fell}%) — compra ${id}`,
+    `Sigue ${under}% bajo el costo promedio (${avgCost}). Compró $${usd.toFixed(2)} a ${price}, sin esperar la línea de precio del escalón.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(bought, `dca:${position.id}:${rung}`)) await deps.alerts.send(bought)
+  return 'bought'
+}
+
 /**
  * One rung, if the price has fallen far enough under the FIRST buy, at that
  * rung's own size. Never into a position the death watch has frozen or
- * condemned.
+ * condemned, and never while the liquidity watch holds the ladder braked —
+ * whose bounce, instead, buys the next rung on its own terms.
  *
  * The rung pays for itself: its capital is asked of the book's free capital
  * first (`DropLadder.fund`), and the broker is built from the position AS
@@ -852,6 +1079,8 @@ async function buyOnDrop(
   price: number,
   at: number,
   throttle: AlertThrottle,
+  /** What the liquidity watch said this sweep; null when there is no watch. */
+  liquidity: LiquidityVerdict | null = null,
 ): Promise<void> {
   if (position.deathWatch.stage !== 'healthy') return
   // The HOLDING's buys, never the tape's: a position that sold and bought back
@@ -860,6 +1089,13 @@ async function buyOnDrop(
   const first = buys[0]
   const last = buys[buys.length - 1]
   if (!first || !last) return
+  // The bounce first: it is this sweep's one rung when it buys, and when it
+  // only releases the brake, the price line below runs as it always did.
+  if (liquidity?.bounced === true
+    && (await buyOnBounce(deps, ladder, position, fills, buys.length, price, liquidity.fellPct, at, throttle)) === 'bought') return
+  // Braked: no rung on the price line, however far it fell — and nothing
+  // asked of the hour's volatility or of the free capital on the way.
+  if (liquidity?.braked === true) return
   const where = { entries: buys.length, firstBuyPrice: first.price, lastBuyPrice: last.price, priceUsd: price }
   const spacing = await spacingFor(deps, ladder, position, fills, where)
   if (spacing === null) return

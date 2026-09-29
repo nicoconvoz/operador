@@ -30,6 +30,8 @@ import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
 import { tokenCandles } from '../application/candle-source.js'
 import { lastHourVolatility } from '../application/recent-volatility.js'
+import { recentLiquidityChange } from '../application/liquidity-change.js'
+import { type LiquidityReading } from '../domain/strategy/liquidity-brake.js'
 import { patientSellProbe } from '../application/patient-sell-probe.js'
 import { PRESSURE_THRESHOLD } from '../domain/strategy/pressure-ladder.js'
 import { makeHttpGet, makeThrottle } from '../infrastructure/http.js'
@@ -157,6 +159,25 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    */
   const recentVolatility = lastHourVolatility({
     candles: (position) => candlesOf(position.chain, position.tokenAddress, position.pairAddress, FIVE_MINUTES, 16),
+    now: () => Date.now(),
+  })
+  /**
+   * The book's pools for the liquidity watch — the change over the last five
+   * minutes and the last hour, and the depth in dollars — from Jupiter's own
+   * windows, the whole book in one request, each answer held a minute. ONE
+   * instance, shared by the cycle's sweeps and the loop's, so watching every
+   * held position every thirty seconds costs one request a minute. Solana
+   * only: nothing else here reports it, and a token nobody answered about
+   * changes nothing.
+   */
+  const liquidityChange = recentLiquidityChange({
+    changes: async (positions) => {
+      const out = new Map<string, LiquidityReading>()
+      const mints = positions.filter((p) => p.chain === 'solana').map((p) => p.tokenAddress)
+      if (mints.length === 0) return out
+      for (const [mint, reading] of await jupiterTokens.liquidityChanges(mints)) out.set(`solana:${mint}`, reading)
+      return out
+    },
     now: () => Date.now(),
   })
   const sourcesFor = (chain: Chain) =>
@@ -452,6 +473,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // hour cannot be read. Only inside `adaptive` — the sweep never asks
       // with that off. Absent with OPERADOR_DCA_REALTIME=0.
       ...(config.dcaRealtime ? { recentVolatility } : {}),
+      // *Freno en tiempo real por cambio de liquidez inmediata que supere el
+      // 5% — 5 minutos o 1 hora.* The ladder brakes while a pool drains —
+      // PAID froze at 41% of its entry liquidity after the ladder had bought
+      // two rungs into it — and a 5% bounce off the minimum lifts it, buying
+      // the next rung if the position is still at a loss.
+      // OPERADOR_LIQUIDITY_BRAKE_PCT=0: the whole watch off, nothing asked.
+      liquidityChange,
+      liquidityBrakePct: config.liquidityBrakePct,
     },
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,

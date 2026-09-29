@@ -28,6 +28,7 @@ export interface CachedSecurity {
 }
 import { type DeathWatchState } from '../risk/death-exit.js'
 import { type GainLock } from '../risk/gain-lock.js'
+import { type LiquidityWatch } from '../strategy/liquidity-brake.js'
 import { type DailyPnl, type DailyPnlSample } from '../reporting/daily-pnl.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
@@ -159,6 +160,19 @@ export interface PersistedPosition {
    * stored. Absent: no floor yet.
    */
   readonly gainLock?: GainLock | null
+  /**
+   * The brake on the ladder, as a state: the pool's peak and minimum since the
+   * holding began or last bounced, and whether rungs on the price line are held
+   * back. *Freno en tiempo real por cambio de liquidez inmediata que supere el
+   * 5%* — and *siempre esperar la recuperación del 5% de liquidez a partir del
+   * mínimo.* See `nextLiquidityWatch` in `domain/strategy/liquidity-brake.ts`.
+   *
+   * A reading, kept by both stores by one rule — the watch with the NEWER `at`
+   * wins — because every step of the cycle writes the whole row back from a
+   * snapshot read before the sweep moved it, and a stale snapshot must never
+   * lift a brake, or put one back. Absent: nothing has been watched yet.
+   */
+  readonly liquidityWatch?: LiquidityWatch | null
   /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *

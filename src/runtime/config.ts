@@ -266,6 +266,12 @@ export interface RuntimeConfig {
    * off. Only inside `dcaAdaptive`: with that off, nothing is scaled at all.
    */
   readonly dcaRealtime: boolean
+  /**
+   * How far, in percent, a pool may have lost liquidity over the last five
+   * minutes or the last hour before a DCA rung at its line waits. 5;
+   * OPERADOR_LIQUIDITY_BRAKE_PCT=0 turns it off.
+   */
+  readonly liquidityBrakePct: number
   /** Whether a position holding tokens may be sold for a better token. */
   readonly swapHolders: boolean
   /** Points under the entry score at which a held position is sold. Zero: off. */
@@ -621,6 +627,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     dcaFrom: productionLadder(env).dcaFrom,
     dcaAdaptive: productionLadder(env).dcaAdaptive,
     dcaRealtime: productionLadder(env).dcaRealtime,
+    liquidityBrakePct: productionLadder(env).liquidityBrakePct,
     // OFF: *no me cortes por cambio por una mejor — sólo dejá que, si el TP
     // que habíamos puesto se activa, cierre; si no, no.* A position holding
     // tokens is never sold for a better token; OPERADOR_SWAP_HOLDERS=1 brings

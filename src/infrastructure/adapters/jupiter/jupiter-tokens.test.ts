@@ -205,6 +205,64 @@ describe('jupiterMarket — the market half, from the same source as the candles
     expect(await tokens.markets('bsc', ['A'])).toEqual([])
   })
 })
+describe('JupiterTokens — the pool’s liquidity change, for the brake on the ladder', () => {
+  // *Freno en tiempo real por cambio de liquidez inmediata que supere el 5% —
+  // 5 minutos o 1 hora.* Jupiter's own windows carry the change; nothing else
+  // in the engine measures it over five minutes.
+  const shaped = (id: string, m5: number | undefined, h1: number | undefined) => ({
+    ...bonk, id, usdPrice: 1,
+    stats5m: { priceChange: 0.1, numBuys: 3, numSells: 2, ...(m5 === undefined ? {} : { liquidityChange: m5 }) },
+    stats1h: { priceChange: -1.2, numBuys: 40, numSells: 38, ...(h1 === undefined ? {} : { liquidityChange: h1 }) },
+  })
+
+  it('maps stats5m and stats1h liquidityChange per mint, with the liquidity now in dollars', async () => {
+    // The dollars are what the watch follows down to its minimum and back up
+    // 5% off it: *siempre esperar la recuperación del 5% de liquidez a partir
+    // del mínimo.*
+    const http = stubHttp({ [url]: { body: [shaped('A', -6.2, 0.4), { ...shaped('B', 0, -19.3), liquidity: 84_000 }] } })
+    const changes = await new JupiterTokens(http).liquidityChanges(['A', 'B'])
+    expect(changes.get('A')).toEqual({ m5: -6.2, h1: 0.4, usd: 1007195.75 })
+    expect(changes.get('B')).toEqual({ m5: 0, h1: -19.3, usd: 84_000 })
+  })
+
+  it('reads an unreported window as null, never as flat — and an unreported or empty depth the same', async () => {
+    // A change of zero is a measurement; a missing window is silence, and the
+    // brake must never fire on silence. A depth of zero on a token we hold is
+    // a feed that did not say, and a minimum of zero would call every later
+    // reading a bounce.
+    const { stats5m: _gone, ...noFiveMinutes } = shaped('C', undefined, -7)
+    const { liquidity: _unreported, ...noDepth } = shaped('D', undefined, undefined)
+    const http = stubHttp({ [url]: { body: [noFiveMinutes, noDepth, { ...shaped('E', 1, 1), liquidity: 0 }] } })
+    const changes = await new JupiterTokens(http).liquidityChanges(['C', 'D', 'E'])
+    expect(changes.get('C')).toEqual({ m5: null, h1: -7, usd: 1007195.75 })
+    expect(changes.get('D')).toEqual({ m5: null, h1: null, usd: null })
+    expect(changes.get('E')?.usd).toBeNull()
+  })
+
+  it('leaves out a mint Jupiter did not return, and every mint of a refused request', async () => {
+    // Search is fuzzy: only an exact id is the token asked about. A refused
+    // request is not an answer about any mint — absent, so nobody remembers it.
+    expect((await new JupiterTokens(stubHttp({ [url]: { body: [shaped('Other', -9, -9)] } })).liquidityChanges(['A'])).has('A')).toBe(false)
+    expect((await new JupiterTokens(stubHttp({ [url]: { status: 503, body: {} } })).liquidityChanges(['A'])).size).toBe(0)
+  })
+
+  it('asks fresh, in batches of a hundred, whatever the cache holds', async () => {
+    // A minute-old change is a minute-old drain; the caller decides how long
+    // an answer stands, not the scan's cache.
+    const asked: string[][] = []
+    const http: HttpGet = async (u) => {
+      const mints = decodeURIComponent(u.slice(url.length)).split(',')
+      asked.push(mints)
+      return { status: 200, json: async () => mints.map((id) => shaped(id, -1, -2)) }
+    }
+    const tokens = new JupiterTokens(http)
+    await tokens.prefetch(['M0'])
+    const changes = await tokens.liquidityChanges(Array.from({ length: 150 }, (_, i) => `M${i}`))
+    expect(asked.map((a) => a.length)).toEqual([1, 100, 50])
+    expect(changes.size).toBe(150)
+  })
+})
+
 describe('JupiterTokens — LIVE prices are never served from the cache', () => {
   // The cache stands a minute, which is right for a scan and wrong for the
   // stop: it re-prices the book every thirty seconds, and a price read from a
