@@ -255,7 +255,13 @@ export class JupiterTokens implements DecimalsPort {
 
   /**
    * A Solana universe: the tokens Jupiter ranks as trending, most traded and
-   * most organically active over 24h. Confirmed live (Sept 2026): each list
+   * most organically active over the last 5 minutes, hour, 6 hours and day,
+   * and the newest tokens it lists — thirteen requests, one scan.
+   *
+   * *Como hiciste la lista de 50 que me pasaste, aplicá la misma lógica.* The
+   * operator. It read the 24h lists alone, and the tokens moving NOW live on
+   * the short ones: of 16 rising and moving 1% every five minutes that the
+   * book did not hold, measured 2026-09-29, 9 were on no 24h list at all. Confirmed live (Sept 2026): each list
    * returns up to `limit` tokens with liquidity, holders, stats and audit —
    * and unlike DexScreener's boosts, most of them have real liquidity.
    *
@@ -270,7 +276,10 @@ export class JupiterTokens implements DecimalsPort {
    * largest single source and it was running at half.
    */
   async discover(limit = 100): Promise<string[]> {
-    const lists = ['toptrending/24h', 'toptraded/24h', 'toporganicscore/24h']
+    const lists = [
+      ...['toptrending', 'toptraded', 'toporganicscore'].flatMap((list) => ['5m', '1h', '6h', '24h'].map((window) => `${list}/${window}`)),
+      'recent',
+    ]
     const seen = new Set<string>()
     for (const list of lists) {
       await this.throttle.wait()

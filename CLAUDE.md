@@ -74,6 +74,10 @@ over the last 72 closed 5-minute bars. Zero turns it off.
   scan's own order: a calm token costs one chart request and never reaches its
   authorities or its sale quote, and a remembered one still has to move. Held
   tokens are never measured. An answer stands ten minutes (`volatilityProbe`).
+- **Discovery reads where the movers are.** Jupiter's trending, most-traded and
+  organic lists over **5 minutes, 1 hour, 6 hours and 24 hours**, plus its newest
+  tokens: thirteen requests. It read the 24h lists alone, and of 16 rising movers
+  the book did not hold, 9 were on no 24h list.
 - **The book may run below fifty** when few tokens qualify. The free slots are
   what keeps the scan looking, and it stops the moment they are covered.
 

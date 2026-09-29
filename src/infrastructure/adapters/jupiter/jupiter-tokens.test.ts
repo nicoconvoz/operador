@@ -62,8 +62,23 @@ describe('JupiterTokens — discovery asks for everything the provider gives', (
   it('asks each list for the provider ceiling', async () => {
     asked.length = 0
     await new JupiterTokens(recording).discover()
-    expect(asked).toHaveLength(3)
+    expect(asked).toHaveLength(13)
     for (const target of asked) expect(target).toContain('limit=100')
+  })
+
+  it('reads every window, not only the day — the tokens moving NOW are on the short lists', async () => {
+    // *Como hiciste la lista de 50 que me pasaste, aplicá la misma lógica.*
+    // The operator. Measured on 2026-09-29: of 16 tokens rising and moving 1%
+    // every five minutes that the book did not hold, 9 were on no 24h list —
+    // only on the 5-minute, hourly and 6-hour ones, plus the newest tokens.
+    asked.length = 0
+    await new JupiterTokens(recording).discover()
+    for (const list of ['toptrending', 'toptraded', 'toporganicscore']) {
+      for (const window of ['5m', '1h', '6h', '24h']) {
+        expect(asked.some((t) => t.includes(`/tokens/v2/${list}/${window}?`)), `${list}/${window}`).toBe(true)
+      }
+    }
+    expect(asked.some((t) => t.includes('/tokens/v2/recent?'))).toBe(true)
   })
 
   it('still lets a caller ask for less', async () => {
