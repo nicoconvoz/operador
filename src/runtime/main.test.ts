@@ -776,3 +776,76 @@ describe('with no free slot, the scan reads nothing new — through the scan the
     expect(queries.some((sql) => sql.includes('solana_cache'))).toBe(false)
   })
 })
+
+describe('the fill tape is read ONCE per process, through the path the engine runs', () => {
+  // 5156a9b holds up to 250 positions buying up to twenty $1 steps, and the
+  // sweep read every held position's fills from Postgres every thirty seconds
+  // while the cycle re-read the whole tape about three times a pass — gigabytes
+  // a day against a 5 GB monthly allowance. The engine is the only writer of
+  // fills, so after start-up the tape answers from memory.
+  const BOOK = 40
+  const FIRST_BUY = 1_000_000
+  // Each holding one $1 step, its watch armed at a 4% dip with the low at 0.96:
+  // a live price of 0.98 is the 2% bounce that buys the next step. The capital
+  // is the first step and its gas, spent, so the next step's fees come out of
+  // the free capital — the funding that reads the whole tape.
+  const book: PersistedPosition[] = Array.from({ length: BOOK }, (_, i) => ({
+    ...held, id: `solana:T${i}:1`, tokenAddress: `T${i}`, pairAddress: `P${i}`, symbol: `T${i}`, capitalUsd: 1.05,
+    dipWatch: { reference: 1, low: 0.96, armed: true, at: FIRST_BUY + 1, holdingSince: FIRST_BUY },
+  }))
+  const tape = book.map((p) => ({
+    idempotency_key: `${p.id}:${FIRST_BUY}:Step-1`, position_id: p.id, order_id: 'Step-1', side: 'buy',
+    time: FIRST_BUY, price: '1', qty: '1', cost_usd: '0.05', comment: 'step',
+  }))
+  const wired = () => {
+    const queries: string[] = []
+    const sql: SqlClient = {
+      query: async <T>(text: string, params: readonly unknown[] = []) => {
+        queries.push(text)
+        if (/SELECT \* FROM fills WHERE position_id/.test(text)) return { rows: tape.filter((r) => r.position_id === params[0]) as T[] }
+        if (/SELECT \* FROM fills/.test(text)) return { rows: tape as T[] }
+        return { rows: [] as T[] }
+      },
+    }
+    const { deps, cycleConfig } = buildRuntime(
+      loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_CAPITAL_USD: '5000' }),
+      { sql, postJson: async () => { throw new Error('no network in this test') } },
+    )
+    const sweep = (price: number, at: number) =>
+      sweepStops(
+        { ...deps, alerts: { send: async () => {} } },
+        (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)),
+        new AlertThrottle(0), book, new Map(book.map((p) => [`solana:${p.tokenAddress}`, price])), at,
+      )
+    return {
+      deps, sweep,
+      /** Every read of the fills table — `allFills`, `fillsFor` and `hasFill` alike. */
+      fillReads: () => queries.filter((q) => /\bFROM fills\b/.test(q)).length,
+      inserts: () => queries.filter((q) => /INSERT INTO fills/.test(q)).length,
+    }
+  }
+
+  it('a quiet sweep over the book reads no fill from the database after start-up', async () => {
+    const { deps, sweep, fillReads } = wired()
+    await deps.store.allFills()
+    expect(fillReads()).toBe(1)
+
+    for (let pass = 1; pass <= 3; pass++) await sweep(1, FIRST_BUY + pass * 30_000)
+
+    expect(fillReads()).toBe(1)
+  })
+
+  it('and a sweep that BUYS a step on every position reads none either — the funding, the broker and the check after the buy', async () => {
+    const { deps, sweep, fillReads, inserts } = wired()
+    await deps.store.allFills()
+
+    await sweep(0.98, FIRST_BUY + 30_000)
+
+    expect(inserts()).toBe(BOOK)
+    expect(fillReads()).toBe(1)
+    // What it bought is on the tape the next reader sees, without asking.
+    expect(await deps.store.allFills()).toHaveLength(2 * BOOK)
+    expect(await deps.store.fillsFor(book[0]!.id)).toHaveLength(2)
+    expect(fillReads()).toBe(1)
+  })
+})

@@ -47,6 +47,7 @@ import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { readOnlyRegistry } from '../application/read-only-registry.js'
+import { cachedTape } from '../application/cached-tape.js'
 import { worthStoring } from '../application/worth-storing.js'
 import { type LiveMarket } from '../domain/scanner/live-market.js'
 import { runLoop, shutdownSignal } from './loop.js'
@@ -96,7 +97,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // never sits still — too slow on a quiet minute, too fast on a busy one.
   const geckoThrottle = makeAdaptiveThrottle()
 
-  const store = new PostgresStore(ports.sql)
+  // The fill tape is read ONCE per process and then answered from memory,
+  // appended by every fill this engine records — it is the only writer. Every
+  // reader below goes through it: the cycle, both sweeps, the funders, the
+  // brokers, the day log and the common fund. At 250 positions of twenty $1
+  // steps they re-read the whole tape about three times a pass and each held
+  // position's fills every thirty seconds: gigabytes a day against a 5 GB
+  // monthly allowance. The dashboard is read-only and keeps its own cache.
+  const store = cachedTape(new PostgresStore(ports.sql))
   // Alerts go into the store, not down a wire.
   //
   // Telegram was a pipe: the engine pushed, and whatever was not delivered was
