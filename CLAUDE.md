@@ -31,7 +31,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **Candidate** | safe, and **rising in the last hour** — nothing else | `production-doors.ts`, `momentum.ts` (`risingInTheHour`) |
 | **The book** | a slot is **20 × $5 = $100**; the book holds **capital / $100** tokens, the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
-| **Every later buy** | **$5** on a dip and a bounce that **grow with each DCA**, under a **crash ceiling** and a **live pool check** | `dip-bounce.ts`, the stop sweep |
+| **Every later buy** | **$5** on a dip and a bounce that **grow with each DCA**, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
 | **Exits** | the **TP** at +10% over the average, the **gain lock**, the **freeze** exit, the **death** exit | the cascade, `gain-lock.ts`, `death-exit.ts` |
 
 ### The door: rising in the last hour
@@ -82,7 +82,7 @@ cada DCA.* The first buy is automatic, after `confirmEntry` re-asks the safety
 half. Every later buy is `nextDipBounce`, run by the stop sweep every thirty
 seconds on the live price:
 
-| Buy | Dip below the previous buy | Bounce off the low | Crash ceiling |
+| Buy | Dip below the previous buy | Bounce off the low | Crash ceiling (OFF, see below) |
 |---|---|---|---|
 | 1st | automatic | — | — |
 | DCA 1 | 3% | 2% | 20% |
@@ -101,7 +101,12 @@ times in sixteen minutes while its price moved −0.5% to −2.9%**, and ended a
 fourteen buys and −30%. Growing the dip spaces the buys; growing the bounce
 slower than the dip keeps each one genuinely lower.
 
-**The crash ceiling.** A fall bigger than the step's ceiling is a collapse, not
+**The crash ceiling — OFF in production since the evening it shipped.** *Sacá
+el techo de derrumbe; lo único que quiero que proteja de derrumbe es que se
+quite el 50% del capital.* The growing dips had just contained SDOG's −35% in
+five buys spaced 7–9 points apart without the ceiling ever firing, and the live
+pool check below is now the one collapse guard. `OPERADOR_MAX_DIP_PCT=20`
+brings it back exactly as it was built: a fall bigger than the step's ceiling is a collapse, not
 a dip: the watch is marked crashed, and nothing is bought until the price is
 back within the ceiling of the reference, when the low restarts. It grows with
 the dip so the window between arming and collapsing is always 17 points and all
@@ -120,8 +125,8 @@ the freeze landed. An unknown reading refuses nothing.
 
 `OPERADOR_STEP_USD` (5), `OPERADOR_MAX_STEPS` (20), `OPERADOR_DIP_PCT` (3),
 `OPERADOR_BOUNCE_PCT` (2), `OPERADOR_DIP_STEP_PCT` (2),
-`OPERADOR_BOUNCE_STEP_PCT` (1), `OPERADOR_MAX_DIP_PCT` (20, 0 turns the ceiling
-off). Zero step values restore the flat rule.
+`OPERADOR_BOUNCE_STEP_PCT` (1), `OPERADOR_MAX_DIP_PCT` (0 — off; 20 restores
+the ceiling). Zero step values restore the flat rule.
 
 ### Exits
 

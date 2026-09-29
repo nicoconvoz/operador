@@ -165,7 +165,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     // 20* — *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que
     // aumente de 1%.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20, dipStepPct: 2, bounceStepPct: 1 })
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
     expect(deps.dipBounce?.stepUsd).toBe(5)
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(20)
@@ -603,8 +603,8 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
   // off through every path.* So these build the runtime from an EMPTY
   // environment — production's defaults — and run the SAME sweep the cycle and
   // the loop run, on a book read back from the store the way production reads it.
-  const book = async () => {
-    const { deps, cycleConfig, store } = onMemory()
+  const book = async (env: Record<string, string> = {}) => {
+    const { deps, cycleConfig, store } = onMemory(env)
     // A reservation the allocator sized and the tick has priced: nothing bought.
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
@@ -623,12 +623,11 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     return { sweep, buys, store, slot, deps, cycleConfig }
   }
 
-  it('buys $5 on every dip and bounce within 20% — nothing on a −30%, −50% or −85% collapse — and never a $20 rung', async () => {
+  it('with the ceiling brought back (OPERADOR_MAX_DIP_PCT=20), buys nothing on a −30%, −50% or −85% collapse — and never a $20 rung', async () => {
     // "If it fell more than 20% it is a collapse, not a dip: don't buy there.
-    // Wait until it is back within 20%." This bought three more $5 steps on
-    // these falls before the ceiling; now the collapse buys nothing until the
-    // price is back within 20% of the last buy (0.98) and bounces off there.
-    const { sweep, buys } = await book()
+    // Wait until it is back within 20%." Off in production since *sacá el
+    // techo de derrumbe*; kept tested one variable away.
+    const { sweep, buys } = await book({ OPERADOR_MAX_DIP_PCT: '20' })
     for (const price of [1, 0.96, 0.98, 0.7, 0.714, 0.5, 0.51, 0.15, 0.153]) await sweep(price)
     expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
     for (const price of [0.8, 0.8 * 1.021]) await sweep(price)
@@ -639,9 +638,11 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     for (const f of bought) expect((f.qty * f.price) / 5).toBeCloseTo(1, 2)
   })
 
-  it('buys every dip and bounce on the old falls with the ceiling off — OPERADOR_MAX_DIP_PCT=0', async () => {
-    // Each bounce as big as its DCA asks: 2% for DCA 1, 3% for DCA 2, 4% for DCA 3.
-    const { deps, cycleConfig, store } = onMemory({ OPERADOR_MAX_DIP_PCT: '0' })
+  it('buys every dip and bounce on the old falls with the production defaults — there is no crash ceiling', async () => {
+    // *Sacá el techo de derrumbe.* Each bounce as big as its DCA asks: 2% for
+    // DCA 1, 3% for DCA 2, 4% for DCA 3. What still refuses a buy in a
+    // collapse is the live pool check, tested on its own below.
+    const { deps, cycleConfig, store } = onMemory()
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000

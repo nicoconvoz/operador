@@ -850,7 +850,9 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
   // casillero con el número de DCA.* The operator. ONE box — buys made of
   // twenty — and under it, in words, what the next dollar waits for, read off
   // the watch the sweep wrote down. From the module the engine reads.
-  const L = productionLadder({})
+  // The ceiling is OFF in production; these draw a collapse, so they read the
+  // screen under the policy that still has one — `OPERADOR_MAX_DIP_PCT=20`.
+  const L = productionLadder({ OPERADOR_MAX_DIP_PCT: '20' })
   const dip = {
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: L.maxUsdPerLevel },

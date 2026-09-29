@@ -78,8 +78,15 @@ export const DEFAULT_BOUNCE_STEP_PCT = DEFAULT_DIP_BOUNCE_POLICY.bounceStepPct
  *
  * The first buy's and DCA 1's: every later DCA's grows with the dip, by
  * `DEFAULT_DIP_STEP_PCT` — 38% for DCA 10, whose dip is 21%.
+ *
+ * OFF in production. *Sacá el techo de derrumbe; lo único que quiero que
+ * proteja de derrumbe es que se quite el 50% del capital.* The operator, after
+ * the growing dips contained SDOG's −35% in five well-spaced buys without the
+ * ceiling ever firing. What still refuses a buy in a collapse is the live pool
+ * check: liquidity under half of what it was at entry
+ * (`liquidityFreezeRatio`). `OPERADOR_MAX_DIP_PCT=20` brings the ceiling back.
  */
-export const DEFAULT_MAX_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.maxDipPct
+export const DEFAULT_MAX_DIP_PCT = 0
 
 /**
  * Whether the deep rung — $20 after a fall of more than 80% and a 10% rebound —

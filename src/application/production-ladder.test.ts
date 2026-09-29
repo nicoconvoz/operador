@@ -37,9 +37,9 @@ describe('productionLadder — one place for the numbers that differ', () => {
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 20, dipStepPct: 2, bounceStepPct: 1, slotUsd: 100, cascadeEntries: false,
+      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 100, cascadeEntries: false,
     })
-    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 20, 3, 2, 20])
+    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 20, 3, 2, 0])
   })
 
   it('asks each DCA for 2 more points of dip — and of ceiling — and 1 more of bounce', () => {
@@ -57,10 +57,13 @@ describe('productionLadder — one place for the numbers that differ', () => {
     }
   })
 
-  it('refuses to buy on a fall of more than 20% — a collapse, not a dip — and zero turns that off', () => {
+  it('has NO crash ceiling in production — the pool check is the one collapse guard — and a number brings it back', () => {
+    // *Sacá el techo de derrumbe; lo único que quiero que proteja de derrumbe
+    // es que se quite el 50% del capital.* The operator.
+    expect(productionLadder({}).maxDipPct).toBe(0)
+    expect(productionLadder({ OPERADOR_MAX_DIP_PCT: '20' }).maxDipPct).toBe(20)
     expect(productionLadder({ OPERADOR_MAX_DIP_PCT: '25' }).maxDipPct).toBe(25)
-    expect(productionLadder({ OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
-    for (const bad of ['veinte', '-1', '100', '250', ' ']) expect(productionLadder({ OPERADOR_MAX_DIP_PCT: bad }).maxDipPct, bad).toBe(20)
+    for (const bad of ['veinte', '-1', '100', '250', ' ']) expect(productionLadder({ OPERADOR_MAX_DIP_PCT: bad }).maxDipPct, bad).toBe(0)
   })
 
   it('puts at most $100 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
