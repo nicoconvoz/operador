@@ -924,6 +924,30 @@ describe('tickPosition — if it can act now, it does not wait for the next cand
     expect(result.position.pendingOrders).toEqual([])
   })
 
+  it('buys the dollars it decided at the live price, even when the price ran above the close', async () => {
+    // Production, e/acc: a slot opened minutes after the bar closed at
+    // 0.00787, with the market already at 0.0097. The order carried the
+    // QUANTITY sized at the close — $10 worth there, $12.30 at the market —
+    // so the broker refused it for capital, silently, and the next tick
+    // raised a critical "desincronizada" over a position nobody had bought.
+    // What was decided is a dollar amount; the quantity follows the price it
+    // actually fills at.
+    const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
+    const candles = extend(decline(300))
+    const close = candles.close[candles.close.length - 1]!
+    const store = new MemoryStore()
+    const result = await tickPosition(
+      { position: position({ capitalUsd: ladderCapitalUsd(FLAT_15, 1, 0.05) }), candles, health: null, marketPriceUsd: close * 1.2, broker: rig().broker },
+      { ...config, params: FLAT_15, maxOpenEntries: 4, gasUsdPerSwap: 0.05, reservedEntries: 1 },
+      store, new RecordingAlerts(), new AlertThrottle(60_000),
+    )
+    const entry = result.orders.find((o) => o.kind === 'entry')
+    expect(entry).toBeDefined()
+    const [fill] = await store.allFills()
+    expect(fill).toBeDefined()
+    expect(fill!.price * fill!.qty).toBeCloseTo(15, 0)
+  })
+
   it('falls back to the old path when nobody offered a live price', async () => {
     // Silence is not evidence, here as everywhere. Without a second opinion the
     // order waits for the next bar's open exactly as it always did.

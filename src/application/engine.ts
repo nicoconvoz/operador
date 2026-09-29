@@ -622,7 +622,30 @@ async function advanceOneBar(
   const live = input.marketPriceUsd
   const settled = orders.length > 0 && live !== null && live !== undefined && live > 0
   if (settled) {
-    exitRefused = (await settle(orders, barTime, live, barTime, next, broker, store)) || exitRefused
+    // What was decided is a DOLLAR amount, and its quantity was sized at the
+    // close. Filled now, at the live price, the quantity follows that price —
+    // or a slot opened minutes after a close the market has already run past
+    // carries a quantity worth 20% more than its capital, and the broker
+    // refuses it. Production, e/acc: sized at 0.00787, the market at 0.0097,
+    // refused for capital in silence, and a critical "desincronizada" on the
+    // next tick over a position nobody had bought. The key is the order's id,
+    // never its quantity, so recovery finds this fill exactly as before.
+    const atLive = orders.map((o) => (o.kind === 'entry' ? { ...o, qty: o.usd / live } : o))
+    const rejectedNow = broker.rejections.length
+    exitRefused = (await settle(atLive, barTime, live, barTime, next, broker, store)) || exitRefused
+    // A refusal here is as real as one at the open, and it was the only one
+    // nobody reported.
+    const refusedNow = broker.rejections.slice(rejectedNow)
+    if (refusedNow.length > 0) {
+      const refused = alert(
+        'order-refused',
+        `🚫 ${position.symbol} — el bróker rechazó ${refusedNow.length} orden(es)`,
+        refusedNow.map((r) => `${r.order.comment}: ${r.reason}`).join('\n'),
+        barTime,
+        { position: position.id, reasons: refusedNow.map((r) => r.reason).join(',') },
+      )
+      if (throttle.shouldSend(refused, `refused:${position.id}`)) await alerts.send(refused)
+    }
     await store.savePosition({ ...next, pendingOrders: [] })
   }
 
