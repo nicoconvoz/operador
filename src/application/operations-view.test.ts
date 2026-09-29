@@ -34,6 +34,13 @@ const seed = async (fills: PersistedFill[], over: Partial<PersistedPosition> = {
 
 const options = { now: () => NOW, params: DEFAULT_PARAMS }
 
+/**
+ * Ladder A, brought back from the environment. OFF in production — only the
+ * deep rung buys after the entry — and the lists it draws are still the
+ * defaults; these are the two numbers that differ.
+ */
+const LADDER_A = { OPERADOR_MAX_DCA: '5', OPERADOR_MAX_USD_PER_LEVEL: '10' }
+
 describe('buildOperations — the books come from the fills', () => {
   it('an empty store reports nothing, not zeroes that look like activity', async () => {
     const view = await buildOperations(new MemoryStore(), options)
@@ -628,7 +635,7 @@ describe('buildOperations — ladder A, as the dashboard composes it', () => {
   // $15, $20, $25, $30 and $35, each at the first buy less its own drop — the
   // same module the engine reads, so the screen draws each line where the sweep
   // is actually looking and at the size it will actually buy.
-  const A = productionLadder({})
+  const A = productionLadder(LADDER_A)
   const ladder = {
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
@@ -685,7 +692,7 @@ describe('buildOperations — ladder A at the token’s own scale', () => {
   // *Más largo y más separado para las volátiles.* The more a token moves, the
   // wider its rungs — and the screen draws the lines the ENGINE buys on, so a
   // wild token's DCA-1 sits at −19.2%, not at the −10% of the base list.
-  const A = productionLadder({})
+  const A = productionLadder(LADDER_A)
   const ladder = (adaptive: boolean) => ({
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
@@ -726,7 +733,7 @@ describe('buildOperations — the next line from the token’s last hour, while 
   // bars and writes what it measured onto the position; the screen draws the
   // line from THAT while it is under fifteen minutes old — three bars — and
   // says which volatility drew it.
-  const A = productionLadder({})
+  const A = productionLadder(LADDER_A)
   const ladder = (drop: { adaptive: boolean; realtime: boolean }) => ({
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel },
@@ -770,5 +777,69 @@ describe('buildOperations — the next line from the token’s last hour, while 
     const [p] = (await buildOperations(store, ladder({ adaptive: false, realtime: true }))).positions
     expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.9, 9)
     expect(p!.locks![0]!.detail).toContain('10% bajo la compra anterior;')
+  })
+})
+
+describe('buildOperations — the deep rung, as the dashboard composes it', () => {
+  // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay un
+  // rebote de 10%, nueva compra DCA de $20.* Two boxes: the entry, and the one
+  // rung — first at the line that arms it, then at the low it is measured
+  // from, then filled. From the module the engine reads, and off the low the
+  // sweep wrote down.
+  const D = productionLadder({})
+  const ladder = {
+    ...options,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: D.maxUsdPerLevel },
+    maxOpenEntries: D.maxOpenEntries,
+    deepRung: { fallPct: D.deepRungFallPct, reboundPct: D.deepRungReboundPct, usd: D.deepRungUsd },
+  }
+  const BOUGHT = NOW - 30 * MIN
+  const held = (over: Partial<PersistedPosition> = {}) => ({ cascade: { ...initialState(), level: 1, ep1: 1, wasInTrade: true }, lastPriceUsd: 0.5, ...over })
+
+  it('draws two boxes: the $15 entry, and the $20 rung at a fifth of the first buy', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT)], held())
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder.map((r) => r.nominalUsd)).toEqual([15, 20])
+    expect(p!.ladder[0]!.triggerPrice).toBeNull()
+    expect(p!.ladder[1]!.triggerPrice).toBeCloseTo(0.2, 12)
+    expect(p!.ladder.map((r) => r.pending)).toEqual([false, true])
+  })
+
+  it('says where the rung arms until the low is under that line', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT)], held({ priceLow: { price: 0.3, at: NOW, holdingSince: BOUGHT } }))
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.locks).toEqual([{ name: 'deep', held: false, detail: 'DCA-1 $20: se activa bajo $0.2000 (−80%)' }])
+  })
+
+  it('once the low is under it, names the low and the price the rebound buys at', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT)], held({ lastPriceUsd: 0.155, priceLow: { price: 0.15, at: NOW, holdingSince: BOUGHT } }))
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.locks).toEqual([{ name: 'deep', held: false, detail: 'mínimo $0.1500 — compra al rebotar 10%, en $0.1650' }])
+  })
+
+  it('marks the lock as met once the price is at the rebound line', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT)], held({ lastPriceUsd: 0.17, priceLow: { price: 0.15, at: NOW, holdingSince: BOUGHT } }))
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.locks![0]!.held).toBe(true)
+  })
+
+  it('reads only THIS holding’s low — an older holding’s crash does not arm it', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT)], held({ priceLow: { price: 0.05, at: NOW, holdingSince: BOUGHT - 1 } }))
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.locks![0]!.detail).toBe('DCA-1 $20: se activa bajo $0.2000 (−80%)')
+  })
+
+  it('draws the rung filled once bought, and waits on nothing', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT), fill('DCA-1', 0.165, 20 / 0.165, NOW - 5 * MIN)], held())
+    const [p] = (await buildOperations(store, ladder)).positions
+    expect(p!.ladder.map((r) => r.filled)).toEqual([true, true])
+    expect(p!.ladder[1]!.fillPrice).toBe(0.165)
+    expect(p!.locks).toBeNull()
+  })
+
+  it('never draws a box the deep rung cannot fill, whatever the venue holds', async () => {
+    const store = await seed([fill('Entry', 1, 15, BOUGHT)], held())
+    const [p] = (await buildOperations(store, { ...ladder, maxOpenEntries: 6 })).positions
+    expect(p!.ladder).toHaveLength(2)
   })
 })

@@ -2,6 +2,7 @@ import { alert, type AlertPort, type AlertThrottle } from '../domain/notificatio
 import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './ledger.js'
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
+import { nextDeepRung, nextPriceLow, priceLowWorthWriting, type DeepRungPolicy, type PriceLow } from '../domain/strategy/deep-rung.js'
 import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
 import {
@@ -248,9 +249,13 @@ export interface PressureLadder {
 
 /**
  * The DCA ladder on the PRICE alone: rung `n` once the price has fallen
- * `dropsPct[n-1]` under the FIRST buy, buying `rungsUsd[n-1]` — ladder A in
- * production: $15, $20, $25, $30 and $35 at −10, −15, −20, −25 and −30%. See
+ * `dropsPct[n-1]` under the FIRST buy, buying `rungsUsd[n-1]` — ladder A:
+ * $15, $20, $25, $30 and $35 at −10, −15, −20, −25 and −30%. See
  * `drop-ladder.ts` and `production-ladder.ts` for the replays that chose it.
+ *
+ * OFF in production — only the deep rung (`DeepRung`) buys after the entry —
+ * and absent from the deps when off, so nothing it carries runs: no spacing
+ * asked, no pool watched, no bounce bought. `OPERADOR_DROP_LADDER=1`.
  */
 export interface DropLadder {
   readonly policy: DropLadderPolicy
@@ -326,6 +331,29 @@ export interface DropLadder {
   readonly liquidityBrakePct?: number
 }
 
+/**
+ * The ONE rung a holding may buy after its first: more than 80% under the
+ * first buy, then a 10% rebound off the lowest price seen since, while still
+ * at a loss — $20. *Dos escalones solamente: uno con $15; si el precio cae más
+ * de 80% y hay un rebote de 10%, nueva compra DCA de $20.* See
+ * `domain/strategy/deep-rung.ts`.
+ *
+ * On the sweep for the reason every ladder is: it runs every thirty seconds, in
+ * all three places the book is watched, with the live price.
+ */
+export interface DeepRung {
+  readonly policy: DeepRungPolicy
+  /** What the rung buys, in dollars. */
+  readonly usd: number
+  /**
+   * Gives the position the capital of `entries` entries out of the book's free
+   * capital — the same as `DropLadder.fund`, and for the same reason: a slot is
+   * allocated its first buy only. Absent: the rung is bought out of what the
+   * position holds.
+   */
+  readonly fund?: (position: PersistedPosition, entries: number) => Promise<PersistedPosition | null>
+}
+
 /** What the liquidity watch said about one position on this sweep. */
 interface LiquidityVerdict {
   /** Rungs on the price line are held back. */
@@ -345,6 +373,8 @@ export interface StopSweepDeps {
   readonly pressureLadder?: PressureLadder
   /** Absent: no price ladder. */
   readonly dropLadder?: DropLadder
+  /** Absent: no deep rung, and no low followed. */
+  readonly deepRung?: DeepRung
 }
 
 export async function sweepStops(
@@ -446,6 +476,15 @@ export async function sweepStops(
     const liquidity = held && pools !== null ? await watchLiquidity(deps, pools, position, fills, at, throttle) : null
 
     /**
+     * THE LOW, on every held position, every sweep — the deep rung's rebound is
+     * measured from it, and a low missed while the price was elsewhere is a
+     * rebound measured from the wrong place. After the price guard, like the
+     * watch: a price nobody confirms would set a low no real price ever
+     * touched, and every price after it would read as a rebound.
+     */
+    const low = held && deps.deepRung ? await watchLow(deps, deps.deepRung, position, fills, price!, at) : null
+
+    /**
      * THE GAIN LOCK. *Por si algo es muy volátil y vuela para arriba, lo
      * podemos atrapar si baja a toda velocidad.*
      *
@@ -517,7 +556,7 @@ export async function sweepStops(
           stopped.push(position.id)
           continue
         }
-        if (deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle, liquidity)
+        await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low)
         continue
       }
       await deps.store.closePosition(position.id)
@@ -552,7 +591,7 @@ export async function sweepStops(
         stopped.push(position.id)
         continue
       }
-      if (held && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price!, at, throttle, liquidity)
+      if (held) await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low)
       continue
     }
 
@@ -1143,4 +1182,124 @@ async function buyOnDrop(
     { position: position.id, token: position.tokenAddress },
   )
   if (throttle.shouldSend(bought, `dca:${position.id}:${rung}`)) await deps.alerts.send(bought)
+}
+
+/**
+ * This sweep's rung, if any: the deep rung first, then the chained drop ladder
+ * when it is switched on. ONE a sweep — a deep rung that bought, or that fired
+ * and found no capital, leaves the drop ladder for the next sweep, so the same
+ * fall is never bought twice off one stale read of the fills.
+ */
+async function buyRungs(
+  deps: StopSweepDeps,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+  liquidity: LiquidityVerdict | null,
+  low: PriceLow | null,
+): Promise<void> {
+  const deep = deps.deepRung ? await buyOnDeepRung(deps, deps.deepRung, position, fills, price, low, at, throttle) : null
+  if (deep === null && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price, at, throttle, liquidity)
+}
+
+/**
+ * One held position's low, moved by this sweep's live price and written down
+ * when it matters. The low of THIS holding — the time of its first buy — so a
+ * position that sold and bought back starts a new one.
+ *
+ * Written only once it is under the arming line, and there every time it
+ * falls (`priceLowWorthWriting`): above the line no decision reads it, and a
+ * whole-row write every time a falling token ticks lower is network this
+ * project cannot spare. Written from the snapshot this sweep was handed; every
+ * later write in the pass, and every stale snapshot the cycle saves, carries an
+ * older low or none, and the store keeps the lower (`keepPriceLow`).
+ */
+async function watchLow(
+  deps: StopSweepDeps,
+  rung: DeepRung,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  price: number,
+  at: number,
+): Promise<PriceLow | null> {
+  const first = holdingBuys(fills)[0]
+  if (!first) return null
+  const stored = position.priceLow ?? null
+  const next = nextPriceLow(stored, price, { since: first.time, at })
+  if (priceLowWorthWriting(stored, next, first.price, rung.policy)) await deps.store.savePosition({ ...position, priceLow: next })
+  return next
+}
+
+/** Dollars as the operator says them: $20, not $20.00. */
+const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`
+
+/**
+ * The deep rung, if its three conditions hold now: the low more than 80% under
+ * the first buy, the live price 10% over the low, and the position still at a
+ * loss. Never into a position the death watch has frozen or condemned — the
+ * same guard every rung has — and never twice for one holding: it fires only
+ * while the holding holds its first buy alone.
+ *
+ * The rung pays for itself: its capital is asked of the book's free capital
+ * (`DeepRung.fund`), and the broker is built from the position AS FUNDED, or
+ * it would refuse the entry for funds.
+ *
+ * Returns 'bought' when it bought, 'unfunded' when it fired and found nothing
+ * free — either way this sweep's rung — and null when it did not fire.
+ */
+async function buyOnDeepRung(
+  deps: StopSweepDeps,
+  rung: DeepRung,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  price: number,
+  low: PriceLow | null,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<'bought' | 'unfunded' | null> {
+  if (position.deathWatch.stage !== 'healthy') return null
+  const buys = holdingBuys(fills)
+  const first = buys[0]
+  if (!first) return null
+  // Only THIS holding's low. `watchLow` already answers for it; the check is
+  // here so a caller can never hand the rung another holding's crash.
+  const lowPrice = low !== null && low.holdingSince === first.time ? low.price : null
+  const n = nextDeepRung(
+    { entries: buys.length, firstBuyPrice: first.price, lowPrice, priceUsd: price, avgCostUsd: positionLedger(fills).avgCostUsd },
+    rung.policy,
+  )
+  if (n === null || lowPrice === null) return null
+  const id = `DCA-${n}`
+  const fell = ((1 - lowPrice / first.price) * 100).toFixed(1)
+  const rose = ((price / lowPrice - 1) * 100).toFixed(1)
+  const why = `cayó ${fell}% desde la primera compra y rebotó ${rose}% desde el mínimo`
+
+  const funded = rung.fund ? await rung.fund(position, buys.length + 1) : position
+  if (funded === null) {
+    await sayUnfunded(deps, position, id, `El precio ${why}`, 'Se vuelve a intentar en el próximo barrido.', at, throttle)
+    return 'unfunded'
+  }
+  const broker = await deps.brokerFor(funded)
+  const before = fills.length
+  await settle(
+    [{ kind: 'entry', id, level: n, usd: rung.usd, qty: rung.usd / price, comment: id }],
+    funded.lastBarTime,
+    price,
+    at,
+    funded,
+    broker,
+    deps.store,
+  )
+  if ((await deps.store.fillsFor(position.id)).length === before) return null
+  const bought = alert(
+    'dca-filled',
+    `🪜 ${position.symbol} promedió — ${id} ${dollars(rung.usd)}: ${why}`,
+    `Primera compra a ${first.price}, mínimo ${lowPrice}. Compró $${rung.usd.toFixed(2)} a ${price}. Es el único escalón: no se compra nada más en esta posición.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(bought, `dca:${position.id}:${n}`)) await deps.alerts.send(bought)
+  return 'bought'
 }

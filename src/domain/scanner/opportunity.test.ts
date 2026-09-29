@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_OPPORTUNITY_POLICY as P, meetsMinimums, meetsAnyDoor, closestDoor, scoreOpportunity } from './opportunity.js'
+import { DEFAULT_OPPORTUNITY_POLICY as P, meetsMinimums, meetsAnyDoor, closestDoor, scoreOpportunity, failedMinimums, floorLevel, floorIsStrict, type ComponentFloors } from './opportunity.js'
 import { type TokenSnapshot } from './snapshot.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -742,5 +742,63 @@ describe('meetsAnyDoor — one of several ways in', () => {
     expect(closestDoor({ volumeExpansion: 0.3, momentum: 0 }, doors)).toEqual({ floors: doors[1], failed: ['momentum'] })
     expect(closestDoor({ volumeExpansion: 0.2, momentum: 1 }, doors)).toEqual({ floors: doors[0], failed: ['volumeExpansion'] })
     expect(closestDoor({ volumeExpansion: 0.3, momentum: 1 }, doors)).toBeNull()
+  })
+})
+
+describe('a floor can ask for STRICTLY more — the buy-pressure door', () => {
+  // *Como puerta de entrada, todos los tokens que tengan más de 10% de presión
+  // compradora.* The operator said MORE than: a token at exactly 10% stays out.
+  // A plain number keeps meaning "at least", which every floor before this one
+  // was written against.
+  const door: ComponentFloors = { buyPressure: { above: 0.1 } }
+
+  it('refuses exactly 10%', () => {
+    expect(failedMinimums({ buyPressure: 0.1 }, door)).toEqual(['buyPressure'])
+    expect(meetsMinimums({ buyPressure: 0.1 }, door)).toBe(false)
+  })
+
+  it('admits anything over it, and refuses anything under', () => {
+    expect(meetsMinimums({ buyPressure: 0.1001 }, door)).toBe(true)
+    expect(meetsMinimums({ buyPressure: 0.073 }, door)).toBe(false)
+  })
+
+  it('refuses a MISSING component, as every floor does', () => {
+    expect(meetsMinimums({}, door)).toBe(false)
+  })
+
+  it('keeps a plain number meaning AT LEAST', () => {
+    expect(meetsMinimums({ activity: 0.5 }, { activity: 0.5 })).toBe(true)
+    expect(meetsMinimums({ activity: 0.49 }, { activity: 0.5 })).toBe(false)
+  })
+
+  it('says what it asks: the level, and whether it is strict', () => {
+    expect(floorLevel({ above: 0.1 })).toBe(0.1)
+    expect(floorLevel(0.5)).toBe(0.5)
+    expect(floorIsStrict({ above: 0.1 })).toBe(true)
+    expect(floorIsStrict(0.5)).toBe(false)
+  })
+
+  const pressure = (buys: number, sells: number) =>
+    scoreOpportunity(base({ txns: { h1: { buys, sells }, h24: { buys: 240, sells: 240 } } }), P).components.buyPressure
+
+  it('reads EXACTLY 10% off the counts, so the door at 10% refuses it', () => {
+    // 11 buys of 20 is a 55% share, 10% of pressure. Computed as
+    // (0.55 − 0.5) × 2 the float came out at 0.10000000000000009 — over the
+    // door by a rounding error, and admitted. (buys − sells) / trades is one
+    // correctly rounded division, and lands on 0.1 exactly.
+    for (const [buys, sells] of [[11, 9], [22, 18], [55, 45], [33, 27]] as const) {
+      expect(pressure(buys, sells)).toBe(0.1)
+      expect(meetsMinimums({ buyPressure: pressure(buys, sells) }, door)).toBe(false)
+    }
+  })
+
+  it('admits a token whose buyers lead by more than a tenth of the hour', () => {
+    expect(pressure(12, 9)).toBeCloseTo(3 / 21, 12)
+    expect(meetsMinimums({ buyPressure: pressure(12, 9) }, door)).toBe(true)
+  })
+
+  it('reads a silent hour as no pressure, which the door refuses', () => {
+    expect(pressure(0, 0)).toBe(0)
+    expect(meetsMinimums({ buyPressure: pressure(0, 0) }, door)).toBe(false)
   })
 })

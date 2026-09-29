@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { UniverseToken, UniverseView, TokenTier } from '../../src/application/universe-view.js'
+import { describeHoldBack } from '../../src/application/hold-back.js'
 
 /**
  * The universe.
@@ -979,9 +980,7 @@ function Detail({ token, compact, onClose }: { token: UniverseToken; compact: bo
           {token.holdBack.map((door) => (
             <div key={door.kind + door.name} style={{ color: '#e3b341', fontSize: 12 }}>
               •{' '}
-              {door.kind === 'score'
-                ? `puntaje ${door.value.toFixed(1)} — la puerta pide ${door.floor}`
-                : `${COMPONENT_LABEL[door.name] ?? door.name} ${(door.value * 100).toFixed(1)}% — ${door.kind === 'entry' ? 'la primera compra pide' : 'el piso pide'} ${(door.floor * 100).toFixed(0)}%`}
+              {describeHoldBack(door, COMPONENT_LABEL)}
             </div>
           ))}
         </div>

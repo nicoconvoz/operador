@@ -62,6 +62,13 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS dca_scale_now_at BIGINT;
 -- keeps the watch with the NEWER time, so a snapshot written back by a later
 -- step never lifts a brake, or puts one back. Null until the sweep watches it.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS liquidity_watch JSONB;
+-- The price low: the lowest live price this holding has seen since its first
+-- buy, when, and the holding it belongs to — { price, at, holdingSince }. The
+-- deep rung arms once it is more than 80% under the first buy and buys on a
+-- 10% rebound off it, so it has to survive a restart. The upsert keeps the
+-- LOWER price for the same holding and a newer holding's whole, so a snapshot
+-- written back by a later step never raises it. Null until the sweep sees it.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS price_low JSONB;
 
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure

@@ -17,25 +17,45 @@
  * dragging the runtime into its build.
  */
 
-import { DEFAULT_LIQUIDITY_BRAKE_PCT } from '../domain/strategy/liquidity-brake.js'
+import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
 
 /**
  * USD cap per level of the reference ladder — which in production is the FIRST
  * buy alone, because the cascade's own rungs are switched off and the sweep
- * buys each DCA rung at its own size (`DEFAULT_DCA_RUNGS_USD`).
+ * buys the one DCA rung at its own size (`DEFAULT_DEEP_RUNG_USD`).
  *
- * TEN, with ladder A: *arriesguémonos, activá la A.* A smaller first buy and
- * bigger rungs under it, so the money goes in where the price is lower. See
- * `DEFAULT_MAX_DCA_PER_TOKEN` for the replay that chose it.
+ * FIFTEEN: *dos escalones solamente: uno con $15.* Bought in the same pass the
+ * token becomes a candidate. The slot reserves this buy alone
+ * (`DEFAULT_RESERVED_ENTRIES`).
  *
- * It was fifteen, flat: `min(1000 × (1 + 1.2n), 15)` is 15 everywhere, and the
+ * It was TEN, with ladder A: *arriesguémonos, activá la A.* A smaller first buy
+ * and bigger rungs under it, so the money goes in where the price is lower.
+ * See `DEFAULT_MAX_DCA_PER_TOKEN` for the replay that chose it. And before
+ * that fifteen, flat: `min(1000 × (1 + 1.2n), 15)` is 15 everywhere, and the
  * rungs bought the same fifteen.
  */
-export const DEFAULT_MAX_USD_PER_LEVEL = 10
+export const DEFAULT_MAX_USD_PER_LEVEL = 15
 
 /**
  * DCA rungs production will fill, per token. The entry is not one of them, so
- * five means six open entries.
+ * one means two open entries.
+ *
+ * ONE — the deep rung: *dos escalones solamente: uno con $15; si el precio cae
+ * más de 80% y hay un rebote de 10%, nueva compra DCA de $20.* The operator.
+ * See `domain/strategy/deep-rung.ts` for the rule and `DEFAULT_DEEP_RUNG_*`
+ * below for its numbers. Every other path that could buy a rung is OFF, each
+ * one a variable away: the chained drop ladder (`DEFAULT_DROP_LADDER`), its
+ * volatility spacing (`DEFAULT_DCA_ADAPTIVE`, `DEFAULT_DCA_REALTIME`), the
+ * liquidity brake's bounce buy (`DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT`), the
+ * buy-pressure ladder (`OPERADOR_PRESSURE`) and the cascade's own rungs
+ * (`minGapPct: 100`).
+ *
+ * What it costs, stated: at most **$35 in one token**, against ladder A's $135
+ * — and a position that falls 30%, 50% or 70% is held with nothing bought,
+ * waiting for the TP, the freeze exit or the death exit. Only a fall of more
+ * than 80% that then turns up 10% buys the rung.
+ *
+ * What came before, kept because each step had a reason:
  *
  * FIVE — ladder A: a $10 first buy, then $15, $20, $25, $30 and $35 at −10%,
  * −15%, −20%, −25% and −30% of it. *Arriesguémonos, activá la A.* The same
@@ -125,7 +145,7 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 10
  * every thirty seconds, at half the last buy. It is the rule the replay above
  * measured against, and the one three rungs replaced.
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 5
+export const DEFAULT_MAX_DCA_PER_TOKEN = 1
 
 /**
  * How far under the FIRST buy each rung buys, in percent: DCA-1 at −10%, then
@@ -162,6 +182,17 @@ export const DEFAULT_DCA_DROPS_PCT: readonly number[] = [10, 15, 20, 25, 30]
 export const DEFAULT_DCA_RUNGS_USD: readonly number[] = [15, 20, 25, 30, 35]
 
 /**
+ * Whether the chained drop ladder — `DEFAULT_DCA_DROPS_PCT` at
+ * `DEFAULT_DCA_RUNGS_USD`, measured per `DEFAULT_DCA_FROM` — buys at all.
+ *
+ * OFF: only the deep rung buys after the entry. `OPERADOR_DROP_LADDER=1` brings
+ * it back, and with it the spacing and the brake that ride on it; ladder A
+ * whole also needs `OPERADOR_MAX_DCA=5` and `OPERADOR_MAX_USD_PER_LEVEL=10`.
+ * The lists below are its numbers, dormant and still tested.
+ */
+export const DEFAULT_DROP_LADDER = false
+
+/**
  * Each drop is measured from the PREVIOUS buy, not the first: *con respecto al
  * anterior — aplicá mi lógica, aunque ganemos menos.* The lines land at −10,
  * −23.5, −38.8, −54 and −68% of the first buy. See `drop-ladder.ts` for what
@@ -173,8 +204,9 @@ export const DEFAULT_DCA_FROM = 'previous' as const
 /**
  * Each position's drops are multiplied by its own `dcaScale`: the more the
  * token moved in the day before its first buy, the CLOSER its rungs. *Aplicá el
- * de en la línea, la propuesta.* ON; `OPERADOR_DCA_ADAPTIVE=0` puts every
- * position back on the base drops without touching what was measured.
+ * de en la línea, la propuesta.* OFF now, with the ladder it spaces — only the
+ * deep rung buys after the entry — and `OPERADOR_DCA_ADAPTIVE=1` brings it
+ * back. It was ON, and 0 was the way out.
  *
  * The same replay of the 336 real entries, every ladder chained from the
  * previous buy, the exit at +10%:
@@ -191,7 +223,7 @@ export const DEFAULT_DCA_FROM = 'previous' as const
  * and both stay. See `domain/strategy/dca-scale.ts` for the rule and what was
  * tried and not taken.
  */
-export const DEFAULT_DCA_ADAPTIVE = true
+export const DEFAULT_DCA_ADAPTIVE = false
 
 /**
  * The NEXT rung is spaced by the token's volatility over the LAST HOUR of
@@ -209,14 +241,42 @@ export const DEFAULT_DCA_ADAPTIVE = true
  * | once, at the buy (what ran) | $263 | −$52 | −$25 | $1,725 |
  * | **in real time, the last hour of 5m bars** | **$324** | **−$30** | **−$17.31** | $2,060 |
  *
- * ON; `OPERADOR_DCA_REALTIME=0` puts every rung back on the at-buy scale. A
- * switch INSIDE `DEFAULT_DCA_ADAPTIVE`, never beside it: with
- * `OPERADOR_DCA_ADAPTIVE=0` nothing is scaled at all, real time included. When
+ * OFF now, with the ladder it spaces; `OPERADOR_DCA_REALTIME=1` brings it back.
+ * A switch INSIDE `DEFAULT_DCA_ADAPTIVE`, never beside it: with the adaptive
+ * spacing off nothing is scaled at all, real time included. When
  * the hour cannot be measured the rung falls back to the at-buy scale, then to
  * one. See `realtimeDcaScale` in `domain/strategy/dca-scale.ts` for the whole
  * table and why the shorter window wins.
  */
-export const DEFAULT_DCA_REALTIME = true
+export const DEFAULT_DCA_REALTIME = false
+
+/**
+ * How far, in percent, a pool may drain before the chained ladder brakes — and
+ * off whose minimum a 5% bounce BUYS the next rung. See
+ * `domain/strategy/liquidity-brake.ts`.
+ *
+ * ZERO — off — because the bounce is a buy, and only the deep rung may buy
+ * after the entry. The operator's five is still the brake's own number
+ * (`DEFAULT_LIQUIDITY_BRAKE_PCT`); `OPERADOR_LIQUIDITY_BRAKE_PCT=5` brings it
+ * back. It rides on the drop ladder and asks nothing without it.
+ */
+export const DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT = 0
+
+/**
+ * The deep rung's three numbers. *Si el precio cae más de 80% y hay un rebote
+ * de 10%, nueva compra DCA de $20.*
+ *
+ * - `FALL`: the lowest live price since the first buy must be MORE than this
+ *   under it — exactly 80% does not arm it.
+ * - `REBOUND`: the live price must then be at least this over that low.
+ * - `USD`: what the rung buys, asked of the book's free capital when it fires.
+ *
+ * And the position must still be at a loss when it does. See
+ * `domain/strategy/deep-rung.ts`.
+ */
+export const DEFAULT_DEEP_RUNG_FALL_PCT = DEFAULT_DEEP_RUNG_POLICY.fallPct
+export const DEFAULT_DEEP_RUNG_REBOUND_PCT = DEFAULT_DEEP_RUNG_POLICY.reboundPct
+export const DEFAULT_DEEP_RUNG_USD = 20
 
 /**
  * How many entries' worth of capital a position is ALLOCATED when it opens.
@@ -231,9 +291,10 @@ export const DEFAULT_DCA_REALTIME = true
  * are rare, most positions never buy one, and the capital belongs to the next
  * token rather than to a dip that may never come.
  *
- * Ladder A makes the argument stronger: its whole ladder is about $142 with
+ * Ladder A made the argument stronger: its whole ladder was about $142 with
  * gas and headroom, against about $10.63 for the first buy — reserving it up
- * front would hold one token where thirteen fit.
+ * front would have held one token where thirteen fit. The deep rung almost
+ * never fires by design, so it is stronger still: $15.89 reserved, not $37.
  *
  * The cost, stated: a rung can find the book fully deployed and be skipped.
  * That is the cheaper failure — a rung not bought is a basis not improved,
@@ -330,6 +391,8 @@ export interface ProductionLadder {
   readonly dcaRungsUsd: readonly number[]
   /** What each drop is measured from: the first buy, or the previous one. */
   readonly dcaFrom: 'first' | 'previous'
+  /** Whether the chained drop ladder buys at all. See `DEFAULT_DROP_LADDER`. */
+  readonly dropLadder: boolean
   /** Whether each position's drops follow its own volatility (`dcaScale`). */
   readonly dcaAdaptive: boolean
   /** Whether the next rung follows the token's LAST HOUR, inside `dcaAdaptive`. */
@@ -346,6 +409,12 @@ export interface ProductionLadder {
    * rung fires.
    */
   readonly reservedEntries: number
+  /** How far under the first buy, in percent, the low must go — strictly — to arm the deep rung. */
+  readonly deepRungFallPct: number
+  /** How far over that low, in percent, the live price must come back to buy it. */
+  readonly deepRungReboundPct: number
+  /** What the deep rung buys, in dollars. */
+  readonly deepRungUsd: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -403,6 +472,19 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     return valid ? values : fallback
   }
 
+  /** Zero or more, unbounded: a rebound off a low can be any size. */
+  const nonNegative = (raw: string | undefined, fallback: number) => {
+    const value = Number(raw?.trim())
+    return raw?.trim() && Number.isFinite(value) && value >= 0 ? value : fallback
+  }
+
+  /**
+   * A switch that is OFF unless 1, true or yes. The operator's decision is
+   * off for these, so a typo keeps it off rather than quietly running the one
+   * it replaced.
+   */
+  const onlyIf = (raw: string | undefined) => ['1', 'true', 'yes'].includes(raw?.trim().toLowerCase() ?? '')
+
   /** A whole number of entries, at least one. */
   const entries = (raw: string | undefined, fallback: number) => {
     const value = Number(raw?.trim())
@@ -427,20 +509,28 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     dcaDropsPct,
     dcaRungsUsd: sizes(env.OPERADOR_DCA_RUNGS_USD, DEFAULT_DCA_RUNGS_USD, dcaDropsPct.length),
     dcaFrom: env.OPERADOR_DCA_FROM?.trim().toLowerCase() === 'first' ? 'first' : DEFAULT_DCA_FROM,
-    // Only 0, false and no turn it off; a typo leaves the operator's decision
-    // running rather than quietly running the one it replaced.
-    dcaAdaptive: ['0', 'false', 'no'].includes(env.OPERADOR_DCA_ADAPTIVE?.trim().toLowerCase() ?? '') ? false : DEFAULT_DCA_ADAPTIVE,
+    // OFF: only the deep rung buys after the entry. Only 1, true and yes turn
+    // it on.
+    dropLadder: onlyIf(env.OPERADOR_DROP_LADDER) || DEFAULT_DROP_LADDER,
+    // OFF, the same way: a typo leaves the operator's decision running rather
+    // than quietly running the one it replaced.
+    dcaAdaptive: onlyIf(env.OPERADOR_DCA_ADAPTIVE) || DEFAULT_DCA_ADAPTIVE,
     // Read on its own, and the same way: the adaptive switch is what gates it,
-    // in the sweep and on the screen, so an operator who turns the spacing off
-    // does not also have to remember this one.
-    dcaRealtime: ['0', 'false', 'no'].includes(env.OPERADOR_DCA_REALTIME?.trim().toLowerCase() ?? '') ? false : DEFAULT_DCA_REALTIME,
+    // in the sweep and on the screen.
+    dcaRealtime: onlyIf(env.OPERADOR_DCA_REALTIME) || DEFAULT_DCA_REALTIME,
     // *Freno en tiempo real por cambio de liquidez inmediata que supere el
-    // 5%.* Zero is a REAL value — the switch off — so it reads through
-    // `percent`, never `positive`; anything unreadable keeps the operator's five
-    // rather than quietly running without the brake.
-    liquidityBrakePct: percent(env.OPERADOR_LIQUIDITY_BRAKE_PCT, DEFAULT_LIQUIDITY_BRAKE_PCT),
+    // 5%.* OFF now, because its bounce buys a rung. Zero is a REAL value — the
+    // switch off — so it reads through `percent`, never `positive`; anything
+    // unreadable keeps it off rather than quietly running a brake that buys.
+    liquidityBrakePct: percent(env.OPERADOR_LIQUIDITY_BRAKE_PCT, DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT),
     // Capped by what the venue holds: reserving capital for an entry the
     // broker will refuse is capital held against nothing.
     reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),
+    // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA de
+    // $20.* Zero is a real value for both percentages; the fall stays under a
+    // hundred, because no price can fall a hundred percent and still be a price.
+    deepRungFallPct: percent(env.OPERADOR_DEEP_RUNG_FALL_PCT, DEFAULT_DEEP_RUNG_FALL_PCT),
+    deepRungReboundPct: nonNegative(env.OPERADOR_DEEP_RUNG_REBOUND_PCT, DEFAULT_DEEP_RUNG_REBOUND_PCT),
+    deepRungUsd: positive(env.OPERADOR_DEEP_RUNG_USD, DEFAULT_DEEP_RUNG_USD),
   }
 }

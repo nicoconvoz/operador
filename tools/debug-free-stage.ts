@@ -13,7 +13,7 @@ import { DexScreener } from '../src/infrastructure/adapters/dexscreener/dexscree
 import { GeckoTerminal } from '../src/infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { JupiterTokens } from '../src/infrastructure/adapters/jupiter/jupiter-tokens.js'
 import { evaluateMarketGates, DEFAULT_GATE_POLICY } from '../src/domain/scanner/gates.js'
-import { scoreOpportunity, DEFAULT_OPPORTUNITY_POLICY } from '../src/domain/scanner/opportunity.js'
+import { scoreOpportunity, failedMinimums, DEFAULT_OPPORTUNITY_POLICY } from '../src/domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../src/domain/market/market-quality.js'
 import { DEFAULT_COMPONENT_FLOORS } from '../src/application/production-doors.js'
 import { type TokenSnapshot } from '../src/domain/scanner/snapshot.js'
@@ -58,11 +58,8 @@ for (const m of all) {
     referenceUsd: 100,
     observedAt: m.observedAt,
   })
-  const failed = [...gates.failures.map((f) => f.gate)]
-  for (const [name, floor] of Object.entries(DEFAULT_COMPONENT_FLOORS)) {
-    const value = (score.components as Record<string, number>)[name]
-    if (value === undefined || value < (floor as number)) failed.push(`PISO:${name}`)
-  }
+  const failed: string[] = [...gates.failures.map((f) => f.gate)]
+  for (const name of failedMinimums(score.components, DEFAULT_COMPONENT_FLOORS)) failed.push(`PISO:${name}`)
   if (failed.length === 0) { pasan++; continue }
   for (const gate of failed) blocks[gate] = (blocks[gate] ?? 0) + 1
   if (failed.length === 1) sole[failed[0]!] = (sole[failed[0]!] ?? 0) + 1

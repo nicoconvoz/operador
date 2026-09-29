@@ -115,7 +115,30 @@ export interface OpportunityPolicy {
  * rejects 16, cost 8, trend 5. That is the cost of the rule, and it is real:
  * fewer positions, better ones.
  */
-export type ComponentFloors = Partial<Record<keyof OpportunityComponents, number>>
+export type ComponentFloors = Partial<Record<keyof OpportunityComponents, ComponentFloor>>
+
+/**
+ * One floor: a plain number asks for AT LEAST that much; `{ above }` asks for
+ * STRICTLY more.
+ *
+ * *Todos los tokens que tengan más de 10% de presión compradora.* The operator
+ * said MORE than, so a token at exactly 10% stays out — and a plain number
+ * could not say that without a nudge nobody can read off the screen. Every
+ * floor written before it meant "at least" and still does.
+ */
+export type ComponentFloor = number | { readonly above: number }
+
+/** The level a floor sits at, whether it asks for at least it or more than it. */
+export const floorLevel = (floor: ComponentFloor): number => (typeof floor === 'number' ? floor : floor.above)
+
+/** Whether the floor asks for STRICTLY more than its level. */
+export const floorIsStrict = (floor: ComponentFloor): boolean => typeof floor !== 'number'
+
+/** Whether a component clears one floor. A MISSING component clears none. */
+const clearsFloor = (value: number | undefined, floor: ComponentFloor): boolean => {
+  if (value === undefined || Number.isNaN(value)) return false
+  return floorIsStrict(floor) ? value > floorLevel(floor) : value >= floorLevel(floor)
+}
 
 export function meetsMinimums(
   components: Partial<OpportunityComponents>,
@@ -141,8 +164,8 @@ export function failedMinimums(
   floors: ComponentFloors | undefined,
 ): readonly (keyof OpportunityComponents)[] {
   if (floors === undefined) return []
-  return (Object.entries(floors) as [keyof OpportunityComponents, number | undefined][])
-    .filter(([name, floor]) => floor !== undefined && (components[name] ?? -1) < floor)
+  return (Object.entries(floors) as [keyof OpportunityComponents, ComponentFloor | undefined][])
+    .filter(([name, floor]) => floor !== undefined && !clearsFloor(components[name], floor))
     .map(([name]) => name)
 }
 
@@ -281,9 +304,14 @@ export function scoreOpportunity(
   const volumeExpansion = clamp01(expansionRatio / policy.fullExpansionRatio)
 
   // Share of buys in the last hour. 0.5 is neutral; only the excess counts.
+  //
+  // (buyShare − 0.5) × 2, written as the one division it equals: (buys −
+  // sells) / trades. The two-step form rounded 11 buys of 20 — exactly 10% —
+  // to 0.10000000000000009, over a door at "more than 10%" by a rounding
+  // error. One correctly rounded division lands on 0.1 exactly. A silent hour
+  // is no pressure.
   const trades1h = txns.h1.buys + txns.h1.sells
-  const buyShare = trades1h > 0 ? txns.h1.buys / trades1h : 0.5
-  const buyPressure = clamp01((buyShare - 0.5) * 2)
+  const buyPressure = trades1h > 0 ? clamp01((txns.h1.buys - txns.h1.sells) / trades1h) : 0
 
   // Liquidity vs the previous look: 1 = flat, ≥ 1.5 = fully growing, ≤ 0.5 = gone.
   const growthRatio = previous && previous.liquidityUsd > 0 ? snapshot.liquidityUsd / previous.liquidityUsd : 1

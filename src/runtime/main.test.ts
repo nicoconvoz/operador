@@ -43,6 +43,17 @@ const runtime = (env: Record<string, string> = {}) =>
     postJson: async () => { throw new Error('no network in this test') },
   })
 
+/**
+ * Ladder A, brought back from the environment: five chained rungs with their
+ * volatility spacing and the liquidity brake. OFF in production — only the
+ * deep rung buys after the entry — and these are the variables that bring it
+ * back, so the dormant code is still tested on the path the engine would run.
+ */
+const LADDER_A: Record<string, string> = {
+  OPERADOR_DROP_LADDER: '1', OPERADOR_MAX_DCA: '5', OPERADOR_MAX_USD_PER_LEVEL: '10',
+  OPERADOR_DCA_ADAPTIVE: '1', OPERADOR_DCA_REALTIME: '1', OPERADOR_LIQUIDITY_BRAKE_PCT: '5',
+}
+
 const held: PersistedPosition = {
   id: 'solana:T:1', chain: 'solana', tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
   cascade: initialState(), deathWatch: startDeathWatch(1_000_000, 0),
@@ -132,23 +143,42 @@ describe('the take-profit waits for +10%, through the path the engine runs', () 
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('buys ladder A: five rungs of $15..$35 at −10..−30% of the first buy, each funded from the free capital', () => {
-    // *Arriesguémonos, activá la A.*
+  it('wires ONE rung after the entry: the deep rung, $20, funded from the free capital', () => {
+    // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
+    // un rebote de 10%, nueva compra DCA de $20.*
     const { deps, cycleConfig } = runtime()
+    expect(deps.deepRung?.policy).toEqual({ fallPct: 80, reboundPct: 10, maxEntries: 2 })
+    expect(deps.deepRung?.usd).toBe(20)
+    expect(deps.deepRung?.fund).toBeDefined()
+    expect(cycleConfig.maxOpenEntries).toBe(2)
+  })
+
+  it('wires nothing else that could buy a rung — each one a variable away', () => {
+    const { deps, cycleConfig } = runtime()
+    // The chained drop ladder, and with it the volatility spacing and the
+    // liquidity brake that ride on it.
+    expect(deps.dropLadder).toBeUndefined()
+    // The buy-pressure ladder.
+    expect(deps.pressureLadder).toBeUndefined()
+    // The cascade's own rungs: a separation no price can clear.
+    expect(cycleConfig.params.minGapPct).toBe(100)
+  })
+
+  it('brings ladder A back from the environment, beside the deep rung', () => {
+    const { deps } = runtime(LADDER_A)
     expect(deps.dropLadder?.policy).toEqual({ maxEntries: 6, dropsPct: [10, 15, 20, 25, 30], from: 'previous' })
     expect(deps.dropLadder?.rungsUsd).toEqual([15, 20, 25, 30, 35])
     expect(deps.dropLadder?.fund).toBeDefined()
-    expect(cycleConfig.maxOpenEntries).toBe(6)
   })
 
-  it('reserves one entry a slot, and the slot is exactly what one $10 buy needs', () => {
+  it('reserves one entry a slot, and the slot is exactly what one $15 buy needs', () => {
     const { cycleConfig } = runtime()
     expect(cycleConfig.reservedEntries).toBe(1)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(10)
-    expect(cycleConfig.usdPerToken).toBeCloseTo(ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: 10 }, 1, 0.05), 9)
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(15)
+    expect(cycleConfig.usdPerToken).toBeCloseTo(ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }, 1, 0.05), 9)
   })
 
-  it('buys exactly ten dollars on the first tick of a slot the allocator sized', async () => {
+  it('buys exactly fifteen dollars on the first tick of a slot the allocator sized', async () => {
     // The path the engine runs: the cycle's own tick rules, a slot of
     // `usdPerToken`, the broker `brokerFor` builds. Flat candles are enough —
     // production enters on selection, with no indicator condition.
@@ -167,20 +197,26 @@ describe('the ladder, the reservation and the ban, as wired', () => {
       new MemoryStore(), new RecordingAlerts(), new AlertThrottle(60_000),
     )
     const entry = result.orders.find((o) => o.kind === 'entry')
-    expect(entry && entry.kind === 'entry' ? entry.usd : 0).toBeCloseTo(10, 6)
+    expect(entry && entry.kind === 'entry' ? entry.usd : 0).toBeCloseTo(15, 6)
   })
 
-  it('funds a rung at its own size: all six entries of ladder A cost $135 grossed up', async () => {
+  it('funds the rung at its own size: both entries cost $35 grossed up', async () => {
     const { deps, cycleConfig } = runtime()
+    const funded = await deps.deepRung!.fund!({ ...held, capitalUsd: cycleConfig.usdPerToken! }, 2)
+    expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([15, 20], 0.05), 9)
+  })
+
+  it('funds ladder A at its own sizes when it is brought back: six entries cost $135 grossed up', async () => {
+    const { deps, cycleConfig } = runtime(LADDER_A)
     const funded = await deps.dropLadder!.fund!({ ...held, capitalUsd: cycleConfig.usdPerToken! }, 6)
     expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
   })
 
-  it('builds a broker that holds six entries — the first buy and five rungs — and refuses a seventh', async () => {
+  it('builds a broker that holds two entries — the first buy and the rung — and refuses a third', async () => {
     const { deps } = runtime()
     const broker = await deps.brokerFor({ ...held, capitalUsd: 200 })
-    const entries = Array.from({ length: 7 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 10, qty: 10, comment: 'x' }))
-    expect(broker.execute(entries, 1, 0)).toHaveLength(6)
+    const entries = Array.from({ length: 3 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 10, qty: 10, comment: 'x' }))
+    expect(broker.execute(entries, 1, 0)).toHaveLength(2)
   })
 
   it('blacklists a frozen token on release unless told not to', () => {
@@ -225,9 +261,13 @@ describe('the rungs follow each token’s volatility, through the path the engin
     return (await store.fillsFor(wild.id)).filter((f) => f.side === 'buy').map((f) => f.orderId)
   }
 
-  it('is ON when nothing is set: DCA-1 of a wild token at −5.3%', async () => {
-    expect(runtime().deps.dropLadder?.adaptive).toBe(true)
-    expect(await sweepAt({}, 0.947)).toEqual(['Entry', 'DCA-1'])
+  it('is OFF when nothing is set — the whole drop ladder is', () => {
+    expect(runtime().deps.dropLadder).toBeUndefined()
+  })
+
+  it('is ON with ladder A brought back: DCA-1 of a wild token at −5.3%', async () => {
+    expect(runtime(LADDER_A).deps.dropLadder?.adaptive).toBe(true)
+    expect(await sweepAt(LADDER_A, 0.947)).toEqual(['Entry', 'DCA-1'])
   })
 
   it('measures the scale over 15-minute bars: the tick is told the bar the engine trades', () => {
@@ -237,9 +277,10 @@ describe('the rungs follow each token’s volatility, through the path the engin
   })
 
   it('is OFF with OPERADOR_DCA_ADAPTIVE=0: the same token waits for the base −10%', async () => {
-    expect(runtime({ OPERADOR_DCA_ADAPTIVE: '0' }).deps.dropLadder?.adaptive).toBe(false)
-    expect(await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.947)).toEqual(['Entry'])
-    expect(await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.899)).toEqual(['Entry', 'DCA-1'])
+    const env = { ...LADDER_A, OPERADOR_DCA_ADAPTIVE: '0' }
+    expect(runtime(env).deps.dropLadder?.adaptive).toBe(false)
+    expect(await sweepAt(env, 0.947)).toEqual(['Entry'])
+    expect(await sweepAt(env, 0.899)).toEqual(['Entry', 'DCA-1'])
   })
 })
 
@@ -290,9 +331,9 @@ describe('the NEXT rung follows the token’s last hour, through the path the en
     return { buys: (await store.fillsFor(wild.id)).filter((f) => f.side === 'buy').map((f) => f.orderId), after: after! }
   }
 
-  it('is ON when nothing is set: the wild hour holds DCA-1 back, and asks Jupiter for 5-minute bars by mint', async () => {
-    expect(runtime().deps.dropLadder?.recentVolatility).toBeDefined()
-    const { buys, after } = await sweepAt({}, 0.9)
+  it('is ON with ladder A brought back: the wild hour holds DCA-1 back, and asks Jupiter for 5-minute bars by mint', async () => {
+    expect(runtime(LADDER_A).deps.dropLadder?.recentVolatility).toBeDefined()
+    const { buys, after } = await sweepAt(LADDER_A, 0.9)
     expect(buys).toEqual(['Entry'])
     expect(asked.some((url) => url.includes('/v2/charts/T?interval=5_MINUTE'))).toBe(true)
     // Written down for the screen: sqrt(ln(1.2)×100 / 2.17) ≈ 2.9.
@@ -300,16 +341,18 @@ describe('the NEXT rung follows the token’s last hour, through the path the en
   })
 
   it('is OFF with OPERADOR_DCA_REALTIME=0: the same token buys on the scale measured at the buy', async () => {
-    expect(runtime({ OPERADOR_DCA_REALTIME: '0' }).deps.dropLadder?.recentVolatility).toBeUndefined()
-    const { buys } = await sweepAt({ OPERADOR_DCA_REALTIME: '0' }, 0.9)
+    const env = { ...LADDER_A, OPERADOR_DCA_REALTIME: '0' }
+    expect(runtime(env).deps.dropLadder?.recentVolatility).toBeUndefined()
+    const { buys } = await sweepAt(env, 0.9)
     expect(buys).toEqual(['Entry', 'DCA-1'])
     expect(barsAsked()).toEqual([])
   })
 
   it('scales nothing with OPERADOR_DCA_ADAPTIVE=0, real time included: the base −10%, and no hour asked', async () => {
     // Neither the −5.2% measured at the buy nor the −29% of the wild hour.
-    expect((await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.93)).buys).toEqual(['Entry'])
-    expect((await sweepAt({ OPERADOR_DCA_ADAPTIVE: '0' }, 0.899)).buys).toEqual(['Entry', 'DCA-1'])
+    const env = { ...LADDER_A, OPERADOR_DCA_ADAPTIVE: '0' }
+    expect((await sweepAt(env, 0.93)).buys).toEqual(['Entry'])
+    expect((await sweepAt(env, 0.899)).buys).toEqual(['Entry', 'DCA-1'])
     expect(barsAsked()).toEqual([])
   })
 })
@@ -343,7 +386,7 @@ describe('the liquidity watch, through the path the engine runs', () => {
     vi.useRealTimers()
   })
 
-  const book = async (env: Record<string, string> = {}) => {
+  const book = async (env: Record<string, string> = LADDER_A) => {
     const { deps, cycleConfig } = runtime(env)
     const store = new MemoryStore()
     await store.savePosition(flat)
@@ -365,9 +408,13 @@ describe('the liquidity watch, through the path the engine runs', () => {
     return { sweep, buys, sent }
   }
 
-  it('is ON at 5% when nothing is set: a pool down 8% in the hour holds DCA-1 back at its line', async () => {
-    expect(runtime().deps.dropLadder?.liquidityBrakePct).toBe(5)
-    expect(runtime().deps.dropLadder?.liquidityChange).toBeDefined()
+  it('is OFF when nothing is set — it rides on the drop ladder, which is off', () => {
+    expect(runtime().deps.dropLadder).toBeUndefined()
+  })
+
+  it('is ON at 5% with ladder A brought back: a pool down 8% in the hour holds DCA-1 back at its line', async () => {
+    expect(runtime(LADDER_A).deps.dropLadder?.liquidityBrakePct).toBe(5)
+    expect(runtime(LADDER_A).deps.dropLadder?.liquidityChange).toBeDefined()
     const { sweep, buys, sent } = await book()
     await sweep(0.899)
     expect(await buys()).toEqual(['Entry'])
@@ -395,10 +442,72 @@ describe('the liquidity watch, through the path the engine runs', () => {
   })
 
   it('is OFF with OPERADOR_LIQUIDITY_BRAKE_PCT=0: the same draining pool buys on the line, and nothing is asked', async () => {
-    expect(runtime({ OPERADOR_LIQUIDITY_BRAKE_PCT: '0' }).deps.dropLadder?.liquidityBrakePct).toBe(0)
-    const { sweep, buys } = await book({ OPERADOR_LIQUIDITY_BRAKE_PCT: '0' })
+    const env = { ...LADDER_A, OPERADOR_LIQUIDITY_BRAKE_PCT: '0' }
+    expect(runtime(env).deps.dropLadder?.liquidityBrakePct).toBe(0)
+    const { sweep, buys } = await book(env)
     await sweep(0.899)
     expect(await buys()).toEqual(['Entry', 'DCA-1'])
     expect(searched).toEqual([])
+  })
+})
+
+describe('only the deep rung buys after the entry, through the path the engine runs', () => {
+  // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay un
+  // rebote de 10%, nueva compra DCA de $20.* And the lesson this project paid
+  // for when a switched-off stop cut six positions: *a switched-off rule must
+  // stay off through every path.* So these build the runtime from an EMPTY
+  // environment — production's defaults — and run the SAME sweep the cycle and
+  // the loop run, funder and brokers included, on a book read back from the
+  // store the way production reads it.
+  const book = async () => {
+    const { deps, cycleConfig } = runtime()
+    const store = new MemoryStore()
+    // A slot sized by the allocator: the $15 first buy alone.
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken! }
+    await store.savePosition(slot)
+    await store.recordFill({
+      positionId: slot.id, orderId: 'Entry', side: 'buy', time: 0, price: 1, qty: 15, costUsd: 0.05,
+      comment: '🟢 Entry', idempotencyKey: `${slot.id}:0:Entry`,
+    })
+    const sent: { kind: string; title: string }[] = []
+    let clock = 1_000
+    // One sweep at a live price. The tick keeps the last candle close beside
+    // the market, so the price guard sees the two agree, as it would live.
+    const sweep = async (price: number) => {
+      await sweepStops(
+        { ...deps, store, alerts: { send: async (a) => { sent.push({ kind: a.kind, title: a.title }) } } },
+        (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)),
+        new AlertThrottle(0),
+        (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })),
+        new Map([['solana:T', price]]),
+        (clock += 30_000),
+      )
+    }
+    const buys = async () => (await store.fillsFor(slot.id)).filter((f) => f.side === 'buy')
+    return { sweep, buys, sent }
+  }
+
+  for (const fall of [30, 50, 70]) {
+    it(`buys NOTHING on a ${fall}% fall, however it bounces`, async () => {
+      const { sweep, buys } = await book()
+      const bottom = 1 - fall / 100
+      for (const price of [0.95, 0.9, bottom, bottom * 1.1, bottom * 1.25, bottom]) await sweep(price)
+      expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    })
+  }
+
+  it('buys EXACTLY one $20 rung on an 85% fall that rebounds 10% — and nothing after it', async () => {
+    const { sweep, buys, sent } = await book()
+    for (const price of [0.7, 0.4, 0.15]) await sweep(price)
+    expect(await buys()).toHaveLength(1)
+    await sweep(0.165)
+    const bought = await buys()
+    expect(bought.map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    expect(bought[1]!.qty).toBeCloseTo(20 / 0.165, 6)
+    expect(sent.find((a) => a.kind === 'dca-filled')?.title)
+      .toBe('🪜 T promedió — DCA-1 $20: cayó 85.0% desde la primera compra y rebotó 10.0% desde el mínimo')
+    // A deeper fall and another rebound: the holding has had its one rung.
+    for (const price of [0.05, 0.06, 0.1]) await sweep(price)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
   })
 })

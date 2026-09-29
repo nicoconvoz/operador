@@ -278,10 +278,10 @@ describe('PostgresStore — the break-even ratchet is enforced in SQL', () => {
     await new PostgresStore(client).savePosition({ ...position, dcaScale: 0.52 })
     expect(calls[0]!.sql).toContain('dca_scale = COALESCE(positions.dca_scale, EXCLUDED.dca_scale)')
     expect(calls[0]!.sql).toContain('entry_score, dca_scale, gain_lock_pct, gain_lock_since')
-    expect(calls[0]!.params.slice(-6, -3)).toEqual([0.52, null, null])
+    expect(calls[0]!.params.slice(-7, -4)).toEqual([0.52, null, null])
     const { client: bare, calls: bareCalls } = fakeSql()
     await new PostgresStore(bare).savePosition(position)
-    expect(bareCalls[0]!.params.slice(-6, -3)).toEqual([null, null, null])
+    expect(bareCalls[0]!.params.slice(-7, -4)).toEqual([null, null, null])
   })
 
   it('reads the DCA scale back as a number, and absent as null', async () => {
@@ -331,9 +331,9 @@ describe('PostgresStore — the real-time DCA scale: the NEWER reading wins, in 
     const measured = await upsert({ ...position, dcaScaleNow: 2.1, dcaScaleNowAt: 1_700 })
     expect(measured.sql).toContain('gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at')
     expect(measured.sql).toContain('$21')
-    expect(measured.params.slice(-3, -1)).toEqual([2.1, 1_700])
-    expect((await upsert(position)).params.slice(-3, -1)).toEqual([null, null])
-    expect((await upsert({ ...position, dcaScaleNow: 2.1, dcaScaleNowAt: null })).params.slice(-3, -1)).toEqual([null, null])
+    expect(measured.params.slice(-4, -2)).toEqual([2.1, 1_700])
+    expect((await upsert(position)).params.slice(-4, -2)).toEqual([null, null])
+    expect((await upsert({ ...position, dcaScaleNow: 2.1, dcaScaleNowAt: null })).params.slice(-4, -2)).toEqual([null, null])
   })
 
   it('takes the written pair only when it is NEWER than the stored one', async () => {
@@ -374,8 +374,8 @@ describe('PostgresStore — the gain lock ratchets in SQL', () => {
   it('writes the pair, and a missing lock as two nulls', async () => {
     const locked = await upsert({ ...position, gainLock: { pct: 20, since: 1_700 } })
     expect(locked.sql).toContain('gain_lock_pct, gain_lock_since')
-    expect(locked.params.slice(-5, -3)).toEqual([20, 1_700])
-    expect((await upsert(position)).params.slice(-5, -3)).toEqual([null, null])
+    expect(locked.params.slice(-6, -4)).toEqual([20, 1_700])
+    expect((await upsert(position)).params.slice(-6, -4)).toEqual([null, null])
   })
 
   it('keeps what is stored when the write carries no lock, or an OLDER holding’s', async () => {
@@ -500,13 +500,13 @@ describe('PostgresStore — the liquidity watch: the NEWER watch wins, in SQL', 
     return loaded!.liquidityWatch
   }
 
-  it('writes the watch last, as JSON, and none as null', async () => {
+  it('writes the watch just before the price low, as JSON, and none as null', async () => {
     const written = await upsert({ ...position, liquidityWatch: watch })
-    expect(written.sql).toContain('dca_scale_now, dca_scale_now_at, liquidity_watch)')
+    expect(written.sql).toContain('dca_scale_now, dca_scale_now_at, liquidity_watch, price_low)')
     expect(written.sql).toContain('$22')
-    expect(JSON.parse(written.params.at(-1) as string)).toEqual(watch)
-    expect((await upsert(position)).params.at(-1)).toBeNull()
-    expect((await upsert({ ...position, liquidityWatch: null })).params.at(-1)).toBeNull()
+    expect(JSON.parse(written.params.at(-2) as string)).toEqual(watch)
+    expect((await upsert(position)).params.at(-2)).toBeNull()
+    expect((await upsert({ ...position, liquidityWatch: null })).params.at(-2)).toBeNull()
   })
 
   it('takes the written watch only when it is NEWER than the stored one', async () => {
@@ -530,5 +530,75 @@ describe('PostgresStore — the liquidity watch: the NEWER watch wins, in SQL', 
   it('adds the column to a table that already holds money, without a truncate', () => {
     const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
     expect(schema).toContain('ALTER TABLE positions ADD COLUMN IF NOT EXISTS liquidity_watch JSONB;')
+  })
+})
+
+describe('PostgresStore — the price low: a stale snapshot never raises it, in SQL', () => {
+  // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA de
+  // $20.* The rebound is measured from the lowest live price the holding has
+  // seen, and it has to survive a restart. The sweep lowers it; the tick, the
+  // trim and a funded rung write the whole row back from snapshots read before
+  // it. So the upsert decides, exactly as `keepPriceLow` does in the
+  // MemoryStore: the same holding keeps the LOWER price, a newer holding's low
+  // replaces it whole, and a write with an older holding's low, or none, keeps
+  // what is stored.
+  const upsert = async (p: PersistedPosition) => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).savePosition(p)
+    return calls[0]!
+  }
+  const squash = (sql: string) => sql.replace(/\s+/g, ' ')
+  const low = { price: 0.15, at: 1_900, holdingSince: 1_700 }
+  const row = {
+    id: 'pos-1', chain: 'solana', token_address: 'Mint1', pair_address: 'Pair1', symbol: 'TEST',
+    cascade: position.cascade, death_watch: position.deathWatch, quality: position.quality,
+    capital_usd: '500', last_bar_time: '1', last_price_usd: '1', pending_orders: [],
+    opened_at: '1', updated_at: '1', break_even_armed: false,
+  }
+  const load = async (extra: Record<string, unknown>) => {
+    const [loaded] = await new PostgresStore(fakeSql([[{ ...row, ...extra }]]).client).loadPositions()
+    return loaded!.priceLow
+  }
+
+  it('writes the low last, as JSON, and none as null', async () => {
+    const written = await upsert({ ...position, priceLow: low })
+    expect(written.sql).toContain('liquidity_watch, price_low)')
+    expect(written.sql).toContain('$23')
+    expect(JSON.parse(written.params.at(-1) as string)).toEqual(low)
+    expect((await upsert(position)).params.at(-1)).toBeNull()
+    expect((await upsert({ ...position, priceLow: null })).params.at(-1)).toBeNull()
+  })
+
+  it('keeps what is stored when the write carries none, or an OLDER holding’s', async () => {
+    const sql = squash((await upsert(position)).sql)
+    expect(sql).toContain('price_low = CASE WHEN EXCLUDED.price_low IS NULL THEN positions.price_low')
+    expect(sql).toMatch(/ELSE positions\.price_low END/)
+  })
+
+  it('takes a NEWER holding’s low whole, and the LOWER price of the same holding', async () => {
+    const sql = squash((await upsert(position)).sql)
+    expect(sql).toContain(
+      "WHEN positions.price_low IS NULL OR (EXCLUDED.price_low->>'holdingSince')::bigint > (positions.price_low->>'holdingSince')::bigint THEN EXCLUDED.price_low",
+    )
+    expect(sql).toContain(
+      "WHEN (EXCLUDED.price_low->>'holdingSince')::bigint = (positions.price_low->>'holdingSince')::bigint " +
+      "AND (EXCLUDED.price_low->>'price')::double precision < (positions.price_low->>'price')::double precision THEN EXCLUDED.price_low",
+    )
+  })
+
+  it('reads it back whole, and anything malformed as nothing', async () => {
+    expect(await load({ price_low: low })).toEqual(low)
+    expect(await load({ price_low: JSON.stringify(low) })).toEqual(low)
+    expect(await load({ price_low: null })).toBeNull()
+    expect(await load({})).toBeNull()
+    expect(await load({ price_low: { ...low, price: 'x' } })).toBeNull()
+    expect(await load({ price_low: { ...low, price: 0 } })).toBeNull()
+    expect(await load({ price_low: { price: 0.15, at: 1_900 } })).toBeNull()
+    expect(await load({ price_low: '{not json' })).toBeNull()
+  })
+
+  it('adds the column to a table that already holds money, without a truncate', () => {
+    const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
+    expect(schema).toContain('ALTER TABLE positions ADD COLUMN IF NOT EXISTS price_low JSONB;')
   })
 })

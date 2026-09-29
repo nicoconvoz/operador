@@ -13,6 +13,7 @@ import { type CascadeState } from '../../domain/strategy/state.js'
 import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type GainLock } from '../../domain/risk/gain-lock.js'
 import { type LiquidityWatch } from '../../domain/strategy/liquidity-brake.js'
+import { type PriceLow } from '../../domain/strategy/deep-rung.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 import { type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
@@ -73,6 +74,7 @@ interface PositionRow {
   dca_scale_now?: string | number | null
   dca_scale_now_at?: string | number | null
   liquidity_watch?: unknown
+  price_low?: unknown
 }
 
 const present = (value: string | number | null | undefined): value is string | number => value !== null && value !== undefined
@@ -107,6 +109,29 @@ const liquidityWatchOf = (raw: unknown): LiquidityWatch | null => {
   const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
   return finite(w.peakUsd) && finite(w.minUsd) && typeof w.braked === 'boolean' && finite(w.holdingSince) && finite(w.at)
     ? { peakUsd: w.peakUsd, minUsd: w.minUsd, braked: w.braked, holdingSince: w.holdingSince, at: w.at }
+    : null
+}
+
+/**
+ * The price low as the JSONB column holds it, and only if it is whole and a
+ * real price. A low with a field missing cannot say which holding it belongs
+ * to, and a low of zero is not a price — read as one, every live price would
+ * be an infinite rebound off it.
+ */
+const priceLowOf = (raw: unknown): PriceLow | null => {
+  let value = raw
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  if (value === null || typeof value !== 'object') return null
+  const l = value as Record<string, unknown>
+  const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+  return finite(l.price) && l.price > 0 && finite(l.at) && finite(l.holdingSince)
+    ? { price: l.price, at: l.at, holdingSince: l.holdingSince }
     : null
 }
 
@@ -152,6 +177,7 @@ export class PostgresStore implements StatePort {
         ? { dcaScaleNow: num(row.dca_scale_now), dcaScaleNowAt: num(row.dca_scale_now_at) }
         : { dcaScaleNow: null, dcaScaleNowAt: null }),
       liquidityWatch: liquidityWatchOf(row.liquidity_watch),
+      priceLow: priceLowOf(row.price_low),
     }))
   }
 
@@ -159,8 +185,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at, liquidity_watch)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at, liquidity_watch, price_low)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -219,6 +245,19 @@ export class PostgresStore implements StatePort {
             AND (positions.liquidity_watch IS NULL
                  OR (EXCLUDED.liquidity_watch->>'at')::bigint > (positions.liquidity_watch->>'at')::bigint)
            THEN EXCLUDED.liquidity_watch ELSE positions.liquidity_watch
+         END,
+         -- The PRICE LOW, keepPriceLow spelled in SQL. The sweep lowers it; the
+         -- tick, the trim and a funded rung write the row back from snapshots
+         -- read before it, and none of those may RAISE it — the deep rung's
+         -- rebound would then be measured from a price the holding never saw.
+         -- A write with none: what is stored. A newer holding: its low whole.
+         -- The same holding: the lower price. Anything else: what is stored.
+         price_low = CASE
+           WHEN EXCLUDED.price_low IS NULL THEN positions.price_low
+           WHEN positions.price_low IS NULL OR (EXCLUDED.price_low->>'holdingSince')::bigint > (positions.price_low->>'holdingSince')::bigint THEN EXCLUDED.price_low
+           WHEN (EXCLUDED.price_low->>'holdingSince')::bigint = (positions.price_low->>'holdingSince')::bigint
+            AND (EXCLUDED.price_low->>'price')::double precision < (positions.price_low->>'price')::double precision THEN EXCLUDED.price_low
+           ELSE positions.price_low
          END`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
@@ -227,7 +266,8 @@ export class PostgresStore implements StatePort {
        p.gainLock ? p.gainLock.pct : null, p.gainLock ? p.gainLock.since : null,
        // Both or neither, for the lock's reason: a scale with no time is no reading.
        ...(present(p.dcaScaleNow) && present(p.dcaScaleNowAt) ? [p.dcaScaleNow, p.dcaScaleNowAt] : [null, null]),
-       p.liquidityWatch ? JSON.stringify(p.liquidityWatch) : null],
+       p.liquidityWatch ? JSON.stringify(p.liquidityWatch) : null,
+       p.priceLow ? JSON.stringify(p.priceLow) : null],
     )
   }
 

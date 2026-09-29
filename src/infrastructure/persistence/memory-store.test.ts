@@ -295,3 +295,51 @@ describe('MemoryStore — the liquidity watch: the NEWER watch wins', () => {
     expect((await store.loadPositions())[0]!.lastBarTime).toBe(2)
   })
 })
+
+describe('MemoryStore — the price low: a stale snapshot never raises it', () => {
+  // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA.*
+  // The rebound is measured from the lowest price the holding has seen, and
+  // every step of the cycle writes the whole row back from a snapshot read
+  // before the sweep moved that low. Exactly as the SQL keeps it: the same
+  // holding keeps the LOWER price, a newer holding replaces it whole.
+  const base = {
+    id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+    cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+    quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+    capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+  }
+  const low = (price: number, holdingSince = 1, at = 10) => ({ price, at, holdingSince })
+  const stored = async (store: MemoryStore) => (await store.loadPositions())[0]!.priceLow
+
+  it('is absent until a sweep writes one', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(base)
+    expect(await stored(store)).toBeNull()
+  })
+
+  it('takes a lower price for the same holding', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, priceLow: low(0.5) })
+    await store.savePosition({ ...base, priceLow: low(0.15, 1, 20) })
+    expect(await stored(store)).toEqual(low(0.15, 1, 20))
+  })
+
+  it('never lets a stale snapshot raise it — a higher low, or none at all', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, priceLow: low(0.15) })
+    await store.savePosition({ ...base, priceLow: low(0.5, 1, 30) })
+    await store.savePosition({ ...base, lastBarTime: 1, priceLow: null })
+    await store.savePosition({ ...base, lastBarTime: 2 })
+    expect(await stored(store)).toEqual(low(0.15))
+    expect((await store.loadPositions())[0]!.lastBarTime).toBe(2)
+  })
+
+  it('takes a NEWER holding’s low whole, and never an older one’s', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, priceLow: low(0.15, 1) })
+    await store.savePosition({ ...base, priceLow: low(0.9, 2) })
+    expect(await stored(store)).toEqual(low(0.9, 2))
+    await store.savePosition({ ...base, priceLow: low(0.01, 1) })
+    expect(await stored(store)).toEqual(low(0.9, 2))
+  })
+})

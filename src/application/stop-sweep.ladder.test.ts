@@ -16,8 +16,15 @@ import { dcaScale, MEDIAN_VOL_5M_PCT } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
 
 const FLAT_15 = { ...DEFAULT_PARAMS, maxUsdPerLevel: 15 }
-/** Ladder A, exactly as production reads it with no environment set. */
-const A = productionLadder({})
+/**
+ * Ladder A, as the environment brings it back. It was production's default;
+ * now only the deep rung buys after the entry, and ladder A is these variables
+ * away — still built, still tested here.
+ */
+const A = productionLadder({
+  OPERADOR_DROP_LADDER: '1', OPERADOR_MAX_DCA: '5', OPERADOR_MAX_USD_PER_LEVEL: '10',
+  OPERADOR_DCA_ADAPTIVE: '1', OPERADOR_DCA_REALTIME: '1', OPERADOR_LIQUIDITY_BRAKE_PCT: '5',
+})
 const PARAMS_A = { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel }
 
 /**
@@ -62,8 +69,8 @@ const rig = async (options: {
   readonly levels?: ExitLevels
   /**
    * The price ladder instead of the pressure ladder: `true` is an explicit
-   * three $15 rungs at −10/−20/−30% of the first buy; `'A'` is production's
-   * own, read from `productionLadder({})`, with its $10 first buy.
+   * three $15 rungs at −10/−20/−30% of the first buy; `'A'` is ladder A,
+   * as the environment brings it back (`A` above), with its $10 first buy.
    */
   readonly drop?: boolean | 'A'
   /**
@@ -507,7 +514,7 @@ describe('the pressure ladder pays for its rungs the same way', () => {
   })
 })
 
-describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35', () => {
+describe('ladder A, as it runs when brought back: $10, then $15, $20, $25, $30 and $35', () => {
   // *Arriesguémonos, activá la A.* The first buy is $10 at 1.00; DCA-n buys its
   // own size at 1.00 less its drop — −10, −15, −20, −25 and −30%. Each rung
   // asks the free capital for its share, and the broker holds six entries.
@@ -519,7 +526,8 @@ describe('ladder A, as production runs it: $10, then $15, $20, $25, $30 and $35'
   // respecto al anterior*: 0.899, then 15% under that, 20% under the next…
   const LINES = [0.899, 0.764, 0.611, 0.458, 0.32]
 
-  it('is what production reads with nothing set', () => {
+  it('is what the environment brings back', () => {
+    expect(A.dropLadder).toBe(true)
     expect(A.maxUsdPerLevel).toBe(10)
     expect(A.maxOpenEntries).toBe(6)
     expect(A.dcaDropsPct).toEqual([10, 15, 20, 25, 30])
@@ -586,7 +594,7 @@ describe('ladder A at the token’s own scale: the more it moves, the wider its 
   const held = (dcaScale?: number) => position({ capitalUsd: ONE_ENTRY, lastPriceUsd: 0.9, ...(dcaScale === undefined ? {} : { dcaScale }) })
   const bought = async (store: MemoryStore) => (await store.fillsFor(ID)).filter((f) => f.side === 'buy')
 
-  it('is ON with nothing set', () => {
+  it('is ON with ladder A brought back', () => {
     expect(A.dcaAdaptive).toBe(true)
   })
 

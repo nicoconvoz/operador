@@ -1,6 +1,7 @@
 import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { usableScale } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
+import { deepRungArmed, deepRungLine, reboundLine, type DeepRungPolicy } from '../domain/strategy/deep-rung.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
@@ -46,7 +47,7 @@ export interface LadderRung {
  * broken looked exactly alike, which makes the correct one impossible to trust.
  */
 export interface LadderLock {
-  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'pressure' | 'drop'
+  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'pressure' | 'drop' | 'deep'
   readonly held: boolean
   /** What it is waiting for, in the numbers it is waiting on. */
   readonly detail: string
@@ -183,6 +184,18 @@ export interface OperationsOptions {
     readonly threshold: number
     readonly pressureOf?: (position: PersistedPosition) => Promise<number | null>
   }
+  /**
+   * The ONE rung the engine buys after the entry: armed once the holding's low
+   * is more than `fallPct` under the first buy, bought on a `reboundPct`
+   * rebound off that low, `usd` dollars. *Dos escalones solamente.* Read off
+   * the low the sweep wrote onto the position. Drawn when given and no
+   * `dropLadder` is.
+   */
+  readonly deepRung?: {
+    readonly fallPct: number
+    readonly reboundPct: number
+    readonly usd: number
+  }
 }
 
 export async function buildOperations(store: StatePort, options: OperationsOptions): Promise<OperationsView> {
@@ -263,6 +276,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     // swapped — usually the engine refuses what the screen offers.
     const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
     const drop = options.dropLadder
+    const deep = drop ? undefined : options.deepRung
     const pressure = options.pressureLadder
     // The position's own spacing, read exactly as the sweep reads it — the
     // same switches, the same stored scales — so each line is drawn where it
@@ -270,6 +284,8 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     const { scale, why } = drop ? ladderScale(position, drop, generatedAt) : { scale: 1, why: '' }
     const ladder: LadderRung[] = drop
       ? dropRungs(filledByLevel, fillable, drop, scale, params, inFlight?.level ?? filledByLevel.size)
+      : deep
+      ? deepRungs(filledByLevel, fillable, deep, params, inFlight?.level ?? filledByLevel.size)
       : pressure
       ? pressureRungs(filledByLevel, fillable, params, inFlight?.level ?? filledByLevel.size)
       : Array.from({ length: fillable }, (_, level) => {
@@ -303,6 +319,8 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       ladder,
       locks: drop
         ? dropLocks(buys, price, fillable, drop, scale, why, params)
+        : deep
+        ? deepLocks(position, buys, price, fillable, deep)
         : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
@@ -474,6 +492,77 @@ function dropLocks(
       detail: reached
         ? `el precio llegó a ${line.toPrecision(4)} — ${id} compra ${usd} en este barrido`
         : `${id} compra ${usd} si el precio cae a ${line.toPrecision(4)} — ${dropLabel(drop)}% bajo ${since}${why}; va en ${price === null ? '—' : price.toPrecision(4)}`,
+    },
+  ]
+}
+
+type DeepRungView = NonNullable<OperationsOptions['deepRung']>
+
+/** The deep rung's policy as the domain reads it: the first buy and one rung. */
+const deepPolicy = (rung: DeepRungView): DeepRungPolicy => ({ fallPct: rung.fallPct, reboundPct: rung.reboundPct, maxEntries: 2 })
+
+/** Dollars as the operator says them: $20, not $20.00. */
+const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`
+
+/**
+ * The deep rung's two boxes: the entry, and DCA-1 at the line that arms it — a
+ * fifth of what the first buy actually PAID, at the production numbers. Never
+ * more boxes than the deep rung can fill, whatever the venue holds: a box
+ * nothing will ever buy is a trade the screen offers and the engine refuses.
+ */
+function deepRungs(
+  filledByLevel: ReadonlyMap<number, PersistedFill>,
+  fillable: number,
+  rung: DeepRungView,
+  params: CascadeParams,
+  waitingOn: number,
+): LadderRung[] {
+  const first = filledByLevel.get(0)?.price ?? null
+  return Array.from({ length: Math.min(fillable, 2) }, (_, level) => {
+    const fill = filledByLevel.get(level)
+    return {
+      level,
+      triggerPrice: level === 1 && first !== null ? deepRungLine(first, deepPolicy(rung)) : null,
+      nominalUsd: level === 0 ? usdForLevel(params, 0) : rung.usd,
+      filled: fill !== undefined,
+      fillPrice: fill?.price ?? null,
+      fillUsd: fill ? fill.price * fill.qty : null,
+      pending: level === waitingOn && !fill,
+    }
+  })
+}
+
+/**
+ * What the deep rung waits for, in the order it happens: the line that arms it
+ * — *DCA-1 $20: se activa bajo $P (−80%)* — and, once the holding's low is
+ * under that line, the low and the price a 10% rebound buys at. Null when flat,
+ * once the rung is bought, or when the venue holds the entry alone.
+ *
+ * The low is the one the sweep persisted, and only THIS holding's: a low left
+ * by the holding before a sale and a buy back is not this one's crash.
+ */
+function deepLocks(
+  position: PersistedPosition,
+  buys: readonly PersistedFill[],
+  price: number | null,
+  fillable: number,
+  rung: DeepRungView,
+): readonly LadderLock[] | null {
+  if (buys.length !== 1 || fillable < 2) return null
+  const first = buys[0]!
+  const policy = deepPolicy(rung)
+  const stored = position.priceLow ?? null
+  const low = stored !== null && stored.holdingSince === first.time ? stored.price : null
+  if (low === null || !deepRungArmed(first.price, low, policy)) {
+    const line = deepRungLine(first.price, policy)
+    return [{ name: 'deep', held: false, detail: `DCA-1 ${dollars(rung.usd)}: se activa bajo $${line.toPrecision(4)} (−${rung.fallPct}%)` }]
+  }
+  const rebound = reboundLine(low, policy)
+  return [
+    {
+      name: 'deep',
+      held: price !== null && price >= rebound,
+      detail: `mínimo $${low.toPrecision(4)} — compra al rebotar ${rung.reboundPct}%, en $${rebound.toPrecision(4)}`,
     },
   ]
 }

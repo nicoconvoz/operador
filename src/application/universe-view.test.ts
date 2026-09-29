@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildUniverse } from './universe-view.js'
+import { describeHoldBack } from './hold-back.js'
+import { productionDoors } from './production-doors.js'
 import { STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { initialState } from '../domain/strategy/state.js'
@@ -44,6 +46,11 @@ const seed = async (snapshots: TokenSnapshot[]) => {
 }
 
 const options = { now: () => NOW }
+
+/** The screen's own labels for the components these tests name. */
+const LABELS: Readonly<Record<string, string>> = {
+  buyPressure: 'presión compradora', activity: 'actividad', volumeExpansion: 'expansión de volumen',
+}
 
 /**
  * The tiers, under the policy that still asks the taste gates.
@@ -473,9 +480,48 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     const store = await seed([token('COLD')])
     const view = await buildUniverse(store, { now: () => NOW, entryDoors: [{ volumeExpansion: 2 }], minScore: 101 })
     const back = view.tokens[0]!.holdBack
-    expect(back.find((b) => b.kind === 'entry')).toMatchObject({ name: 'volumeExpansion', floor: 2 })
+    expect(back.find((b) => b.kind === 'entry')).toMatchObject({ name: 'volumeExpansion', floor: 2, strict: false })
     expect(back.find((b) => b.kind === 'score')).toMatchObject({ floor: 101 })
     expect(back.find((b) => b.kind === 'entry')!.value).toBeLessThan(2)
+  })
+
+  it('draws a token under the buy-pressure door as filtered, and says what it read and what the door asks', async () => {
+    // *Como puerta de entrada, todos los tokens que tengan más de 10% de
+    // presión compradora.* 53 buys of 99 trades is 7.1% — under the door.
+    const store = await seed([token('SOFT', { txns: { h1: { buys: 53, sells: 46 }, h24: { buys: 900, sells: 850 } } })])
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    const soft = view.tokens[0]!
+    expect(soft.tier).toBe('filtered')
+    expect(soft.holdBack).toEqual([{ kind: 'floor', name: 'buyPressure', value: 7 / 99, floor: 0.1, strict: true }])
+    expect(describeHoldBack(soft.holdBack[0]!, LABELS)).toBe('presión compradora 7.1% (pide > 10%)')
+  })
+
+  it('refuses a token at EXACTLY 10% of buy pressure — the door asks for more', async () => {
+    const store = await seed([token('EVEN', { txns: { h1: { buys: 55, sells: 45 }, h24: { buys: 900, sells: 850 } } })])
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    expect(view.tokens[0]!.tier).toBe('filtered')
+    expect(describeHoldBack(view.tokens[0]!.holdBack[0]!, LABELS)).toBe('presión compradora 10.0% (pide > 10%)')
+  })
+
+  it('lets a token whose buyers lead by more than a tenth through the door', async () => {
+    const store = await seed([token('HOT')])
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    expect(view.tokens[0]!.tier).not.toBe('filtered')
+    expect(view.tokens[0]!.holdBack).toEqual([])
+  })
+
+  it('says an AT-LEAST door, a first-buy door and the score door in their own words', () => {
+    expect(describeHoldBack({ kind: 'floor', name: 'activity', value: 0.49, floor: 0.5, strict: false }, LABELS))
+      .toBe('actividad 49.0% (pide ≥ 50%)')
+    expect(describeHoldBack({ kind: 'entry', name: 'volumeExpansion', value: 0.2, floor: 0.25, strict: false }, LABELS))
+      .toBe('expansión de volumen 20.0% (la primera compra pide ≥ 25%)')
+    expect(describeHoldBack({ kind: 'floor', name: 'buyPressure', value: 0.05, floor: 0.125, strict: true }, LABELS))
+      .toBe('presión compradora 5.0% (pide > 12.5%)')
+    expect(describeHoldBack({ kind: 'score', name: 'score', value: 42, floor: 50, strict: false }, LABELS))
+      .toBe('puntaje 42.0 (la puerta pide 50)')
+    // A component nobody labelled is named as the code names it, never blank.
+    expect(describeHoldBack({ kind: 'floor', name: 'mystery', value: 0.1, floor: 0.2, strict: false }, {}))
+      .toBe('mystery 10.0% (pide ≥ 20%)')
   })
 
   it('holds nothing back on a token the engine may open', async () => {

@@ -25,6 +25,23 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  */
 
 /**
+ * The buy-pressure door, in percent: STRICTLY more than this.
+ *
+ * *Como puerta de entrada, todos los tokens que tengan más de 10% de presión
+ * compradora.* The operator, replacing activity above half and liquidity
+ * growth in the hour — both still scored and drawn, neither asked.
+ *
+ * Buy pressure is `(buys − sells) / trades` over the last hour, so more than
+ * 10% is buyers holding more than 55% of the hour's trades. A silent hour is
+ * no pressure, and fails. The SAFETY gates, and the opportunity gates still on
+ * in `DEFAULT_GATE_POLICY`, are not conditions of this kind and stay.
+ */
+export const DEFAULT_MIN_BUY_PRESSURE_PCT = 10
+
+/** The door as a floor: `{ above }`, because the operator said MORE than. */
+const buyPressureDoor = (pct: number): ComponentFloors => ({ buyPressure: { above: pct / 100 } })
+
+/**
  * The binary key: below any one of these the token is not traded, whatever
  * its total says.
  *
@@ -56,19 +73,12 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  * A MISSING component fails. Everywhere else in this scanner silence means "no
  * verdict"; here the verdict was already asked for, and an absent number is
  * not a passing one.
+ *
+ * TODAY there is one, and it is none of the above: buy pressure strictly over
+ * `DEFAULT_MIN_BUY_PRESSURE_PCT`. The table is the history of how the key got
+ * here.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {
-  // *Sólo traer en candidatas monedas con más del 50% de actividad y con
-  // crecimiento de liquidez — de la última hora, más del 0% — y operarlas
-  // directamente.* The operator, replacing trend at 100%.
-  //
-  // Activity above half is about 54 trades or more in the last hour. Liquidity
-  // growth is a yes or a no off Jupiter's own measurement of the hour, so a
-  // floor of one means the pool grew. The SAFETY gates are not conditions of
-  // this kind and stay.
-  activity: 0.5,
-  liquidityGrowth: 1,
-}
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = buyPressureDoor(DEFAULT_MIN_BUY_PRESSURE_PCT)
 
 /**
  * The lowest total score the book will open a position on.
@@ -151,5 +161,13 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const parsed = Number(raw)
   const minScore = raw && Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIN_SCORE
 
-  return { minComponents: DEFAULT_COMPONENT_FLOORS, entryDoors: DEFAULT_ENTRY_DOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
+  // Zero is a real value here too — "buyers lead at all" — and a door at 100
+  // or past it is one no token can clear, so it is nonsense, not a setting.
+  const pressureRaw = env.OPERADOR_MIN_BUY_PRESSURE_PCT?.trim()
+  const pressure = Number(pressureRaw)
+  const minComponents = pressureRaw && Number.isFinite(pressure) && pressure >= 0 && pressure < 100
+    ? buyPressureDoor(pressure)
+    : DEFAULT_COMPONENT_FLOORS
+
+  return { minComponents, entryDoors: DEFAULT_ENTRY_DOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
 }

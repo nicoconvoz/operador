@@ -13,6 +13,7 @@ import { FLAT_ONE_PCT_STOP } from '../domain/risk/stop-loss.js'
 import { DEFAULT_GAIN_LOCK_POLICY, type GainLockPolicy } from '../domain/risk/gain-lock.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
+import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
 
 const NOW = 1_800_000_000_000
 const quality: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: NOW }
@@ -537,6 +538,61 @@ describe('runLoop — the stop does not clock off between cycles', () => {
 
     it('and sells nothing when the lock is off', async () => {
       expect(await floorsThenFalls(null)).toBeNull()
+    })
+  })
+
+  describe('the deep rung is watched between cycles, alone', () => {
+    // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA de
+    // $20.* With no stop, no break-even, no gain lock and no other ladder wired,
+    // the deep rung is reason enough to look between cycles: a rebound that
+    // arrives while the loop sleeps must still buy.
+    const at = (price: number, bars = 260): Candles => ({
+      time: Array.from({ length: bars }, (_, i) => i * 3_600_000),
+      open: Array(bars).fill(price), high: Array(bars).fill(price), low: Array(bars).fill(price),
+      close: Array(bars).fill(price), volume: Array(bars).fill(10_000),
+    })
+    const fallsThenRebounds = async (deepRung: boolean) => {
+      let clock = NOW
+      let asked = 0
+      const store = new MemoryStore()
+      const { deps } = rig({
+        store,
+        now: () => clock,
+        candlesFor: async () => at(0.16),
+        // 85% under the first buy while the cycle runs, 10% off that low once
+        // it is sleeping.
+        marketPrices: async () => new Map([['solana:Held', asked++ === 0 ? 0.15 : 0.165]]),
+        brokerFor: async (pos) => {
+          const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: pos.capitalUsd, maxOpenEntries: 2, quality: () => quality })
+          broker.seed(await store.fillsFor(pos.id))
+          return broker
+        },
+        ...(deepRung ? { deepRung: { policy: DEFAULT_DEEP_RUNG_POLICY, usd: 20 } } : {}),
+      })
+      await store.savePosition({
+        id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+        cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 50,
+        lastBarTime: -1, lastPriceUsd: 0.15, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+      })
+      await store.recordFill({
+        positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 3_600_000,
+        price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+      })
+      await runLoop(
+        deps,
+        { ...config, breakEven: false, gainLock: null },
+        new AlertThrottle(60_000),
+        { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+      )
+      return (await store.allFills()).filter((f) => f.side === 'buy').map((f) => f.orderId)
+    }
+
+    it('buys the rung on a rebound that arrives while the loop sleeps', async () => {
+      expect(await fallsThenRebounds(true)).toEqual(['Entry', 'DCA-1'])
+    })
+
+    it('and buys nothing when no deep rung is wired', async () => {
+      expect(await fallsThenRebounds(false)).toEqual(['Entry'])
     })
   })
 

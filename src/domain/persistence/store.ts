@@ -29,6 +29,7 @@ export interface CachedSecurity {
 import { type DeathWatchState } from '../risk/death-exit.js'
 import { type GainLock } from '../risk/gain-lock.js'
 import { type LiquidityWatch } from '../strategy/liquidity-brake.js'
+import { type PriceLow } from '../strategy/deep-rung.js'
 import { type DailyPnl, type DailyPnlSample } from '../reporting/daily-pnl.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
@@ -173,6 +174,19 @@ export interface PersistedPosition {
    * lift a brake, or put one back. Absent: nothing has been watched yet.
    */
   readonly liquidityWatch?: LiquidityWatch | null
+  /**
+   * The lowest live price this HOLDING has seen since its first buy, and which
+   * holding it belongs to. *Si el precio cae más de 80% y hay un rebote de 10%,
+   * nueva compra DCA de $20* — the rebound is measured from it, so it has to
+   * survive the sweep and the process. See `domain/strategy/deep-rung.ts`.
+   *
+   * Kept by both stores by one rule, `keepPriceLow`: the same holding keeps
+   * the LOWER price, a newer holding's low replaces it whole, and a write with
+   * an older holding's low, or none — every stale snapshot the cycle writes
+   * back — keeps what is stored. A low a stale write could RAISE would forget
+   * the crash the holding lived through. Absent: the sweep has not seen it yet.
+   */
+  readonly priceLow?: PriceLow | null
   /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *

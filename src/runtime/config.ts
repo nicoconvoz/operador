@@ -188,15 +188,15 @@ export interface RuntimeConfig {
   readonly idleSlotHours: number
   /**
    * DCA rungs production will actually fill, per token. Entry is not one of
-   * them, so 5 means six open entries.
+   * them, so 1 means two open entries.
    *
    * NOT `PYRAMIDING`, which is 10 because that is what the `strategy()` header
    * ran and the parity harness asserts it. Evidence, not a preference.
    *
-   * FIVE — ladder A: $15, $20, $25, $30 and $35 at −10, −15, −20, −25 and −30%
-   * of a $10 first buy. The replay of all 336 real entries made +$520 with it
-   * against +$373 for three $15 rungs. The history of the number, and why it
-   * moved each time, is in `application/production-ladder.ts`.
+   * ONE — the deep rung: $20, once the price has been more than 80% under the
+   * $15 first buy and rebounds 10% off its low. It was FIVE, ladder A. The
+   * history of the number, and why it moved each time, is in
+   * `application/production-ladder.ts`.
    */
   readonly maxDcaPerToken: number
   /**
@@ -256,20 +256,34 @@ export interface RuntimeConfig {
   /** What each drop is measured from: the previous buy in production. */
   readonly dcaFrom: 'first' | 'previous'
   /**
+   * Whether the chained drop ladder buys at all. OFF: only the deep rung buys
+   * after the entry. OPERADOR_DROP_LADDER=1 brings it back.
+   */
+  readonly dropLadder: boolean
+  /**
+   * The deep rung: *si el precio cae más de 80% y hay un rebote de 10%, nueva
+   * compra DCA de $20.* How far under the first buy the low must go, strictly;
+   * how far over that low the price must come back; what it buys.
+   */
+  readonly deepRungFallPct: number
+  readonly deepRungReboundPct: number
+  readonly deepRungUsd: number
+  /**
    * Whether each position's drops follow its own `dcaScale` — the more the
-   * token moves, the closer its rungs. ON; OPERADOR_DCA_ADAPTIVE=0 turns it off.
+   * token moves, the closer its rungs. OFF; OPERADOR_DCA_ADAPTIVE=1 turns it on.
    */
   readonly dcaAdaptive: boolean
   /**
    * Whether the NEXT rung is spaced by the token's last hour of 5-minute bars,
-   * decided when the sweep looks at it. ON; OPERADOR_DCA_REALTIME=0 turns it
-   * off. Only inside `dcaAdaptive`: with that off, nothing is scaled at all.
+   * decided when the sweep looks at it. OFF; OPERADOR_DCA_REALTIME=1 turns it
+   * on. Only inside `dcaAdaptive`: with that off, nothing is scaled at all.
    */
   readonly dcaRealtime: boolean
   /**
    * How far, in percent, a pool may have lost liquidity over the last five
-   * minutes or the last hour before a DCA rung at its line waits. 5;
-   * OPERADOR_LIQUIDITY_BRAKE_PCT=0 turns it off.
+   * minutes or the last hour before a DCA rung at its line waits — and off
+   * whose minimum a bounce buys. 0, off; OPERADOR_LIQUIDITY_BRAKE_PCT=5 turns
+   * it on.
    */
   readonly liquidityBrakePct: number
   /** Whether a position holding tokens may be sold for a better token. */
@@ -278,6 +292,12 @@ export interface RuntimeConfig {
   readonly scoreStopPoints: number
   /** The ways a candidate may be OPENED, any one enough. See `DEFAULT_ENTRY_DOORS`. */
   readonly entryDoors: readonly import('../domain/scanner/opportunity.js').ComponentFloors[]
+  /**
+   * The component floors a candidate must clear — today buy pressure strictly
+   * over 10%. See `DEFAULT_COMPONENT_FLOORS`. The scan and the shelf both rank
+   * with it, and the dashboard reads the same module.
+   */
+  readonly minComponents: import('../domain/scanner/opportunity.js').ComponentFloors
   /** Whether a token failing only a preference gate may still be bought. See `ProductionDoors`. */
   readonly reserve: boolean
   /**
@@ -528,9 +548,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // ON, and independently. Without it the executor's classic door decides,
     // and it refuses exactly what a wide shortlist is full of.
     buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
-    // Unset: what the RESERVED entries need, derived below — one $10 buy, its
-    // gas and the price headroom. The rungs are not in it: each asks the free
-    // capital for its own when it fires.
+    // Unset: what the RESERVED entries need, derived below — one $15 buy, its
+    // gas and the price headroom. The rung is not in it: it asks the free
+    // capital for its own $20 when it fires.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
     maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
@@ -613,6 +633,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
     entryDoors: productionDoors(env).entryDoors,
+    // *Como puerta de entrada, todos los tokens que tengan más de 10% de
+    // presión compradora.* OPERADOR_MIN_BUY_PRESSURE_PCT moves it.
+    minComponents: productionDoors(env).minComponents,
     // *Cuando el puntaje cae 5 puntos, SL.* Points under the entry score at
     // which a held position is sold as it is. Zero turns it off.
     scoreStopPoints: numberOrZero(env, 'OPERADOR_SCORE_STOP_POINTS', 0),
@@ -625,6 +648,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     dcaDropsPct: productionLadder(env).dcaDropsPct,
     dcaRungsUsd: productionLadder(env).dcaRungsUsd,
     dcaFrom: productionLadder(env).dcaFrom,
+    dropLadder: productionLadder(env).dropLadder,
+    deepRungFallPct: productionLadder(env).deepRungFallPct,
+    deepRungReboundPct: productionLadder(env).deepRungReboundPct,
+    deepRungUsd: productionLadder(env).deepRungUsd,
     dcaAdaptive: productionLadder(env).dcaAdaptive,
     dcaRealtime: productionLadder(env).dcaRealtime,
     liquidityBrakePct: productionLadder(env).liquidityBrakePct,

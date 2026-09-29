@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder, type DeepRung } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -58,8 +58,13 @@ export interface CycleDeps {
    * that runs the stop. Absent: no ladder.
    */
   readonly pressureLadder?: PressureLadder
-  /** The one-step ladder on price: a rung once the price has halved. */
+  /** The chained ladder on price, off in production. Absent: no ladder. */
   readonly dropLadder?: DropLadder
+  /**
+   * The ONE rung a holding may buy after its first: more than 80% down, then a
+   * 10% rebound off the low, while still at a loss. Absent: no deep rung.
+   */
+  readonly deepRung?: DeepRung
   /**
    * What the MARKET says every held token is worth, keyed `chain:address`.
    *

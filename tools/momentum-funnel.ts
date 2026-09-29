@@ -29,7 +29,7 @@ import { JupiterTokens } from '../src/infrastructure/adapters/jupiter/jupiter-to
 import { DexScreener, type MarketSnapshot } from '../src/infrastructure/adapters/dexscreener/dexscreener.js'
 import { risingAcrossWindows } from '../src/domain/scanner/momentum.js'
 import { evaluateMarketGates, DEFAULT_GATE_POLICY } from '../src/domain/scanner/gates.js'
-import { scoreOpportunity, failedMinimums, DEFAULT_OPPORTUNITY_POLICY } from '../src/domain/scanner/opportunity.js'
+import { scoreOpportunity, failedMinimums, floorLevel, floorIsStrict, DEFAULT_OPPORTUNITY_POLICY } from '../src/domain/scanner/opportunity.js'
 import { DEFAULT_COMPONENT_FLOORS, DEFAULT_MIN_SCORE } from '../src/application/production-doors.js'
 import { estimatePriceImpactPct } from '../src/domain/market/market-quality.js'
 import { type TokenSnapshot } from '../src/domain/scanner/snapshot.js'
@@ -117,8 +117,8 @@ if (Object.keys(gateBlame).length > 0) {
 if (Object.keys(floorBlame).length > 0) {
   console.log('    qué PISO corta:')
   for (const [f, n] of Object.entries(floorBlame).sort((a, b) => b[1] - a[1])) {
-    const floor = (DEFAULT_COMPONENT_FLOORS as Record<string, number>)[f]
-    line('  ' + f, n, `piso ${floor}`)
+    const floor = DEFAULT_COMPONENT_FLOORS[f as keyof typeof DEFAULT_COMPONENT_FLOORS]
+    line('  ' + f, n, floor === undefined ? '' : `piso ${floorIsStrict(floor) ? '> ' : ''}${floorLevel(floor)}`)
   }
 }
 

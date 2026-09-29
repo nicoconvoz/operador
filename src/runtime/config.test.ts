@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at $10 by default — ladder A’s first buy; the rungs carry their own sizes', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(10)
+  it('caps each level at $15 by default — the first buy; the rung carries its own size', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(15)
   })
 
   it('scales up when the capital does, without touching the reference', () => {
@@ -196,15 +196,17 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token ladder A: a ten-dollar first buy, then $15..$35 at −10..−30% of it', () => {
-    // *Arriesguémonos, activá la A.* The slot is what ONE $10 buy needs once
-    // gas and the price headroom are reserved, so the first buy is exactly 10;
-    // each rung asks the free capital for its own size when it fires.
+  it('gives every token two buys: a fifteen-dollar first buy, then one $20 rung past −80% on a 10% rebound', () => {
+    // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
+    // un rebote de 10%, nueva compra DCA de $20.* The slot is what ONE $15 buy
+    // needs once gas and the price headroom are reserved, so the first buy is
+    // exactly 15; the rung asks the free capital for its own $20 when it fires.
     const config = loadConfig(valid)
-    expect(config.maxUsdPerLevel).toBe(10)
-    expect(config.maxDcaPerToken).toBe(5)
-    expect(config.dcaDropsPct).toEqual([10, 15, 20, 25, 30])
-    expect(config.dcaRungsUsd).toEqual([15, 20, 25, 30, 35])
+    expect(config.maxUsdPerLevel).toBe(15)
+    expect(config.maxDcaPerToken).toBe(1)
+    expect(config).toMatchObject({ deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20 })
+    // Nothing else buys a rung: the chained ladder, its spacing and the brake.
+    expect(config).toMatchObject({ dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false })
     expect(config.reservedEntries).toBe(1)
     const deployable = deployableCapital({
       initialCapital: config.usdPerToken!,
@@ -212,8 +214,8 @@ describe('two rules stand, and the doors they need are separate switches', () =>
       maxOpenEntries: config.reservedEntries,
       params: DEFAULT_PARAMS,
     })
-    expect(deployable).toBeCloseTo(10, 9)
-    expect(config.usdPerToken).toBeCloseTo(10.63, 2)
+    expect(deployable).toBeCloseTo(15, 9)
+    expect(config.usdPerToken).toBeCloseTo(15.89, 2)
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
   })
 
@@ -224,17 +226,28 @@ describe('two rules stand, and the doors they need are separate switches', () =>
   })
 
   it('reserves the whole ladder again when asked — one variable away', () => {
-    const config = loadConfig({ ...valid, OPERADOR_RESERVED_ENTRIES: '4' })
-    expect(config.reservedEntries).toBe(4)
+    const config = loadConfig({ ...valid, OPERADOR_RESERVED_ENTRIES: '2' })
+    expect(config.reservedEntries).toBe(2)
     const deployable = deployableCapital({
       initialCapital: config.usdPerToken!,
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.reservedEntries,
       params: DEFAULT_PARAMS,
     })
-    // Four FIRST buys' worth, so the tick's first buy is still ten dollars;
-    // the rungs above it are still priced at their own sizes when they fire.
-    expect(deployable / 4).toBeCloseTo(10, 9)
+    // Two FIRST buys' worth, so the tick's first buy is still fifteen dollars;
+    // the rung above it is still priced at its own size when it fires.
+    expect(deployable / 2).toBeCloseTo(15, 9)
+  })
+
+  it('brings each switched-off rung back from the environment', () => {
+    const config = loadConfig({
+      ...valid, OPERADOR_DROP_LADDER: '1', OPERADOR_DCA_ADAPTIVE: '1', OPERADOR_DCA_REALTIME: '1', OPERADOR_LIQUIDITY_BRAKE_PCT: '5',
+      OPERADOR_DEEP_RUNG_FALL_PCT: '70', OPERADOR_DEEP_RUNG_REBOUND_PCT: '15', OPERADOR_DEEP_RUNG_USD: '25',
+    })
+    expect(config).toMatchObject({
+      dropLadder: true, dcaAdaptive: true, dcaRealtime: true, liquidityBrakePct: 5,
+      deepRungFallPct: 70, deepRungReboundPct: 15, deepRungUsd: 25,
+    })
   })
 
   it('blacklists a frozen token when its slot is released, unless told not to', () => {
@@ -371,5 +384,19 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // the number above is an experiment and experiments get revised.
     const stop = loadConfig({ ...valid, OPERADOR_STOP_SHARE_OF_RUN: '0.05', OPERADOR_STOP_MAX_PCT: '50' }).stopLoss
     expect(stopLossPctFor(1000, stop)).toBe(50)
+  })
+})
+
+describe('loadConfig — the entry door is buy pressure over 10%', () => {
+  // *Como puerta de entrada, todos los tokens que tengan más de 10% de presión
+  // compradora.* From the module the dashboard reads too, so the canvas and
+  // the engine cannot disagree about which tokens the book may buy.
+  it('asks buy pressure STRICTLY over 10%, and nothing else of the components', () => {
+    expect(loadConfig(valid).minComponents).toEqual({ buyPressure: { above: 0.1 } })
+  })
+
+  it('moves with OPERADOR_MIN_BUY_PRESSURE_PCT', () => {
+    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({ buyPressure: { above: 0.2 } })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '0' }).minComponents).toEqual({ buyPressure: { above: 0 } })
   })
 })

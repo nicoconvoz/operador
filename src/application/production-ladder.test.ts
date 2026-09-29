@@ -7,25 +7,34 @@ import {
   DEFAULT_DCA_RUNGS_USD,
   DEFAULT_DCA_ADAPTIVE,
   DEFAULT_DCA_REALTIME,
+  DEFAULT_DROP_LADDER,
+  DEFAULT_DEEP_RUNG_FALL_PCT,
+  DEFAULT_DEEP_RUNG_REBOUND_PCT,
+  DEFAULT_DEEP_RUNG_USD,
+  DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT,
 } from './production-ladder.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to ladder A: a $10 buy, then FIVE rungs of $15..$35 at −10..−30% of it', () => {
-    // *Arriesguémonos, activá la A.* The operator, on a replay of all 336 real
-    // entries: +$520 against +$373 for three $15 rungs, and in both halves of a
-    // split in time. One entry reserved up front; each rung asks the free
-    // capital for its own dollars when it fires.
+  it('defaults to TWO buys: $15 at entry, and one $20 rung past −80% on a 10% rebound', () => {
+    // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
+    // un rebote de 10%, nueva compra DCA de $20. Dejá el TP en 10%.* One entry
+    // reserved up front; the rung asks the free capital for its own $20 when it
+    // fires. Everything else that could buy a rung is OFF, each one a variable
+    // away: the chained drop ladder, its volatility spacing and the liquidity
+    // brake. Ladder A's lists stay as they were, dormant behind the switch.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 10, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: true, dcaRealtime: true, liquidityBrakePct: 5, reservedEntries: 1,
+      maxUsdPerLevel: 15, maxOpenEntries: 2, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
+      dropLadder: false,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 1,
+      deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
     })
   })
 
-  it('puts at most $135 into one token — the cost the operator accepted', () => {
+  it('puts at most $35 into one token: the $15 entry and the $20 rung', () => {
     const ladder = productionLadder({})
-    const total = ladder.maxUsdPerLevel + ladder.dcaRungsUsd.reduce((a, b) => a + b, 0)
-    expect(total).toBe(135)
+    expect(ladder.maxUsdPerLevel + ladder.deepRungUsd).toBe(35)
+    expect(ladder.maxOpenEntries).toBe(2)
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -39,7 +48,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 10, maxOpenEntries: 6 })
+      .toMatchObject({ maxUsdPerLevel: 15, maxOpenEntries: 2 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -102,8 +111,8 @@ describe('production ladder — depth ZERO is one buy and nothing after it', () 
 
   it('still defaults to whatever the decision above says', () => {
     expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
-    // The entry and five rungs.
-    expect(productionLadder({}).maxOpenEntries).toBe(6)
+    // The entry and the one deep rung.
+    expect(productionLadder({}).maxOpenEntries).toBe(2)
   })
 
   it('still refuses nonsense rather than taking it', () => {
@@ -169,11 +178,14 @@ describe('production ladder — a position reserves its FIRST buy, not the whole
   })
 
   it('takes an override — the whole ladder is one variable away', () => {
-    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '4' }).reservedEntries).toBe(4)
+    // Two entries is the whole ladder now: the $15 entry and the $20 rung.
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '2' }).reservedEntries).toBe(2)
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '4', OPERADOR_MAX_DCA: '5' }).reservedEntries).toBe(4)
   })
 
   it('never reserves more entries than the venue will hold', () => {
-    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9' }).reservedEntries).toBe(6)
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9' }).reservedEntries).toBe(2)
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '5' }).reservedEntries).toBe(6)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '1' }).reservedEntries).toBe(2)
   })
 
@@ -186,59 +198,106 @@ describe('production ladder — a position reserves its FIRST buy, not the whole
 
 describe('production ladder — the rungs adapt to how much the token moves', () => {
   // *Aplicá el de en la línea, la propuesta.* The more a token moves, the
-  // closer its rungs. ON unless switched off, one variable away.
-  it('is ON when nothing is set', () => {
-    expect(DEFAULT_DCA_ADAPTIVE).toBe(true)
-    expect(productionLadder({}).dcaAdaptive).toBe(true)
+  // closer its rungs. OFF now — only the deep rung buys after the entry — and
+  // one variable away.
+  it('is OFF when nothing is set', () => {
+    expect(DEFAULT_DCA_ADAPTIVE).toBe(false)
+    expect(productionLadder({}).dcaAdaptive).toBe(false)
   })
 
-  it('is OFF with 0, false or no — every position then uses the base drops', () => {
-    for (const off of ['0', 'false', 'no', ' NO ']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: off }).dcaAdaptive).toBe(false)
+  it('is ON with 1, true or yes', () => {
+    for (const on of ['1', 'true', 'yes', ' YES ']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: on }).dcaAdaptive).toBe(true)
   })
 
-  it('stays ON on anything else, a typo included', () => {
-    for (const on of ['1', 'true', 'yes', 'si', '']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: on }).dcaAdaptive).toBe(true)
+  it('stays OFF on anything else, a typo included — the operator’s decision keeps running', () => {
+    for (const off of ['0', 'false', 'no', 'si', '']) expect(productionLadder({ OPERADOR_DCA_ADAPTIVE: off }).dcaAdaptive).toBe(false)
   })
 })
 
 describe('productionLadder — the NEXT rung spaced by the last hour, in real time', () => {
   // *Que el próximo escalón DCA lo calcule por la cantidad de volatilidad que
-  // tenga en ese preciso momento la moneda.* Then *tiempo real.* ON unless
-  // switched off, one variable away — and only ever inside the adaptive
-  // switch: with OPERADOR_DCA_ADAPTIVE=0 nothing is scaled at all.
-  it('is ON when nothing is set', () => {
-    expect(DEFAULT_DCA_REALTIME).toBe(true)
-    expect(productionLadder({}).dcaRealtime).toBe(true)
+  // tenga en ese preciso momento la moneda.* Then *tiempo real.* OFF now, one
+  // variable away — and only ever inside the adaptive switch: with that off
+  // nothing is scaled at all.
+  it('is OFF when nothing is set', () => {
+    expect(DEFAULT_DCA_REALTIME).toBe(false)
+    expect(productionLadder({}).dcaRealtime).toBe(false)
   })
 
-  it('is OFF with 0, false or no — every rung then uses the scale measured at the buy', () => {
-    for (const off of ['0', 'false', 'no', ' NO ']) expect(productionLadder({ OPERADOR_DCA_REALTIME: off }).dcaRealtime).toBe(false)
+  it('is ON with 1, true or yes', () => {
+    for (const on of ['1', 'true', 'yes', ' YES ']) expect(productionLadder({ OPERADOR_DCA_REALTIME: on }).dcaRealtime).toBe(true)
   })
 
-  it('stays ON on anything else, a typo included', () => {
-    for (const on of ['1', 'true', 'yes', 'si', '']) expect(productionLadder({ OPERADOR_DCA_REALTIME: on }).dcaRealtime).toBe(true)
+  it('stays OFF on anything else, a typo included', () => {
+    for (const off of ['0', 'false', 'no', 'si', '']) expect(productionLadder({ OPERADOR_DCA_REALTIME: off }).dcaRealtime).toBe(false)
   })
 
-  it('is its own switch: turning it off leaves the adaptive spacing alone', () => {
-    const ladder = productionLadder({ OPERADOR_DCA_REALTIME: '0' })
-    expect(ladder.dcaAdaptive).toBe(true)
+  it('is its own switch: turning it on leaves the adaptive spacing alone', () => {
+    const ladder = productionLadder({ OPERADOR_DCA_REALTIME: '1' })
+    expect(ladder.dcaAdaptive).toBe(false)
   })
 })
 
 describe('productionLadder — the brake on a draining pool', () => {
   // *Freno en tiempo real por cambio de liquidez inmediata que supere el 5%* —
-  // *5 minutos o 1 hora.* ON at five unless switched off, one variable away.
-  it('brakes at 5% when nothing is set', () => {
-    expect(productionLadder({}).liquidityBrakePct).toBe(5)
+  // *5 minutos o 1 hora.* OFF now, because it also BUYS — a bounce off the
+  // pool's minimum bought the next rung — and only the deep rung may buy after
+  // the entry. OPERADOR_LIQUIDITY_BRAKE_PCT=5 brings back the operator's five.
+  it('is OFF when nothing is set', () => {
+    expect(DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT).toBe(0)
+    expect(productionLadder({}).liquidityBrakePct).toBe(0)
   })
 
-  it('takes another threshold, and ZERO turns it off rather than falling back', () => {
+  it('takes a threshold, and ZERO is a real value rather than falling back', () => {
     // Zero is a real value here, the third time this file has had to say so.
+    expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: '5' }).liquidityBrakePct).toBe(5)
     expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: '8' }).liquidityBrakePct).toBe(8)
     expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: '0' }).liquidityBrakePct).toBe(0)
   })
 
-  it('keeps the operator’s five on nonsense — a typo never switches the brake off', () => {
-    for (const bad of ['abc', '-5', '100', ' ']) expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: bad }).liquidityBrakePct).toBe(5)
+  it('stays off on nonsense — a typo never switches the brake on', () => {
+    for (const bad of ['abc', '-5', '100', ' ']) expect(productionLadder({ OPERADOR_LIQUIDITY_BRAKE_PCT: bad }).liquidityBrakePct).toBe(0)
+  })
+})
+
+describe('productionLadder — the chained drop ladder is OFF', () => {
+  // Only the deep rung buys after the entry. Ladder A — five rungs chained
+  // from the previous buy — stays built and tested, one variable away.
+  it('is OFF when nothing is set', () => {
+    expect(DEFAULT_DROP_LADDER).toBe(false)
+    expect(productionLadder({}).dropLadder).toBe(false)
+  })
+
+  it('is ON with 1, true or yes, and off on anything else', () => {
+    for (const on of ['1', 'true', 'yes', ' YES ']) expect(productionLadder({ OPERADOR_DROP_LADDER: on }).dropLadder).toBe(true)
+    for (const off of ['0', 'false', 'no', 'si', '']) expect(productionLadder({ OPERADOR_DROP_LADDER: off }).dropLadder).toBe(false)
+  })
+})
+
+describe('productionLadder — the deep rung', () => {
+  // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA de
+  // $20.*
+  it('defaults to more than 80% down, a 10% rebound, $20', () => {
+    expect([DEFAULT_DEEP_RUNG_FALL_PCT, DEFAULT_DEEP_RUNG_REBOUND_PCT, DEFAULT_DEEP_RUNG_USD]).toEqual([80, 10, 20])
+  })
+
+  it('takes each from the environment', () => {
+    expect(productionLadder({ OPERADOR_DEEP_RUNG_FALL_PCT: '70', OPERADOR_DEEP_RUNG_REBOUND_PCT: '15', OPERADOR_DEEP_RUNG_USD: '25' }))
+      .toMatchObject({ deepRungFallPct: 70, deepRungReboundPct: 15, deepRungUsd: 25 })
+  })
+
+  it('reads zero as a real value for the two percentages', () => {
+    expect(productionLadder({ OPERADOR_DEEP_RUNG_FALL_PCT: '0', OPERADOR_DEEP_RUNG_REBOUND_PCT: '0' }))
+      .toMatchObject({ deepRungFallPct: 0, deepRungReboundPct: 0 })
+  })
+
+  it('takes a rebound of 100% or more — off a low at a fifth of the entry, doubling is still a loss', () => {
+    expect(productionLadder({ OPERADOR_DEEP_RUNG_REBOUND_PCT: '150' }).deepRungReboundPct).toBe(150)
+  })
+
+  it('keeps the operator’s numbers on nonsense rather than trading on it', () => {
+    for (const bad of ['ochenta', '-5', '100', '   ']) expect(productionLadder({ OPERADOR_DEEP_RUNG_FALL_PCT: bad }).deepRungFallPct).toBe(80)
+    for (const bad of ['diez', '-1', '   ']) expect(productionLadder({ OPERADOR_DEEP_RUNG_REBOUND_PCT: bad }).deepRungReboundPct).toBe(10)
+    for (const bad of ['veinte', '0', '-20', '   ']) expect(productionLadder({ OPERADOR_DEEP_RUNG_USD: bad }).deepRungUsd).toBe(20)
   })
 })

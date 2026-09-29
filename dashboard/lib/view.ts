@@ -92,17 +92,22 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         urgentProfitPct: ladder.urgentProfitPct,
       },
       maxOpenEntries: ladder.maxOpenEntries,
-      // The ladder the engine BUYS: ladder A, five rungs of $15 to $35 at −10
-      // to −30% of the FIRST buy — from the same module the engine reads, so
-      // the screen draws each line where the sweep is actually looking and at
-      // the size it will actually buy.
-      // And at each position's own spacing, behind the same switches the
-      // sweep reads: the next line from the token's last hour while the
-      // sweep's reading is fresh, else from the scale measured at the buy.
-      dropLadder: {
-        dropsPct: ladder.dcaDropsPct, rungsUsd: ladder.dcaRungsUsd, from: ladder.dcaFrom,
-        adaptive: ladder.dcaAdaptive, realtime: ladder.dcaRealtime,
-      },
+      // The ladder the engine BUYS: the $15 entry and the ONE rung, $20, armed
+      // once the holding's low is more than 80% under the first buy and bought
+      // on a 10% rebound off it — from the same module the engine reads, and
+      // off the low the sweep wrote down.
+      deepRung: { fallPct: ladder.deepRungFallPct, reboundPct: ladder.deepRungReboundPct, usd: ladder.deepRungUsd },
+      // Ladder A, drawn instead only when it is switched back on — the screen
+      // never offers rungs the engine will not buy. At each position's own
+      // spacing, behind the same switches the sweep reads.
+      ...(ladder.dropLadder
+        ? {
+            dropLadder: {
+              dropsPct: ladder.dcaDropsPct, rungsUsd: ladder.dcaRungsUsd, from: ladder.dcaFrom,
+              adaptive: ladder.dcaAdaptive, realtime: ladder.dcaRealtime,
+            },
+          }
+        : {}),
       // Thirty, for the Registro tab. The tape grows without bound and the
       // screen does not.
       tapeLength: 30,

@@ -1,5 +1,5 @@
 import { evaluateGates, forgivableFailures, type GatePolicy, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { meetsMinimums, failedMinimums, meetsAnyDoor, closestDoor, scoreOpportunity, type Opportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
+import { meetsMinimums, failedMinimums, meetsAnyDoor, closestDoor, scoreOpportunity, floorLevel, floorIsStrict, type Opportunity, type ComponentFloors, type OpportunityPolicy, DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -61,6 +61,8 @@ export interface HoldBack {
   readonly name: string
   readonly value: number
   readonly floor: number
+  /** Whether the door asks for STRICTLY more than `floor`, rather than at least it. */
+  readonly strict: boolean
 }
 
 export interface UniverseToken {
@@ -544,19 +546,17 @@ function fromPositionAlone(
 function holdBackOf(opportunity: Opportunity, options: UniverseOptions): readonly HoldBack[] {
   const components = opportunity.components
   const doors = (kind: HoldBack['kind'], floors: ComponentFloors | undefined): HoldBack[] =>
-    failedMinimums(components, floors).map((name) => ({
-      kind,
-      name,
-      value: components[name] ?? 0,
-      floor: floors?.[name] ?? 0,
-    }))
+    failedMinimums(components, floors).map((name) => {
+      const floor = floors?.[name] ?? 0
+      return { kind, name, value: components[name] ?? 0, floor: floorLevel(floor), strict: floorIsStrict(floor) }
+    })
   return [
     ...doors('floor', options.minComponents),
     // The first-buy door it came CLOSEST to: listing every door's every floor
     // would bury the one thing the reader needs, which is what is missing.
     ...doors('entry', closestDoor(opportunity.components, options.entryDoors)?.floors),
     ...(opportunity.score < (options.minScore ?? 0)
-      ? [{ kind: 'score' as const, name: 'score', value: opportunity.score, floor: options.minScore ?? 0 }]
+      ? [{ kind: 'score' as const, name: 'score', value: opportunity.score, floor: options.minScore ?? 0, strict: false }]
       : []),
   ]
 }

@@ -2562,7 +2562,9 @@ describe('runCycle — ladder A: the trim and the rung funder price the same lad
   // the first buy plus the rungs so far, at their own sizes. The trim takes a
   // position back down to that one entry, never under what it bought, and the
   // next rung must still be fundable, and fillable, from there.
-  const A = productionLadder({})
+  // Ladder A as the environment brings it back: only the deep rung buys after
+  // the entry in production now.
+  const A = productionLadder({ OPERADOR_DROP_LADDER: '1', OPERADOR_MAX_DCA: '5', OPERADOR_MAX_USD_PER_LEVEL: '10' })
   const PARAMS_A = { ...DEFAULT_PARAMS, maxUsdPerLevel: A.maxUsdPerLevel }
   const cfgA: CycleConfig = {
     ...config, params: PARAMS_A, maxOpenEntries: A.maxOpenEntries, reservedEntries: A.reservedEntries, gasUsdPerSwap: 0.05,

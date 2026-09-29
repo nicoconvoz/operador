@@ -110,7 +110,8 @@ export async function runLoop(
     // is the gain lock: a rocket that set its floor during a pass falls through
     // it while the loop sleeps as easily as while it runs.
     const lockOn = config.gainLock !== undefined && config.gainLock !== null
-    if (!stopOn && config.breakEven !== true && !lockOn && deps.pressureLadder === undefined && deps.dropLadder === undefined) return
+    const laddersOn = deps.pressureLadder !== undefined || deps.dropLadder !== undefined || deps.deepRung !== undefined
+    if (!stopOn && config.breakEven !== true && !lockOn && !laddersOn) return
     if (deps.marketPrices === undefined) return
     // The kill switch as the last pass found it. Its documented asymmetry is
     // that it stops OPENING and keeps protecting, so this would arguably run

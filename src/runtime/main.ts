@@ -8,7 +8,6 @@ import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
-import { DEFAULT_COMPONENT_FLOORS } from '../application/production-doors.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { ladderCapitalUsd } from '../application/paper-run.js'
 import { fundRungsFromFreeCapital } from '../application/free-capital.js'
@@ -334,7 +333,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     const broker = new PaperBroker({
       gasUsdPerSwap: config.gasUsdPerSwap,
       initialCapital: position.capitalUsd,
-      // Five DCAs plus the entry — ladder A. The reference's ten stays in
+      // The entry and the one deep rung. The reference's ten stays in
       // PYRAMIDING, which the parity harness asserts; production composes its
       // own.
       maxOpenEntries: config.maxDcaPerToken + 1,
@@ -401,6 +400,15 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     params,
     gasUsdPerSwap: config.gasUsdPerSwap,
   })
+  // The deep rung buys its OWN size, $20, on top of the $15 first buy — priced
+  // at that, or the broker would refuse a rung funded for fifteen.
+  const fundDeepRung = fundRungsFromFreeCapital({
+    store,
+    totalCapitalUsd: config.totalCapitalUsd,
+    params,
+    gasUsdPerSwap: config.gasUsdPerSwap,
+    rungsUsd: [config.deepRungUsd],
+  })
 
   const deps: CycleDeps = {
     store,
@@ -450,16 +458,32 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // priced at this ladder's one size.
         fund: fundPressureRung,
       } } : {}),
+    // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
+    // un rebote de 10%, nueva compra DCA de $20.* The ONE rung after the entry,
+    // bought by the sweep every thirty seconds at the live price, off the low
+    // it follows and writes down. It pays for itself out of the book's FREE
+    // capital — a slot holds its first buy only — and waits a sweep when there
+    // is none. One `fund` for the cycle's sweeps and the loop's, since both
+    // read these deps.
+    deepRung: {
+      policy: { fallPct: config.deepRungFallPct, reboundPct: config.deepRungReboundPct, maxEntries: config.maxDcaPerToken + 1 },
+      usd: config.deepRungUsd,
+      fund: fundDeepRung,
+    },
     // *Arriesguémonos, activá la A.* Five rungs of $15, $20, $25, $30 and $35
     // at −10, −15, −20, −25 and −30% of a $10 FIRST buy, bought by the sweep
     // every thirty seconds. It was three $15 rungs at −10, −20 and −30%.
+    //
+    // OFF now — only the deep rung buys after the entry — and absent, so
+    // nothing it carries runs either: no spacing asked, no pool watched, no
+    // bounce bought. OPERADOR_DROP_LADDER=1 brings it back.
     //
     // Each pays for itself: a slot is allocated its first buy only, so a rung
     // asks the book's FREE capital for one more entry — the same definition
     // of free the allocator opens positions with — and waits a sweep when
     // there is none. One `fund` for the cycle's sweeps and the loop's, since
     // both read these deps.
-    dropLadder: {
+    ...(config.dropLadder ? { dropLadder: {
       policy: { maxEntries: config.maxDcaPerToken + 1, dropsPct: config.dcaDropsPct, from: config.dcaFrom },
       rungsUsd: config.dcaRungsUsd,
       fund: fundRung,
@@ -481,7 +505,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // OPERADOR_LIQUIDITY_BRAKE_PCT=0: the whole watch off, nothing asked.
       liquidityChange,
       liquidityBrakePct: config.liquidityBrakePct,
-    },
+    } } : {}),
     // The SECOND opinion on what a held token is worth, so the engine can tell
     // a token that collapsed from one whose price it cannot read. DexScreener,
     // never GeckoTerminal: asking the candle feed to check the candle feed
@@ -727,7 +751,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           // The SAME floors the live scan applies. A shelf that allocated on
           // looser rules than the scan that filled it would quietly undo them
           // every five minutes.
-          minComponents: DEFAULT_COMPONENT_FLOORS,
+          minComponents: config.minComponents,
           requireRising: config.requireRising,
         },
         // The shelf, priced NOW, for one batched request per thirty tokens.
@@ -908,13 +932,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 minScore: config.minScore,
                 // *Sólo candidatas las que ya cumplan todas las condiciones.*
                 reserve: config.reserve,
-                // The operator's floors: without cost, headroom AND trend all
-                // above thirty percent, it is not a coin to trade. A weighted
-                // average can let one ruinous term be carried by the rest —
-                // PURR charged 15.55% a round trip and was bought anyway — and
-                // a floor is the only thing that says "this alone disqualifies
-                // you". Measured on a live book of 29: 8 survive.
-                minComponents: DEFAULT_COMPONENT_FLOORS,
+                // The operator's floors — today one: buy pressure strictly over
+                // 10%. A weighted average can let one ruinous term be carried
+                // by the rest — PURR charged 15.55% a round trip and was bought
+                // anyway — and a floor is the only thing that says "this alone
+                // disqualifies you".
+                minComponents: config.minComponents,
                 requireRising: config.requireRising,
               },
               // How many candle downloads are worth paying for: the number of

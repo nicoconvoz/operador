@@ -13,6 +13,7 @@ import { retireToken } from '../application/retire.js'
 import { PostgresStore } from '../infrastructure/persistence/postgres-store.js'
 import { StoredAlertSink } from '../infrastructure/notifications/store-alerts.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
+import { DEFAULT_MAX_DCA_PER_TOKEN } from '../application/production-ladder.js'
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 
@@ -66,7 +67,7 @@ try {
         const broker = new PaperBroker({
           gasUsdPerSwap: Number(process.env.OPERADOR_GAS_USD ?? 0.05),
           initialCapital: position.capitalUsd,
-          maxOpenEntries: Number(process.env.OPERADOR_MAX_DCA ?? 5) + 1,
+          maxOpenEntries: Number(process.env.OPERADOR_MAX_DCA ?? DEFAULT_MAX_DCA_PER_TOKEN) + 1,
           quality: () => position.quality,
         })
         broker.seed(await store.fillsFor(position.id))

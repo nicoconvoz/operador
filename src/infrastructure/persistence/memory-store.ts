@@ -10,6 +10,7 @@ import { type Alert } from '../../domain/notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.js'
 import { keepGainLock } from '../../domain/risk/gain-lock.js'
 import { keepLiquidityWatch } from '../../domain/strategy/liquidity-brake.js'
+import { keepPriceLow } from '../../domain/strategy/deep-rung.js'
 import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
 import { foldDailySample, type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
 
@@ -67,10 +68,14 @@ export class MemoryStore implements StatePort {
     // The liquidity watch, by the rule the upsert spells out in its CASE: the
     // NEWER watch wins, and a write carrying none keeps what is stored.
     const liquidityWatch = keepLiquidityWatch(stored?.liquidityWatch, position.liquidityWatch)
+    // The price low, by the rule the upsert spells out in its CASE: the same
+    // holding keeps the LOWER price, a newer holding's replaces it, and a
+    // write carrying none keeps what is stored.
+    const priceLow = keepPriceLow(stored?.priceLow, position.priceLow)
     this.positions.set(position.id, structuredClone({
       ...position, breakEvenArmed: armed, entryScore, dcaScale, gainLock,
       dcaScaleNow: now?.scale ?? null, dcaScaleNowAt: now?.at ?? null,
-      liquidityWatch,
+      liquidityWatch, priceLow,
     }))
   }
 
