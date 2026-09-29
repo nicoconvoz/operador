@@ -16,12 +16,201 @@ Spot, on-chain, harvesting volatility on assets that are volatile by nature.
 Reference strategy: [`DCA.pine`](DCA.pine) — CASCADE DCA v1.5, Pine Script v6,
 spot long, 1H, bar-close driven. Author: Jesús Nicolás Astorga. MPL-2.0.
 
-## What runs today — 2026-09-24
+## What runs today — 2026-09-29
 
 **This section is the truth about production.** Everything below it is the
 decision log: why each rule exists, what it cost, what replaced it. Where a
 section below disagrees with this one, this one wins — and the list at the end
 names the sections it replaces.
+
+The strategy was rebuilt again in one day, the operator's *idea loca*, and it is
+the first configuration whose launch did not start by falling into a hole:
+
+| | Rule | Where it lives |
+|---|---|---|
+| **Candidate** | safe, and **rising in the last hour** — nothing else | `production-doors.ts`, `momentum.ts` (`risingInTheHour`) |
+| **The book** | a slot is **20 × $5 = $100**; the book holds **capital / $100** tokens, the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
+| **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
+| **Every later buy** | **$5** on a dip and a bounce that **grow with each DCA**, under a **crash ceiling** and a **live pool check** | `dip-bounce.ts`, the stop sweep |
+| **Exits** | the **TP** at +10% over the average, the **gain lock**, the **freeze** exit, the **death** exit | the cascade, `gain-lock.ts`, `death-exit.ts` |
+
+### The door: rising in the last hour
+
+*Que la barrera de entrada sea solamente que los tokens suban, como marca la
+barra de estudio.* A candidate needs `priceChangePct.h1 > 0` — strictly, and an
+unreported hour fails. It is ONE predicate, `risingInTheHour`, and the Universo
+breadth bar counts with the same one: the screen and the door cannot disagree
+about what "rising" means. `OPERADOR_ENTRY_RISING=0` turns it off.
+
+Everything else that used to be a door is off: no component floors, no score
+door, and the three opportunity gates — `maxDailyFallPct`, `minAgeHours`,
+`minHourlyTxns` — read 100, 0 and 0 (`STRICT_GATE_POLICY` keeps them so their
+logic stays tested). `staleBars` is off too (`maxBarAgeHours: Infinity`) — *sacá
+la protección de actividad* — but a feed that reports **no trades at all** still
+fails, because there is nothing to price the token against.
+
+**The SAFETY gates are untouched and still fail closed**: honeypot (a real sell
+quote), `minLiquidityUsd` **$100,000**, authorities, holders, tax,
+`priceMismatch`, impact. They are not doors of this kind, and no instruction
+about "the only condition" has ever meant them.
+
+### The book: capital divided by $100, cheapest first, only what is free
+
+- **A slot reserves exactly its twenty steps**, $100, nothing grossed up. The
+  book is `capital / $100` — fifty tokens at `OPERADOR_CAPITAL_USD` = 5,000 —
+  and there is no other ceiling. `freeSlots` is the one definition; the scan,
+  the ranking cut and the allocator all read it. The dashboard needs the same
+  variable in Vercel's environment to count them.
+- **Candidates are ordered by cost efficiency**, ties by score, before every
+  cut — *de los candidatos, elegí los de mejor eficiencia de costos*.
+  `OPERADOR_RANK_BY=size` restores small-caps-first.
+- **Never more candidates than free slots.** A freed slot is filled by the next
+  scan; there is no reserve backlog.
+- **The scan only looks as far as the free slots need** — *no hacemos lectura
+  y búsqueda al pedo*. With the book full it reads no discovery and no registry
+  and quotes nothing it does not hold. With `k` free it examines in order of
+  estimated cost efficiency and stops at the `k`th that passes. An empty book
+  reads everything. The `solana_cache` registry is read in pages, busiest first,
+  and is still never written or deleted.
+- **A reservation that never buys** keeps its slot while the book is full.
+  Stated and accepted: *como está me gusta*.
+
+### Buying: $5, and each DCA asks for more
+
+*Ante una caída del precio y una subida, comprá; 3% suma 2%, el 2% suma 1% por
+cada DCA.* The first buy is automatic, after `confirmEntry` re-asks the safety
+half. Every later buy is `nextDipBounce`, run by the stop sweep every thirty
+seconds on the live price:
+
+| Buy | Dip below the previous buy | Bounce off the low | Crash ceiling |
+|---|---|---|---|
+| 1st | automatic | — | — |
+| DCA 1 | 3% | 2% | 20% |
+| DCA 2 | 5% | 3% | 22% |
+| DCA 3 | 7% | 4% | 24% |
+| DCA 10 | 21% | 11% | 38% |
+| DCA 19 | 39% | 20% | 56% |
+
+Twenty buys at most, $100 a token. The step comes from the holding's buy count
+(`holdingBuys`), so nothing new is stored and a restart rebuilds the same
+thresholds; a new holding after a full sale starts again at DCA 1.
+
+**Why the thresholds grow.** With a flat 3%/2% the bounce eats most of the dip,
+so each buy lands only about 1% under the previous one: CURVE bought **five
+times in sixteen minutes while its price moved −0.5% to −2.9%**, and ended at
+fourteen buys and −30%. Growing the dip spaces the buys; growing the bounce
+slower than the dip keeps each one genuinely lower.
+
+**The crash ceiling.** A fall bigger than the step's ceiling is a collapse, not
+a dip: the watch is marked crashed, and nothing is bought until the price is
+back within the ceiling of the reference, when the low restarts. It grows with
+the dip so the window between arming and collapsing is always 17 points and all
+twenty buys stay reachable — a fixed 20% would have blocked every DCA from the
+tenth, whose dip is 21%. It was measured before it was built: the tokens that
+worked never bought on a fall bigger than **15.6%**; the losers bought on falls
+of **22–38%**, and YAP and BAGSPAY *entered* on 31% and 34%.
+
+**The live pool check.** Before every buy the sweep reads the pool's liquidity
+(one batched, minute-cached Jupiter request per sweep) and refuses when it is
+below `liquidityFreezeRatio` (0.5) of the liquidity at entry — the death
+watch's own threshold, from the same policy object. It closes a real gap: the
+freeze is assessed once per 15-minute bar, the sweep buys every thirty seconds,
+and **YAP bought four more times into a pool already at 26.6% of entry** before
+the freeze landed. An unknown reading refuses nothing.
+
+`OPERADOR_STEP_USD` (5), `OPERADOR_MAX_STEPS` (20), `OPERADOR_DIP_PCT` (3),
+`OPERADOR_BOUNCE_PCT` (2), `OPERADOR_DIP_STEP_PCT` (2),
+`OPERADOR_BOUNCE_STEP_PCT` (1), `OPERADOR_MAX_DIP_PCT` (20, 0 turns the ceiling
+off). Zero step values restore the flat rule.
+
+### Exits
+
+| Exit | Leaves at a loss? |
+|---|---|
+| 🏁 The strategy's TP — `avg_cost × 1.10` and the impulse dead or a Supertrend flip | no — the no-loss guard |
+| 🔐 The gain lock — at +20% it locks +10%, and 10 more for every 20 more | no |
+| ❄️ The freeze exit — liquidity collapse, a safety gate that turned, a broken sell path | yes, by design |
+| ☠️ The death exit — twelve hours without a trade, the sell path gone, confirmed | yes, by design |
+
+`OPERADOR_MAX_COST_SHARE_PCT` defaults to 0: on a small step the gas-derived
+target would have lifted the TP to about +35%. **The two-hour abandonment
+freeze is OFF** — *ya no quiero que vendan por dos horas sin operaciones* — and
+the death exit at twelve hours stays. No price stop exists.
+
+### Everything else is off, and one variable away
+
+`OPERADOR_BUY_ON_SELECTION=0`, `OPERADOR_CASCADE_ENTRIES=1`,
+`OPERADOR_DROP_LADDER=1`, `OPERADOR_DEEP_RUNG=1`,
+`OPERADOR_LIQUIDITY_BRAKE_PCT`, `OPERADOR_DCA_ADAPTIVE` /
+`OPERADOR_DCA_REALTIME`, `OPERADOR_PRESSURE=1`, `OPERADOR_BREAK_EVEN=1`,
+`OPERADOR_ABANDON_FREEZE_HOURS`, `OPERADOR_MIN_COST_EFFICIENCY_PCT`,
+`OPERADOR_MIN_BUY_PRESSURE_PCT`. Each has tests on the path it restores.
+
+### What it costs to run
+
+- **Gas is $0.05 a swap in paper** (`OPERADOR_GAS_USD`). On a $1 step that was
+  5% of every buy, and it ate the $1 experiment: **+$16.95 realised against
+  $9.71 of costs** in its first seven hours. On $5 it is 1%, which is why the
+  step is five.
+- **The engine reads the fill tape once per process** (`cachedTape`) and
+  answers it from memory; before, it re-read the whole tape several times a
+  pass — about 10 GB a day at 250 positions against a 5 GB monthly quota.
+- **Still heavy, and measured, not fixed:** `loadPositions` runs several times a
+  pass, about 280 MB a day at 30 positions and 2.5 GB at 250; the dashboard's
+  2-minute tape cache grows with the tape. Watch the database's usage panel.
+- **A pass takes longer with a big book**: each held token costs a candle
+  request and a sell probe per tick.
+
+### The screen
+
+- **Universo is one bar**: the share of the tokens that rose in the last hour,
+  red to green, with its counts. The orbit canvas, its dots and its detail sheet
+  are gone — 250 glowing bodies would have stalled a phone.
+- **Operaciones** lists the book alphabetically, fifty to a page, one
+  `DCA n / 20` box per token and the watch in one line.
+- **One search box** filters every tab; the Log says it is the whole book's.
+- **The Log's day bar** runs from −$100 to +$100 with zero in the middle.
+
+### Measured: three launches on the same day
+
+| Launch | At about 1 h 30 | What sank it |
+|---|---|---|
+| $5, flat 3%/2%, no protection | **−$44** | YAP −$18, BAGSPAY −$17, CURVE −$7: 80% of the loss, bought into collapses |
+| + ceiling + pool check | **−$23** | CURVE −$15: fourteen buys in the chop |
+| + growing dip, bounce and ceiling | **−$3.88** | nothing — $4.63 of it is entry costs; 32 of 49 up, worst −$2.17 |
+
+*Por primera vez está estable; todas las largadas anteriores eran caer en el
+abismo.* The operator.
+
+### What this day taught
+
+- **A dip measured from the last buy with a bounce buys about 1% apart in
+  chop.** The bounce hands back most of the dip. A rule has to be read at the
+  price it actually fills, not at the numbers it names.
+- **A ceiling on each dip does not catch a staircase.** CURVE never fell 20% in
+  one step and lost 30% in fourteen.
+- **Two clocks let money through.** A freeze decided per 15-minute bar and a
+  sweep buying every thirty seconds are two definitions of "is it safe to buy";
+  the sweep now asks the same threshold itself.
+- **Fixed costs decide the step size.** $0.05 is nothing on $15 and 5% on $1.
+- **The entry replay cannot recycle capital**, so its totals are fiction: it
+  said +$25 for a configuration that made +$229 live over two days. Judge a
+  design against the live tape, per day.
+- **Separate the minority before fixing it.** Both protections were chosen by
+  finding the number that split the losers from the rest — 15.6% against 22% —
+  and pinning that the majority buys exactly as before.
+
+### Replaced by this section
+
+"What runs today — 2026-09-24" (kept below as the previous state), and with it
+the $15 entry, the one rung at half the last buy, the activity and
+liquidity-growth floors, and ladder A. Their arguments stand as history; their
+numbers do not.
+
+## What ran on 2026-09-24 — SUPERSEDED, see "What runs today"
+
+**This was the truth about production until 2026-09-29.** Kept because its
+lessons still hold.
 
 The strategy was rebuilt in two days, one operator decision at a time, and
 what survived is small enough to hold in one table:
