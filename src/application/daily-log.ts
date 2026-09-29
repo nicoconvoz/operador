@@ -33,27 +33,27 @@ export interface DailyLogRow {
 }
 
 /**
- * Where a day's result sits on a bar whose MIDDLE is zero: a day that ended
- * where it started sits in the centre, a gain goes right toward green, a loss
- * left toward red, by how much.
+ * The day bar's edges, in dollars: −100 at the red end, +100 at the green.
  *
- * The operator's rule, replacing a bar that placed the close between the
- * day's low and high: a day that lost money but closed near its own high was
- * drawn on the green end, which reads as a winning day.
- *
- * The ends are ±`scaleUsd`: the farthest the day travelled from where it
- * started (the previous close), down or up. So a small result on a day that
- * swung hard stays near the middle, and the screen prints the scale beside the
- * bar, because a dot at the end means "+$1" on a quiet day and "+$40" on a
- * wild one. The result is in the maximum only as a guard: a close outside the
- * day's own low and high would otherwise fall off the bar.
+ * Fixed, the operator's call. The first version scaled each day to its own
+ * swing, which put a quiet +$1 day on the same green edge as a +$40 one; with
+ * the same ends on every card, the dot's position alone compares two days.
  */
-export function resultMark(row: DailyLogRow): { readonly at: number; readonly scaleUsd: number } {
-  const start = row.closeUsd - row.resultUsd
-  const scaleUsd = Math.max(Math.abs(row.minUsd - start), Math.abs(row.maxUsd - start), Math.abs(row.resultUsd))
-  if (!(scaleUsd > 0)) return { at: 50, scaleUsd: 0 }
-  const at = 50 + (50 * row.resultUsd) / scaleUsd
-  return { at: Math.min(100, Math.max(0, at)), scaleUsd }
+export const DAY_BAR_EDGE_USD = 100
+
+/**
+ * Where a day's result sits on a bar whose MIDDLE is zero, as a percent of the
+ * bar: 50 for a day that made nothing, running right into the green as it
+ * gains and left into the red as it loses, and pinned to the edge past
+ * ±`DAY_BAR_EDGE_USD` — a day beyond the scale is still drawn, at its end.
+ *
+ * It replaced a bar that placed the close between the day's low and high, so a
+ * losing day that closed near its own high was drawn on the green end.
+ */
+export function resultAt(resultUsd: number): number {
+  if (!Number.isFinite(resultUsd)) return 50
+  const at = 50 + (50 * resultUsd) / DAY_BAR_EDGE_USD
+  return Math.min(100, Math.max(0, at))
 }
 
 export interface DailyLogView {

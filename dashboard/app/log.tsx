@@ -1,6 +1,6 @@
 'use client'
 
-import { resultMark, type DailyLogRow, type DailyLogView } from '../../src/application/daily-log.js'
+import { DAY_BAR_EDGE_USD, resultAt, type DailyLogView } from '../../src/application/daily-log.js'
 
 /**
  * The Log: what the book made, day by day.
@@ -87,12 +87,12 @@ function Reading({ label, value }: { label: string; value: number }) {
  * placed the close between the day's low and high, so a losing day that closed
  * near its own high was drawn on the green end.
  *
- * Full-strength colours, and the scale printed under the ends, because a dot
- * at the edge means "+$1" on a quiet day and "+$40" on a wild one.
+ * Full-strength colours, and the same ends on every card — −$100 and +$100,
+ * printed under the bar — so the dot's position alone compares two days.
  */
-function ResultBar({ row }: { row: DailyLogRow }) {
-  const { at, scaleUsd } = resultMark(row)
-  const glow = tone(row.resultUsd)
+function ResultBar({ resultUsd }: { resultUsd: number }) {
+  const at = resultAt(resultUsd)
+  const glow = tone(resultUsd)
   return (
     <div>
       <div aria-hidden style={{ position: 'relative', height: 10, borderRadius: 5, background: `linear-gradient(90deg, ${BAR_RED} 0%, ${BAR_ORANGE} 28%, ${BAR_YELLOW} 50%, ${BAR_LIME} 72%, ${BAR_GREEN} 100%)` }}>
@@ -105,9 +105,9 @@ function ResultBar({ row }: { row: DailyLogRow }) {
         />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: DIM, fontSize: 11, fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
-        <span>{scaleUsd > 0 ? `−${exact(scaleUsd)}` : ''}</span>
+        <span>−${DAY_BAR_EDGE_USD}</span>
         <span>$0</span>
-        <span>{scaleUsd > 0 ? `+${exact(scaleUsd)}` : ''}</span>
+        <span>+${DAY_BAR_EDGE_USD}</span>
       </div>
     </div>
   )
@@ -162,7 +162,7 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
                 <Reading label="Máximo" value={d.maxUsd} />
               </div>
 
-              <ResultBar row={d} />
+              <ResultBar resultUsd={d.resultUsd} />
             </article>
           ))}
         </div>
@@ -174,7 +174,7 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
       <div style={{ color: DIM, fontSize: 11, marginTop: 14, lineHeight: 1.6 }}>
         Acumulado: la ganancia total (cobrada + sin cobrar − costos) en la última lectura del día. Resultado del día: el
         acumulado menos el del día anterior; el primer día registrado se mide desde su primera lectura. Mínimo y máximo:
-        lo más bajo y lo más alto que tocó el acumulado ese día. La barra tiene el cero en el medio: el punto va hacia el verde si el día ganó y hacia el rojo si perdió, y los extremos son lo más lejos que se movió el día.
+        lo más bajo y lo más alto que tocó el acumulado ese día. La barra tiene el cero en el medio: el punto va hacia el verde si el día ganó y hacia el rojo si perdió, y los extremos son −$100 y +$100.
       </div>
     </section>
   )
