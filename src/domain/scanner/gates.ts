@@ -370,7 +370,15 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // 3,706,097% — a decimal in the wrong place, not a move. USDF cost this
   // project real money that way.
   minHistoryBars: 0,
-  maxBarAgeHours: 1,
+  // OFF. *Sacá la protección de actividad.* The operator, after KORI was
+  // refused at the door with its newest candle 1.2 hours old while it traded
+  // fourteen times that hour, in bursts. The rule was "do not buy what you
+  // cannot watch", and one hour was argued against the abandonment freeze.
+  // A feed that answers with NO trades at all still fails (`staleBars:
+  // unknown`): there is nothing to price the token against. The candles are
+  // still downloaded, because `priceMismatch` and `history` read them.
+  // STRICT keeps the hour; a number here brings it back.
+  maxBarAgeHours: Infinity,
   maxPriceRatio: 5,
   // CREPE measured 98% on a $285 sell while reporting $718k of liquidity.
   // Ten percent is already far beyond anything the 1%-per-fill and 3%-exit
@@ -404,6 +412,8 @@ export const STRICT_GATE_POLICY: GatePolicy = {
   // the default would have carried the zero here and quietly deleted the
   // coverage along with the behaviour.
   minHistoryBars: 60,
+  // Kept for the same reason: production turned it off.
+  maxBarAgeHours: 1,
 }
 
 

@@ -714,11 +714,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           if (candles === null) throw new Error('ninguna fuente de velas respondió')
           return hoursSinceLastTrade(candles, Date.now())
         },
-        // One hour: it matches `minHourlyTxns`'s own window, and it leaves the
-        // three-hour abandonment freeze clear room. Admitting a token whose
-        // newest bar is already two hours old is admitting one that freezes
-        // within the hour.
-        maxBarAgeHours: 1,
+        // The production gate policy's limit — off since the operator said
+        // *sacá la protección de actividad*. A feed with no trades at all
+        // still refuses the entry.
+        maxBarAgeHours: DEFAULT_GATE_POLICY.maxBarAgeHours,
       }),
     // Every configured chain, each scan stored under its own chain so the
     // universe can show them together. One chain failing must not cost the
@@ -953,7 +952,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // A shortlist the engine can act on. One candle request per
               // CANDIDATE — after the gates cut ninety percent — so about
               // thirty a scan rather than three hundred.
-              maxBarAgeHours: 1,
+              // Set, so the candles are still downloaded — `priceMismatch` and
+              // `history` read them — while the age itself no longer refuses.
+              maxBarAgeHours: DEFAULT_GATE_POLICY.maxBarAgeHours,
               // Ours first: into the universe before discovery, past the cap,
               // and ahead of every candidate for the security budget.
               held: open.filter((p) => p.chain === chain).map((p) => p.tokenAddress),

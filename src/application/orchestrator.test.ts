@@ -258,6 +258,21 @@ describe('runCycle — the chosen token is re-examined before money moves', () =
     expect(refusals[0]!.level).toBe('info')
   })
 
+  it('says nothing about an entry refused for ACTIVITY — no bars — and still does not buy it', async () => {
+    // *Sacá las notificaciones también, sobre la actividad.* The operator. The
+    // entry is still not opened on a feed with no trades at all; it just no
+    // longer fills the log with it.
+    for (const confirmation of [
+      { ok: false as const, reason: 'stale-bars' as const, detail: 'el proveedor de velas no devolvió ninguna operación' },
+      { ok: false as const, reason: 'gates' as const, failures: [{ gate: 'staleBars' as const, reason: 'unknown' as const, detail: 'sin barras' }] },
+    ]) {
+      const { deps, alerts, throttle } = rig()
+      await runCycle({ ...deps, confirmEntry: async () => confirmation }, config, throttle)
+      expect(await deps.store.loadPositions()).toEqual([])
+      expect(alerts.sent.filter((a) => a.kind === 'entry-refused')).toEqual([])
+    }
+  })
+
   it('says WHICH gate turned, not just that something did', async () => {
     // "No se abre la posición" alone sends the reader nowhere. A gate that
     // turned is the check working; a provider that could not answer is the

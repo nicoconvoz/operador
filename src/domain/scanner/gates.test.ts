@@ -889,3 +889,26 @@ describe('a known failure is reported before an unknown one', () => {
   })
 })
 
+
+describe('staleBars — off in production, the operator’s call', () => {
+  // *Sacá la protección de actividad.* KORI was refused at the door with its
+  // newest candle 1.2 hours old while it traded fourteen times that hour, in
+  // bursts. The rule was "do not buy what you cannot watch"; the operator took
+  // it out. STRICT keeps the hour, so the gate's LOGIC stays tested.
+  it('does not refuse a token for an old last candle', () => {
+    expect(DEFAULT_GATE_POLICY.maxBarAgeHours).toBe(Infinity)
+    expect(evaluateGates(clean({ lastTradeAgoHours: 1.2 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateGates(clean({ lastTradeAgoHours: 30 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateSafetyGates(clean({ lastTradeAgoHours: 30 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('still refuses a token the candle feed says NOBODY ever traded — there is nothing to price it against', () => {
+    const none = evaluateGates(clean({ lastTradeAgoHours: null }), DEFAULT_GATE_POLICY)
+    expect(none.failures.map((f) => `${f.gate}:${f.reason}`)).toEqual(['staleBars:unknown'])
+  })
+
+  it('keeps the hour under the strict policy', () => {
+    const old = evaluateGates(clean({ lastTradeAgoHours: 1.2 }), STRICT_GATE_POLICY)
+    expect(old.failures.map((f) => `${f.gate}:${f.reason}`)).toContain('staleBars:failed')
+  })
+})

@@ -1228,6 +1228,14 @@ export async function runCycle(
             // phone that buzzes for opportunities NOT taken is a phone whose
             // notifications get turned off, after which the death exit does not
             // arrive either.
+            //
+            // And an ACTIVITY refusal — no bars — is not reported at all. *Sacá
+            // las notificaciones también, sobre la actividad.* The operator.
+            // The token is still not bought; only the line goes.
+            const aboutActivity =
+              confirmation.reason === 'stale-bars' ||
+              (confirmation.reason === 'gates' && confirmation.failures.every((f) => f.gate === 'staleBars'))
+            if (aboutActivity) continue
             refused.push({
               symbol: allocation.snapshot.symbol,
               why:

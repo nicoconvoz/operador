@@ -423,6 +423,24 @@ describe('scanOnce — a cap that bites says so', () => {
 })
 
 describe('scanOnce — a token the engine cannot watch is not a candidate', () => {
+  // Production turned the hour OFF (*sacá la protección de actividad*); these
+  // keep the mechanism tested under a policy that still asks it.
+  const HOUR: ScanConfig = { ...config, maxBarAgeHours: 1, ranking: { ...config.ranking, gates: { ...DEFAULT_GATE_POLICY, maxBarAgeHours: 1 } } }
+
+  it('keeps a token with an old last candle a candidate under the production policy', async () => {
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+      [`${GOPLUS_BASE}/solana/token_security?contract_addresses=good`]: { body: { code: 1, message: 'ok', result: { good: safe } } },
+      [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
+    })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, { ...config, maxBarAgeHours: DEFAULT_GATE_POLICY.maxBarAgeHours })
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
+    expect(out.snapshots[0]!.lastTradeAgoHours).toBe(5)
+  })
+
   it('moves a token with stale bars out of the shortlist and says why', async () => {
     // Measured live, the same pool asked of both providers at once: GeckoTerminal
     // reported 0 trades in the last hour where DexScreener reported 35, and its
@@ -443,7 +461,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
     })
 
-    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, HOUR)
 
     expect(out.candidates).toEqual([])
     expect(out.rejected.map((r) => r.gates.failures[0]!.gate)).toContain('staleBars')
@@ -467,11 +485,11 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
     })
 
-    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, { ...config, maxBarAgeHours: 1 })
+    const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, HOUR)
 
     expect(out.snapshots[0]!.lastTradeAgoHours).toBe(5)
     // And the gates, run again on that snapshot by anyone, reach the same verdict.
-    expect(evaluateGates(out.snapshots[0]!, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('staleBars')
+    expect(evaluateGates(out.snapshots[0]!, HOUR.ranking.gates).failures.map((f) => f.gate)).toContain('staleBars')
   })
 
   it('keeps a token whose bars are current', async () => {
