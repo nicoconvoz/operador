@@ -1,6 +1,6 @@
 'use client'
 
-import type { DailyLogView } from '../../src/application/daily-log.js'
+import { resultMark, type DailyLogRow, type DailyLogView } from '../../src/application/daily-log.js'
 
 /**
  * The Log: what the book made, day by day.
@@ -28,6 +28,12 @@ import type { DailyLogView } from '../../src/application/daily-log.js'
 const UP = '#63e6a5'
 const DOWN = '#ff6b6b'
 const DIM = '#8b949e'
+// The day bar at full strength, red through yellow at zero to green.
+const BAR_RED = '#ff1744'
+const BAR_ORANGE = '#ff9100'
+const BAR_YELLOW = '#ffea00'
+const BAR_LIME = '#76ff03'
+const BAR_GREEN = '#00e676'
 
 // Cents, kept, and a real minus sign — the headline's own formatting, so a
 // figure copied from one to the other reads the same.
@@ -75,17 +81,34 @@ function Reading({ label, value }: { label: string; value: number }) {
 }
 
 /**
- * Where the day ended between its low and its high. A bar, because "it closed
- * near the top of its range" is a shape, and three numbers make the reader
- * draw it in their head. Nothing when the day never moved.
+ * Whether the day won or lost, as a place on a bar whose MIDDLE is zero: the
+ * dot sits in the centre on a flat day, runs right into the green as the day
+ * gains and left into the red as it loses. The operator's rule — the old bar
+ * placed the close between the day's low and high, so a losing day that closed
+ * near its own high was drawn on the green end.
+ *
+ * Full-strength colours, and the scale printed under the ends, because a dot
+ * at the edge means "+$1" on a quiet day and "+$40" on a wild one.
  */
-function Range({ min, max, close }: { min: number; max: number; close: number }) {
-  const span = max - min
-  if (!(span > 0)) return null
-  const at = Math.min(100, Math.max(0, ((close - min) / span) * 100))
+function ResultBar({ row }: { row: DailyLogRow }) {
+  const { at, scaleUsd } = resultMark(row)
+  const glow = tone(row.resultUsd)
   return (
-    <div aria-hidden style={{ position: 'relative', height: 6, borderRadius: 3, background: `linear-gradient(90deg, ${DOWN}55, ${UP}55)` }}>
-      <div style={{ position: 'absolute', top: -3, left: `calc(${at}% - 6px)`, width: 12, height: 12, borderRadius: '50%', background: '#e6edf3', border: '2px solid #0d1117' }} />
+    <div>
+      <div aria-hidden style={{ position: 'relative', height: 10, borderRadius: 5, background: `linear-gradient(90deg, ${BAR_RED} 0%, ${BAR_ORANGE} 28%, ${BAR_YELLOW} 50%, ${BAR_LIME} 72%, ${BAR_GREEN} 100%)` }}>
+        <div style={{ position: 'absolute', left: 'calc(50% - 1px)', top: -4, width: 2, height: 18, borderRadius: 1, background: 'rgba(230,237,243,0.55)' }} />
+        <div
+          style={{
+            position: 'absolute', top: -4, left: `calc(${at}% - 9px)`, width: 18, height: 18, borderRadius: '50%',
+            background: '#ffffff', border: '3px solid #0d1117', boxShadow: `0 0 10px 2px ${glow}`,
+          }}
+        />
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, color: DIM, fontSize: 11, fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
+        <span>{scaleUsd > 0 ? `−${exact(scaleUsd)}` : ''}</span>
+        <span>$0</span>
+        <span>{scaleUsd > 0 ? `+${exact(scaleUsd)}` : ''}</span>
+      </div>
     </div>
   )
 }
@@ -139,7 +162,7 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
                 <Reading label="Máximo" value={d.maxUsd} />
               </div>
 
-              <Range min={d.minUsd} max={d.maxUsd} close={d.closeUsd} />
+              <ResultBar row={d} />
             </article>
           ))}
         </div>
@@ -151,7 +174,7 @@ export function DailyLog({ view }: { view: DailyLogView | undefined }) {
       <div style={{ color: DIM, fontSize: 11, marginTop: 14, lineHeight: 1.6 }}>
         Acumulado: la ganancia total (cobrada + sin cobrar − costos) en la última lectura del día. Resultado del día: el
         acumulado menos el del día anterior; el primer día registrado se mide desde su primera lectura. Mínimo y máximo:
-        lo más bajo y lo más alto que tocó el acumulado ese día; la barra marca dónde cerró el día entre los dos.
+        lo más bajo y lo más alto que tocó el acumulado ese día. La barra tiene el cero en el medio: el punto va hacia el verde si el día ganó y hacia el rojo si perdió, y los extremos son lo más lejos que se movió el día.
       </div>
     </section>
   )

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildDailyLog, dailyLogRows, dataSince, uptimeText, LOG_DAYS, LOG_READ_DAYS } from './daily-log.js'
+import { buildDailyLog, dailyLogRows, dataSince, resultMark, uptimeText, LOG_DAYS, LOG_READ_DAYS, type DailyLogRow } from './daily-log.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { type DailyPnl } from '../domain/reporting/daily-pnl.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
@@ -130,5 +130,42 @@ describe('buildDailyLog — what the Log tab and the counter read', () => {
     }
     await buildDailyLog(store, { now: () => now })
     expect(asked).toEqual([LOG_READ_DAYS])
+  })
+})
+
+describe('resultMark — where the day’s result sits on a bar centred on zero', () => {
+  // A day that started at `start` (the previous close), and the readings it took.
+  const row = (start: number, close: number, min: number, max: number): DailyLogRow => ({
+    day: '2026-09-28', isToday: true, resultUsd: close - start, closeUsd: close, minUsd: min, maxUsd: max,
+  })
+
+  it('a day that ended where it started sits in the middle', () => {
+    expect(resultMark(row(10, 10, 4, 16))).toEqual({ at: 50, scaleUsd: 6 })
+  })
+
+  it('a gain goes right toward green, a loss left toward red, by how much', () => {
+    expect(resultMark(row(10, 15, 5, 15)).at).toBe(100)
+    expect(resultMark(row(10, 12.5, 5, 15)).at).toBe(75)
+    expect(resultMark(row(10, 7.5, 5, 15)).at).toBe(25)
+    expect(resultMark(row(10, 5, 5, 15)).at).toBe(0)
+  })
+
+  it('a result near zero on a day that swung hard stays near the middle', () => {
+    expect(resultMark(row(0, 1, -20, 20)).at).toBe(52.5)
+  })
+
+  it('the ends are the farther of the day’s low and high, measured from where it started', () => {
+    expect(resultMark(row(0, -2, -2, 8))).toEqual({ at: 37.5, scaleUsd: 8 })
+  })
+
+  it('a day that opened away from the last close is still measured from the last close', () => {
+    // Engine off overnight: yesterday closed at 0, today's first reading was already 9.
+    const mark = resultMark(row(0, 10, 9, 11))
+    expect(mark.scaleUsd).toBe(11)
+    expect(mark.at).toBeCloseTo(50 + (50 * 10) / 11)
+  })
+
+  it('a day that never moved sits in the middle with no scale', () => {
+    expect(resultMark(row(3, 3, 3, 3))).toEqual({ at: 50, scaleUsd: 0 })
   })
 })

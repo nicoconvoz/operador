@@ -32,6 +32,30 @@ export interface DailyLogRow {
   readonly maxUsd: number
 }
 
+/**
+ * Where a day's result sits on a bar whose MIDDLE is zero: a day that ended
+ * where it started sits in the centre, a gain goes right toward green, a loss
+ * left toward red, by how much.
+ *
+ * The operator's rule, replacing a bar that placed the close between the
+ * day's low and high: a day that lost money but closed near its own high was
+ * drawn on the green end, which reads as a winning day.
+ *
+ * The ends are ±`scaleUsd`: the farthest the day travelled from where it
+ * started (the previous close), down or up. So a small result on a day that
+ * swung hard stays near the middle, and the screen prints the scale beside the
+ * bar, because a dot at the end means "+$1" on a quiet day and "+$40" on a
+ * wild one. The result is in the maximum only as a guard: a close outside the
+ * day's own low and high would otherwise fall off the bar.
+ */
+export function resultMark(row: DailyLogRow): { readonly at: number; readonly scaleUsd: number } {
+  const start = row.closeUsd - row.resultUsd
+  const scaleUsd = Math.max(Math.abs(row.minUsd - start), Math.abs(row.maxUsd - start), Math.abs(row.resultUsd))
+  if (!(scaleUsd > 0)) return { at: 50, scaleUsd: 0 }
+  const at = 50 + (50 * row.resultUsd) / scaleUsd
+  return { at: Math.min(100, Math.max(0, at)), scaleUsd }
+}
+
 export interface DailyLogView {
   readonly days: readonly DailyLogRow[]
   /** When the current data began, or null when there is none. See `dataSince`. */
