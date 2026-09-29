@@ -28,7 +28,7 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | safe, and **rising in the last hour** — nothing else | `production-doors.ts`, `momentum.ts` (`risingInTheHour`) |
+| **Candidate** | safe, **rising in the last hour**, and **moving at least 1% every five minutes** | `production-doors.ts`, `momentum.ts` (`risingInTheHour`), `gates.ts` (`volatility`), `volatility-probe.ts` |
 | **The book** | a slot is **20 × $5 = $100**; the book holds **capital / $100** tokens, the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
 | **Every later buy** | **$5** on a dip and a bounce that **grow with each DCA**, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
@@ -53,6 +53,29 @@ fails, because there is nothing to price the token against.
 quote), `minLiquidityUsd` **$100,000**, authorities, holders, tax,
 `priceMismatch`, impact. They are not doors of this kind, and no instruction
 about "the only condition" has ever meant them.
+
+### The second door: it has to move
+
+*Que la puerta de entrada haga pasar los mejores tokens, los de mayor
+volatilidad* — and then, *no necesito ordenar nada*: a DOOR, not an order. A
+stranger enters only if its price moves at least `OPERADOR_MIN_VOLATILITY_PCT`
+(**1**) every five minutes: `volatilityPct`, the DCA spacing's own measure,
+over the last 72 closed 5-minute bars. Zero turns it off.
+
+- **Why.** Measured on 2026-09-29 across 179 liquid Solana tokens: the book's
+  median was **0.88%** against **2.74%** for the 50 most volatile, its tail
+  calm big caps (JUP, PYTH, Bonk, WIF) ranked #76–#129 — the cost-efficiency
+  order prefers deep pools, and deep pools are the calmest. One percent is
+  where the fiftieth sat: 51 cleared it, 24 of them rising at that moment.
+- **It asks for evidence**, like the rising door: unmeasured, or fewer than 24
+  closes, is refused. It is an opportunity gate (`volatility`), never a safety
+  one — it decides what enters and never touches what is held.
+- **Measured before anything is paid for**, one stranger at a time in the
+  scan's own order: a calm token costs one chart request and never reaches its
+  authorities or its sale quote, and a remembered one still has to move. Held
+  tokens are never measured. An answer stands ten minutes (`volatilityProbe`).
+- **The book may run below fifty** when few tokens qualify. The free slots are
+  what keeps the scan looking, and it stops the moment they are covered.
 
 ### The book: capital divided by $100, cheapest first, only what is free
 
