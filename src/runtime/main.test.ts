@@ -17,6 +17,7 @@ import { type SqlClient } from '../infrastructure/persistence/postgres-store.js'
 import { runCycle, type CycleDeps } from '../application/orchestrator.js'
 import { fundStepFromFreeCapital, freeSlots, bookCapital } from '../application/free-capital.js'
 import { positionLedger } from '../application/ledger.js'
+import { dipBounceThresholds } from '../domain/strategy/dip-bounce.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
@@ -158,11 +159,13 @@ describe('the take-profit waits for +10%, through the path the engine runs', () 
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: $5 on a 3% dip and a 2% bounce, twenty steps, fees from the free capital', () => {
+  it('wires the dip-bounce as the ONE buyer: $5 on a 3% dip and a 2% bounce, each DCA asking 2 more points of dip and 1 of bounce, twenty steps, fees from the free capital', () => {
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
-    // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a 20.*
+    // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a
+    // 20* — *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que
+    // aumente de 1%.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20 })
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20, dipStepPct: 2, bounceStepPct: 1 })
     expect(deps.dipBounce?.stepUsd).toBe(5)
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(20)
@@ -171,6 +174,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('never buys past a 20% fall unless the environment turns the ceiling off', () => {
     expect(runtime({ OPERADOR_MAX_DIP_PCT: '0' }).deps.dipBounce?.policy.maxDipPct).toBe(0)
     expect(runtime({ OPERADOR_MAX_DIP_PCT: '25' }).deps.dipBounce?.policy.maxDipPct).toBe(25)
+  })
+
+  it('takes the steps from the environment — zero is the flat rule', () => {
+    expect(runtime({ OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' }).deps.dipBounce?.policy).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
+    expect(runtime({ OPERADOR_DIP_STEP_PCT: '3', OPERADOR_BOUNCE_STEP_PCT: '2' }).deps.dipBounce?.policy).toMatchObject({ dipStepPct: 3, bounceStepPct: 2 })
   })
 
   it('asks the pool before every step against the death watch’s OWN freeze line — the policy the tick runs, not a number of its own', () => {
@@ -632,11 +640,12 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
   })
 
   it('buys every dip and bounce on the old falls with the ceiling off — OPERADOR_MAX_DIP_PCT=0', async () => {
+    // Each bounce as big as its DCA asks: 2% for DCA 1, 3% for DCA 2, 4% for DCA 3.
     const { deps, cycleConfig, store } = onMemory({ OPERADOR_MAX_DIP_PCT: '0' })
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000
-    for (const price of [1, 0.96, 0.98, 0.7, 0.714, 0.5, 0.51, 0.15, 0.153]) {
+    for (const price of [1, 0.96, 0.98, 0.7, 0.714, 0.5, 0.5155, 0.15, 0.15615]) {
       await sweepStops(
         deps, (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)), new AlertThrottle(0),
         (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000),
@@ -651,23 +660,53 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     expect(await buys()).toEqual([])
   })
 
-  it('stops at twenty, and every step is under the one before', async () => {
-    const { sweep, buys } = await book()
+  it('asks each DCA for 2 more points of dip and 1 more of bounce — and says what applied', async () => {
+    // *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que aumente
+    // de 1%.* The first buy on a 4% dip; DCA 1 on 3% and 2%; DCA 2 waits past a
+    // 4.1% dip and a 2.7% bounce for 5% and 3%; DCA 3 past 6.6% and 3.6% for 7% and 4%.
+    const { sweep, buys, deps } = await book()
+    const ids = async () => (await buys()).map((f) => f.orderId)
+    for (const price of [1, 0.96, 0.98, 0.95, 0.97]) await sweep(price)
+    expect(await ids()).toEqual(['Entry', 'DCA-1'])
+    for (const price of [0.93, 0.95, 0.92, 0.945]) await sweep(price)
+    expect(await ids()).toEqual(['Entry', 'DCA-1'])
+    await sweep(0.948)
+    expect(await ids()).toEqual(['Entry', 'DCA-1', 'DCA-2'])
+    for (const price of [0.885, 0.88, 0.912]) await sweep(price)
+    expect(await ids()).toEqual(['Entry', 'DCA-1', 'DCA-2'])
+    await sweep(0.916)
+    expect(await ids()).toEqual(['Entry', 'DCA-1', 'DCA-2', 'DCA-3'])
+    const said = (deps.alerts as RecordingAlerts).sent.filter((a) => a.kind === 'dca-filled').map((a) => a.title)
+    expect(said).toEqual([
+      '🪜 T promedió — compra 2 de 20: cayó 3.1% (pedía 3%) y rebotó 2.1% (pedía 2%) — DCA 1',
+      '🪜 T promedió — compra 3 de 20: cayó 5.2% (pedía 5%) y rebotó 3.0% (pedía 3%) — DCA 2',
+      '🪜 T promedió — compra 4 de 20: cayó 7.2% (pedía 7%) y rebotó 4.1% (pedía 4%) — DCA 3',
+    ])
+  })
+
+  it('reaches all twenty on a descent that gives each buy its own dip and bounce — the ceiling grows with the dip — and stops there', async () => {
+    // *El techo del 20% crece 2 puntos por DCA, igual que la caída.* DCA 10
+    // asks a 21% dip, past a fixed 20% ceiling; its own is 38%.
+    const { sweep, buys, deps } = await book()
+    const policy = deps.dipBounce!.policy
     let price = 1
     await sweep(price)
-    for (let i = 0; i < 25; i++) {
-      await sweep(price * 0.96)
-      price = price * 0.96 * 1.021
+    for (let k = 1; k <= 25; k++) {
+      const { dipPct, bouncePct } = dipBounceThresholds(k, policy)
+      const low = price * (1 - (dipPct + 1) / 100)
+      await sweep(low)
+      price = low * (1 + (bouncePct + 1) / 100)
       await sweep(price)
     }
     const bought = await buys()
     expect(bought).toHaveLength(20)
     for (let i = 1; i < bought.length; i++) expect(bought[i]!.price).toBeLessThan(bought[i - 1]!.price)
+    for (const f of bought) expect((f.qty * f.price) / 5).toBeCloseTo(1, 2)
   })
 
   it('sells the holding at +10% or more over the average of its $5 steps — the TP, unchanged', async () => {
     const { sweep, buys, store, slot, cycleConfig, deps } = await book()
-    for (const price of [1, 0.96, 0.98, 0.9, 0.92, 0.85, 0.868]) await sweep(price)
+    for (const price of [1, 0.96, 0.98, 0.9, 0.92, 0.85, 0.876]) await sweep(price)
     expect(await buys()).toHaveLength(3)
     const avg = positionLedger(await store.fillsFor(slot.id)).avgCostUsd!
 

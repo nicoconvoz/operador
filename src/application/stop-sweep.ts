@@ -3,7 +3,16 @@ import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './led
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { nextDeepRung, nextPriceLow, priceLowWorthWriting, type DeepRungPolicy, type PriceLow } from '../domain/strategy/deep-rung.js'
-import { nextDipBounce, watchAfterBuy, dipWatchWorthWriting, crashLine, type DipBouncePolicy, type DipBounceStep, type DipWatch } from '../domain/strategy/dip-bounce.js'
+import {
+  nextDipBounce,
+  watchAfterBuy,
+  dipWatchWorthWriting,
+  dipBounceThresholds,
+  crashLine,
+  type DipBouncePolicy,
+  type DipBounceStep,
+  type DipWatch,
+} from '../domain/strategy/dip-bounce.js'
 import { liquidityBelowFreeze, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
@@ -358,9 +367,11 @@ export interface DeepRung {
 
 /**
  * EVERY buy of a holding, the first one included, on one rule: a 3% dip under
- * the reference and a 2% bounce off the low since — $1 a step, twenty at most.
+ * the reference and a 2% bounce off the low since — $1 a step, twenty at most —
+ * each DCA asking 2 more points of dip and of ceiling and 1 more of bounce.
  * *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y armá
- * escalones de 1 USD con la misma regla.* See `domain/strategy/dip-bounce.ts`.
+ * escalones de 1 USD con la misma regla* — *3% suma 2%, el 2% suma 2% por cada
+ * DCA* — *el rebote dejalo que aumente de 1%.* See `domain/strategy/dip-bounce.ts`.
  *
  * On the sweep for the reason every ladder is: it runs every thirty seconds, in
  * all three places the book is watched, with the live price. It is the only
@@ -1318,6 +1329,12 @@ async function watchLow(
 /** Dollars as the operator says them: $20, not $20.00. */
 const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`
 
+/** A line a step asks for, as the operator says it: 7, not 7.00 — and 4.5 when a step is fractional. */
+const asked = (pct: number): string => String(Number(pct.toFixed(2)))
+
+/** Which buy a ceiling belongs to, in the operator's words: the first, or the DCA it is. */
+const ceilingOf = (step: number): string => (step <= 1 ? 'techo de la primera compra' : `techo del DCA ${step - 1}`)
+
 /** The book's pools for one sweep's dip-bounce steps, and the check they are read for. */
 interface StepPools {
   readonly pool: DipBouncePool
@@ -1387,10 +1404,11 @@ async function poolRefuses(
 }
 
 /**
- * A step's watch just COLLAPSED: the low went more than `maxDipPct` under the
- * reference. Said on the look it happened — the domain signals it once, and
- * the watch carries it from then on — never once a sweep. INFO: nothing was
- * bought and nothing is at risk.
+ * A step's watch just COLLAPSED: the low went more than the step's ceiling
+ * under the reference — the first buy's and DCA 1's 20%, and 2 points more for
+ * every DCA after, so the alert names whose ceiling it is. Said on the look it
+ * happened — the domain signals it once, and the watch carries it from then
+ * on — never once a sweep. INFO: nothing was bought and nothing is at risk.
  */
 async function sayCollapsed(
   deps: StopSweepDeps,
@@ -1403,13 +1421,13 @@ async function sayCollapsed(
 ): Promise<void> {
   const watch = step.watch
   if (step.crashedPct === null || watch === null) return
-  const { maxDipPct, bouncePct } = ladder.policy
+  const ceiling = asked(step.thresholds.maxDipPct)
   const fell = step.crashedPct.toFixed(1)
   const from = firstBuy ? 'el máximo visto' : 'la compra anterior'
   const said = alert(
     'entry-refused',
-    `🧊 ${position.symbol}: cayó ${fell}% — más de ${maxDipPct}% es un derrumbe; no compra hasta que vuelva a estar a menos de ${maxDipPct}% de $${watch.reference}`,
-    `El mínimo ${watch.low} quedó ${fell}% bajo ${from} (${watch.reference}). Una caída de más de ${maxDipPct}% no es una baja: no se compra hasta que el precio vuelva sobre ${crashLine(watch.reference, ladder.policy)}, y desde ahí la compra espera un rebote de ${bouncePct}%.`,
+    `🧊 ${position.symbol}: cayó ${fell}% — más de ${ceiling}% (${ceilingOf(step.step)}) es un derrumbe; no compra hasta que vuelva a estar a menos de ${ceiling}% de $${watch.reference}`,
+    `El mínimo ${watch.low} quedó ${fell}% bajo ${from} (${watch.reference}). Una caída de más de ${ceiling}% no es una baja: no se compra hasta que el precio vuelva sobre ${crashLine(watch.reference, ladder.policy, step.step)}, y desde ahí la compra espera un rebote de ${asked(step.thresholds.bouncePct)}%.`,
     at,
     { position: position.id, token: position.tokenAddress },
   )
@@ -1433,8 +1451,9 @@ async function sayCollapsed(
  *   has not priced yet has none, only the scanner's own number;
  * - the live price and that close agree within the band, and there is no order
  *   in flight: both answered by the sweep before it gets here;
- * - never on a fall of more than `maxDipPct` — a collapse, which the watch
- *   itself refuses and says once (see `domain/strategy/dip-bounce.ts`);
+ * - never on a fall past the step's ceiling — `maxDipPct`, grown with every
+ *   DCA — a collapse, which the watch itself refuses and says once (see
+ *   `domain/strategy/dip-bounce.ts`);
  * - never into a pool under the line the death watch freezes on, read LIVE
  *   (`DipBounce.pool`) — the tick would freeze it at the next bar;
  * - the fees are FUNDED out of the free capital first, and a step with nothing
@@ -1504,7 +1523,11 @@ async function buyStep(
   const n = buys.length
   const max = ladder.policy.maxSteps
   const step = ladder.stepUsd
-  const next = `La próxima compra espera una caída de ${ladder.policy.dipPct}% bajo este precio y un rebote de ${ladder.policy.bouncePct}%.`
+  // The buy AFTER this one — its own lines, grown with every DCA.
+  const following = dipBounceThresholds(n + 2, ladder.policy)
+  const next = `La próxima compra espera una caída de ${asked(following.dipPct)}% bajo este precio y un rebote de ${asked(following.bouncePct)}%.`
+  // What THIS buy asked, when a dip bought it: said beside what it got.
+  const lines = cause.kind === 'dip' ? cause.step.thresholds : dipBounceThresholds(n + 1, ladder.policy)
   const fell = cause.kind === 'dip' ? (cause.step.fellPct ?? 0).toFixed(1) : null
   const rose = cause.kind === 'dip' ? (cause.step.bouncedPct ?? 0).toFixed(1) : null
   const cost = buyCostUsd(step, position.quality, ladder.gasUsdPerSwap)
@@ -1515,7 +1538,7 @@ async function buyStep(
       `💤 ${position.symbol} sin capital libre para la compra ${n + 1} de ${max}`,
       cause.kind === 'dip'
         ? `Cayó ${fell}% y rebotó ${rose}%, pero no hay capital libre para las comisiones de la compra de ${dollars(step)}. Se vuelve a intentar en el próximo barrido; la compra no se achica.`
-        : `Entró como candidata, pero no hay capital libre para las comisiones de la compra de ${dollars(step)}. La primera compra espera entonces una caída de ${ladder.policy.dipPct}% y un rebote de ${ladder.policy.bouncePct}%; la compra no se achica.`,
+        : `Entró como candidata, pero no hay capital libre para las comisiones de la compra de ${dollars(step)}. La primera compra espera entonces una caída de ${asked(lines.dipPct)}% y un rebote de ${asked(lines.bouncePct)}%; la compra no se achica.`,
       at,
       { position: position.id, token: position.tokenAddress },
     )
@@ -1557,7 +1580,7 @@ async function buyStep(
       )
     : alert(
         'dca-filled',
-        `🪜 ${position.symbol} promedió — compra ${n + 1} de ${max}: cayó ${fell}% y rebotó ${rose}%`,
+        `🪜 ${position.symbol} promedió — compra ${n + 1} de ${max}: cayó ${fell}% (pedía ${asked(lines.dipPct)}%) y rebotó ${rose}% (pedía ${asked(lines.bouncePct)}%) — DCA ${n}`,
         `La compra anterior fue a ${cause.watch.reference} y el mínimo ${cause.watch.low ?? price}. Compró ${dollars(step)} a ${price}; costo promedio ${positionLedger(await deps.store.fillsFor(position.id)).avgCostUsd}.`,
         at,
         { position: position.id, token: position.tokenAddress },
@@ -1576,7 +1599,8 @@ async function buyStep(
  * on record. It is a dip-bounce step in every way but its cause — the same
  * `buyStep`, so the same funding, id, key and watch — and every later step is
  * the dip-bounce rule with this one as its reference: a 3% dip under it and a
- * 2% bounce, the 20% ceiling and the live pool check. This one has neither:
+ * 2% bounce for DCA 1, more for each DCA after, the step's ceiling and the live
+ * pool check. This one has neither:
  * there is no reference to fall from yet, and the door re-checked the pool.
  *
  * Only for a slot that has NEVER held anything. A holding after a sale is not

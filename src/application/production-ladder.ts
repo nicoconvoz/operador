@@ -36,12 +36,37 @@ export const DEFAULT_MAX_STEPS = DEFAULT_DIP_BOUNCE_POLICY.maxSteps
 
 /**
  * The dip that arms the watch and the bounce off its low that buys, in
- * percent. *Ante una caída del 3% del precio y una subida del 2%.* See
- * `domain/strategy/dip-bounce.ts` for the rule — the same for every buy, the
- * first one included.
+ * percent — the first buy's and DCA 1's. *Ante una caída del 3% del precio y
+ * una subida del 2%.* Every later DCA asks more: see `DEFAULT_DIP_STEP_PCT`, and
+ * `domain/strategy/dip-bounce.ts` for the rule.
  */
 export const DEFAULT_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.dipPct
 export const DEFAULT_BOUNCE_PCT = DEFAULT_DIP_BOUNCE_POLICY.bouncePct
+
+/**
+ * How many points each DCA adds to the dip it asks — and to its collapse
+ * ceiling — and to the bounce. *3% suma 2%, el 2% suma 2% por cada DCA*, then
+ * *el rebote dejalo que aumente de 1%, no de a 2%*, then the ceiling *crece 2
+ * puntos por DCA, igual que la caída*. The operator.
+ *
+ * | Buy | Dip | Bounce | Ceiling |
+ * |---|---|---|---|
+ * | 2nd (DCA 1) | 3% | 2% | 20% |
+ * | 3rd (DCA 2) | 5% | 3% | 22% |
+ * | 4th (DCA 3) | 7% | 4% | 24% |
+ * | 11th (DCA 10) | 21% | 11% | 38% |
+ * | 20th (DCA 19) | 39% | 20% | 56% |
+ *
+ * CURVE bought five times in sixteen minutes while its price moved −0.5%,
+ * −1.2%, −1.8% and −2.9%: a 2% bounce eats most of a 3% dip in a choppy token,
+ * and it ended with fourteen buys and −30%. Zero is a REAL value — every buy on
+ * the same dip, bounce and ceiling, the flat rule this replaced:
+ * `OPERADOR_DIP_STEP_PCT=0`, `OPERADOR_BOUNCE_STEP_PCT=0`. The ceiling has no
+ * variable of its own: it grows with the dip, so the seventeen points between
+ * the dip that arms and the fall that collapses hold at every step.
+ */
+export const DEFAULT_DIP_STEP_PCT = DEFAULT_DIP_BOUNCE_POLICY.dipStepPct
+export const DEFAULT_BOUNCE_STEP_PCT = DEFAULT_DIP_BOUNCE_POLICY.bounceStepPct
 
 /**
  * The deepest fall a step still buys on, in percent under the reference. "If
@@ -50,6 +75,9 @@ export const DEFAULT_BOUNCE_PCT = DEFAULT_DIP_BOUNCE_POLICY.bouncePct
  * $5: every token doing well bought on falls of 3% to 15.6%, while YAP and
  * BAGSPAY bought on 31–34% and lost $35 of the $52 that went. Zero turns it
  * off: `OPERADOR_MAX_DIP_PCT=0`. See `domain/strategy/dip-bounce.ts`.
+ *
+ * The first buy's and DCA 1's: every later DCA's grows with the dip, by
+ * `DEFAULT_DIP_STEP_PCT` — 38% for DCA 10, whose dip is 21%.
  */
 export const DEFAULT_MAX_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.maxDipPct
 
@@ -483,12 +511,16 @@ export interface ProductionLadder {
   readonly stepUsd: number
   /** Buys per holding, the first included. */
   readonly maxSteps: number
-  /** The dip, in percent under the reference, that arms the watch. */
+  /** The dip, in percent under the reference, that arms the watch — the first buy's and DCA 1's. */
   readonly dipPct: number
-  /** The bounce, in percent over the low, that buys. */
+  /** The bounce, in percent over the low, that buys — the first buy's and DCA 1's. */
   readonly bouncePct: number
-  /** A fall of more than this, in percent under the reference, is a collapse: no step buys. Zero: off. */
+  /** A fall of more than this, in percent under the reference, is a collapse: no step buys. Zero: off. The first buy's and DCA 1's. */
   readonly maxDipPct: number
+  /** Points each later DCA adds to the dip and to the collapse ceiling. Zero: flat. */
+  readonly dipStepPct: number
+  /** Points each later DCA adds to the bounce. Zero: flat. */
+  readonly bounceStepPct: number
   /**
    * What a slot is given, exactly: steps × step. No gas, no price headroom and
    * no floor raise it, and no haircut shrinks the count — *el tope son 5000
@@ -635,6 +667,11 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // Zero is a REAL value — the ceiling off — so it reads through `percent`,
     // never `positive`; nonsense keeps the operator's twenty.
     maxDipPct: percent(env.OPERADOR_MAX_DIP_PCT, DEFAULT_MAX_DIP_PCT),
+    // *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que aumente
+    // de 1%.* Zero is a REAL value — the flat rule — so both read through
+    // `percent`, never `positive`; nonsense keeps the operator's steps.
+    dipStepPct: percent(env.OPERADOR_DIP_STEP_PCT, DEFAULT_DIP_STEP_PCT),
+    bounceStepPct: percent(env.OPERADOR_BOUNCE_STEP_PCT, DEFAULT_BOUNCE_STEP_PCT),
     // Derived from the two variables, never written down on its own: a slot of
     // twenty steps of a dollar is twenty dollars, and nothing is grossed up.
     slotUsd: maxSteps * stepUsd,

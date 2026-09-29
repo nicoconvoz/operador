@@ -855,7 +855,10 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: L.maxUsdPerLevel },
     maxOpenEntries: L.maxOpenEntries,
-    dipBounce: { dipPct: L.dipPct, bouncePct: L.bouncePct, maxSteps: L.maxSteps, maxDipPct: L.maxDipPct, stepUsd: L.stepUsd },
+    dipBounce: {
+      dipPct: L.dipPct, bouncePct: L.bouncePct, maxSteps: L.maxSteps, maxDipPct: L.maxDipPct,
+      dipStepPct: L.dipStepPct, bounceStepPct: L.bounceStepPct, stepUsd: L.stepUsd,
+    },
   }
   const reservation = (over: Partial<PersistedPosition> = {}) => ({ cascade: initialState(), capitalUsd: 20, lastPriceUsd: 1, ...over })
 
@@ -866,10 +869,10 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     expect(p!.steps).toEqual({ bought: 0, max: 20, investedUsd: 0 })
   })
 
-  it('says what the FIRST dollar waits for: a 3% dip under the high the sweep saw', async () => {
+  it('says what the FIRST dollar waits for: a 3% dip under the high the sweep saw, and a 2% bounce', async () => {
     const store = await seed([], reservation({ dipWatch: { reference: 1.25, low: null, armed: false, at: NOW, holdingSince: null } }))
     const [p] = (await buildOperations(store, dip)).positions
-    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando caída de 3% bajo $1.250 (compra si baja a $1.212)' }])
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando caída de 3% bajo $1.250 (compra si baja a $1.212 y rebota 2%)' }])
   })
 
   it('once armed, names the low and the price a 2% bounce buys at', async () => {
@@ -884,7 +887,7 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     // nothing bought until the price is back over 1.25 less 20%.
     const store = await seed([], reservation({ dipWatch: { reference: 1.25, low: 0.855, armed: true, at: NOW, holdingSince: null, crashed: true } }))
     const [p] = (await buildOperations(store, dip)).positions
-    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'derrumbe: −31.6% (espera volver sobre $1.000)' }])
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'derrumbe: −31.6% — más de 20% (techo de la primera compra); espera volver sobre $1.000' }])
   })
 
   it('measures a later collapse from the last buy, as the sweep does', async () => {
@@ -892,7 +895,15 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     const fills = [fill('Entry', 1, 1, first)]
     const store = await seed(fills, reservation({ dipWatch: { reference: 1, low: 0.75, armed: true, at: NOW, holdingSince: first, crashed: true } }))
     const [p] = (await buildOperations(store, dip)).positions
-    expect(p!.locks![0]!.detail).toBe('derrumbe: −25.0% (espera volver sobre $0.8000)')
+    expect(p!.locks![0]!.detail).toBe('derrumbe: −25.0% — más de 20% (techo del DCA 1); espera volver sobre $0.8000')
+  })
+
+  it('draws a later DCA’s collapse against ITS ceiling, grown with its dip: DCA 10 past 38%', async () => {
+    // *El techo del 20% crece 2 puntos por DCA, igual que la caída.*
+    const fills = Array.from({ length: 10 }, (_, i) => fill(i === 0 ? 'Entry' : `DCA-${i}`, 1.5 - i * 0.05, 1, NOW - (40 - i) * MIN))
+    const store = await seed(fills, reservation({ dipWatch: { reference: 1.05, low: 0.63, armed: true, at: NOW, holdingSince: fills[0]!.time, crashed: true } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks![0]!.detail).toBe('derrumbe: −40.0% — más de 38% (techo del DCA 10); espera volver sobre $0.6510')
   })
 
   it('after the first step bought on selection, waits for a 3% dip under what it paid', async () => {
@@ -902,24 +913,41 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     const store = await seed([fill('Entry', 1.25, 1 / 1.25, first)], reservation({ dipWatch: { reference: 1.25, low: null, armed: false, at: first, holdingSince: first } }))
     const [p] = (await buildOperations(store, dip)).positions
     expect(p!.steps).toMatchObject({ bought: 1, max: 20 })
-    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando caída de 3% bajo $1.250 (compra si baja a $1.212)' }])
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando caída de 3% bajo $1.250 (compra si baja a $1.212 y rebota 2%)' }])
   })
 
-  it('counts the buys and the dollars in them, and measures the next dip from the LAST buy', async () => {
+  it('counts the buys and the dollars in them, and measures the next dip from the LAST buy — DCA 3’s own 7% and 4%', async () => {
     const first = NOW - 30 * MIN
     const fills = [fill('Entry', 1, 1, first), fill('DCA-1', 0.96, 1 / 0.96, NOW - 20 * MIN), fill('DCA-2', 0.93, 1 / 0.93, NOW - 10 * MIN)]
     const store = await seed(fills, reservation({ dipWatch: { reference: 0.93, low: null, armed: false, at: NOW - 10 * MIN, holdingSince: first } }))
     const [p] = (await buildOperations(store, dip)).positions
     expect(p!.steps).toMatchObject({ bought: 3, max: 20 })
     expect(p!.steps!.investedUsd).toBeCloseTo(3, 9)
-    expect(p!.locks![0]!.detail).toBe('esperando caída de 3% bajo $0.9300 (compra si baja a $0.9021)')
+    expect(p!.locks![0]!.detail).toBe('esperando caída de 7% bajo $0.9300 (compra si baja a $0.8649 y rebota 4%)')
+  })
+
+  it('shows the NEXT step’s lines: after DCA 1, a 5% dip and a 3% bounce', async () => {
+    // *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que aumente de 1%.*
+    const first = NOW - 30 * MIN
+    const fills = [fill('Entry', 1, 1, first), fill('DCA-1', 0.96, 1 / 0.96, NOW - 20 * MIN)]
+    const waiting = await seed(fills, reservation({ dipWatch: { reference: 0.96, low: null, armed: false, at: NOW - 20 * MIN, holdingSince: first } }))
+    expect((await buildOperations(waiting, dip)).positions[0]!.locks![0]!.detail).toBe('esperando caída de 5% bajo $0.9600 (compra si baja a $0.9120 y rebota 3%)')
+    const armed = await seed(fills, reservation({ dipWatch: { reference: 0.96, low: 0.9, armed: true, at: NOW, holdingSince: first } }))
+    expect((await buildOperations(armed, dip)).positions[0]!.locks![0]!.detail).toBe('armado: mínimo $0.9000 — compra al rebotar 3%, en $0.9270')
+  })
+
+  it('draws a watch armed under a shallower line — the flat rule’s 3% for what is now DCA 2 — as still waiting for its 5%, as the sweep reads it', async () => {
+    const first = NOW - 30 * MIN
+    const fills = [fill('Entry', 1, 1, first), fill('DCA-1', 0.96, 1 / 0.96, NOW - 20 * MIN)]
+    const store = await seed(fills, reservation({ dipWatch: { reference: 0.96, low: 0.93, armed: true, at: NOW, holdingSince: first } }))
+    expect((await buildOperations(store, dip)).positions[0]!.locks![0]!.detail).toBe('esperando caída de 5% bajo $0.9600 (compra si baja a $0.9120 y rebota 3%)')
   })
 
   it('reads a watch left by ANOTHER holding as none, and waits off the last buy it can see', async () => {
     const first = NOW - 30 * MIN
     const store = await seed([fill('Entry', 0.8, 1 / 0.8, first)], reservation({ dipWatch: { reference: 5, low: 4, armed: true, at: NOW, holdingSince: first - 1 } }))
     const [p] = (await buildOperations(store, dip)).positions
-    expect(p!.locks![0]!.detail).toBe('esperando caída de 3% bajo $0.8000 (compra si baja a $0.7760)')
+    expect(p!.locks![0]!.detail).toBe('esperando caída de 3% bajo $0.8000 (compra si baja a $0.7760 y rebota 2%)')
   })
 
   it('says a reservation the sweep has not priced yet is waiting for its first look', async () => {

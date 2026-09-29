@@ -2,7 +2,7 @@ import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { usableScale } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { deepRungArmed, deepRungLine, reboundLine, type DeepRungPolicy } from '../domain/strategy/deep-rung.js'
-import { dipArmLine, bounceLine, crashLine, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
+import { dipArmLine, bounceLine, crashLine, armedFor, dipBounceThresholds, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
@@ -206,7 +206,8 @@ export interface OperationsOptions {
   }
   /**
    * The ladder the ENGINE buys in production: every buy, the first included,
-   * $1 on a 3% dip and a 2% bounce, twenty at most — drawn as ONE count and
+   * $1 on a 3% dip and a 2% bounce — more for each DCA after the first, by its
+   * steps — twenty at most — drawn as ONE count and
    * the watch in words, read off the `dipWatch` the sweep wrote down. Drawn
    * when given and no `dropLadder` is.
    */
@@ -595,12 +596,17 @@ function deepLocks(
  * before a sale, or older than the last buy, is read the way the sweep reads
  * it, as none, and the next dip is measured from what the last buy PAID.
  *
- * - unarmed: *esperando caída de 3% bajo $R (compra si baja a $A)*
- * - armed: *armado: mínimo $L — compra al rebotar 2%, en $B*
- * - collapsed: *derrumbe: −X% (espera volver sobre $L)* — the low fell more
- *   than `maxDipPct` under the reference, and no bounce buys until the price
- *   is back over that line. Drawing the bounce line instead would describe a
- *   buy the sweep has already refused.
+ * In the NEXT buy's own lines — 3% and 2% for the first and DCA 1, 5% and 3%
+ * for DCA 2, 2 more points of dip and 1 of bounce for each DCA after — and a
+ * watch armed under a shallower line than that is read as the sweep reads it,
+ * as not armed for this buy:
+ *
+ * - unarmed: *esperando caída de 5% bajo $R (compra si baja a $A y rebota 3%)*
+ * - armed: *armado: mínimo $L — compra al rebotar 3%, en $B*
+ * - collapsed: *derrumbe: −X% — más de 38% (techo del DCA 10); espera volver
+ *   sobre $L* — the low fell more than the step's ceiling under the reference,
+ *   and no bounce buys until the price is back over that line. Drawing the
+ *   bounce line instead would describe a buy the sweep has already refused.
  *
  * Null once the twenty are bought: nothing is waited on.
  */
@@ -612,21 +618,26 @@ function dipLocks(
   if (buys.length >= dip.maxSteps) return null
   const first = buys[0] ?? null
   const last = buys[buys.length - 1] ?? null
+  const step = buys.length + 1
+  const lines = dipBounceThresholds(step, dip)
   const stored = position.dipWatch ?? null
   const watch =
     stored && stored.holdingSince === (first?.time ?? null) && (last === null || stored.at >= last.time) ? stored : null
   const say = (detail: string): readonly LadderLock[] => [{ name: 'dip', held: false, detail }]
   const money = (usd: number) => `$${usd.toPrecision(4)}`
-  if (watch?.armed === true && watch.crashed === true && watch.low !== null) {
-    const fell = ((1 - watch.low / watch.reference) * 100).toFixed(1)
-    return say(`derrumbe: −${fell}% (espera volver sobre ${money(crashLine(watch.reference, dip))})`)
+  const pct = (x: number) => String(Number(x.toFixed(2)))
+  const armed = watch !== null && armedFor(watch, dip, step)
+  if (armed && watch.crashed === true) {
+    const fell = ((1 - watch.low! / watch.reference) * 100).toFixed(1)
+    const whose = step <= 1 ? 'techo de la primera compra' : `techo del DCA ${step - 1}`
+    return say(`derrumbe: −${fell}% — más de ${pct(lines.maxDipPct)}% (${whose}); espera volver sobre ${money(crashLine(watch.reference, dip, step))}`)
   }
-  if (watch?.armed === true && watch.low !== null) {
-    return say(`armado: mínimo ${money(watch.low)} — compra al rebotar ${dip.bouncePct}%, en ${money(bounceLine(watch.low, dip))}`)
+  if (armed) {
+    return say(`armado: mínimo ${money(watch.low!)} — compra al rebotar ${pct(lines.bouncePct)}%, en ${money(bounceLine(watch.low!, dip, step))}`)
   }
   const reference = watch?.reference ?? last?.price ?? null
-  if (reference === null) return say(`esperando el primer precio en vivo para vigilar la caída de ${dip.dipPct}%`)
-  return say(`esperando caída de ${dip.dipPct}% bajo ${money(reference)} (compra si baja a ${money(dipArmLine(reference, dip))})`)
+  if (reference === null) return say(`esperando el primer precio en vivo para vigilar la caída de ${pct(lines.dipPct)}%`)
+  return say(`esperando caída de ${pct(lines.dipPct)}% bajo ${money(reference)} (compra si baja a ${money(dipArmLine(reference, dip, step))} y rebota ${pct(lines.bouncePct)}%)`)
 }
 
 /**

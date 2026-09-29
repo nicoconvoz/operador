@@ -518,13 +518,24 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     //
     // "If it fell more than 20% it is a collapse, not a dip: don't buy there.
     // Wait until it is back within 20%." `maxDipPct`; OPERADOR_MAX_DIP_PCT=0
-    // turns it off. And the pool is read LIVE before every step, against the
+    // turns it off. *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote
+    // dejalo que aumente de 1%*: each DCA asks 2 more points of dip and of
+    // ceiling and 1 more of bounce, from the number of buys the holding has;
+    // OPERADOR_DIP_STEP_PCT=0 and OPERADOR_BOUNCE_STEP_PCT=0 are the flat rule.
+    // And the pool is read LIVE before every step, against the
     // death watch's own freeze line: YAP's froze at 26.6% of entry after four
     // more steps went into it between two ticks. The reader is the liquidity
     // watch's, one request a minute for the whole book, asked only when a step
     // fires.
     dipBounce: {
-      policy: { dipPct: config.dipPct, bouncePct: config.bouncePct, maxSteps: config.maxSteps, maxDipPct: config.maxDipPct },
+      policy: {
+        dipPct: config.dipPct,
+        bouncePct: config.bouncePct,
+        maxSteps: config.maxSteps,
+        maxDipPct: config.maxDipPct,
+        dipStepPct: config.dipStepPct,
+        bounceStepPct: config.bounceStepPct,
+      },
       stepUsd: config.stepUsd,
       gasUsdPerSwap: config.gasUsdPerSwap,
       fund: fundStep,

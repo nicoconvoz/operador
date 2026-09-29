@@ -17,6 +17,8 @@ import {
   DEFAULT_DIP_PCT,
   DEFAULT_BOUNCE_PCT,
   DEFAULT_MAX_DIP_PCT,
+  DEFAULT_DIP_STEP_PCT,
+  DEFAULT_BOUNCE_STEP_PCT,
   DEFAULT_DEEP_RUNG,
   DEFAULT_CASCADE_ENTRIES,
 } from './production-ladder.js'
@@ -35,9 +37,24 @@ describe('productionLadder — one place for the numbers that differ', () => {
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 20, slotUsd: 100, cascadeEntries: false,
+      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 20, dipStepPct: 2, bounceStepPct: 1, slotUsd: 100, cascadeEntries: false,
     })
     expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 20, 3, 2, 20])
+  })
+
+  it('asks each DCA for 2 more points of dip — and of ceiling — and 1 more of bounce', () => {
+    // *3% suma 2%, el 2% suma 2% por cada DCA* — then *el rebote dejalo que
+    // aumente de 1%, no de a 2%*, and the ceiling grows with the dip.
+    expect([DEFAULT_DIP_STEP_PCT, DEFAULT_BOUNCE_STEP_PCT]).toEqual([2, 1])
+    expect(productionLadder({ OPERADOR_DIP_STEP_PCT: '1.5', OPERADOR_BOUNCE_STEP_PCT: '0.5' })).toMatchObject({ dipStepPct: 1.5, bounceStepPct: 0.5 })
+  })
+
+  it('reads zero steps as the flat rule — every buy on the same dip and bounce — and keeps the operator’s steps on nonsense', () => {
+    expect(productionLadder({ OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
+    for (const bad of ['dos', '-2', '100', ' ', 'NaN']) {
+      expect(productionLadder({ OPERADOR_DIP_STEP_PCT: bad }).dipStepPct, bad).toBe(2)
+      expect(productionLadder({ OPERADOR_BOUNCE_STEP_PCT: bad }).bounceStepPct, bad).toBe(1)
+    }
   })
 
   it('refuses to buy on a fall of more than 20% — a collapse, not a dip — and zero turns that off', () => {

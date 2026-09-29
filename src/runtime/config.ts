@@ -217,6 +217,10 @@ export interface RuntimeConfig {
   readonly bouncePct: number
   /** A fall of more than this under the reference, in percent, is a collapse: no step buys. Zero: off. OPERADOR_MAX_DIP_PCT. */
   readonly maxDipPct: number
+  /** Points each DCA after the first adds to the dip and to the collapse ceiling. Zero: flat. OPERADOR_DIP_STEP_PCT. */
+  readonly dipStepPct: number
+  /** Points each DCA after the first adds to the bounce. Zero: flat. OPERADOR_BOUNCE_STEP_PCT. */
+  readonly bounceStepPct: number
   /**
    * What one slot is given, exactly: steps × step. *El tope son 5000 dividido
    * 50, que es lo que tengo* — the book holds capital / slot tokens, and no
@@ -589,6 +593,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     dipPct: productionLadder(env).dipPct,
     bouncePct: productionLadder(env).bouncePct,
     maxDipPct: productionLadder(env).maxDipPct,
+    dipStepPct: productionLadder(env).dipStepPct,
+    bounceStepPct: productionLadder(env).bounceStepPct,
     slotUsd: productionLadder(env).slotUsd,
     deepRung: productionLadder(env).deepRung,
     cascadeEntries: productionLadder(env).cascadeEntries,

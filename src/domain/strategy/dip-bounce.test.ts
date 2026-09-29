@@ -7,6 +7,7 @@ import {
   dipArmLine,
   bounceLine,
   crashLine,
+  dipBounceThresholds,
   DEFAULT_DIP_BOUNCE_POLICY,
   type DipBouncePolicy,
   type DipWatch,
@@ -15,9 +16,13 @@ import {
 /**
  * *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y armá
  * escalones de 1 USD con la misma regla.* The operator — then *disminuí los
- * escalones a 20*.
+ * escalones a 20*, then *3% suma 2%, el 2% suma 2% por cada DCA*, then *el
+ * rebote dejalo que aumente de 1%, no de a 2%*.
  */
 const POLICY: DipBouncePolicy = DEFAULT_DIP_BOUNCE_POLICY
+
+/** The rule before the steps: every buy on the same 3% dip, 2% bounce and 20% ceiling. */
+const FLAT: DipBouncePolicy = { ...POLICY, dipStepPct: 0, bounceStepPct: 0 }
 
 interface Buy { readonly time: number; readonly price: number }
 
@@ -43,18 +48,208 @@ const walk = (prices: readonly number[], policy: DipBouncePolicy = POLICY, start
 }
 
 describe('the dip-bounce ladder — the operator’s numbers', () => {
-  it('buys on a 3% dip and a 2% bounce, twenty times at most — and never on a fall of more than 20%', () => {
-    expect(DEFAULT_DIP_BOUNCE_POLICY).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20 })
+  it('buys on a 3% dip and a 2% bounce, twenty times at most, never past 20% — and each DCA asks 2 more points of dip and ceiling, 1 more of bounce', () => {
+    expect(DEFAULT_DIP_BOUNCE_POLICY).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20, dipStepPct: 2, bounceStepPct: 1 })
   })
 
-  it('draws the arming line 3% under the reference and the buying line 2% over the low', () => {
-    expect(dipArmLine(1, POLICY)).toBeCloseTo(0.97, 12)
-    expect(bounceLine(0.95, POLICY)).toBeCloseTo(0.969, 12)
+  it('draws the arming line 3% under the reference and the buying line 2% over the low — for the first buy and DCA 1', () => {
+    for (const step of [1, 2]) {
+      expect(dipArmLine(1, POLICY, step)).toBeCloseTo(0.97, 12)
+      expect(bounceLine(0.95, POLICY, step)).toBeCloseTo(0.969, 12)
+    }
   })
 
-  it('draws the collapse line 20% under the reference', () => {
-    expect(crashLine(1, POLICY)).toBeCloseTo(0.8, 12)
-    expect(crashLine(0.5, POLICY)).toBeCloseTo(0.4, 12)
+  it('draws the collapse line 20% under the reference — for the first buy and DCA 1', () => {
+    for (const step of [1, 2]) {
+      expect(crashLine(1, POLICY, step)).toBeCloseTo(0.8, 12)
+      expect(crashLine(0.5, POLICY, step)).toBeCloseTo(0.4, 12)
+    }
+  })
+
+  it('draws each DCA’s own lines: DCA 3 arms 7% under, buys 4% over the low and collapses past 24%', () => {
+    expect(dipArmLine(1, POLICY, 4)).toBeCloseTo(0.93, 12)
+    expect(bounceLine(0.9, POLICY, 4)).toBeCloseTo(0.936, 12)
+    expect(crashLine(1, POLICY, 4)).toBeCloseTo(0.76, 12)
+  })
+})
+
+describe('the dip-bounce ladder — each DCA asks for a bigger dip and a bigger bounce', () => {
+  // *3% suma 2%, el 2% suma 2% por cada DCA* — then *el rebote dejalo que
+  // aumente de 1%, no de a 2%*, and the ceiling grows with the dip. CURVE
+  // bought five times in sixteen minutes while its price moved −0.5%, −1.2%,
+  // −1.8% and −2.9%: a 2% bounce eats most of a 3% dip in a choppy token.
+  const asks = (step: number, policy: DipBouncePolicy = POLICY) => dipBounceThresholds(step, policy)
+
+  it('asks the first buy and DCA 1 for 3% and 2% under a 20% ceiling, then 2 points of dip and ceiling and 1 of bounce per DCA', () => {
+    expect(asks(1)).toEqual({ dipPct: 3, bouncePct: 2, maxDipPct: 20 })
+    expect(asks(2)).toEqual({ dipPct: 3, bouncePct: 2, maxDipPct: 20 })
+    expect(asks(3)).toEqual({ dipPct: 5, bouncePct: 3, maxDipPct: 22 })
+    expect(asks(4)).toEqual({ dipPct: 7, bouncePct: 4, maxDipPct: 24 })
+    expect(asks(5)).toEqual({ dipPct: 9, bouncePct: 5, maxDipPct: 26 })
+    expect(asks(11)).toEqual({ dipPct: 21, bouncePct: 11, maxDipPct: 38 })
+    expect(asks(20)).toEqual({ dipPct: 39, bouncePct: 20, maxDipPct: 56 })
+  })
+
+  it('keeps the same 17-point window between the dip that arms and the fall that collapses, at every step', () => {
+    for (let step = 1; step <= POLICY.maxSteps; step++) expect(asks(step).maxDipPct - asks(step).dipPct).toBe(17)
+  })
+
+  it('a ceiling of zero stays off at every step: the dip grows, the ceiling does not appear', () => {
+    for (const step of [1, 2, 3, 11, 20]) expect(asks(step, { ...POLICY, maxDipPct: 0 }).maxDipPct).toBe(0)
+  })
+
+  /**
+   * `k − 1` buys held, the last at a price of one, the watch written after it:
+   * the next buy is the k-th, and it measures from one.
+   */
+  const holding = (k: number) => {
+    const buys = Array.from({ length: k - 1 }, (_, i) => ({ time: 1_000 + i, price: 1 + (k - 2 - i) * 0.01 }))
+    const last = buys[buys.length - 1]!
+    return { buys, watch: watchAfterBuy(last.price, last.time, buys[0]!.time, null) }
+  }
+
+  for (const k of [2, 3, 4, 11]) {
+    const { dipPct, bouncePct } = dipBounceThresholds(k, POLICY)
+    it(`buy ${k} (DCA ${k - 1}) arms at exactly ${dipPct}% and buys on exactly a ${bouncePct}% bounce — and says what it asked`, () => {
+      const low = 1 - dipPct / 100
+      const { buys } = walk([low, low * (1 + bouncePct / 100)], POLICY, holding(k))
+      expect(buys).toHaveLength(k)
+      const armed = walk([low], POLICY, holding(k)).watch
+      const step = nextDipBounce(armed, { priceUsd: low * (1 + bouncePct / 100), at: 1e12, buys: holding(k).buys }, POLICY)
+      expect(step).toMatchObject({ action: 'buy', step: k, thresholds: dipBounceThresholds(k, POLICY) })
+      expect(step.fellPct).toBeCloseTo(dipPct, 9)
+      expect(step.bouncedPct).toBeCloseTo(bouncePct, 9)
+    })
+
+    it(`buy ${k} (DCA ${k - 1}) does not arm on a dip of ${(dipPct - 0.1).toFixed(1)}%, and does not buy on a bounce of ${(bouncePct - 0.1).toFixed(1)}%`, () => {
+      const short = 1 - (dipPct - 0.1) / 100
+      // A bounce that would buy, had it armed.
+      expect(walk([short, short * (1 + (bouncePct + 0.5) / 100)], POLICY, holding(k)).buys).toHaveLength(k - 1)
+      const low = 1 - dipPct / 100
+      expect(walk([low, low * (1 + (bouncePct - 0.1) / 100)], POLICY, holding(k)).buys).toHaveLength(k - 1)
+    })
+  }
+
+  // CURVE, modelled: the first buy at one, then four swings, each a 3.1–3.8%
+  // dip under the last buy and a bounce of 2–3% off the low, then four more of
+  // the same chop. The flat rule buys every swing — what ran.
+  const CURVE_DIPS = [3.3, 3.5, 3.4, 3.8, 3.1, 3.6, 3.2, 3.7]
+  const CURVE_BOUNCES = [2.9, 2.9, 2.9, 2.8, 2.4, 2.0, 2.7, 2.5]
+  const chop: number[] = []
+  const flatBuys: number[] = [1]
+  for (let i = 0, top = 1; i < CURVE_DIPS.length; i++) {
+    const low = top * (1 - CURVE_DIPS[i]! / 100)
+    top = low * (1 + CURVE_BOUNCES[i]! / 100)
+    chop.push(low, top)
+    flatBuys.push(top)
+  }
+  const afterFirst = { buys: [{ time: 1_000, price: 1 }], watch: watchAfterBuy(1, 1_000, 1_000, null) }
+
+  it('CURVE’s chop bought every swing on the flat rule — nine buys drifting down a few percent', () => {
+    const { buys } = walk(chop, FLAT, afterFirst)
+    expect(buys.map((b) => b.price)).toEqual(flatBuys)
+    expect(1 - buys[4]!.price).toBeLessThan(0.035)
+  })
+
+  it('CURVE’s chop buys DCA 1 and then stops: DCA 2 needs a 5% dip and a 3% bounce, and no swing gives both', () => {
+    const { buys } = walk(chop, POLICY, afterFirst)
+    expect(buys.map((b) => b.price)).toEqual([1, flatBuys[1]])
+    expect(dipBounceThresholds(3, POLICY)).toMatchObject({ dipPct: 5, bouncePct: 3 })
+  })
+})
+
+describe('the dip-bounce ladder — zero steps are the flat rule, exactly', () => {
+  it('asks every buy for the same 3%, 2% and 20%', () => {
+    for (let step = 1; step <= 20; step++) expect(dipBounceThresholds(step, FLAT)).toEqual({ dipPct: 3, bouncePct: 2, maxDipPct: 20 })
+  })
+
+  it('buys every 4% dip and 2.1% bounce, twenty in a row — the same buys and the same watch as a policy with no steps at all', () => {
+    const saw: number[] = [1]
+    let price = 1
+    for (let i = 0; i < 25; i++) {
+      saw.push(price * 0.96, price * 0.96 * 1.021)
+      price = price * 0.96 * 1.021
+    }
+    const flat = walk(saw, FLAT)
+    expect(flat.buys).toHaveLength(20)
+    expect(flat.buys.map((b) => b.price)).toEqual(saw.filter((_, i) => i > 0 && i % 2 === 0).slice(0, 20))
+    // The stepped rule stops at DCA 2 on the same walk: a 4% dip is not 5%.
+    expect(walk(saw, POLICY).buys).toHaveLength(2)
+  })
+})
+
+describe('the dip-bounce ladder — the ceiling grows with the dip, so all twenty buys are reachable', () => {
+  // *El techo del 20% crece 2 puntos por DCA, igual que la caída.* DCA 10 asks
+  // a 21% dip; a fixed 20% ceiling would mark every such dip a collapse, and
+  // the book would top out at ten buys.
+  const ten = Array.from({ length: 10 }, (_, i) => ({ time: 1_000 + i, price: 1 + (9 - i) * 0.05 }))
+  const afterTen = { buys: ten, watch: watchAfterBuy(1, ten[9]!.time, ten[0]!.time, null) }
+
+  for (const fall of [21, 25, 30, 38]) {
+    it(`DCA 10 fires on a ${fall}% dip and an 11% bounce`, () => {
+      const low = 1 - fall / 100
+      expect(walk([low, low * 1.11], POLICY, afterTen).buys).toHaveLength(11)
+    })
+  }
+
+  it('DCA 10 does not arm on a 20.9% dip, and a 39% dip is a collapse: no bounce buys it, and it says so', () => {
+    expect(walk([0.791, 0.791 * 1.2], POLICY, afterTen).buys).toHaveLength(10)
+    const crash = nextDipBounce(afterTen.watch, { priceUsd: 0.61, at: 1e9, buys: ten }, POLICY)
+    expect(crash.crashedPct).toBeCloseTo(39, 9)
+    expect(crash.watch).toMatchObject({ armed: true, crashed: true })
+    // Deeper still, and a bounce that stays past the line: nothing.
+    expect(walk([0.61, 0.55, 0.55 * 1.12], POLICY, afterTen).buys).toHaveLength(10)
+    // Back within its own 38% — not the first buy's 20% — the collapse clears.
+    const back = walk([0.61, 0.65], POLICY, afterTen)
+    expect(back.watch).toMatchObject({ armed: true, low: 0.65 })
+    expect(back.watch).not.toHaveProperty('crashed')
+    expect(walk([0.61, 0.65, 0.65 * 1.11], POLICY, afterTen).buys).toHaveLength(11)
+  })
+
+  it('a synthetic descent — each buy one point past its own dip and bounce — reaches all twenty, and stops there', () => {
+    const seen: number[] = [1]
+    let top = 1
+    for (let k = 1; k <= 25; k++) {
+      const { dipPct, bouncePct } = dipBounceThresholds(k, POLICY)
+      const low = top * (1 - (dipPct + 1) / 100)
+      top = low * (1 + (bouncePct + 1) / 100)
+      seen.push(low, top)
+    }
+    const { buys } = walk(seen, POLICY)
+    expect(buys).toHaveLength(20)
+    for (let i = 1; i < buys.length; i++) expect(buys[i]!.price).toBeLessThan(buys[i - 1]!.price)
+    // The same buys with the ceiling off: on this descent it never spoke.
+    expect(walk(seen, { ...POLICY, maxDipPct: 0 }).buys).toEqual(buys)
+    // A ceiling that stayed at 20% would have refused DCA 10's 22% here.
+    expect(dipBounceThresholds(11, POLICY).dipPct + 1).toBeGreaterThan(POLICY.maxDipPct)
+  })
+})
+
+describe('the dip-bounce ladder — a watch armed under a shallower line', () => {
+  // The thresholds are derived from the buys, never stored. A watch written by
+  // the flat rule before the steps — armed at 3% for what is now DCA 2 — has
+  // not dipped far enough for DCA 2's 5%: it is not armed for it.
+  const buys = [{ time: 1_000, price: 1.02 }, { time: 2_000, price: 1 }]
+  const armedAtFour: DipWatch = { reference: 1, low: 0.96, armed: true, at: 2_500, holdingSince: 1_000 }
+
+  it('buys nothing on a bounce off a 4% low, and waits unarmed off the same reference — written, so the store takes it', () => {
+    const step = nextDipBounce(armedAtFour, { priceUsd: 0.96 * 1.035, at: 3_000, buys }, POLICY)
+    expect(step.action).toBe('none')
+    expect(step.watch).toEqual({ reference: 1, low: null, armed: false, at: 3_000, holdingSince: 1_000 })
+    expect(dipWatchWorthWriting(armedAtFour, step.watch, 2_000)).toBe(true)
+    expect(keepDipWatch(armedAtFour, step.watch)).toBe(step.watch)
+  })
+
+  it('arms again at 5% and buys on a 3% bounce off the new low', () => {
+    const { buys: after } = walk([0.96 * 1.035, 0.95, 0.95 * 1.03], POLICY, { buys, watch: armedAtFour })
+    expect(after.map((b) => b.price)).toEqual([1.02, 1, 0.95 * 1.03])
+  })
+
+  it('a watch armed past this step’s line keeps its low, as it always did', () => {
+    const deep: DipWatch = { ...armedAtFour, low: 0.94 }
+    const step = nextDipBounce(deep, { priceUsd: 0.94 * 1.031, at: 3_000, buys }, POLICY)
+    expect(step.action).toBe('buy')
+    expect(step.fellPct).toBeCloseTo(6, 9)
   })
 })
 
@@ -125,15 +320,17 @@ describe('the dip-bounce ladder — every later buy, off the LAST buy', () => {
   })
 
   it('stops at twenty buys, the first included — and a new holding starts over', () => {
+    // On the flat rule, where every buy asks the same 4% dip and 2.1% bounce
+    // this walk gives; the stepped one is walked to twenty further down.
     const saw: number[] = []
     let price = 1
     for (let i = 0; i < 40; i++) {
       saw.push(price, price * 0.96, price * 0.96 * 1.021)
       price = price * 0.96 * 1.021
     }
-    const full = walk(saw)
+    const full = walk(saw, FLAT)
     expect(full.buys).toHaveLength(20)
-    const more = nextDipBounce(full.watch, { priceUsd: 0.0001, at: 1e12, buys: full.buys }, POLICY)
+    const more = nextDipBounce(full.watch, { priceUsd: 0.0001, at: 1e12, buys: full.buys }, FLAT)
     expect(more.action).toBe('none')
   })
 
@@ -144,7 +341,7 @@ describe('the dip-bounce ladder — every later buy, off the LAST buy', () => {
       saw.push(price, price * 0.96, price * 0.96 * 1.021)
       price = price * 0.96 * 1.021
     }
-    expect(walk(saw, { ...POLICY, maxSteps: 3 }).buys).toHaveLength(3)
+    expect(walk(saw, { ...FLAT, maxSteps: 3 }).buys).toHaveLength(3)
   })
 })
 
@@ -166,9 +363,9 @@ describe('the dip-bounce ladder — every buy is under the one before, so no at-
     return out
   }
 
-  for (const seed of [1, 7, 42, 2026, 99_991]) {
-    it(`holds on a noisy walk (seed ${seed})`, () => {
-      const { buys } = walk(noisy(seed, 3_000))
+  for (const [name, policy] of [['stepped', POLICY], ['flat', FLAT]] as const) for (const seed of [1, 7, 42, 2026, 99_991]) {
+    it(`holds on a noisy walk (seed ${seed}, ${name})`, () => {
+      const { buys } = walk(noisy(seed, 3_000), policy)
       expect(buys.length).toBeGreaterThan(3)
       for (let i = 1; i < buys.length; i++) {
         const before = buys.slice(0, i)
@@ -296,7 +493,8 @@ describe('the dip-bounce ladder — a fall of more than 20% is a collapse, not a
 
   it('changes NOTHING on a walk whose dips all stay within 20% — the same buys and the same watch, look by look', () => {
     // The dips the tokens doing well actually bought on, 3% to 15.6%, each
-    // with its bounce and a wobble that does not undo it.
+    // with its bounce and a wobble that does not undo it — on the flat rule
+    // they were measured under, every buy asking the same 3% and 2%.
     const falls = [4, 10, 15.6, 3.2, 7.5, 12, 5, 9.9, 3, 14, 6, 11]
     const seen: number[] = [1]
     let reference = 1
@@ -324,8 +522,8 @@ describe('the dip-bounce ladder — a fall of more than 20% is a collapse, not a
       let at = 1_000
       for (const price of prices) {
         at += 30_000
-        const a = nextDipBounce(on, { priceUsd: price, at, buys }, POLICY)
-        const b = nextDipBounce(off, { priceUsd: price, at, buys }, OFF)
+        const a = nextDipBounce(on, { priceUsd: price, at, buys }, FLAT)
+        const b = nextDipBounce(off, { priceUsd: price, at, buys }, { ...FLAT, maxDipPct: 0 })
         expect(a.action).toBe(b.action)
         expect(a.watch).toEqual(b.watch)
         if (b.watch?.armed && b.watch.low !== null) deepest = Math.max(deepest, (1 - b.watch.low / b.watch.reference) * 100)

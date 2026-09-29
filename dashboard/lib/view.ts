@@ -112,7 +112,11 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       // watch in words, read off the watch the sweep wrote down. From the same
       // module the engine reads — the 20% collapse ceiling included, so a
       // collapsed watch is drawn as the line it waits to be back over.
-      dipBounce: { dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, maxDipPct: ladder.maxDipPct, stepUsd: ladder.stepUsd },
+      // Each DCA's own dip, bounce and ceiling are drawn from the steps.
+      dipBounce: {
+        dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, maxDipPct: ladder.maxDipPct,
+        dipStepPct: ladder.dipStepPct, bounceStepPct: ladder.bounceStepPct, stepUsd: ladder.stepUsd,
+      },
       // The deep rung, drawn only when it is switched back on.
       ...(ladder.deepRung
         ? { deepRung: { fallPct: ladder.deepRungFallPct, reboundPct: ladder.deepRungReboundPct, usd: ladder.deepRungUsd } }

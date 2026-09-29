@@ -8,12 +8,14 @@ import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch, DEFAULT_DEATH_EXIT_POLICY, type DeathWatchState } from '../domain/risk/death-exit.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
-import { DEFAULT_DIP_BOUNCE_POLICY, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
+import { DEFAULT_DIP_BOUNCE_POLICY, dipBounceThresholds, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
 import { type LiquidityReading } from '../domain/strategy/liquidity-brake.js'
 
 /**
  * *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y armá
- * escalones de 1 USD con la misma regla* — then *disminuí los escalones a 20.*
+ * escalones de 1 USD con la misma regla* — then *disminuí los escalones a 20*,
+ * then *3% suma 2%, el 2% suma 2% por cada DCA* and *el rebote dejalo que
+ * aumente de 1%*: each DCA asks 2 more points of dip and ceiling, 1 of bounce.
  *
  * The rule is pure and tested in `domain/strategy/dip-bounce.ts`. These ask the
  * SWEEP that runs it every thirty seconds: that it watches a reservation from
@@ -106,11 +108,23 @@ const rig = async (options: {
   return { store, sent, run, buys, watch, writes: () => writes, deps }
 }
 
-/** Walks the price down one full step: a 4% dip, then a 2.1% bounce off it. */
+/** Walks the price down one full step: a 4% dip, then a 2.1% bounce off it — the first buy's and DCA 1's. */
 const oneStep = async (run: (price: number) => Promise<unknown>, from: number) => {
   await run(from * 0.96)
   await run(from * 0.96 * 1.021)
   return from * 0.96 * 1.021
+}
+
+/**
+ * Walks the price down one full step for the k-th buy: a point past its own dip,
+ * then a point past its own bounce off that low.
+ */
+const stepDown = async (run: (price: number) => Promise<unknown>, from: number, k: number) => {
+  const { dipPct, bouncePct } = dipBounceThresholds(k, DEFAULT_DIP_BOUNCE_POLICY)
+  const low = from * (1 - (dipPct + 1) / 100)
+  await run(low)
+  await run(low * (1 + (bouncePct + 1) / 100))
+  return low * (1 + (bouncePct + 1) / 100)
 }
 
 describe('the dip-bounce ladder, through the sweep — the FIRST buy', () => {
@@ -147,16 +161,29 @@ describe('the dip-bounce ladder, through the sweep — every later buy', () => {
     price = await oneStep(run, price)
     expect((await buys()).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
     const averaged = sent.filter((a) => a.kind === 'dca-filled').map((a) => a.title)
-    expect(averaged).toEqual(['🪜 T promedió — compra 2 de 20: cayó 4.0% y rebotó 2.1%'])
+    expect(averaged).toEqual(['🪜 T promedió — compra 2 de 20: cayó 4.0% (pedía 3%) y rebotó 2.1% (pedía 2%) — DCA 1'])
     expect(sent.find((a) => a.kind === 'dca-filled')?.level).toBe('info')
     void price
+  })
+
+  it('asks DCA 2 for a 5% dip and a 3% bounce: DCA 1’s 4% and 2.1% again buy nothing', async () => {
+    const { run, buys, sent } = await rig()
+    await run(1)
+    let price = await oneStep(run, 1)
+    price = await oneStep(run, price)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    await oneStep(run, price)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+    await stepDown(run, price, 3)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2'])
+    expect(sent.filter((a) => a.kind === 'dca-filled').map((a) => a.title)[1]).toMatch(/: cayó \d+\.\d% \(pedía 5%\) y rebotó \d+\.\d% \(pedía 3%\) — DCA 2$/)
   })
 
   it('stops at twenty, the first buy included — every one a dollar, every one under the last', async () => {
     const { run, buys } = await rig()
     await run(1)
     let price = 1
-    for (let i = 0; i < 25; i++) price = await oneStep(run, price)
+    for (let k = 1; k <= 25; k++) price = await stepDown(run, price, k)
     const bought = await buys()
     expect(bought).toHaveLength(20)
     for (let i = 1; i < bought.length; i++) expect(bought[i]!.price).toBeLessThan(bought[i - 1]!.price)
@@ -169,7 +196,7 @@ describe('the dip-bounce ladder, through the sweep — every later buy', () => {
     const { run, buys, store } = await rig({ bookUsd: 1_000 })
     await run(1)
     let price = 1
-    for (let i = 0; i < 20; i++) price = await oneStep(run, price)
+    for (let k = 1; k <= 20; k++) price = await stepDown(run, price, k)
     expect(await buys()).toHaveLength(20)
     for (const f of await buys()) expect(f.qty * f.price).toBeCloseTo(1 * (1 + 0.1 / 100), 3)
     const [held] = await store.loadPositions()
@@ -182,7 +209,7 @@ describe('the dip-bounce ladder, through the sweep — every later buy', () => {
     const { run, buys, sent } = await rig({ bookUsd: 20 })
     await run(1)
     let price = 1
-    for (let i = 0; i < 20; i++) price = await oneStep(run, price)
+    for (let k = 1; k <= 20; k++) price = await stepDown(run, price, k)
     const bought = await buys()
     expect(bought.length).toBeGreaterThan(15)
     expect(bought.length).toBeLessThan(20)
@@ -291,7 +318,7 @@ describe('the dip-bounce ladder, through the sweep — a fall of more than 20% i
     for (const price of [1, 0.684, 0.684 * 1.021, 0.684 * 1.05, 0.7, 0.66, 0.68]) await run(price)
     expect(await buys()).toEqual([])
     expect(collapses(sent).map((a) => a.title)).toEqual([
-      '🧊 T: cayó 31.6% — más de 20% es un derrumbe; no compra hasta que vuelva a estar a menos de 20% de $1',
+      '🧊 T: cayó 31.6% — más de 20% (techo de la primera compra) es un derrumbe; no compra hasta que vuelva a estar a menos de 20% de $1',
     ])
     expect(collapses(sent)[0]!.level).toBe('info')
     expect(await watch()).toMatchObject({ reference: 1, armed: true, crashed: true })
@@ -313,8 +340,26 @@ describe('the dip-bounce ladder, through the sweep — a fall of more than 20% i
     for (const price of [first * 0.75, first * 0.75 * 1.03, first * 0.7, first * 0.72]) await run(price)
     expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
     expect(collapses(sent).map((a) => a.title)).toEqual([
-      `🧊 T: cayó 25.0% — más de 20% es un derrumbe; no compra hasta que vuelva a estar a menos de 20% de $${first}`,
+      `🧊 T: cayó 25.0% — más de 20% (techo del DCA 1) es un derrumbe; no compra hasta que vuelva a estar a menos de 20% de $${first}`,
     ])
+  })
+
+  it('holds each DCA to its OWN ceiling, grown with its dip: DCA 10 collapses past 38%, not past 20%', async () => {
+    // *El techo del 20% crece 2 puntos por DCA, igual que la caída.*
+    const { run, buys, sent } = await rig()
+    await run(1)
+    let price = 1
+    for (let k = 1; k <= 10; k++) price = await stepDown(run, price, k)
+    expect(await buys()).toHaveLength(10)
+    await run(price * 0.6)
+    expect(collapses(sent).map((a) => a.title)).toEqual([
+      `🧊 T: cayó 40.0% — más de 38% (techo del DCA 10) es un derrumbe; no compra hasta que vuelva a estar a menos de 38% de $${price}`,
+    ])
+    expect(collapses(sent)[0]!.body).toContain('desde ahí la compra espera un rebote de 11%')
+    // Back within its 38% — 35% under — and an 11% bounce: DCA 10.
+    await run(price * 0.65)
+    await run(price * 0.65 * 1.111)
+    expect((await buys()).map((f) => f.orderId).at(-1)).toBe('DCA-10')
   })
 
   it('says a second collapse after a recovery — once per collapse, never once per sweep', async () => {
