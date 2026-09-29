@@ -736,3 +736,45 @@ describe('universe — never more candidates than the capital can take', () => {
     expect(view.tokens.filter((t) => t.tier === 'filtered')).toEqual([])
   })
 })
+
+describe('universe — the hour each token moved, for the breadth bar', () => {
+  // *Una barra de rojo a verde: si la mayoría están subiendo en la última hora,
+  // del lado verde.* The bar counts the rows, so every row carries its hour.
+
+  it('carries the last-hour change the scan read, and says so when nobody reported one', async () => {
+    const store = await seed([
+      token('RISE'),
+      token('FALL', { priceChangePct: { h1: -2.5, h6: 0, h24: 0 } }),
+      token('QUIET', { priceChangePct: { h1: null, h6: 0, h24: 0 } }),
+    ])
+    const view = await buildUniverse(store, options)
+    const hour = new Map(view.tokens.map((t) => [t.symbol, t.change1hPct]))
+    expect(hour.get('RISE')).toBe(6)
+    expect(hour.get('FALL')).toBe(-2.5)
+    expect(hour.get('QUIET')).toBeNull()
+  })
+
+  it('moves with the live market for a token we hold, so the bar moves with every poll', async () => {
+    const store = await seed([token('OURS', { priceChangePct: { h1: 1, h6: 2, h24: 4 } })])
+    await store.savePosition(position('OURS'))
+    const view = await buildUniverse(store, {
+      ...options,
+      liveMarkets: async () =>
+        new Map([['solana:OURS', { ...token('OURS'), priceChangePct: { h1: -7, h6: 2, h24: 4 } }]]),
+    })
+    expect(view.tokens[0]!.change1hPct).toBe(-7)
+  })
+
+  it('a position the scan did not mention reads its hour from the live feed, or does not claim one', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(position('GONE'))
+    const live = await buildUniverse(store, {
+      ...options,
+      liveMarkets: async () => new Map([['solana:GONE', { ...token('GONE'), priceChangePct: { h1: 3, h6: 0, h24: 0 } }]]),
+    })
+    expect(live.tokens[0]!.change1hPct).toBe(3)
+
+    const silent = await buildUniverse(store, options)
+    expect(silent.tokens[0]!.change1hPct).toBeNull()
+  })
+})

@@ -85,6 +85,8 @@ export interface UniverseToken {
   readonly liquidityUsd: number
   readonly volume24hUsd: number
   readonly priceUsd: number
+  /** The last hour's price change, in percent, or null when not reported. What the breadth bar counts. */
+  readonly change1hPct: number | null
   readonly change24hPct: number | null
   readonly ageHours: number | null
   /** Round-trip cost estimate, in percent — what the chain takes. */
@@ -422,6 +424,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
       liquidityUsd: snapshot.liquidityUsd,
       volume24hUsd: snapshot.volumeUsd.h24,
       priceUsd: snapshot.priceUsd,
+      change1hPct: snapshot.priceChangePct.h1,
       change24hPct: snapshot.priceChangePct.h24,
       ageHours: snapshot.pairCreatedAt === null ? null : (snapshot.observedAt - snapshot.pairCreatedAt) / 3_600_000,
       frictionPct: 2 * (quality.spreadPct + quality.slippagePct),
@@ -574,6 +577,7 @@ function fromPositionAlone(
     liquidityUsd: market?.liquidityUsd ?? position.quality.liquidityUsd,
     volume24hUsd: market?.volumeUsd.h24 ?? 0,
     priceUsd: market?.priceUsd ?? position.lastPriceUsd ?? 0,
+    change1hPct: market?.priceChangePct.h1 ?? null,
     change24hPct: market?.priceChangePct.h24 ?? null,
     ageHours: null,
     frictionPct: 2 * (position.quality.spreadPct + position.quality.slippagePct),

@@ -44,6 +44,9 @@ const make = (i: number): UniverseToken => {
     liquidityUsd,
     volume24hUsd: liquidityUsd * (0.2 + r(10) * 3),
     priceUsd: 0.0001 + r(11) * 0.05,
+    // A few that did not report the hour and a few that did not move, so the
+    // breadth line shows every count it has, not only the rises and falls.
+    change1hPct: i % 13 === 5 ? null : i % 17 === 4 ? 0 : (r(15) - 0.42) * 20,
     change24hPct: (r(12) - 0.4) * 60,
     ageHours: 24 + r(13) * 2000,
     frictionPct: 0.6 + (1 - r(2)) * 6,
