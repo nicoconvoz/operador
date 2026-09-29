@@ -32,7 +32,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **The book** | a slot is **20 × $5 = $100**; the book holds **capital / $100** tokens, the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
 | **Every later buy** | **$5** on a dip and a bounce that **grow with each DCA**, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
-| **Exits** | the **TP** at +10% over the average, the **gain lock**, the **freeze** exit, the **death** exit | the cascade, `gain-lock.ts`, `death-exit.ts` |
+| **Exits** | a **fixed TP at +12.5%** over the average, the **freeze** exit, the **death** exit | `fixed-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### The door: rising in the last hour
 
@@ -132,10 +132,22 @@ the ceiling). Zero step values restore the flat rule.
 
 | Exit | Leaves at a loss? |
 |---|---|
-| 🏁 The strategy's TP — `avg_cost × 1.10` and the impulse dead or a Supertrend flip | no — the no-loss guard |
-| 🔐 The gain lock — at +20% it locks +10%, and 10 more for every 20 more | no |
+| 🎯 **The fixed TP** — the stop sweep sells everything the moment the live price reaches `avg_cost × 1.125` | no — the no-loss guard |
+| 🏁 The strategy's TP — its floor is raised to 12.5% too, so it can never sell below the fixed one | no |
+| 🔐 The gain lock — at +20% it locks +10%; with the fixed TP on it practically never fires, since +20% has already crossed +12.5% | no |
 | ❄️ The freeze exit — liquidity collapse, a safety gate that turned, a broken sell path | yes, by design |
 | ☠️ The death exit — twelve hours without a trade, the sell path gone, confirmed | yes, by design |
+
+**The fixed TP.** *Poné un TP fijo al 12.5% del promedio.* The number is the
+operator's, from the live tape: 149 take-profits on 24–25/09 averaged **+13.0%**,
+58 on the 26th **+13.0%**. And the reason it had to be fixed and live: the old
+exit read only 15-minute closes and waited for the impulse to die, so a spike
+past the target inside a bar, or a close above it with the impulse still
+alive, turned back and left the position stuck under it — fone touched +19%
+over its average and fell to +5.6%. The big runs are given up on purpose.
+`OPERADOR_FIXED_TP_PCT` (12.5; 0 turns off the sweep's TP, and
+`OPERADOR_MIN_PROFIT_PCT=10` restores the old floor). Frozen and dead
+positions are left to their own exits.
 
 `OPERADOR_MAX_COST_SHARE_PCT` defaults to 0: on a small step the gas-derived
 target would have lifted the TP to about +35%. **The two-hour abandonment
