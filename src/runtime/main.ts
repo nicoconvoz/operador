@@ -1185,6 +1185,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // null when switched off — composed here so the cycle's sweeps and the
       // loop's read the same one.
       gainLock: config.gainLock,
+      // *Poné un TP fijo al 12.5% del promedio.* Zero is off — composed here
+      // so the cycle's sweeps and the loop's read the same line.
+      fixedTpPct: config.fixedTpPct,
       maxStopPct: config.maxStopPct,
       usdPerToken: config.usdPerToken,
       // *Para la primera compra: expansión del volumen más del 50% y tendencia

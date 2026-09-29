@@ -130,9 +130,10 @@ describe('the gain lock, through the path the engine runs', () => {
   })
 })
 
-describe('the take-profit waits for +10%, through the path the engine runs', () => {
-  // *Bajalas a 10.* The strategy's own exit still sells when the impulse
-  // dies — only never under +10% over the average cost.
+describe('the strategy exit waits for +12.5%, through the path the engine runs', () => {
+  // *Bajalas a 10* — then *poné un TP fijo al 12.5% del promedio.* The
+  // strategy's own exit still sells when the impulse dies — only never under
+  // the fixed TP, which the sweep takes first.
   const tick = async (env: Record<string, string> = {}) => {
     const { deps, cycleConfig } = runtime(env)
     const bars = 300
@@ -149,8 +150,8 @@ describe('the take-profit waits for +10%, through the path the engine runs', () 
     )
   }
 
-  it('asks the exit for at least +10% when nothing is set', async () => {
-    expect((await tick()).minProfitPct).toBe(10)
+  it('asks the exit for at least +12.5% when nothing is set', async () => {
+    expect((await tick()).minProfitPct).toBe(12.5)
   })
 
   it('takes another floor from the environment', async () => {
@@ -705,7 +706,7 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     for (const f of bought) expect((f.qty * f.price) / 5).toBeCloseTo(1, 2)
   })
 
-  it('sells the holding at +10% or more over the average of its $5 steps — the TP, unchanged', async () => {
+  it('sells the holding through the strategy exit only at +12.5% or more over the average of its $5 steps', async () => {
     const { sweep, buys, store, slot, cycleConfig, deps } = await book()
     for (const price of [1, 0.96, 0.98, 0.9, 0.92, 0.85, 0.876]) await sweep(price)
     expect(await buys()).toHaveLength(3)
@@ -728,13 +729,91 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     }
 
     const early = await tickAt(avg * 1.09)
-    expect(early.ticked.minProfitPct).toBe(10)
+    expect(early.ticked.minProfitPct).toBe(12.5)
     expect(early.sells).toEqual([])
 
     const { ticked, sells } = await tickAt(avg * 1.3)
-    expect(ticked.minProfitPct).toBe(10)
+    expect(ticked.minProfitPct).toBe(12.5)
     expect(sells.length).toBe(3)
-    for (const f of sells) expect(f.price).toBeGreaterThanOrEqual(avg * 1.1)
+    for (const f of sells) expect(f.price).toBeGreaterThanOrEqual(avg * 1.125)
+  })
+})
+
+describe('the fixed TP at +12.5%, through the path the engine runs', () => {
+  // *Poné un TP fijo al 12.5% del promedio* — sell everything the moment the
+  // price reaches the average cost plus 12.5%, accepting that the big runs are
+  // given up. Built from an EMPTY environment, the runtime's own sweep rules,
+  // on a holding its own dip-bounce steps bought: three $5 buys, as in the
+  // book above.
+  const holding = async (env: Record<string, string> = {}) => {
+    const { deps, cycleConfig, store } = onMemory(env)
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
+    await store.savePosition(slot)
+    let clock = 1_000
+    const levels = (position: PersistedPosition) => exitLevelsFor(position, exitSizingFrom(cycleConfig))
+    const sweepOn = async (book: readonly PersistedPosition[], price: number) =>
+      sweepStops(deps, levels, new AlertThrottle(0), book.map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000))
+    const sweep = async (price: number) => sweepOn(await store.loadPositions(), price)
+    for (const price of [1, 0.96, 0.98, 0.9, 0.92, 0.85, 0.876]) await sweep(price)
+    const fills = async () => store.fillsFor(slot.id)
+    expect((await fills()).filter((f) => f.side === 'buy')).toHaveLength(3)
+    const ledger = positionLedger(await fills())
+    const sells = async () => (await fills()).filter((f) => f.side === 'sell')
+    return { deps, store, slot, sweep, sweepOn, sells, avg: ledger.avgCostUsd!, qty: ledger.qty }
+  }
+
+  it('is ON at 12.5 when nothing is set, through the levels the cycle and the loop read', () => {
+    const { cycleConfig } = runtime()
+    expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).fixedTpPct).toBe(12.5)
+    expect(exitLevelsFor(held, exitSizingFrom(runtime({ OPERADOR_FIXED_TP_PCT: '0' }).cycleConfig)).fixedTpPct).toBeNull()
+  })
+
+  it('sells EVERYTHING the next sweep once the live price reaches the average × 1.125, under its own name', async () => {
+    const { deps, store, slot, sweep, sells, avg, qty } = await holding()
+    expect(await sweep(avg * 1.125)).toEqual([slot.id])
+    const sold = await sells()
+    expect(sold.map((f) => f.comment)).toEqual(['🎯 TP fijo', '🎯 TP fijo', '🎯 TP fijo'])
+    expect(sold.reduce((q, f) => q + f.qty, 0)).toBeCloseTo(qty, 9)
+    expect(await store.loadPositions()).toEqual([])
+    const said = (deps.alerts as RecordingAlerts).sent.find((a) => a.title.startsWith('🎯'))
+    expect(said?.level).toBe('info')
+    expect(said?.title).toMatch(/^🎯 T vendida en su TP fijo: \+12\.5% sobre el promedio — ganó \$\d+\.\d\d$/)
+  })
+
+  it('does not sell at the average × 1.12', async () => {
+    const { store, slot, sweep, sells, avg } = await holding()
+    expect(await sweep(avg * 1.12)).toEqual([])
+    expect(await sells()).toEqual([])
+    expect((await store.loadPositions()).map((p) => p.id)).toEqual([slot.id])
+  })
+
+  it('sells nothing at +12.5% on the sweep with OPERADOR_FIXED_TP_PCT=0', async () => {
+    const { store, slot, sweep, sells, avg } = await holding({ OPERADOR_FIXED_TP_PCT: '0' })
+    expect(await sweep(avg * 1.125)).toEqual([])
+    expect(await sweep(avg * 1.15)).toEqual([])
+    expect(await sells()).toEqual([])
+    expect((await store.loadPositions()).map((p) => p.id)).toEqual([slot.id])
+  })
+
+  it('never sells a position twice — the stale snapshot handed to the next sweep sells nothing', async () => {
+    const { store, sweepOn, sells, avg } = await holding()
+    const before = await store.loadPositions()
+    await sweepOn(before, avg * 1.125)
+    await sweepOn(before, avg * 1.13)
+    expect(await sells()).toHaveLength(3)
+  })
+
+  it('leaves the gain lock working when the fixed TP is off: a floor at +20%, sold on the way back to +9%', async () => {
+    const { slot, sweep, sells, avg } = await holding({ OPERADOR_FIXED_TP_PCT: '0' })
+    expect(await sweep(avg * 1.25)).toEqual([])
+    expect(await sweep(avg * 1.09)).toEqual([slot.id])
+    expect(new Set((await sells()).map((f) => f.comment))).toEqual(new Set(['🔐 Piso de ganancia']))
+  })
+
+  it('and with the fixed TP on, the same jump to +25% leaves at the TP before any floor is set', async () => {
+    const { slot, sweep, sells, avg } = await holding()
+    expect(await sweep(avg * 1.25)).toEqual([slot.id])
+    expect(new Set((await sells()).map((f) => f.comment))).toEqual(new Set(['🎯 TP fijo']))
   })
 })
 

@@ -181,6 +181,12 @@ export interface RuntimeConfig {
   readonly dropInitPct: number
   /** The least the strategy exit sells for, in percent over the average cost. */
   readonly minProfitPct: number
+  /**
+   * The FIXED take-profit, in percent over the average cost: the sweep sells
+   * the whole holding at the first live price at or over it. Zero: off. See
+   * `domain/strategy/fixed-tp.ts`.
+   */
+  readonly fixedTpPct: number
   /** Gains at which the exit stops waiting for the impulse to die. */
   readonly impatientProfitPct: number
   readonly urgentProfitPct: number
@@ -577,6 +583,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', productionLadder(env).maxUsdPerLevel),
     dropInitPct: productionLadder(env).dropInitPct,
     minProfitPct: productionLadder(env).minProfitPct,
+    // *Poné un TP fijo al 12.5% del promedio.* From the module the dashboard
+    // reads, so the card draws the line the sweep sells at.
+    fixedTpPct: productionLadder(env).fixedTpPct,
     impatientProfitPct: productionLadder(env).impatientProfitPct,
     urgentProfitPct: productionLadder(env).urgentProfitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),

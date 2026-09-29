@@ -191,6 +191,14 @@ describe('dayActivity — what each day DID, read off the tape', () => {
     expect(dayActivity(fills).get('2026-09-29')).toEqual({ buys: 0, closes: 5, tp: 1, gainLock: 1, frozen: 1, death: 1, other: 1 })
   })
 
+  it('counts the fixed TP as a take-profit, never as "other"', () => {
+    // *Poné un TP fijo al 12.5% del promedio.* It replaces the strategy's own
+    // exit in practice, so the day's TP count is both of them.
+    const t = at('2026-09-29T15:00:00Z')
+    const fills = [sell('a', t, '🏁 Exit'), sell('b', t + 1, '🎯 TP fijo'), sell('b2', t + 2, '🎯 TP fijo', 'DCA-1')]
+    expect(dayActivity(fills).get('2026-09-29')).toEqual({ buys: 0, closes: 3, tp: 3, gainLock: 0, frozen: 0, death: 0, other: 0 })
+  })
+
   it('files a fill under its Buenos Aires day, like the result it sits beside', () => {
     // 02:00 UTC on the 30th is still the 29th in Buenos Aires.
     const days = dayActivity([buy('x', at('2026-09-30T02:00:00Z')), buy('y', at('2026-09-30T04:00:00Z'))])

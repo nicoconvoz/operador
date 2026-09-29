@@ -2,6 +2,7 @@ import { tradingDay, type DailyPnl } from '../domain/reporting/daily-pnl.js'
 import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
 import { DEATH_EXIT_COMMENT, FROZEN_EXIT_COMMENT } from '../domain/risk/death-exit.js'
 import { GAIN_LOCK_COMMENT } from '../domain/risk/gain-lock.js'
+import { FIXED_TP_COMMENT } from '../domain/strategy/fixed-tp.js'
 
 /**
  * The read model behind the Log tab and the "funcionando hace…" counter.
@@ -57,8 +58,10 @@ export interface DayActivity {
 
 const NO_ACTIVITY: DayActivity = { buys: 0, closes: 0, tp: 0, gainLock: 0, frozen: 0, death: 0, other: 0 }
 
+// The fixed TP is a take-profit: in practice it is the one that sells now, and
+// the strategy's own exit only ever sells at or over the same line.
 const exitKind = (comment: string): 'tp' | 'gainLock' | 'frozen' | 'death' | 'other' =>
-  comment === '🏁 Exit' ? 'tp'
+  comment === '🏁 Exit' || comment === FIXED_TP_COMMENT ? 'tp'
     : comment === GAIN_LOCK_COMMENT ? 'gainLock'
       : comment === FROZEN_EXIT_COMMENT ? 'frozen'
         : comment === DEATH_EXIT_COMMENT ? 'death'

@@ -38,7 +38,7 @@ const reservation = (over: Partial<PersistedPosition> = {}): PersistedPosition =
   ...over,
 })
 
-const NO_STOP: ExitLevels = { stop: { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }, armAtPct: null, breakEvenPct: 0, gainLock: null }
+const NO_STOP: ExitLevels = { stop: { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }, armAtPct: null, breakEvenPct: 0, gainLock: null, fixedTpPct: null }
 
 const rig = async (options: {
   readonly held?: PersistedPosition

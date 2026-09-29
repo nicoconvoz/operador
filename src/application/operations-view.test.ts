@@ -973,3 +973,36 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     expect(p!.ladder.length).toBeGreaterThan(1)
   })
 })
+
+describe('buildOperations — the fixed TP line of each held position', () => {
+  // *Poné un TP fijo al 12.5% del promedio.* Each card says where its holding
+  // sells, from the module the engine reads, over the same average the sweep
+  // measures from.
+  const L = productionLadder({})
+  const tp = { ...options, fixedTpPct: L.fixedTpPct }
+
+  it('draws "TP fijo en $P (+12.5% del promedio)" over the holding’s average cost', async () => {
+    // $1 at 1.00 and $1 at 0.80: the average is 0.8889, the line 1.000.
+    const store = await seed([fill('Entry', 1, 1, NOW - 30 * MIN), fill('DCA-1', 0.8, 1.25, NOW - 20 * MIN)])
+    const [p] = (await buildOperations(store, tp)).positions
+    expect(p!.takeProfit).toEqual({ priceUsd: expect.closeTo(1, 12), pct: 12.5, detail: 'TP fijo en $1.000 (+12.5% del promedio)' })
+  })
+
+  it('draws no line for a reservation that holds nothing yet', async () => {
+    const store = await seed([], { cascade: initialState() })
+    expect((await buildOperations(store, tp)).positions[0]!.takeProfit).toBeNull()
+  })
+
+  it('draws no line when the TP is off — the screen never offers a sale the engine will not make', async () => {
+    const store = await seed([fill('Entry', 1, 1, NOW - 30 * MIN)])
+    expect((await buildOperations(store, { ...options, fixedTpPct: 0 })).positions[0]!.takeProfit).toBeNull()
+    expect((await buildOperations(store, options)).positions[0]!.takeProfit).toBeNull()
+  })
+
+  it('draws no line on a frozen or dead position — those leave by the freeze and death exits', async () => {
+    for (const stage of ['frozen', 'dead'] as const) {
+      const store = await seed([fill('Entry', 1, 1, NOW - 30 * MIN)], { deathWatch: { ...startDeathWatch(250_000, NOW), stage } })
+      expect((await buildOperations(store, tp)).positions[0]!.takeProfit, stage).toBeNull()
+    }
+  })
+})

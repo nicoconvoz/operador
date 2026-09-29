@@ -75,6 +75,8 @@ const rig = async (options: {
     armAtPct: null,
     breakEvenPct: 0,
     gainLock: options.lock === false ? null : DEFAULT_GAIN_LOCK_POLICY,
+    // The fixed TP off: these pin the lock alone, at gains the TP would take first.
+    fixedTpPct: null,
   }
   const run = async (price: number) =>
     sweepStops(deps, () => levels, new AlertThrottle(0), await store.loadPositions(), new Map([['solana:T', price]]), AT)

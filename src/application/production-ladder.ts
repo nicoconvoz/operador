@@ -444,10 +444,28 @@ export const DEFAULT_IMPATIENT_PROFIT_PCT = 10
 export const DEFAULT_URGENT_PROFIT_PCT = 25
 
 /**
+ * The FIXED take-profit, in percent over the average cost: the stop sweep sells
+ * the whole holding on the first live price at or over it, every thirty
+ * seconds, with no wait for an impulse or a bar. *Poné un TP fijo al 12.5% del
+ * promedio* — the big runs given up, knowingly. See
+ * `domain/strategy/fixed-tp.ts`.
+ *
+ * Zero is a REAL value — the TP off, and the sweep back to what it did before
+ * — so it reads through `nonNegative`, never `positive`; nonsense keeps 12.5.
+ */
+export const DEFAULT_FIXED_TP_PCT = 12.5
+
+/**
  * The least the strategy's own exit may sell for, in percent over the average
  * cost. It is the FLOOR of the derived target — `minProfitPctFor` takes the
  * larger of this and what the pool's round trip demands — so the exit still
  * sells when the impulse dies, only never under it.
+ *
+ * TWELVE AND A HALF now, the fixed TP's own line and derived from it rather
+ * than written twice: the bar-close exit may never sell a holding BELOW the
+ * line the sweep sells it at. In practice the sweep, reading the live price
+ * every thirty seconds, sells first. `OPERADOR_MIN_PROFIT_PCT` still moves it
+ * on its own — `OPERADOR_FIXED_TP_PCT=0` does not.
  *
  * TEN, with the break-even switched off. It was twenty for an hour: *sacá el
  * break-even, pero poné un mínimo de ganancia del 20%* — the break-even armed
@@ -467,13 +485,15 @@ export const DEFAULT_URGENT_PROFIT_PCT = 25
  * eat what the runners make. The reference's 2 stays in `DEFAULT_PARAMS`,
  * which is evidence.
  */
-export const DEFAULT_MIN_PROFIT_PCT = 10
+export const DEFAULT_MIN_PROFIT_PCT = DEFAULT_FIXED_TP_PCT
 
 
 export interface ProductionLadder {
   readonly maxUsdPerLevel: number
   /** The least the strategy exit sells for, in percent over the average cost. */
   readonly minProfitPct: number
+  /** Where the sweep sells the whole holding, in percent over the average cost. Zero: off. */
+  readonly fixedTpPct: number
   /** Entries the venue holds open at once: the entry plus its DCA rungs. */
   readonly maxOpenEntries: number
   /** Drop from the swing high the classic entry demands, in percent. */
@@ -637,6 +657,11 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     maxOpenEntries,
     dropInitPct: percent(env.OPERADOR_DROP_INIT_PCT, DEFAULT_DROP_INIT_PCT),
     minProfitPct: positive(env.OPERADOR_MIN_PROFIT_PCT, DEFAULT_MIN_PROFIT_PCT),
+    // *Poné un TP fijo al 12.5% del promedio.* Zero is a REAL value — the TP
+    // off — so it reads through `nonNegative`, never `positive`; nonsense and
+    // negatives keep the operator's 12.5. No ceiling: +150% is a target, if an
+    // odd one.
+    fixedTpPct: nonNegative(env.OPERADOR_FIXED_TP_PCT, DEFAULT_FIXED_TP_PCT),
     impatientProfitPct: positive(env.OPERADOR_IMPATIENT_PROFIT_PCT, DEFAULT_IMPATIENT_PROFIT_PCT),
     urgentProfitPct: positive(env.OPERADOR_URGENT_PROFIT_PCT, DEFAULT_URGENT_PROFIT_PCT),
     dcaDropsPct,

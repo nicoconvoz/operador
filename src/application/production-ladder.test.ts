@@ -21,6 +21,8 @@ import {
   DEFAULT_BOUNCE_STEP_PCT,
   DEFAULT_DEEP_RUNG,
   DEFAULT_CASCADE_ENTRIES,
+  DEFAULT_FIXED_TP_PCT,
+  DEFAULT_MIN_PROFIT_PCT,
 } from './production-ladder.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
@@ -31,15 +33,31 @@ describe('productionLadder — one place for the numbers that differ', () => {
     // escalones a 20.* The slot reserves the whole ladder, exactly steps ×
     // step. Every other path that could buy is OFF, each one a variable away:
     // the deep rung, the chained drop ladder, its volatility spacing, the
-    // liquidity brake and the cascade's own doors. The TP stays at 10%.
+    // liquidity brake and the cascade's own doors. The TP is FIXED at +12.5%,
+    // and the strategy exit never sells under it.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 5, maxOpenEntries: 20, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
+      maxUsdPerLevel: 5, maxOpenEntries: 20, dropInitPct: 0, minProfitPct: 12.5, fixedTpPct: 12.5, impatientProfitPct: 10, urgentProfitPct: 25,
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
       stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 100, cascadeEntries: false,
     })
     expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 20, 3, 2, 0])
+  })
+
+  it('sells everything at a FIXED +12.5% over the average, and the strategy exit never sells under it', () => {
+    // *Poné un TP fijo al 12.5% del promedio.* The big runs are given up.
+    expect([DEFAULT_FIXED_TP_PCT, DEFAULT_MIN_PROFIT_PCT]).toEqual([12.5, 12.5])
+    expect(productionLadder({}).minProfitPct).toBeGreaterThanOrEqual(productionLadder({}).fixedTpPct)
+    expect(productionLadder({ OPERADOR_FIXED_TP_PCT: '15' }).fixedTpPct).toBe(15)
+    expect(productionLadder({ OPERADOR_FIXED_TP_PCT: '7.5' }).fixedTpPct).toBe(7.5)
+  })
+
+  it('reads zero as the fixed TP OFF, and falls back to 12.5 on nonsense', () => {
+    expect(productionLadder({ OPERADOR_FIXED_TP_PCT: '0' }).fixedTpPct).toBe(0)
+    for (const bad of ['doce', '-5', ' ', 'NaN', 'Infinity']) {
+      expect(productionLadder({ OPERADOR_FIXED_TP_PCT: bad }).fixedTpPct, bad).toBe(12.5)
+    }
   })
 
   it('asks each DCA for 2 more points of dip — and of ceiling — and 1 more of bounce', () => {

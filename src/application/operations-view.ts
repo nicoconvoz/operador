@@ -3,6 +3,7 @@ import { usableScale } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { deepRungArmed, deepRungLine, reboundLine, type DeepRungPolicy } from '../domain/strategy/deep-rung.js'
 import { dipArmLine, bounceLine, crashLine, armedFor, dipBounceThresholds, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
+import { fixedTpPrice } from '../domain/strategy/fixed-tp.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
@@ -90,6 +91,13 @@ export interface PositionOperations {
    * Four locks that are certain beat five where one is invented.
    */
   readonly locks: readonly LadderLock[] | null
+  /**
+   * Where the whole holding sells: *TP fijo en $P (+12.5% del promedio)*.
+   * Null when the TP is off, nothing is held, or the death watch froze or
+   * condemned the position — the sweep does not sell those at the TP, and a
+   * line drawn for them would be a sale the engine will not make.
+   */
+  readonly takeProfit: { readonly priceUsd: number; readonly pct: number; readonly detail: string } | null
   readonly fills: readonly PersistedFill[]
   readonly openedAt: number
   readonly updatedAt: number
@@ -212,6 +220,11 @@ export interface OperationsOptions {
    * when given and no `dropLadder` is.
    */
   readonly dipBounce?: DipBouncePolicy & { readonly stepUsd: number }
+  /**
+   * The fixed TP the sweep sells at, in percent over the average cost — the
+   * number the engine reads, from the same module. Absent or zero: no line.
+   */
+  readonly fixedTpPct?: number
 }
 
 export async function buildOperations(store: StatePort, options: OperationsOptions): Promise<OperationsView> {
@@ -347,6 +360,7 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
         : pressure
         ? await pressureLocks(position, buys, fillable, pressure)
         : ladderLocks(position.cascade, params, position.lastPriceUsd),
+      takeProfit: position.deathWatch.stage === 'healthy' ? takeProfitLine(avgCostUsd, options.fixedTpPct ?? null) : null,
       fills: [...fills].reverse(),
       openedAt: position.openedAt,
       updatedAt: position.updatedAt,
@@ -389,6 +403,17 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
 
 
 const pct = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`
+
+/**
+ * The fixed TP's line over the holding's average cost, in the operator's
+ * words — *TP fijo en $P (+12.5% del promedio)* — from the SAME function the
+ * sweep sells on, so the card and the machine cannot disagree about where.
+ */
+function takeProfitLine(avgCostUsd: number | null, fixedTpPct: number | null): PositionOperations['takeProfit'] {
+  const line = fixedTpPrice(avgCostUsd, fixedTpPct)
+  if (line === null || fixedTpPct === null) return null
+  return { priceUsd: line, pct: fixedTpPct, detail: `TP fijo en $${line.toPrecision(4)} (+${Number(fixedTpPct.toFixed(2))}% del promedio)` }
+}
 
 type DropLadderView = NonNullable<OperationsOptions['dropLadder']>
 

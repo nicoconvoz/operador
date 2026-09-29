@@ -181,6 +181,14 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
         </div>
       )}
 
+      {/* Where the whole holding sells. Always on screen, beside what the next
+          buy waits for: the two lines a position lives between. */}
+      {position.takeProfit && (
+        <div style={{ color: DIM, fontSize: 11, marginTop: 2 }}>
+          🎯 {position.takeProfit.detail}
+        </div>
+      )}
+
       {open && (
         <div style={{ marginTop: 10, fontSize: 13 }}>
           <Line label="costo promedio" value={position.avgCostUsd === null ? '—' : price(position.avgCostUsd)} />

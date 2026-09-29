@@ -46,7 +46,7 @@ const fill = (side: 'buy' | 'sell', price: number, time: number, qty: number, or
 /** The first buy: $15 at 1.00. */
 const ENTRY = fill('buy', 1, 0, 15)
 
-const NO_STOP: ExitLevels = { stop: { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }, armAtPct: null, breakEvenPct: 0, gainLock: null }
+const NO_STOP: ExitLevels = { stop: { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }, armAtPct: null, breakEvenPct: 0, gainLock: null, fixedTpPct: null }
 
 const rig = async (options: {
   readonly held?: PersistedPosition

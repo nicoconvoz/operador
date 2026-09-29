@@ -34,6 +34,7 @@ import {
   GAIN_LOCK_COMMENT,
   type GainLockPolicy,
 } from '../domain/risk/gain-lock.js'
+import { FIXED_TP_COMMENT, reachedFixedTp } from '../domain/strategy/fixed-tp.js'
 import type { BrokerPort } from '../domain/execution/broker.js'
 import type { PersistedFill, PersistedPosition, StatePort } from '../domain/persistence/store.js'
 import {
@@ -142,6 +143,12 @@ export interface ExitSizing {
    * break-even 10%.* See `domain/risk/gain-lock.ts`.
    */
   readonly gainLock: GainLockPolicy | null
+  /**
+   * The FIXED take-profit, in percent over the average cost, or null when it
+   * is off. *Poné un TP fijo al 12.5% del promedio.* See
+   * `domain/strategy/fixed-tp.ts`.
+   */
+  readonly fixedTpPct: number | null
 }
 
 /** The lines a position lives between, in percent of its average cost. */
@@ -161,6 +168,12 @@ export interface ExitLevels {
    * could switch off without saying so.
    */
   readonly gainLock: GainLockPolicy | null
+  /**
+   * Where the whole holding sells, in percent over its average cost; null
+   * means off. Required for the gain lock's reason: a field a caller could
+   * leave out is a rule a caller could switch off without saying so.
+   */
+  readonly fixedTpPct: number | null
 }
 
 /**
@@ -219,6 +232,9 @@ export const exitLevelsFor = (position: PersistedPosition, sizing: ExitSizing): 
     // Not derived from the pool: the operator's staircase is in points of GAIN,
     // and every floor on it is far above any round trip these pools charge.
     gainLock: sizing.gainLock,
+    // Not derived either: *al 12.5% del promedio* is the operator's number, and
+    // the no-loss guard at the fill is what answers for an expensive pool.
+    fixedTpPct: sizing.fixedTpPct !== null && sizing.fixedTpPct > 0 ? sizing.fixedTpPct : null,
   }
 }
 
@@ -555,6 +571,37 @@ export async function sweepStops(
     const held = input.openQty > 0 && avg > 0 && price !== null && price > 0
 
     /**
+     * THE FIXED TP. *Poné un TP fijo al 12.5% del promedio* — the whole
+     * holding, the first sweep the live price is at or over its average cost
+     * plus the line, the big runs given up.
+     *
+     * First of everything a held position does here: a position at its TP is
+     * leaving, and nothing that watches, locks or buys for it has anything
+     * left to do. After the price guard above, like every sale here — a line
+     * is only as good as the price it is compared with.
+     *
+     * Only on a HEALTHY death watch. A frozen position is sold by the freeze
+     * exit and a condemned one by the death exit, each under its own name,
+     * with its own evidence, and the freeze with its ban on release — a TP
+     * sale here would close the slot out from under both and file a freeze or
+     * a death on the tape as a take-profit.
+     *
+     * A refused sale — a fill the no-loss guard saw landing under cost —
+     * changes nothing: the rest of the sweep runs as if the TP had not spoken,
+     * and the position is held.
+     */
+    if (
+      held && levels.fixedTpPct !== null && position.deathWatch.stage === 'healthy' &&
+      (await takeFixedProfit(deps, levels.fixedTpPct, position, fills, avg, price!, at, throttle)) === 'sold'
+    ) {
+      // In the same list as the stops: the caller keeps the token out of this
+      // cycle's allocation, and buying straight back what was just sold is a
+      // round trip, not a rotation.
+      stopped.push(position.id)
+      continue
+    }
+
+    /**
      * THE LIQUIDITY WATCH, on every held position, every sweep — braked or
      * not, near a line or not — because the bounce that buys a rung does not
      * wait for the price. After the price guard: a bounce acts at the live
@@ -721,6 +768,63 @@ export async function sweepStops(
   }
 
   return stopped
+}
+
+/**
+ * The fixed TP on one held position: the whole holding, at the live price,
+ * once that price is at or over its average cost plus `pct` percent — over the
+ * same average the gain lock, the strategy's exit and the screen read.
+ *
+ * Returns 'sold' when the position was closed; null when it holds — under the
+ * line, a sale the no-loss guard refused, or a sale that recorded nothing. The
+ * last one is not closed: a position closed with tokens still on its ledger
+ * orphans them, neither realised nor unrealised, and gone from the screen.
+ */
+async function takeFixedProfit(
+  deps: StopSweepDeps,
+  pct: number,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  avgCostUsd: number,
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<'sold' | null> {
+  if (!reachedFixedTp(price, avgCostUsd, pct)) return null
+
+  const broker = await deps.brokerFor(position)
+  // The SAME `settle` as every other exit — one idempotency key, the no-loss
+  // guard, the per-fill suffix. A second copy of that is how a retry sells
+  // twice. NOT exempt from the guard: it is a strategy exit, and its line is
+  // above cost, so a refusal means the fill would land under it.
+  const refused = await settle(
+    [{ kind: 'closeAll', comment: FIXED_TP_COMMENT }],
+    position.lastBarTime,
+    price,
+    at,
+    position,
+    broker,
+    deps.store,
+  )
+  if (refused) return null
+  const after = await deps.store.fillsFor(position.id)
+  if (after.length === fills.length) return null
+  // What THIS sale made, against the basis it sold out of — the same walk the
+  // tape's per-sale figure uses, so the alert and the Registro line agree.
+  // Costs are not subtracted, for the tape's reason: they have their own column.
+  const made = positionLedger(after).realisedUsd - positionLedger(fills).realisedUsd
+  await deps.store.closePosition(position.id)
+
+  const gain = (price / avgCostUsd - 1) * 100
+  const sold = alert(
+    'position-closed',
+    `🎯 ${position.symbol} vendida en su TP fijo: +${asked(pct)}% sobre el promedio — ganó $${made.toFixed(2)}`,
+    `Llegó a +${gain.toFixed(2)}% sobre el costo promedio (${avgCostUsd}) y se vendió todo a ${price}, sin esperar el impulso ni el cierre de la vela. El TP fijo está en +${asked(pct)}%.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(sold, `fixed-tp:${position.id}`)) await deps.alerts.send(sold)
+  return 'sold'
 }
 
 /**

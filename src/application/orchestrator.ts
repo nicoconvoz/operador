@@ -262,6 +262,14 @@ export interface CycleConfig {
    * handed a new exit. Production composes it ON in `main.ts`.
    */
   readonly gainLock?: GainLockPolicy | null
+  /**
+   * The FIXED take-profit, in percent over the average cost: the sweep sells
+   * the whole holding at the first live price at or over it. *Poné un TP fijo
+   * al 12.5% del promedio.* Absent, null or zero: off — the old behaviour
+   * exactly, so a caller that says nothing is not handed a new exit.
+   * Production composes it ON in `main.ts`.
+   */
+  readonly fixedTpPct?: number | null
   /** The widest the derived stop may ever be. See `ExitSizing.maxStopPct`. */
   readonly maxStopPct?: number
   /**
@@ -1571,5 +1579,8 @@ export function exitSizingFrom(config: CycleConfig): ExitSizing {
     breakEvenArmPct: config.breakEvenArmPct,
     breakEvenFloorPct: config.breakEvenFloorPct,
     gainLock: config.gainLock ?? null,
+    // Zero is OFF here, the way the environment writes it: one "off" for the
+    // sweep to read, never two.
+    fixedTpPct: config.fixedTpPct !== undefined && config.fixedTpPct !== null && config.fixedTpPct > 0 ? config.fixedTpPct : null,
   }
 }

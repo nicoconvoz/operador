@@ -81,6 +81,9 @@ const SPANISH: Record<CloseAllOrder['comment'], string> = {
   // earned. It says "piso" because that is what sold it: not the target, not
   // a stop — the part of the gain that was already kept.
   '🔐 Piso de ganancia': '🔐 Venta en el piso de ganancia',
+  // Already Spanish, and already says what sold it: the fixed line at +12.5%
+  // over the average, reached on a live price.
+  '🎯 TP fijo': '🎯 TP fijo',
 }
 // A DCA rung arrives as "➕ DCA-2" and an entry as "🟢 Entry" — neither is a
 // `closeAll` comment, so neither is in the union above. Anything unknown is

@@ -54,6 +54,7 @@ const sizing: ExitSizing = {
   breakEvenArmPct: undefined,
   breakEvenFloorPct: undefined,
   gainLock: null,
+  fixedTpPct: null,
 }
 
 describe('exitLevelsFor — the stop is sized from the toll the broker actually charges', () => {
@@ -203,5 +204,23 @@ describe('exitSizingFrom — the gain lock reaches the sweep', () => {
   it('is off when the config says nothing — the old behaviour exactly', () => {
     expect(exitSizingFrom(base).gainLock).toBeNull()
     expect(exitSizingFrom({ ...base, gainLock: null }).gainLock).toBeNull()
+  })
+})
+
+describe('exitSizingFrom — the fixed TP reaches the sweep', () => {
+  // *Poné un TP fijo al 12.5% del promedio.* A wiring test, for the reason they
+  // all exist here: a builder that forgets to hand the line over leaves every
+  // winner waiting for the impulse while every unit test of the sweep stays green.
+  const base = { params: DEFAULT_PARAMS, portfolio: DEFAULT_PORTFOLIO_POLICY, heartbeatMs: 1 }
+
+  it('carries the percent from the cycle config to the levels', () => {
+    expect(exitLevelsFor(position(quality(0.25, 1.1)), exitSizingFrom({ ...base, fixedTpPct: 12.5 })).fixedTpPct).toBe(12.5)
+  })
+
+  it('is off when the config says nothing, null or zero — the old behaviour exactly', () => {
+    expect(exitSizingFrom(base).fixedTpPct).toBeNull()
+    expect(exitSizingFrom({ ...base, fixedTpPct: null }).fixedTpPct).toBeNull()
+    expect(exitSizingFrom({ ...base, fixedTpPct: 0 }).fixedTpPct).toBeNull()
+    expect(exitLevelsFor(position(quality(0.25, 1.1)), exitSizingFrom({ ...base, fixedTpPct: 0 })).fixedTpPct).toBeNull()
   })
 })

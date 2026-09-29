@@ -542,6 +542,53 @@ describe('runLoop — the stop does not clock off between cycles', () => {
     })
   })
 
+  describe('the fixed TP is watched between cycles, alone', () => {
+    // *Poné un TP fijo al 12.5% del promedio.* With no stop, no break-even, no
+    // gain lock and no ladder wired, the TP is reason enough to look between
+    // cycles: a winner that reaches its line while the loop sleeps must sell.
+    const reachesWhileSleeping = async (fixedTpPct: number | null) => {
+      let clock = NOW
+      let asked = 0
+      const store = new MemoryStore()
+      const { deps } = rig({
+        store,
+        now: () => clock,
+        // Flat while the cycle runs, up 13% once it is sleeping.
+        marketPrices: async () => new Map([['solana:Held', asked++ === 0 ? 1 : 1.13]]),
+        brokerFor: async (pos) => {
+          const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: 500, maxOpenEntries: 10, quality: () => quality })
+          broker.seed(await store.fillsFor(pos.id))
+          return broker
+        },
+      })
+      await store.savePosition({
+        id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+        cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 15,
+        lastBarTime: -1, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+      })
+      await store.recordFill({
+        positionId: 'pos-1', orderId: 'Entry', side: 'buy', time: NOW - 3_600_000,
+        price: 1, qty: 15, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: 'entry-1',
+      })
+      await runLoop(
+        deps,
+        { ...config, breakEven: false, gainLock: null, fixedTpPct },
+        new AlertThrottle(60_000),
+        { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+      )
+      return (await store.allFills()).find((f: { side: string; comment: string }) => f.side === 'sell')?.comment ?? null
+    }
+
+    it('sells the winner at its TP while the loop sleeps', async () => {
+      expect(await reachesWhileSleeping(12.5)).toBe('🎯 TP fijo')
+    })
+
+    it('and sells nothing when the TP is off', async () => {
+      expect(await reachesWhileSleeping(null)).toBeNull()
+      expect(await reachesWhileSleeping(0)).toBeNull()
+    })
+  })
+
   describe('the deep rung is watched between cycles, alone', () => {
     // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA de
     // $20.* With no stop, no break-even, no gain lock and no other ladder wired,

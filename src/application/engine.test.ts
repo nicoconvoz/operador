@@ -1186,6 +1186,13 @@ describe('refusesToSellAtALoss — the break-even exit is NOT a risk exit any mo
     expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🔐 Piso de ganancia' }, 1, 1.1)).toBe(false)
   })
 
+  it('refuses the fixed TP under cost — a strategy exit, never a risk one', () => {
+    // It only fires at +12.5% over the average, so only a quote the fill gaps
+    // under cost can land here — and then the position is held.
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🎯 TP fijo' }, 1, 0.9)).toBe(true)
+    expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '🎯 TP fijo' }, 1, 1.125)).toBe(false)
+  })
+
   it('lets the score stop through at any price — the operator asked for an SL', () => {
     expect(refusesToSellAtALoss({ kind: 'closeAll', comment: '📉 Cae el puntaje' }, 1, 0.9)).toBe(false)
   })

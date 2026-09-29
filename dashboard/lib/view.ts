@@ -117,6 +117,9 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, maxDipPct: ladder.maxDipPct,
         dipStepPct: ladder.dipStepPct, bounceStepPct: ladder.bounceStepPct, stepUsd: ladder.stepUsd,
       },
+      // The fixed TP the sweep sells at — *TP fijo en $P (+12.5% del
+      // promedio)* — from the same module the engine reads. Zero: no line.
+      fixedTpPct: ladder.fixedTpPct,
       // The deep rung, drawn only when it is switched back on.
       ...(ladder.deepRung
         ? { deepRung: { fallPct: ladder.deepRungFallPct, reboundPct: ladder.deepRungReboundPct, usd: ladder.deepRungUsd } }

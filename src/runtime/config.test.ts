@@ -373,10 +373,19 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: 'nope' }).gainLock).not.toBeNull()
   })
 
-  it('asks the strategy exit for +10% by default, and reads another floor', () => {
-    expect(loadConfig(valid).minProfitPct).toBe(10)
+  it('asks the strategy exit for +12.5% by default — never under the fixed TP — and reads another floor', () => {
+    expect(loadConfig(valid).minProfitPct).toBe(12.5)
     expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: '20' }).minProfitPct).toBe(20)
-    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'diez' }).minProfitPct).toBe(10)
+    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'diez' }).minProfitPct).toBe(12.5)
+  })
+
+  it('sells everything at a FIXED +12.5% by default; zero turns it off and nonsense keeps 12.5', () => {
+    // *Poné un TP fijo al 12.5% del promedio.*
+    expect(loadConfig(valid).fixedTpPct).toBe(12.5)
+    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '0' }).fixedTpPct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '15' }).fixedTpPct).toBe(15)
+    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: 'doce' }).fixedTpPct).toBe(12.5)
+    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '-1' }).fixedTpPct).toBe(12.5)
   })
 
   it('takes both lines from the environment, and never floors above the arm', () => {
