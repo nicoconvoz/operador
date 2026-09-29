@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { risingAcrossWindows, unreportedWindows, DEFAULT_MOMENTUM_POLICY } from './momentum.js'
+import { risingAcrossWindows, risingInTheHour, unreportedWindows, DEFAULT_MOMENTUM_POLICY } from './momentum.js'
 import { type WindowedChangePct } from './snapshot.js'
 
 const P = DEFAULT_MOMENTUM_POLICY
@@ -90,5 +90,24 @@ describe('unreportedWindows — a refusal the screen can explain', () => {
 
   it('says nothing about windows the rule does not read', () => {
     expect(unreportedWindows({ m5: 2, h1: null, h6: null, h24: null })).toEqual([])
+  })
+})
+
+describe('risingInTheHour — the ONE definition of "rising", the breadth bar’s and the entry door’s', () => {
+  // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
+  // marca la barra de estudio.* The bar counts a token as rising when its last
+  // hour is up by anything at all; the door asks exactly the same.
+  it('is rising by any amount over zero, however small or large', () => {
+    for (const up of [0.3, 0.0001, 12, 2_000]) expect(risingInTheHour(up), String(up)).toBe(true)
+  })
+
+  it('is NOT rising flat or falling: exactly zero fails', () => {
+    for (const not of [0, -0, -0.1, -40]) expect(risingInTheHour(not), String(not)).toBe(false)
+  })
+
+  it('is NOT rising on an hour nobody reported, or on a number nobody can read — silence is refused at a door', () => {
+    for (const silent of [null, undefined, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(risingInTheHour(silent), String(silent)).toBe(false)
+    }
   })
 })

@@ -11,6 +11,8 @@
  * the same arrangement as `resultAt` in the day log.
  */
 
+import { risingInTheHour } from '../domain/scanner/momentum.js'
+
 export interface MarketBreadth {
   /** Rose in the last hour. */
   readonly up: number
@@ -39,6 +41,10 @@ export interface MarketBreadth {
  * hour is neither a rise nor a fall, and neither is a number that is not finite:
  * a feed that sent garbage has not said which way the token went. With nothing
  * that moved the marker sits in the middle, never at NaN.
+ *
+ * "Rising" is `risingInTheHour`, the entry door's own predicate: *que la
+ * barrera de entrada sea solamente que los tokens suban, como marca la barra.*
+ * One definition, so the bar counts exactly what the engine lets in.
  */
 export function marketBreadth(changes1h: readonly (number | null | undefined)[]): MarketBreadth {
   let up = 0
@@ -47,7 +53,7 @@ export function marketBreadth(changes1h: readonly (number | null | undefined)[])
   let unknown = 0
   for (const change of changes1h) {
     if (typeof change !== 'number' || !Number.isFinite(change)) unknown += 1
-    else if (change > 0) up += 1
+    else if (risingInTheHour(change)) up += 1
     else if (change < 0) down += 1
     else flat += 1
   }

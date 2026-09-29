@@ -3,7 +3,7 @@ import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './led
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { nextDeepRung, nextPriceLow, priceLowWorthWriting, type DeepRungPolicy, type PriceLow } from '../domain/strategy/deep-rung.js'
-import { nextDipBounce, watchAfterBuy, dipWatchWorthWriting, crashLine, type DipBouncePolicy, type DipBounceStep } from '../domain/strategy/dip-bounce.js'
+import { nextDipBounce, watchAfterBuy, dipWatchWorthWriting, crashLine, type DipBouncePolicy, type DipBounceStep, type DipWatch } from '../domain/strategy/dip-bounce.js'
 import { liquidityBelowFreeze, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
@@ -393,6 +393,13 @@ export interface DipBounce {
    * reads the pool itself and refuses the step the next tick would freeze.
    */
   readonly pool?: DipBouncePool
+  /**
+   * Whether the FIRST step of a slot is bought the moment the cycle opens it,
+   * at the live price, instead of waiting for a dip and a bounce. *Y además
+   * que la primera compra entre automáticamente.* The operator. See
+   * `buyFirstStepOnSelection`. Absent: off — every caller that predates it.
+   */
+  readonly onSelection?: boolean
 }
 
 export interface DipBouncePool {
@@ -1464,20 +1471,51 @@ async function buyOnDipBounce(
   await sayCollapsed(deps, ladder, position, step, buys.length === 0, at, throttle)
   if (step.action !== 'buy' || step.watch === null) return null
 
-  const n = buys.length
-  const max = ladder.policy.maxSteps
   // The pool last, right before the money: only a step that fired costs the
   // book's one request, and the watch stays armed for the sweep it recovers.
-  if (stepPools !== null && (await poolRefuses(deps, stepPools, position, n + 1, max, at, throttle))) return 'refused'
-  const fell = (step.fellPct ?? 0).toFixed(1)
-  const rose = (step.bouncedPct ?? 0).toFixed(1)
-  const cost = buyCostUsd(ladder.stepUsd, position.quality, ladder.gasUsdPerSwap)
+  if (stepPools !== null && (await poolRefuses(deps, stepPools, position, buys.length + 1, ladder.policy.maxSteps, at, throttle))) return 'refused'
+  return buyStep(deps, ladder, position, buys, price, at, throttle, { kind: 'dip', step, watch: step.watch })
+}
+
+/** Why a step is bought: a dip and its bounce, or the slot having just been opened. */
+type StepCause =
+  | { readonly kind: 'dip'; readonly step: DipBounceStep; readonly watch: DipWatch }
+  | { readonly kind: 'selection' }
+
+/**
+ * One step, bought: funded, settled, the watch moved to it, and said. ONE body
+ * for both causes, so the step bought on selection and every step bought on a
+ * bounce share the funding, the idempotency key, the order ids and the watch —
+ * a second copy of any of those is how a retry buys twice.
+ *
+ * Returns 'bought', 'unfunded' when nothing free would pay its fees — said,
+ * and never shrunk — or null when the fill did not happen.
+ */
+async function buyStep(
+  deps: StopSweepDeps,
+  ladder: DipBounce,
+  position: PersistedPosition,
+  buys: readonly PersistedFill[],
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+  cause: StepCause,
+): Promise<'bought' | 'unfunded' | null> {
+  const n = buys.length
+  const max = ladder.policy.maxSteps
+  const step = ladder.stepUsd
+  const next = `La próxima compra espera una caída de ${ladder.policy.dipPct}% bajo este precio y un rebote de ${ladder.policy.bouncePct}%.`
+  const fell = cause.kind === 'dip' ? (cause.step.fellPct ?? 0).toFixed(1) : null
+  const rose = cause.kind === 'dip' ? (cause.step.bouncedPct ?? 0).toFixed(1) : null
+  const cost = buyCostUsd(step, position.quality, ladder.gasUsdPerSwap)
   const funded = ladder.fund ? await ladder.fund(position, cost) : position
   if (funded === null) {
     const unfunded = alert(
       'entry-refused',
       `💤 ${position.symbol} sin capital libre para la compra ${n + 1} de ${max}`,
-      `Cayó ${fell}% y rebotó ${rose}%, pero no hay capital libre para las comisiones de la compra de ${dollars(ladder.stepUsd)}. Se vuelve a intentar en el próximo barrido; la compra no se achica.`,
+      cause.kind === 'dip'
+        ? `Cayó ${fell}% y rebotó ${rose}%, pero no hay capital libre para las comisiones de la compra de ${dollars(step)}. Se vuelve a intentar en el próximo barrido; la compra no se achica.`
+        : `Entró como candidata, pero no hay capital libre para las comisiones de la compra de ${dollars(step)}. La primera compra espera entonces una caída de ${ladder.policy.dipPct}% y un rebote de ${ladder.policy.bouncePct}%; la compra no se achica.`,
       at,
       { position: position.id, token: position.tokenAddress },
     )
@@ -1489,8 +1527,8 @@ async function buyOnDipBounce(
   // one is the next rung. Keyed by the sweep's clock, so a sweep run again
   // collides with itself instead of buying twice.
   const order = n === 0
-    ? { kind: 'entry' as const, id: 'Entry', level: 0, usd: ladder.stepUsd, qty: ladder.stepUsd / price, comment: '🟢 Entry' }
-    : { kind: 'entry' as const, id: `DCA-${n}`, level: n, usd: ladder.stepUsd, qty: ladder.stepUsd / price, comment: `DCA-${n}` }
+    ? { kind: 'entry' as const, id: 'Entry', level: 0, usd: step, qty: step / price, comment: '🟢 Entry' }
+    : { kind: 'entry' as const, id: `DCA-${n}`, level: n, usd: step, qty: step / price, comment: `DCA-${n}` }
   const broker = await deps.brokerFor(funded)
   await settle([order], at, price, at, funded, broker, deps.store)
   const after = holdingBuys(await deps.store.fillsFor(position.id))
@@ -1498,27 +1536,77 @@ async function buyOnDipBounce(
   const bought = after[after.length - 1]!
   // The reference is now what this step bought at, unarmed — and the watch is
   // never older than the fill it describes.
-  await deps.store.savePosition({ ...funded, dipWatch: watchAfterBuy(price, bought.time, after[0]!.time, step.watch) })
+  const watched = cause.kind === 'dip' ? cause.watch : position.dipWatch
+  await deps.store.savePosition({ ...funded, dipWatch: watchAfterBuy(price, bought.time, after[0]!.time, watched) })
 
-  const reference = step.watch.reference
-  const low = step.watch.low ?? price
-  const said = n === 0
+  const said = cause.kind === 'selection'
     ? alert(
         'position-opened',
-        `🟢 ${position.symbol} compró ${dollars(ladder.stepUsd)} — cayó ${fell}% y rebotó ${rose}% (compra 1 de ${max})`,
-        `El máximo visto fue ${reference} y el mínimo ${low}. Compró ${dollars(ladder.stepUsd)} a ${price}. La próxima compra espera una caída de ${ladder.policy.dipPct}% bajo este precio y un rebote de ${ladder.policy.bouncePct}%.`,
+        `🟢 ${position.symbol} compró ${dollars(step)} al entrar como candidata (compra 1 de ${max})`,
+        `Compró ${dollars(step)} a ${price}, sin esperar caída ni rebote: la primera compra entra al abrir la posición. ${next}`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+    : n === 0
+    ? alert(
+        'position-opened',
+        `🟢 ${position.symbol} compró ${dollars(step)} — cayó ${fell}% y rebotó ${rose}% (compra 1 de ${max})`,
+        `El máximo visto fue ${cause.watch.reference} y el mínimo ${cause.watch.low ?? price}. Compró ${dollars(step)} a ${price}. ${next}`,
         at,
         { position: position.id, token: position.tokenAddress },
       )
     : alert(
         'dca-filled',
         `🪜 ${position.symbol} promedió — compra ${n + 1} de ${max}: cayó ${fell}% y rebotó ${rose}%`,
-        `La compra anterior fue a ${reference} y el mínimo ${low}. Compró ${dollars(ladder.stepUsd)} a ${price}; costo promedio ${positionLedger(await deps.store.fillsFor(position.id)).avgCostUsd}.`,
+        `La compra anterior fue a ${cause.watch.reference} y el mínimo ${cause.watch.low ?? price}. Compró ${dollars(step)} a ${price}; costo promedio ${positionLedger(await deps.store.fillsFor(position.id)).avgCostUsd}.`,
         at,
         { position: position.id, token: position.tokenAddress },
       )
   if (throttle.shouldSend(said, `dip:${position.id}:${after[0]!.time}:${n + 1}`)) await deps.alerts.send(said)
   return 'bought'
+}
+
+/**
+ * The FIRST step of a slot the cycle has just opened, bought NOW at the live
+ * price — not on a dip and a bounce. *Y además que la primera compra entre
+ * automáticamente.* The operator.
+ *
+ * The cycle calls it in the pass that opened the slot, after the door's
+ * safety re-check (`confirmEntry`) and after the tick that put a candle close
+ * on record. It is a dip-bounce step in every way but its cause — the same
+ * `buyStep`, so the same funding, id, key and watch — and every later step is
+ * the dip-bounce rule with this one as its reference: a 3% dip under it and a
+ * 2% bounce, the 20% ceiling and the live pool check. This one has neither:
+ * there is no reference to fall from yet, and the door re-checked the pool.
+ *
+ * Only for a slot that has NEVER held anything. A holding after a sale is not
+ * a selection — the token was chosen long ago, and rebuying it the moment it
+ * sold would skip the entry door entirely — so it waits for its dip and
+ * bounce, as it always did. And once bought, never again: a second call, in
+ * this pass or the next, finds a fill and buys nothing.
+ *
+ * Every guard a step has, kept: a candle close on record and a live price that
+ * agrees with it within the band, a healthy death watch, and nothing in
+ * flight. Returns 'bought', 'unfunded' — said, never shrunk — or null.
+ */
+export async function buyFirstStepOnSelection(
+  deps: StopSweepDeps,
+  position: PersistedPosition,
+  price: number | null,
+  at: number,
+  throttle: AlertThrottle,
+  /** The gate's own band, as in the sweep. */
+  maxPriceRatio: number = DEFAULT_GATE_POLICY.maxPriceRatio,
+): Promise<'bought' | 'unfunded' | null> {
+  const ladder = deps.dipBounce
+  if (!ladder || ladder.onSelection !== true) return null
+  if (position.pendingOrders.length > 0) return null
+  if (position.deathWatch.stage !== 'healthy') return null
+  if (position.lastBarTime < 0 || position.lastPriceUsd === null || position.lastPriceUsd === undefined) return null
+  if (price === null || !(price > 0) || pricesDisagree(price, position.lastPriceUsd, maxPriceRatio)) return null
+  const fills = await deps.store.fillsFor(position.id)
+  if (fills.length > 0) return null
+  return buyStep(deps, ladder, position, [], price, at, throttle, { kind: 'selection' })
 }
 
 /**

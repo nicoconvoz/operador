@@ -272,6 +272,10 @@ export interface RuntimeConfig {
    * turning the selection rule off also closed the only door those tokens can
    * come through — the engine would have chosen a wide shortlist and bought
    * none of it.
+   *
+   * It is the dip-bounce's FIRST step now, bought by the cycle in the pass that
+   * opened the slot (`dipBounce.onSelection`), never the cascade's door 3. ON
+   * by default; OPERADOR_BUY_ON_SELECTION=0.
    */
   readonly buyOnSelection: boolean
   /**
@@ -598,10 +602,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // liquidez y menos del 50% topholders.* Liquidity and concentration are
     // the whole rule, and the momentum window is not part of it any more.
     requireRising: (env.OPERADOR_REQUIRE_RISING ?? '0').trim() === '1',
-    // OFF now: *nada se compra cuando una moneda pasa a candidata.* Every buy,
-    // the first one included, waits for a 3% dip and a 2% bounce in the sweep.
-    // Only 1, true or yes reopens the door that bought in the same pass.
-    buyOnSelection: onlyIf(env, 'OPERADOR_BUY_ON_SELECTION'),
+    // ON: *y además que la primera compra entre automáticamente.* The FIRST
+    // dip-bounce step is bought in the pass that opens the slot; every later
+    // one waits for a 3% dip and a 2% bounce. It was off — *nada se compra
+    // cuando una moneda pasa a candidata* — and only an explicit 0 or false
+    // puts it back off.
+    buyOnSelection: onUnless(env, 'OPERADOR_BUY_ON_SELECTION'),
     // Unset: exactly one slot, steps × step, set below — nothing grossed up.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
     // ZERO — off — by default: the target a $1 step's round trip derives would

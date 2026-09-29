@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder, type DeepRung, type DipBounce } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, buyFirstStepOnSelection, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder, type DeepRung, type DipBounce } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -1383,6 +1383,37 @@ export async function runCycle(
       current.set(position.id, result.position)
     } catch {
       // One token that cannot be priced must not cost the others their entry.
+    }
+  }
+
+  // ── 3f. The FIRST step, bought on selection ───────────────────────────────
+  //
+  // *Y además que la primera compra entre automáticamente.* The operator. The
+  // cascade's doors stay shut; the first dollar is a dip-bounce step bought
+  // NOW, at the live price, instead of on a 3% dip and a 2% bounce — past the
+  // door's safety re-check above, and after the tick that put a candle close
+  // on record for the price guard to compare against. One batched request
+  // prices every slot this pass opened: the book's prices were fetched before
+  // they existed.
+  //
+  // A failure costs the BUY, never the position: no live price, a price that
+  // disagrees with the candle, nothing free for the fees — the slot is saved
+  // and its first step waits for a dip and a bounce, which is the rule this
+  // replaces, so the worst case is the old one.
+  if (deps.dipBounce?.onSelection === true && deps.marketPrices && opened.length > 0) {
+    const fresh = opened.map((p) => current.get(p.id) ?? p)
+    let live: ReadonlyMap<string, number> = new Map()
+    try {
+      live = await deps.marketPrices(fresh)
+    } catch {
+      // Silence, not a price: nothing is bought on it.
+    }
+    for (const position of fresh) {
+      try {
+        await buyFirstStepOnSelection(deps, position, live.get(`${position.chain}:${position.tokenAddress}`) ?? null, at, throttle)
+      } catch {
+        // One slot's first step must not cost the others theirs.
+      }
     }
   }
 

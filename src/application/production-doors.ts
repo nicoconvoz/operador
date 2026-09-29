@@ -90,14 +90,40 @@ const costEfficiencyDoor = (pct: number): ComponentFloors => ({ costEfficiency: 
  * verdict"; here the verdict was already asked for, and an absent number is
  * not a passing one.
  *
- * TODAY there is none. *Puerta de entrada ninguna: todo es bienvenido.* The
- * operator, replacing cost efficiency over 60% — and before it buy pressure
- * over 10%. Every buy waits for a 3% dip and a 2% bounce on the live price
- * (`domain/strategy/dip-bounce.ts`), and that is the whole entry. The table is
+ * It was none — *puerta de entrada ninguna: todo es bienvenido* — replacing
+ * cost efficiency over 60%, and before it buy pressure over 10%. The table is
  * the history of how the key got here; `OPERADOR_MIN_COST_EFFICIENCY_PCT`
- * brings the last floor back, and unset it is none.
+ * brings the cost floor back, BESIDE the one below.
+ *
+ * TODAY it is ONE: the token is rising in the last hour. *Hacé que la barrera
+ * de entrada sea solamente que los tokens suban, como marca la barra de
+ * estudio de los 49 tokens.* The operator. See `DEFAULT_ENTRY_RISING`.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {}
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = { risingHour: 1 }
+
+/** The rising door as a floor: `risingHour` is 1 or 0, so at least 1 means rising. */
+const risingDoor: ComponentFloors = { risingHour: 1 }
+
+/**
+ * Whether the ONE opportunity condition is on: the token's last hour is up by
+ * anything at all — the Universo breadth bar's own "suben", through the same
+ * predicate (`risingInTheHour`), so the bar and the door count the same tokens.
+ * Exactly zero fails; an unreported hour fails, because at a door silence is
+ * refused.
+ *
+ * A FLOOR on `risingHour`, a component that weighs nothing — not `headroom`,
+ * which reads the same hour but asks "not collapsing past −3%" and carries 0.3
+ * of the score. As a floor it rides everywhere the floors already go: the
+ * scan's door before anything is paid for, the ranking BEFORE its
+ * cost-efficiency order and its free-slot cut, the shelf a watch pass
+ * allocates from, and the screen, which says why: *no sube en la última hora
+ * (−1.2%)*.
+ *
+ * The SAFETY gates are not conditions of this kind and are untouched, as
+ * always. `OPERADOR_ENTRY_RISING=0` takes the door off; only an explicit off
+ * does, so a mistyped value keeps the operator's rule.
+ */
+export const DEFAULT_ENTRY_RISING = true
 
 /**
  * Who wins when there are more candidates than free slots.
@@ -209,12 +235,17 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
 
   // Zero is a real value here too — "any toll under the worst" — and a door at 100
   // or past it is one no token can clear, so it is nonsense, not a setting.
-  // Unset or nonsense: no door, the operator's decision.
+  // Unset or nonsense: no cost door, the operator's decision.
   const costRaw = env.OPERADOR_MIN_COST_EFFICIENCY_PCT?.trim()
   const cost = Number(costRaw)
-  const minComponents = costRaw && Number.isFinite(cost) && cost >= 0 && cost < 100
-    ? costEfficiencyDoor(cost)
-    : DEFAULT_COMPONENT_FLOORS
+  const costDoor = costRaw && Number.isFinite(cost) && cost >= 0 && cost < 100 ? costEfficiencyDoor(cost) : {}
+  // Only an explicit off or on moves it: a misspelt value must not quietly
+  // open the door.
+  const risingRaw = env.OPERADOR_ENTRY_RISING?.trim().toLowerCase() ?? ''
+  const risingOn = ['0', 'false', 'no'].includes(risingRaw)
+    ? false
+    : ['1', 'true', 'yes'].includes(risingRaw) || DEFAULT_ENTRY_RISING
+  const minComponents: ComponentFloors = { ...costDoor, ...(risingOn ? risingDoor : {}) }
 
   // Only `size` brings the old order back; anything else keeps the operator's.
   const order: CandidateOrder = env.OPERADOR_RANK_BY?.trim().toLowerCase() === 'size' ? 'size' : DEFAULT_CANDIDATE_ORDER

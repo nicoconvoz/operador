@@ -895,6 +895,16 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     expect(p!.locks![0]!.detail).toBe('derrumbe: −25.0% (espera volver sobre $0.8000)')
   })
 
+  it('after the first step bought on selection, waits for a 3% dip under what it paid', async () => {
+    // *Y además que la primera compra entre automáticamente.* The step bought
+    // the moment the slot opened is the reference, unarmed, as the sweep wrote it.
+    const first = NOW - 5 * MIN
+    const store = await seed([fill('Entry', 1.25, 1 / 1.25, first)], reservation({ dipWatch: { reference: 1.25, low: null, armed: false, at: first, holdingSince: first } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.steps).toMatchObject({ bought: 1, max: 20 })
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando caída de 3% bajo $1.250 (compra si baja a $1.212)' }])
+  })
+
   it('counts the buys and the dollars in them, and measures the next dip from the LAST buy', async () => {
     const first = NOW - 30 * MIN
     const fills = [fill('Entry', 1, 1, first), fill('DCA-1', 0.96, 1 / 0.96, NOW - 20 * MIN), fill('DCA-2', 0.93, 1 / 0.93, NOW - 10 * MIN)]

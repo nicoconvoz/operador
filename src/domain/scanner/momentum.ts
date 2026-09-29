@@ -51,6 +51,24 @@ export function risingAcrossWindows(
   return recent !== null && recent !== undefined && recent >= policy.minRisePct
 }
 
+/**
+ * Is the token RISING in the last hour — the ONE definition of the word.
+ *
+ * *Hacé que la barrera de entrada sea solamente que los tokens suban, como
+ * marca la barra de estudio.* The operator. The Universo's breadth bar counts
+ * a token as rising when its last hour is up by anything at all, and the entry
+ * door asks exactly that — so both read this, and the screen's "suben" can
+ * never disagree with what the engine lets in.
+ *
+ * Strictly over zero: exactly flat is not a rise. And an hour nobody reported,
+ * or a number nobody can read, is NOT a rise: at a door, silence is refused —
+ * there is no such thing as an unmeasured reason to buy. The bar counts those
+ * apart, as "sin dato", which is the same answer said out loud.
+ */
+export function risingInTheHour(change1h: number | null | undefined): boolean {
+  return typeof change1h === 'number' && Number.isFinite(change1h) && change1h > 0
+}
+
 export interface MomentumPolicy {
   /**
    * How far the token must be up over the freshest window, in percent.

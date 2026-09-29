@@ -217,11 +217,13 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(cycleConfig.sizing?.minFillUsd).toBe(5)
   })
 
-  it('buys NOTHING on the first tick of a slot the allocator sized — the sweep buys, on a dip and a bounce', async () => {
-    // *Nada se compra cuando una moneda pasa a candidata.* The path the engine
-    // runs: the cycle's own tick rules, a slot of `usdPerToken`, the broker
-    // `brokerFor` builds, over candles on which every old door would open —
-    // a flat market inside a lateral zone, a new position, nothing held.
+  it('buys NOTHING through the cascade on the first tick of a slot — its doors stay shut; the first step is the dip-bounce’s', async () => {
+    // The first buy on selection is a dip-bounce STEP the cycle buys (see "the
+    // FIRST step is bought on selection"), never one of the cascade's doors.
+    // The path the engine runs: the cycle's own tick rules, a slot of
+    // `usdPerToken`, the broker `brokerFor` builds, over candles on which
+    // every old door would open — a flat market inside a lateral zone, a new
+    // position, nothing held.
     const { deps, cycleConfig } = runtime()
     const bars = 300
     const HOUR = 3_600_000
@@ -772,13 +774,161 @@ describe('the pool is asked live before every step, through the path the engine 
   })
 })
 
+describe('the ONE entry door is rising in the last hour, through the shelf the engine allocates from', () => {
+  // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
+  // marca la barra de estudio de los 49 tokens.* The operator. `deps.recall` is
+  // what a watch pass allocates from: the stored scan, re-ranked with the
+  // production policy main.ts composes — gates, floors, order and the cut.
+  const safe = {
+    honeypot: false, mintAuthorityActive: false, freezeAuthorityActive: false, transferTaxPct: 0,
+    hasBlacklist: false, lpLockedPct: 100, topHoldersPct: 20, creatorPct: 1, verifiedSource: null, isProxy: null,
+  }
+  const token = (address: string, h1: number | null, liquidityUsd: number): TokenSnapshot => ({
+    chain: 'solana', address, symbol: address, pairAddress: `pair-${address}`, observedAt: Date.now() - 60_000,
+    priceUsd: 1, liquidityUsd, fdvUsd: 5_000_000,
+    volumeUsd: { h1: 60_000, h6: 300_000, h24: 875_000 },
+    priceChangePct: { h1, h6: 2, h24: 3 },
+    txns: { h1: { buys: 70, sells: 25 }, h24: { buys: 900, sells: 850 } },
+    pairCreatedAt: Date.now() - 30 * 24 * 3_600_000, historyBars: 1000, security: safe,
+  })
+  // Four risers, and three that are not — the three CHEAPEST to trade, so an
+  // order or a cut applied before the door would pick them.
+  const shelf = [
+    token('R150', 5, 150_000), token('R300', 8, 300_000), token('R600', 1, 600_000), token('UP03', 0.3, 200_000),
+    token('DOWN', -0.1, 5_000_000), token('FLAT', 0, 4_000_000), token('QUIET', null, 3_000_000),
+  ]
+  const recalled = async (slots: number, env: Record<string, string> = {}) => {
+    const sql: SqlClient = {
+      query: async <T>(text: string) =>
+        /FROM scans/.test(text)
+          ? { rows: [{ scanned_at: String(Date.now() - 60_000), chain: 'solana', snapshots: shelf }] as T[] }
+          : { rows: [] as T[] },
+    }
+    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', ...env }), {
+      sql,
+      postJson: async () => { throw new Error('no network in this test') },
+    })
+    const found = await deps.recall!(slots)
+    return found!.candidates.map((c) => c.snapshot.address)
+  }
+
+  it('lets in a candidate rising by +0.3 in the hour, and nothing at −0.1, 0 or unreported', async () => {
+    const found = await recalled(10)
+    expect(found).toContain('UP03')
+    for (const not of ['DOWN', 'FLAT', 'QUIET']) expect(found).not.toContain(not)
+  })
+
+  it('orders by cost efficiency and cuts to the free slots AFTER the door — the cheapest risers, not the cheapest tokens', async () => {
+    expect(await recalled(10)).toEqual(['R600', 'R300', 'UP03', 'R150'])
+    expect(await recalled(2)).toEqual(['R600', 'R300'])
+  })
+
+  it('takes the cheapest tokens again with the door off — OPERADOR_ENTRY_RISING=0', async () => {
+    expect(await recalled(2, { OPERADOR_ENTRY_RISING: '0' })).toEqual(['DOWN', 'FLAT'])
+  })
+})
+
+describe('the FIRST step is bought on selection, through the cycle the engine runs', () => {
+  // *Y además que la primera compra entre automáticamente.* The operator. A
+  // token that becomes a candidate and gets a slot buys its first $5 in the
+  // SAME pass, at the live price — past the door's safety re-check, funded, and
+  // keyed so it cannot happen twice. Every later buy is the dip-bounce rule.
+  const quality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
+  const HOUR = 3_600_000
+  const T0 = 400 * 900_000
+  const risingCandidate: Candidate = {
+    snapshot: {
+      chain: 'solana', address: 'NEW', symbol: 'NEW', pairAddress: 'pair-NEW', priceUsd: 1, liquidityUsd: 1_000_000,
+      priceChangePct: { h1: 0.3, h6: 1, h24: 2 },
+    } as TokenSnapshot,
+    opportunity: { score: 60, components: { volumeExpansion: 0, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, headroom: 1, costEfficiency: 0.8, risingHour: 1 } },
+    marketQuality: quality,
+  }
+  // Flat candles at 1: the tick has a close on record, and it agrees with the
+  // live price the pass asks for.
+  const candles = (): Candles => {
+    const bars = 300
+    const time = Array.from({ length: bars }, (_, i) => T0 - (bars - i) * 900_000)
+    const flat = (v: number) => time.map(() => v)
+    return { time, open: flat(1), high: flat(1.001), low: flat(0.999), close: flat(1), volume: flat(10_000) }
+  }
+  const confirmed: string[] = []
+
+  const pass = async (setup: ReturnType<typeof onMemory>, now: number, env: { price?: number } = {}) =>
+    runCycle(
+      {
+        ...setup.deps,
+        scan: async () => [risingCandidate],
+        candlesFor: async () => candles(),
+        healthFor: async () => null,
+        marketPrices: async (positions) => new Map(positions.map((p) => [`${p.chain}:${p.tokenAddress}`, env.price ?? 1])),
+        confirmEntry: async (snapshot) => { confirmed.push(snapshot.address); return { ok: true, snapshot } },
+        now: () => now,
+      },
+      setup.cycleConfig,
+      new AlertThrottle(0),
+      'full',
+    )
+
+  it('buys exactly one $5 step in the pass that opened it — after the door’s safety re-check — and says so', async () => {
+    confirmed.length = 0
+    const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000' })
+    const result = await pass(setup, T0)
+    expect(result.opened.map((p) => p.tokenAddress)).toEqual(['NEW'])
+    expect(confirmed).toEqual(['NEW'])
+    const buys = (await setup.store.allFills()).filter((f) => f.side === 'buy')
+    expect(buys.map((f) => f.orderId)).toEqual(['Entry'])
+    expect((buys[0]!.qty * buys[0]!.price) / 5).toBeCloseTo(1, 2)
+    const said = (setup.deps.alerts as RecordingAlerts).sent.find((a) => a.kind === 'position-opened')
+    expect(said?.title).toBe('🟢 NEW compró $5 al entrar como candidata (compra 1 de 20)')
+  })
+
+  it('never buys a second first step on the next pass — and the next buy needs a 3% dip under it and a 2% bounce', async () => {
+    const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000' })
+    await pass(setup, T0)
+    await pass(setup, T0 + 15 * 60_000)
+    const [position] = await setup.store.loadPositions()
+    expect((await setup.store.fillsFor(position!.id)).map((f) => f.orderId)).toEqual(['Entry'])
+
+    let clock = T0 + HOUR
+    const sweep = async (price: number) =>
+      sweepStops(
+        setup.deps,
+        (p) => exitLevelsFor(p, exitSizingFrom(setup.cycleConfig)),
+        new AlertThrottle(0),
+        (await setup.store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })),
+        new Map([['solana:NEW', price]]),
+        (clock += 30_000),
+      )
+    // A 2% dip and a bounce: not a step.
+    for (const price of [0.98, 0.9996]) await sweep(price)
+    expect((await setup.store.fillsFor(position!.id)).map((f) => f.orderId)).toEqual(['Entry'])
+    // A 4% dip under the first buy and a 2.1% bounce off it: the second step.
+    for (const price of [0.96, 0.96 * 1.021]) await sweep(price)
+    expect((await setup.store.fillsFor(position!.id)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
+  })
+
+  it('buys nothing on selection with OPERADOR_BUY_ON_SELECTION=0: the first step waits for a dip and a bounce', async () => {
+    const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_BUY_ON_SELECTION: '0' })
+    const result = await pass(setup, T0)
+    expect(result.opened).toHaveLength(1)
+    expect(await setup.store.allFills()).toEqual([])
+  })
+
+  it('buys nothing on selection when the live price and the candle disagree — the sweep’s own guard', async () => {
+    const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000' })
+    await pass(setup, T0, { price: 40 })
+    expect(await setup.store.allFills()).toEqual([])
+  })
+})
+
 describe('the book holds capital / $100 tokens and no other ceiling, through the path the engine runs', () => {
   // *No pongas tope, el tope son 5000 dividido 50, que es lo que tengo* — then
   // *disminuí los escalones a 20*, and *en vez de 1 USD que sean 5 por
   // escalón*: capital / $100. And *que de los tokens
   // candidatos elija los que tengan mejor eficiencia de costos*, *que no haya
   // más candidatos de los que el capital pueda tomar*.
-  const COMPONENTS = { volumeExpansion: 0, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, headroom: 0 }
+  const COMPONENTS = { volumeExpansion: 0, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, headroom: 0, risingHour: 1 }
   const quality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
   const candidate = (i: number, costEfficiency: number, score = 50): Candidate => ({
     snapshot: { chain: 'solana', address: `C${i}`, symbol: `C${i}`, pairAddress: `pair-C${i}`, priceUsd: 0.01 } as TokenSnapshot,
@@ -846,7 +996,7 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     expect(result.opened).toEqual([])
   })
 
-  it('opens a position that holds nothing: the first $5 waits for a dip and a bounce', async () => {
+  it('opens a position that holds nothing when no candle is on record: the first $5 needs a close to check its price against', async () => {
     const { result, store } = await cycle({ capital: '5000', opened: 0, candidates: [candidate(1, 0.9)] })
     expect(result.opened).toHaveLength(1)
     expect(await store.allFills()).toEqual([])

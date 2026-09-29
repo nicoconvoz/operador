@@ -15,6 +15,13 @@ const doorPct = (fraction: number): string => String(Number((fraction * 100).toF
  * carry the gates and the scorer along.
  */
 export function describeHoldBack(door: HoldBack, labels: Readonly<Record<string, string>>): string {
+  // *No sube en la última hora (−1.2%)*: the hour it read, signed with a true
+  // minus, or that nobody reported one — silence is refused at the door too.
+  if (door.kind === 'rising') {
+    const hour = door.value
+    const read = typeof hour !== 'number' || !Number.isFinite(hour) ? 'sin dato' : `${hour < 0 ? '−' : ''}${Math.abs(hour).toFixed(1)}%`
+    return `no sube en la última hora (${read})`
+  }
   if (door.kind === 'slots') return `sin lugar libre: el capital toma ${door.floor} y hay candidatas más baratas de operar (${labels[door.name] ?? door.name} ${(door.value * 100).toFixed(1)}%)`
   if (door.kind === 'score') return `puntaje ${door.value.toFixed(1)} (la puerta pide ${door.floor})`
   const asks = door.kind === 'entry' ? 'la primera compra pide' : 'pide'

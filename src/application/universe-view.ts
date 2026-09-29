@@ -56,7 +56,10 @@ export type TokenTier =
   | 'dead'
 
 /** One door a token did not clear, with what it read and what the door asks. */
-export interface HoldBack {
+export type HoldBack = ScoreHoldBack | RisingHoldBack
+
+/** A door on a component or the score. */
+export interface ScoreHoldBack {
   /**
    * `'slots'`: it cleared every door, and the free slots were taken by
    * cheaper tokens — `value` is its cost efficiency and `floor` how many
@@ -69,6 +72,20 @@ export interface HoldBack {
   readonly floor: number
   /** Whether the door asks for STRICTLY more than `floor`, rather than at least it. */
   readonly strict: boolean
+}
+
+/**
+ * The rising door: what the last hour READ, not the 0 or 1 its component
+ * makes of it — *no sube en la última hora (−1.2%)*. A 0 against a floor of 1
+ * would send the reader hunting for which hour it was; the number says it.
+ */
+export interface RisingHoldBack {
+  readonly kind: 'rising'
+  readonly name: 'risingHour'
+  /** The last hour's change, in percent; null when nobody reported it. */
+  readonly value: number | null
+  readonly floor: 0
+  readonly strict: true
 }
 
 export interface UniverseToken {
@@ -434,7 +451,7 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
       holdBack:
         held || unsafe || !gateResult.passed || snapshot.securityChecked === false
           ? []
-          : holdBackOf(opportunity, options),
+          : holdBackOf(opportunity, snapshot.priceChangePct.h1 ?? null, options),
       position: held
         ? {
             capitalUsd: held.capitalUsd,
@@ -594,10 +611,12 @@ function fromPositionAlone(
 }
 
 /** Every door a safe token did not clear: the floors, the first-buy door, the score. */
-function holdBackOf(opportunity: Opportunity, options: UniverseOptions): readonly HoldBack[] {
+function holdBackOf(opportunity: Opportunity, change1hPct: number | null, options: UniverseOptions): readonly HoldBack[] {
   const components = opportunity.components
-  const doors = (kind: HoldBack['kind'], floors: ComponentFloors | undefined): HoldBack[] =>
-    failedMinimums(components, floors).map((name) => {
+  const doors = (kind: 'floor' | 'entry', floors: ComponentFloors | undefined): HoldBack[] =>
+    failedMinimums(components, floors).map((name): HoldBack => {
+      // The rising door says the hour it read, not the 0 its component made of it.
+      if (name === 'risingHour') return { kind: 'rising', name, value: change1hPct, floor: 0, strict: true }
       const floor = floors?.[name] ?? 0
       return { kind, name, value: components[name] ?? 0, floor: floorLevel(floor), strict: floorIsStrict(floor) }
     })

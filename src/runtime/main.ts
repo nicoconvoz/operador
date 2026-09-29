@@ -368,7 +368,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // It is what the scanner change requires rather than an extra: the
     // shortlist is now chosen for RISING, and door 1 refuses a bar making a
     // new twenty-bar high. Sixteen candidates produced five positions.
-    useMomentumEntry: config.buyOnSelection,
+    //
+    // SHUT now, and `OPERADOR_BUY_ON_SELECTION` no longer opens it: the first
+    // buy on selection is a dip-bounce STEP (`dipBounce.onSelection`), bought
+    // by the cycle in the pass that opened the slot. This door would size the
+    // entry off the slot's deployable capital — $4.70 of a $100 slot, not the
+    // $5 step — and, flat after every sale, it would buy the token straight
+    // back on the next bar without asking the entry door again.
+    useMomentumEntry: false,
     // The cascade's OWN doors, switched off: *nada se compra cuando una moneda
     // pasa a candidata.* Every buy, the first one included, is a dip-bounce
     // step bought by the sweep; the machine is left to sell at the take-profit
@@ -522,6 +529,10 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       gasUsdPerSwap: config.gasUsdPerSwap,
       fund: fundStep,
       pool: { liquidity: liquidityChange, deathPolicy, refusing: new Set<string>() },
+      // *Y además que la primera compra entre automáticamente.* The FIRST step
+      // is bought in the pass that opens the slot, at the live price; every
+      // later one waits for its dip and bounce. OPERADOR_BUY_ON_SELECTION=0.
+      onSelection: config.buyOnSelection,
     },
     // *Arriesguémonos, activá la A.* Five rungs of $15, $20, $25, $30 and $35
     // at −10, −15, −20, −25 and −30% of a $10 FIRST buy, bought by the sweep

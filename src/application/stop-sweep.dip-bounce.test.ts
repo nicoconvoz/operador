@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sweepStops, type DipBounce, type ExitLevels, type StopSweepDeps } from './stop-sweep.js'
+import { sweepStops, buyFirstStepOnSelection, type DipBounce, type ExitLevels, type StopSweepDeps } from './stop-sweep.js'
 import { fundStepFromFreeCapital } from './free-capital.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
@@ -45,6 +45,8 @@ const rig = async (options: {
   readonly policy?: DipBouncePolicy
   /** The book's pools, as the runtime's Jupiter reader answers them. Absent: no pool check. */
   readonly pool?: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>
+  /** Whether the cycle buys the first step the moment it opens the slot. */
+  readonly onSelection?: boolean
 } = {}) => {
   const store = new MemoryStore()
   await store.savePosition(options.held ?? reservation())
@@ -81,6 +83,7 @@ const rig = async (options: {
       cashOf: async (p) => (await brokerFor(p)).equityCash,
     }),
     ...(options.pool ? { pool: { liquidity: options.pool, deathPolicy: DEFAULT_DEATH_EXIT_POLICY, refusing: new Set<string>() } } : {}),
+    ...(options.onSelection === true ? { onSelection: true } : {}),
   }
   const deps: StopSweepDeps = {
     store: counting,
@@ -399,5 +402,77 @@ describe('the dip-bounce ladder, through the sweep — the pool, asked live befo
     expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
     expect(calls).toHaveLength(1)
     expect([...calls[0]!].sort()).toEqual(['solana:T:1', 'solana:U:1'])
+  })
+})
+
+describe('the FIRST step on selection — bought the moment a slot is opened', () => {
+  // *Y además que la primera compra entre automáticamente.* The operator. The
+  // cycle calls this for a slot it just opened, after the door's safety
+  // re-check and the tick that put a candle close on record: the first dollar
+  // does not wait for a dip and a bounce. Every later one does.
+  const onSelection = async (options: Parameters<typeof rig>[0] = {}) => {
+    const r = await rig({ ...options, onSelection: true })
+    const first = async (price: number | null, close = 1, at = AT) => {
+      const [position] = await r.store.loadPositions()
+      return buyFirstStepOnSelection(r.deps, { ...position!, lastPriceUsd: close }, price, at, new AlertThrottle(0))
+    }
+    return { ...r, first }
+  }
+
+  it('buys one step at the live price, names the reference for the next one, and says so', async () => {
+    const { first, buys, watch, sent } = await onSelection()
+    expect(await first(1)).toBe('bought')
+    const bought = await buys()
+    expect(bought.map((f) => f.orderId)).toEqual(['Entry'])
+    expect(bought[0]!.qty).toBeCloseTo(1 / 1, 9)
+    expect(await watch()).toMatchObject({ reference: 1, armed: false, low: null, holdingSince: bought[0]!.time })
+    const said = sent.find((a) => a.kind === 'position-opened')!
+    expect(said.title).toBe('🟢 T compró $1 al entrar como candidata (compra 1 de 20)')
+    expect(said.level).toBe('info')
+  })
+
+  it('buys it ONCE: a second call, the same pass or the next, finds the step already bought', async () => {
+    const { first, buys } = await onSelection()
+    await first(1)
+    expect(await first(1)).toBeNull()
+    expect(await first(1, 1, AT + 15 * MIN)).toBeNull()
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+  })
+
+  it('never on a slot that has held anything before — a holding after a sale waits for its dip and bounce', async () => {
+    const { first, buys, store } = await onSelection()
+    await store.recordFill({ positionId: ID, orderId: 'Entry', side: 'buy', time: 1, price: 1, qty: 1, costUsd: 0.05, comment: '🟢 Entry', idempotencyKey: `${ID}:1:Entry` })
+    await store.recordFill({ positionId: ID, orderId: 'Exit', side: 'sell', time: 2, price: 1.2, qty: 1, costUsd: 0.05, comment: '🏁 Exit', idempotencyKey: `${ID}:2:Exit` })
+    expect(await first(1)).toBeNull()
+    expect(await buys()).toHaveLength(1)
+  })
+
+  it('keeps every guard a step has: a candle close, prices that agree, a healthy watch, nothing in flight, a price at all', async () => {
+    const cases: [string, Partial<PersistedPosition>, number | null, number][] = [
+      ['no close on record', { lastBarTime: -1 }, 1, 1],
+      ['prices disagree', {}, 1, 40],
+      ['frozen', { deathWatch: { ...startDeathWatch(1, 0), stage: 'frozen' } }, 1, 1],
+      ['in flight', { pendingOrders: [{ kind: 'closeAll', comment: '🏁 Exit' }] }, 1, 1],
+      ['no live price', {}, null, 1],
+    ]
+    for (const [why, held, price, close] of cases) {
+      const { first, buys } = await onSelection({ held: reservation(held) })
+      expect(await first(price, close), why).toBeNull()
+      expect(await buys(), why).toEqual([])
+    }
+  })
+
+  it('is off unless asked for: every caller that predates it buys nothing here', async () => {
+    const r = await rig()
+    const [position] = await r.store.loadPositions()
+    expect(await buyFirstStepOnSelection(r.deps, position!, 1, AT, new AlertThrottle(0))).toBeNull()
+    expect(await r.buys()).toEqual([])
+  })
+
+  it('says a first step that found no free capital for its fees, and buys nothing — never shrunk', async () => {
+    const { first, buys, sent } = await onSelection({ bookUsd: 0.5, held: reservation({ capitalUsd: 0.5 }) })
+    expect(await first(1)).toBe('unfunded')
+    expect(await buys()).toEqual([])
+    expect(sent.some((a) => a.kind === 'entry-refused' && a.title.startsWith('💤 T sin capital libre para la compra 1 de 20'))).toBe(true)
   })
 })

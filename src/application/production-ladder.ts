@@ -63,9 +63,10 @@ export const DEFAULT_DEEP_RUNG = false
 /**
  * Whether the cascade's own doors — the classic drop from the swing high and
  * the trend re-entry — may buy. OFF: *nada se compra cuando una moneda pasa a
- * candidata*; only the dip-bounce sweep buys. `OPERADOR_CASCADE_ENTRIES=1`
- * brings them back. The momentum door (`OPERADOR_BUY_ON_SELECTION`) is its own
- * switch, and off too.
+ * candidata*; only dip-bounce steps buy — the first one on selection, the
+ * rest on a dip and a bounce. `OPERADOR_CASCADE_ENTRIES=1` brings them back.
+ * The momentum door is shut too: `OPERADOR_BUY_ON_SELECTION` now buys the
+ * first dip-bounce STEP on selection, never through the cascade.
  */
 export const DEFAULT_CASCADE_ENTRIES = false
 

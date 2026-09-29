@@ -185,13 +185,13 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: '1' }).requireRising).toBe(true)
   })
 
-  it('buys NOTHING on selection any more — one variable brings the old door back', () => {
-    // *Nada se compra cuando una moneda pasa a candidata.* Every buy, the first
-    // one included, waits for a 3% dip and a 2% bounce in the sweep. The door
-    // that bought in the same pass is off, and only 1, true or yes reopens it.
-    expect(loadConfig(valid).buyOnSelection).toBe(false)
-    for (const on of ['1', 'true', 'yes']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
-    expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
+  it('buys the FIRST step on selection — only an explicit 0 turns it off', () => {
+    // *Y además que la primera compra entre automáticamente.* The operator. A
+    // token that becomes a candidate and gets a slot buys its first step in
+    // the same pass; every later one waits for a 3% dip and a 2% bounce.
+    expect(loadConfig(valid).buyOnSelection).toBe(true)
+    for (const off of ['0', 'false']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: off }).buyOnSelection).toBe(false)
+    for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
   it('gives every token twenty $5 steps on a 3% dip and a 2% bounce, and a slot of exactly $100', () => {
@@ -400,16 +400,18 @@ describe('two rules stand, and the doors they need are separate switches', () =>
   })
 })
 
-describe('loadConfig — no entry door: *todo es bienvenido*', () => {
-  // From the module the dashboard reads too, so the canvas and the engine
-  // cannot disagree about which tokens the book may buy.
-  it('asks nothing of the components', () => {
-    expect(loadConfig(valid).minComponents).toEqual({})
+describe('loadConfig — ONE entry door: the token is rising in the last hour', () => {
+  // *Hacé que la barrera de entrada sea solamente que los tokens suban.* From
+  // the module the dashboard reads too, so the screen and the engine cannot
+  // disagree about which tokens the book may buy.
+  it('asks one thing of the components: rising in the hour', () => {
+    expect(loadConfig(valid).minComponents).toEqual({ risingHour: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_ENTRY_RISING: '0' }).minComponents).toEqual({})
   })
 
-  it('brings the cost-efficiency floor back with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
-    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0' }).minComponents).toEqual({ costEfficiency: { above: 0 } })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({})
+  it('brings the cost-efficiency floor back beside it with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
+    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 }, risingHour: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '0' }).minComponents).toEqual({ costEfficiency: { above: 0 } })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({ risingHour: 1 })
   })
 })

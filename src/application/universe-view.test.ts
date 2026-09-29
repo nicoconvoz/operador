@@ -526,6 +526,32 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]!.holdBack).toEqual([])
   })
 
+  it('draws a token that is not rising in the last hour as filtered, and says so with the hour it read', async () => {
+    // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
+    // marca la barra de estudio.* The engine's door, from the module it reads.
+    const store = await seed([
+      token('UP', { priceChangePct: { h1: 0.3, h6: 0, h24: 0 } }),
+      token('DOWN', { priceChangePct: { h1: -1.2, h6: 0, h24: 0 } }),
+      token('FLAT', { priceChangePct: { h1: 0, h6: 0, h24: 0 } }),
+      token('QUIET', { priceChangePct: { h1: null, h6: 0, h24: 0 } }),
+    ])
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    const by = (symbol: string) => view.tokens.find((t) => t.symbol === symbol)!
+    expect(by('UP').tier).not.toBe('filtered')
+    expect(by('UP').holdBack).toEqual([])
+    for (const symbol of ['DOWN', 'FLAT', 'QUIET']) expect(by(symbol).tier, symbol).toBe('filtered')
+    expect(by('DOWN').holdBack).toEqual([{ kind: 'rising', name: 'risingHour', value: -1.2, floor: 0, strict: true }])
+    expect(describeHoldBack(by('DOWN').holdBack[0]!, LABELS)).toBe('no sube en la última hora (−1.2%)')
+    expect(describeHoldBack(by('FLAT').holdBack[0]!, LABELS)).toBe('no sube en la última hora (0.0%)')
+    expect(describeHoldBack(by('QUIET').holdBack[0]!, LABELS)).toBe('no sube en la última hora (sin dato)')
+  })
+
+  it('draws the same token as buyable with the door off — OPERADOR_ENTRY_RISING=0', async () => {
+    const store = await seed([token('DOWN', { priceChangePct: { h1: -1.2, h6: 0, h24: 0 } })])
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_RISING: '0' }).minComponents })
+    expect(view.tokens[0]!.tier).not.toBe('filtered')
+  })
+
   it('says an AT-LEAST door, a first-buy door and the score door in their own words', () => {
     expect(describeHoldBack({ kind: 'floor', name: 'activity', value: 0.49, floor: 0.5, strict: false }, LABELS))
       .toBe('actividad 49.0% (pide ≥ 50%)')

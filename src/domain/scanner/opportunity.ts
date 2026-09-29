@@ -1,5 +1,6 @@
 import { type MarketQuality } from '../market/market-quality.js'
 import { type TokenSnapshot } from './snapshot.js'
+import { risingInTheHour } from './momentum.js'
 
 /**
  * Opportunity score — is this token "breathing"?
@@ -31,6 +32,8 @@ export interface OpportunityWeights {
    * ranking that ignores it ranks a trap alongside a bargain.
    */
   readonly costEfficiency: number
+  /** Whether the last hour is up at all — the entry door. Measured, never weighed: zero. */
+  readonly risingHour: number
 }
 
 export interface OpportunityPolicy {
@@ -251,7 +254,9 @@ export const DEFAULT_OPPORTUNITY_POLICY: OpportunityPolicy = {
   // reciente alcista 50%, sube en una hora 30%, eficiencia de costos 30%.*
   // Everything else is still measured and still drawn — the detail sheet
   // answers "why is this ranked here" with bars — and decides nothing.
-  weights: { volumeExpansion: 0, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0.5, headroom: 0.3, costEfficiency: 0.3 },
+  // `risingHour` is the ENTRY DOOR, a floor in `production-doors.ts`, and
+  // weighs nothing: a door reads the number and changes nothing about the score.
+  weights: { volumeExpansion: 0, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0.5, headroom: 0.3, costEfficiency: 0.3, risingHour: 0 },
   fullExpansionRatio: 3,
   activityKneeTxnsPerHour: 15,
   fullActivityTxnsPerHour: 300,
@@ -274,6 +279,11 @@ export interface OpportunityComponents {
   readonly momentum: number
   readonly headroom: number
   readonly costEfficiency: number
+  /**
+   * 1 when the last hour is up by anything at all, 0 when it is flat, falling
+   * or unreported. See `risingInTheHour`.
+   */
+  readonly risingHour: number
 }
 
 export interface Opportunity {
@@ -466,10 +476,23 @@ export function scoreOpportunity(
   // token, so the neutral only ever affects where it sits on the screen.
   const costEfficiency = quality === null ? 0.5 : clamp01(1 - (2 * (quality.spreadPct + quality.slippagePct)) / policy.worstRoundTripPct)
 
-  const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility, momentum, headroom, costEfficiency }
+  // RISING IN THE HOUR — the entry door, and nothing but a door.
+  //
+  // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
+  // marca la barra de estudio.* The operator. The breadth bar's own predicate,
+  // `risingInTheHour`: up by anything at all counts, exactly zero does not, and
+  // an unreported hour does not either — at a door silence is refused.
+  //
+  // Not `headroom`, which reads the same window and asks something else — not
+  // collapsing past −3% — and carries 0.3 of the score; not `momentum`, which
+  // asks for a full percent on the hour OR the day. Redefining either would
+  // move every score in the book. This weighs nothing and moves none.
+  const risingHour = risingInTheHour(priceChangePct.h1) ? 1 : 0
+
+  const components = { volumeExpansion, buyPressure, liquidityGrowth, activity, volatility, momentum, headroom, costEfficiency, risingHour }
   const w = policy.weights
   const weightSum =
-    w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.activity + w.volatility + w.momentum + w.headroom + w.costEfficiency
+    w.volumeExpansion + w.buyPressure + w.liquidityGrowth + w.activity + w.volatility + w.momentum + w.headroom + w.costEfficiency + w.risingHour
   const weighted =
     w.volumeExpansion * volumeExpansion +
     w.buyPressure * buyPressure +
@@ -478,7 +501,8 @@ export function scoreOpportunity(
     w.volatility * volatility +
     w.momentum * momentum +
     w.headroom * headroom +
-    w.costEfficiency * costEfficiency
+    w.costEfficiency * costEfficiency +
+    w.risingHour * risingHour
 
   return { score: (100 * weighted) / weightSum, components }
 }

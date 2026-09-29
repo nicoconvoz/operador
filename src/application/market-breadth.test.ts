@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { marketBreadth } from './market-breadth.js'
+import { risingInTheHour } from '../domain/scanner/momentum.js'
 
 describe('marketBreadth — which way the universe went in the last hour', () => {
   it('everything rising puts the marker at the green end', () => {
@@ -39,6 +40,14 @@ describe('marketBreadth — which way the universe went in the last hour', () =>
 
   it('only flat tokens sit in the middle', () => {
     expect(marketBreadth([0, 0]).at).toBe(50)
+  })
+
+  it('counts as rising exactly what the entry door lets in — one definition, never two', () => {
+    // *Que la barrera de entrada sea solamente que los tokens suban, como marca
+    // la barra de estudio.* The bar and the door read the same predicate.
+    const hours = [0.3, 0.0001, 0, -0.1, -5, null, undefined, Number.NaN, Number.POSITIVE_INFINITY, 40]
+    expect(marketBreadth(hours).up).toBe(hours.filter((h) => risingInTheHour(h)).length)
+    expect(marketBreadth(hours).up).toBe(3)
   })
 
   it('an empty universe is the middle, not a crash', () => {

@@ -165,7 +165,7 @@ describe('opportunity — the components still move the right way, weighed or no
   })
 
   it('weights are honoured: a policy that only values volume ignores everything else', () => {
-    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, headroom: 0, costEfficiency: 0 } }
+    const volumeOnly = { ...P, weights: { volumeExpansion: 1, buyPressure: 0, liquidityGrowth: 0, activity: 0, volatility: 0, momentum: 0, headroom: 0, costEfficiency: 0, risingHour: 0 } }
     const burst = base({ volumeUsd: { h1: 3_000, h6: 8_000, h24: 24_000 }, priceChangePct: { h1: 50, h6: 50, h24: 50 } })
     expect(scoreOpportunity(burst, volumeOnly).score).toBeCloseTo(100, 9)
   })
@@ -800,5 +800,32 @@ describe('a floor can ask for STRICTLY more — the buy-pressure door', () => {
   it('reads a silent hour as no pressure, which the door refuses', () => {
     expect(pressure(0, 0)).toBe(0)
     expect(meetsMinimums({ buyPressure: pressure(0, 0) }, door)).toBe(false)
+  })
+})
+
+describe('opportunity — risingHour: the entry door, measured and never weighed', () => {
+  // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
+  // marca la barra de estudio de los 49 tokens.* The operator. ONE question —
+  // is the last hour up at all — asked with the breadth bar's own predicate,
+  // so the screen's "suben" and the engine's door cannot disagree.
+  const hour = (h1: number | null) => scoreOpportunity(base({ priceChangePct: { h1, h6: 0, h24: 0 } }), P, null, cheap)
+
+  it('is 1 when the last hour is up by anything, and 0 otherwise — flat, falling or unreported', () => {
+    expect(hour(0.3).components.risingHour).toBe(1)
+    expect(hour(2_000).components.risingHour).toBe(1)
+    for (const not of [0, -0.1, -40, null]) expect(hour(not).components.risingHour, String(not)).toBe(0)
+  })
+
+  it('weighs NOTHING: every score is exactly what it was before the door existed', () => {
+    expect(P.weights.risingHour).toBe(0)
+    // The same token a hair either side of zero: `headroom` and `momentum` do
+    // not move there, so only `risingHour` does — and the score does not.
+    expect(hour(0.3).score).toBe(hour(-0.1).score)
+  })
+
+  it('as a floor, admits the riser and refuses the rest', () => {
+    const door: ComponentFloors = { risingHour: 1 }
+    expect(meetsMinimums(hour(0.3).components, door)).toBe(true)
+    for (const not of [0, -0.1, null]) expect(meetsMinimums(hour(not).components, door), String(not)).toBe(false)
   })
 })
