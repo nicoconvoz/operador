@@ -38,8 +38,23 @@ import { type ComponentFloors } from '../domain/scanner/opportunity.js'
  */
 export const DEFAULT_MIN_BUY_PRESSURE_PCT = 10
 
-/** The door as a floor: `{ above }`, because the operator said MORE than. */
-const buyPressureDoor = (pct: number): ComponentFloors => ({ buyPressure: { above: pct / 100 } })
+/**
+ * *La única puerta de entrada para los tokens es que la eficiencia de los
+ * costos esté arriba del 60%.* The operator, replacing buy pressure above 10%
+ * outright — it is still scored and drawn, no longer asked, and its variable
+ * no longer moves anything.
+ *
+ * `costEfficiency` is linear in the measured round trip: 1 at no toll, 0 at
+ * `worstRoundTripPct` (4%). Above 0.6 is a round trip under 1.6% — spread,
+ * impact and gas of buying and leaving. An UNMEASURED toll is the neutral 0.5,
+ * so a token nobody priced stays out. The SAFETY gates, and the opportunity
+ * gates still on in `DEFAULT_GATE_POLICY`, are not conditions of this kind and
+ * stay.
+ */
+export const DEFAULT_MIN_COST_EFFICIENCY_PCT = 60
+
+/** The door as a floor: `{ above }`, because the operator said ABOVE. */
+const costEfficiencyDoor = (pct: number): ComponentFloors => ({ costEfficiency: { above: pct / 100 } })
 
 /**
  * The binary key: below any one of these the token is not traded, whatever
@@ -74,11 +89,11 @@ const buyPressureDoor = (pct: number): ComponentFloors => ({ buyPressure: { abov
  * verdict"; here the verdict was already asked for, and an absent number is
  * not a passing one.
  *
- * TODAY there is one, and it is none of the above: buy pressure strictly over
- * `DEFAULT_MIN_BUY_PRESSURE_PCT`. The table is the history of how the key got
- * here.
+ * TODAY there is one: cost efficiency strictly over
+ * `DEFAULT_MIN_COST_EFFICIENCY_PCT`. Before it, buy pressure over 10%. The
+ * table is the history of how the key got here.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = buyPressureDoor(DEFAULT_MIN_BUY_PRESSURE_PCT)
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = costEfficiencyDoor(DEFAULT_MIN_COST_EFFICIENCY_PCT)
 
 /**
  * The lowest total score the book will open a position on.
@@ -161,12 +176,12 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const parsed = Number(raw)
   const minScore = raw && Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MIN_SCORE
 
-  // Zero is a real value here too — "buyers lead at all" — and a door at 100
+  // Zero is a real value here too — "any toll under the worst" — and a door at 100
   // or past it is one no token can clear, so it is nonsense, not a setting.
-  const pressureRaw = env.OPERADOR_MIN_BUY_PRESSURE_PCT?.trim()
-  const pressure = Number(pressureRaw)
-  const minComponents = pressureRaw && Number.isFinite(pressure) && pressure >= 0 && pressure < 100
-    ? buyPressureDoor(pressure)
+  const costRaw = env.OPERADOR_MIN_COST_EFFICIENCY_PCT?.trim()
+  const cost = Number(costRaw)
+  const minComponents = costRaw && Number.isFinite(cost) && cost >= 0 && cost < 100
+    ? costEfficiencyDoor(cost)
     : DEFAULT_COMPONENT_FLOORS
 
   return { minComponents, entryDoors: DEFAULT_ENTRY_DOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }

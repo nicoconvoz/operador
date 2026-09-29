@@ -50,6 +50,7 @@ const options = { now: () => NOW }
 /** The screen's own labels for the components these tests name. */
 const LABELS: Readonly<Record<string, string>> = {
   buyPressure: 'presión compradora', activity: 'actividad', volumeExpansion: 'expansión de volumen',
+  costEfficiency: 'eficiencia de costo',
 }
 
 /**
@@ -485,25 +486,30 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(back.find((b) => b.kind === 'entry')!.value).toBeLessThan(2)
   })
 
-  it('draws a token under the buy-pressure door as filtered, and says what it read and what the door asks', async () => {
-    // *Como puerta de entrada, todos los tokens que tengan más de 10% de
-    // presión compradora.* 53 buys of 99 trades is 7.1% — under the door.
-    const store = await seed([token('SOFT', { txns: { h1: { buys: 53, sells: 46 }, h24: { buys: 900, sells: 850 } } })])
+  it('draws a token under the cost-efficiency door as filtered, and says what it read and what the door asks', async () => {
+    // *La única puerta de entrada para los tokens es que la eficiencia de los
+    // costos esté arriba del 60%.* The screen's 0.3% spread and 0.8% of
+    // measured impact is a 2.2% round trip: 1 - 2.2 / 4 = 45% — under the door.
+    const store = await seed([token('DEAR', { measuredImpactPct: 0.8 })])
     const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
-    const soft = view.tokens[0]!
-    expect(soft.tier).toBe('filtered')
-    expect(soft.holdBack).toEqual([{ kind: 'floor', name: 'buyPressure', value: 7 / 99, floor: 0.1, strict: true }])
-    expect(describeHoldBack(soft.holdBack[0]!, LABELS)).toBe('presión compradora 7.1% (pide > 10%)')
+    const dear = view.tokens[0]!
+    expect(dear.tier).toBe('filtered')
+    expect(dear.holdBack).toHaveLength(1)
+    expect(dear.holdBack[0]).toMatchObject({ kind: 'floor', name: 'costEfficiency', floor: 0.6, strict: true })
+    expect(dear.holdBack[0]!.value).toBeCloseTo(0.45, 9)
+    expect(describeHoldBack(dear.holdBack[0]!, LABELS)).toBe('eficiencia de costo 45.0% (pide > 60%)')
   })
 
-  it('refuses a token at EXACTLY 10% of buy pressure — the door asks for more', async () => {
-    const store = await seed([token('EVEN', { txns: { h1: { buys: 55, sells: 45 }, h24: { buys: 900, sells: 850 } } })])
+  it('refuses a token at 60% of cost efficiency — the door asks for more', async () => {
+    // 0.3% of spread and 0.5% of impact is a 1.6% round trip: 60% to the
+    // rounding of the screen, and never above it.
+    const store = await seed([token('EVEN', { measuredImpactPct: 0.5 })])
     const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
     expect(view.tokens[0]!.tier).toBe('filtered')
-    expect(describeHoldBack(view.tokens[0]!.holdBack[0]!, LABELS)).toBe('presión compradora 10.0% (pide > 10%)')
+    expect(describeHoldBack(view.tokens[0]!.holdBack[0]!, LABELS)).toBe('eficiencia de costo 60.0% (pide > 60%)')
   })
 
-  it('lets a token whose buyers lead by more than a tenth through the door', async () => {
+  it('lets a token whose round trip is cheap enough through the door', async () => {
     const store = await seed([token('HOT')])
     const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
     expect(view.tokens[0]!.tier).not.toBe('filtered')

@@ -293,8 +293,8 @@ export interface RuntimeConfig {
   /** The ways a candidate may be OPENED, any one enough. See `DEFAULT_ENTRY_DOORS`. */
   readonly entryDoors: readonly import('../domain/scanner/opportunity.js').ComponentFloors[]
   /**
-   * The component floors a candidate must clear — today buy pressure strictly
-   * over 10%. See `DEFAULT_COMPONENT_FLOORS`. The scan and the shelf both rank
+   * The component floors a candidate must clear — today cost efficiency
+   * strictly over 60%. See `DEFAULT_COMPONENT_FLOORS`. The scan and the shelf both rank
    * with it, and the dashboard reads the same module.
    */
   readonly minComponents: import('../domain/scanner/opportunity.js').ComponentFloors
@@ -633,8 +633,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
     entryDoors: productionDoors(env).entryDoors,
-    // *Como puerta de entrada, todos los tokens que tengan más de 10% de
-    // presión compradora.* OPERADOR_MIN_BUY_PRESSURE_PCT moves it.
+    // *La única puerta de entrada para los tokens es que la eficiencia de los
+    // costos esté arriba del 60%.* OPERADOR_MIN_COST_EFFICIENCY_PCT moves it.
     minComponents: productionDoors(env).minComponents,
     // *Cuando el puntaje cae 5 puntos, SL.* Points under the entry score at
     // which a held position is sold as it is. Zero turns it off.

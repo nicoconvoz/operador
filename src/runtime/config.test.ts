@@ -387,16 +387,18 @@ describe('two rules stand, and the doors they need are separate switches', () =>
   })
 })
 
-describe('loadConfig — the entry door is buy pressure over 10%', () => {
-  // *Como puerta de entrada, todos los tokens que tengan más de 10% de presión
-  // compradora.* From the module the dashboard reads too, so the canvas and
-  // the engine cannot disagree about which tokens the book may buy.
-  it('asks buy pressure STRICTLY over 10%, and nothing else of the components', () => {
-    expect(loadConfig(valid).minComponents).toEqual({ buyPressure: { above: 0.1 } })
+describe('loadConfig — the only entry door is cost efficiency above 60%', () => {
+  // *La única puerta de entrada para los tokens es que la eficiencia de los
+  // costos esté arriba del 60%.* From the module the dashboard reads too, so
+  // the canvas and the engine cannot disagree about which tokens the book may
+  // buy.
+  it('asks cost efficiency STRICTLY over 60%, and nothing else of the components', () => {
+    expect(loadConfig(valid).minComponents).toEqual({ costEfficiency: { above: 0.6 } })
   })
 
-  it('moves with OPERADOR_MIN_BUY_PRESSURE_PCT', () => {
-    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({ buyPressure: { above: 0.2 } })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '0' }).minComponents).toEqual({ buyPressure: { above: 0 } })
+  it('moves with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
+    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0' }).minComponents).toEqual({ costEfficiency: { above: 0 } })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({ costEfficiency: { above: 0.6 } })
   })
 })
