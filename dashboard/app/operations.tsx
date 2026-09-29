@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { OperationsView, PositionOperations, LadderRung } from '../../src/application/operations-view.js'
+import { alphabetical } from '../../src/application/position-order.js'
 
 /**
  * The broker at work.
@@ -36,13 +37,15 @@ const DIM = '#8b949e'
  */
 export function Operations({
   view,
-  positions = view.positions,
+  positions: given = view.positions,
   query = '',
 }: {
   view: OperationsView
   positions?: readonly PositionOperations[]
   query?: string
 }) {
+  // By name, whatever order the book was stored in. See `alphabetical`.
+  const positions = useMemo(() => alphabetical(given), [given])
   const [open, setOpen] = useState<string | null>(positions[0]?.id ?? null)
 
   // A new search opens the first card it found, the way the first card of the
