@@ -454,3 +454,42 @@ describe('door 3 — the scanner already decided, so just buy', () => {
     expect(DEFAULT_PARAMS.useMomentumEntry).toBe(false)
   })
 })
+
+describe('stepCascade — the classic door can be switched off', () => {
+  // *Nada se compra cuando una moneda pasa a candidata.* Production buys only
+  // on a 3% dip and a 2% bounce, in the sweep — so the cascade's own doors are
+  // switched off there, and the machine is left to do the one thing it still
+  // does: sell at the take-profit off the broker's average cost.
+  const closed = { ...P, useClassicEntry: false, useTrendReentry: false }
+
+  it('buys nothing on the classic door when it is off, drop and lateral zone or not', () => {
+    const out = stepCascade(initialState(), closed, bar(89, 91, 88, 89), ctx({ swingHigh: 100, isLateral: true }), FLAT)
+    expect(out.orders).toEqual([])
+    expect(out.state.level).toBe(0)
+  })
+
+  it('buys nothing on the trend re-entry after a sale when it is off', () => {
+    const justSold = { ...initialState(), awaitReentry: true }
+    const out = stepCascade(justSold, closed, bar(119, 121, 118, 120), ctx({ trendBullish: true, isLateral: false }), FLAT)
+    expect(out.orders).toEqual([])
+  })
+
+  it('still sells a holding it never bought, off the broker’s average cost', () => {
+    // Every buy came from the sweep: the machine sits at level 0, and the exit
+    // reads the BROKER, as the reference does.
+    const holding = { ...initialState(), wasInTrade: true }
+    const out = stepCascade(holding, { ...closed, useSupertrendExit: true }, bar(1.2, 1.25, 1.19, 1.2), ctx({ stBearFlip: true }), long(1, 2))
+    expect(out.orders.map((o) => o.comment)).toEqual(['🏁 Exit'])
+  })
+
+  it('never buys on the classic door while holding what the sweep bought — level 0 is not flat', () => {
+    const holding = { ...initialState(), wasInTrade: true }
+    const out = stepCascade(holding, { ...P, useClassicEntry: true }, bar(89, 91, 88, 89), ctx({ swingHigh: 100, isLateral: true }), long(1, 0))
+    expect(out.orders.filter((o) => o.kind === 'entry')).toEqual([])
+  })
+
+  it('is ON in the reference params, so the parity harness is untouched', () => {
+    expect(DEFAULT_PARAMS.useClassicEntry).toBe(true)
+    expect(DEFAULT_PARAMS.useTrendReentry).toBe(true)
+  })
+})

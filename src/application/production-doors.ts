@@ -1,4 +1,5 @@
 import { type ComponentFloors } from '../domain/scanner/opportunity.js'
+import { type CandidateOrder } from '../domain/scanner/ranking.js'
 
 /**
  * The two doors between a scored token and a slot holding money.
@@ -89,11 +90,37 @@ const costEfficiencyDoor = (pct: number): ComponentFloors => ({ costEfficiency: 
  * verdict"; here the verdict was already asked for, and an absent number is
  * not a passing one.
  *
- * TODAY there is one: cost efficiency strictly over
- * `DEFAULT_MIN_COST_EFFICIENCY_PCT`. Before it, buy pressure over 10%. The
- * table is the history of how the key got here.
+ * TODAY there is none. *Puerta de entrada ninguna: todo es bienvenido.* The
+ * operator, replacing cost efficiency over 60% — and before it buy pressure
+ * over 10%. Every buy waits for a 3% dip and a 2% bounce on the live price
+ * (`domain/strategy/dip-bounce.ts`), and that is the whole entry. The table is
+ * the history of how the key got here; `OPERADOR_MIN_COST_EFFICIENCY_PCT`
+ * brings the last floor back, and unset it is none.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = costEfficiencyDoor(DEFAULT_MIN_COST_EFFICIENCY_PCT)
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {}
+
+/**
+ * Who wins when there are more candidates than free slots.
+ *
+ * *Que de los tokens candidatos elija los que tengan mejor eficiencia de
+ * costos.* The operator. Cost efficiency, highest first, ties broken by score —
+ * applied before EVERY cut: the ranking's, the scan's candle budget and the
+ * allocator's, so the cheapest tokens to trade are never cut before the
+ * allocator sees them. An unmeasured toll sorts by its neutral 0.5, like any
+ * other number.
+ *
+ * It replaces "small caps first, then score" (`smallCapFdvUsd`), which
+ * `OPERADOR_RANK_BY=size` brings back.
+ */
+export const DEFAULT_CANDIDATE_ORDER: CandidateOrder = 'costEfficiency'
+
+/**
+ * How much better, in points of cost efficiency, a waiting candidate must be
+ * to take a reservation's slot — the reservation having bought nothing. Ten:
+ * the same margin the score edge has always asked (`OPERADOR_MIN_SCORE_EDGE`),
+ * read as 0.10 of efficiency. `OPERADOR_MIN_COST_EDGE_PCT` moves it.
+ */
+export const DEFAULT_MIN_COST_EDGE_PCT = 10
 
 /**
  * The lowest total score the book will open a position on.
@@ -164,6 +191,10 @@ export interface ProductionDoors {
    * cumplan todas las condiciones.* `OPERADOR_RESERVE=1` brings it back.
    */
   readonly reserve: boolean
+  /** Who wins when there are more candidates than free slots. See `DEFAULT_CANDIDATE_ORDER`. */
+  readonly order: CandidateOrder
+  /** Points of cost efficiency a waiting candidate must beat a reservation by. See `DEFAULT_MIN_COST_EDGE_PCT`. */
+  readonly minCostEdgePct: number
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -178,11 +209,27 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
 
   // Zero is a real value here too — "any toll under the worst" — and a door at 100
   // or past it is one no token can clear, so it is nonsense, not a setting.
+  // Unset or nonsense: no door, the operator's decision.
   const costRaw = env.OPERADOR_MIN_COST_EFFICIENCY_PCT?.trim()
   const cost = Number(costRaw)
   const minComponents = costRaw && Number.isFinite(cost) && cost >= 0 && cost < 100
     ? costEfficiencyDoor(cost)
     : DEFAULT_COMPONENT_FLOORS
 
-  return { minComponents, entryDoors: DEFAULT_ENTRY_DOORS, minScore, reserve: env.OPERADOR_RESERVE?.trim() === '1' }
+  // Only `size` brings the old order back; anything else keeps the operator's.
+  const order: CandidateOrder = env.OPERADOR_RANK_BY?.trim().toLowerCase() === 'size' ? 'size' : DEFAULT_CANDIDATE_ORDER
+
+  // Zero is a real value: any better token takes an idle reservation's slot.
+  const edgeRaw = env.OPERADOR_MIN_COST_EDGE_PCT?.trim()
+  const edge = Number(edgeRaw)
+  const minCostEdgePct = edgeRaw && Number.isFinite(edge) && edge >= 0 && edge < 100 ? edge : DEFAULT_MIN_COST_EDGE_PCT
+
+  return {
+    minComponents,
+    entryDoors: DEFAULT_ENTRY_DOORS,
+    minScore,
+    reserve: env.OPERADOR_RESERVE?.trim() === '1',
+    order,
+    minCostEdgePct,
+  }
 }

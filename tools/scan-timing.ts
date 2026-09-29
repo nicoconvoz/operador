@@ -112,6 +112,7 @@ const result = await scanOnce(
       minScore: config.minScore,
       minComponents: DEFAULT_COMPONENT_FLOORS,
       requireRising: config.requireRising,
+      order: config.order,
     },
     candleBudget: 67,
     maxBarAgeHours: 1,

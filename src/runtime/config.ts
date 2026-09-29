@@ -1,8 +1,7 @@
 import { type Chain } from '../domain/scanner/snapshot.js'
-import { ladderCapitalUsd } from '../application/paper-run.js'
-import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { productionDoors } from '../application/production-doors.js'
-import { productionLadder, DEFAULT_MAX_DCA_PER_TOKEN, DEFAULT_MAX_USD_PER_LEVEL } from '../application/production-ladder.js'
+import { productionLadder } from '../application/production-ladder.js'
+import { type CandidateOrder } from '../domain/scanner/ranking.js'
 import { FLAT_ONE_PCT_STOP, type StopLossPolicy } from '../domain/risk/stop-loss.js'
 import { DEFAULT_MAX_SWAP_LOSS_PCT } from '../domain/risk/idle-slots.js'
 import { DEFAULT_GAIN_LOCK_POLICY, type GainLockPolicy } from '../domain/risk/gain-lock.js'
@@ -23,6 +22,12 @@ export const DEFAULT_USD_PER_TOKEN = 15
  * A THIRD. At $15 a position that makes the exit ask 3.9% instead of 2%, and
  * the net per winner goes from eleven cents to thirty-nine — because the round
  * trip is about 1.3% and a 2% target was barely above it.
+ *
+ * OFF in production now (`OPERADOR_MAX_COST_SHARE_PCT` unset reads zero): *vendé
+ * si el promedio de todos los 1 sumados + 10% de ese promedio.* A $1 step pays
+ * $0.05 of gas — five percent on the way in — so the target derived from the
+ * round trip of one step would ask the exit for about +35%, and the operator's
+ * +10% would never be the line. Set it to bring the derivation back.
  */
 export const DEFAULT_MAX_COST_SHARE_PCT = 33
 
@@ -196,16 +201,45 @@ export interface RuntimeConfig {
    * NOT `PYRAMIDING`, which is 10 because that is what the `strategy()` header
    * ran and the parity harness asserts it. Evidence, not a preference.
    *
-   * ONE — the deep rung: $20, once the price has been more than 80% under the
-   * $15 first buy and rebounds 10% off its low. It was FIVE, ladder A. The
+   * NINETEEN — twenty dip-bounce steps, the first buy included, so the venue
+   * holds twenty entries. It was ONE, the deep rung, and FIVE, ladder A. The
    * history of the number, and why it moved each time, is in
    * `application/production-ladder.ts`.
    */
   readonly maxDcaPerToken: number
+  /** What every dip-bounce buy is, in dollars. */
+  readonly stepUsd: number
+  /** Dip-bounce buys per holding, the first included. */
+  readonly maxSteps: number
+  /** The dip under the reference that arms the watch, in percent. */
+  readonly dipPct: number
+  /** The bounce off the low that buys, in percent. */
+  readonly bouncePct: number
   /**
-   * Entries' worth of capital a position is allocated when it opens. One: the
-   * first buy. Each rung asks the book's free capital for its own when it
-   * fires. See `DEFAULT_RESERVED_ENTRIES`.
+   * What one slot is given, exactly: steps × step. *El tope son 5000 dividido
+   * 50, que es lo que tengo* — the book holds capital / slot tokens, and no
+   * other ceiling.
+   */
+  readonly slotUsd: number
+  /** Whether the deep rung buys at all. OFF; OPERADOR_DEEP_RUNG=1. */
+  readonly deepRung: boolean
+  /** Whether the cascade's own doors may buy. OFF; OPERADOR_CASCADE_ENTRIES=1. */
+  readonly cascadeEntries: boolean
+  /** Who wins when there are more candidates than free slots. See `DEFAULT_CANDIDATE_ORDER`. */
+  readonly order: CandidateOrder
+  /** Points of cost efficiency a waiting candidate must beat a reservation by. */
+  readonly minCostEdgePct: number
+  /**
+   * How far a scan may read the permanent registry, busiest first — an upper
+   * bound, never a read size: it reads a page at a time and only while the
+   * free slots are still short. Infinity when unset: the whole registry, if
+   * the slots need it. OPERADOR_REGISTRY_TOKENS bounds it.
+   */
+  readonly registryTokens: number
+  /**
+   * Entries' worth of capital a position is allocated when it opens: every
+   * step, the whole ladder — twenty. The fees each step pays beyond its dollar
+   * are asked of the free capital as it fills. See `DEFAULT_RESERVED_ENTRIES`.
    */
   readonly reservedEntries: number
   /**
@@ -296,8 +330,8 @@ export interface RuntimeConfig {
   /** The ways a candidate may be OPENED, any one enough. See `DEFAULT_ENTRY_DOORS`. */
   readonly entryDoors: readonly import('../domain/scanner/opportunity.js').ComponentFloors[]
   /**
-   * The component floors a candidate must clear — today cost efficiency
-   * strictly over 60%. See `DEFAULT_COMPONENT_FLOORS`. The scan and the shelf both rank
+   * The component floors a candidate must clear — today NONE: *puerta de
+   * entrada ninguna*. See `DEFAULT_COMPONENT_FLOORS`. The scan and the shelf both rank
    * with it, and the dashboard reads the same module.
    */
   readonly minComponents: import('../domain/scanner/opportunity.js').ComponentFloors
@@ -528,19 +562,32 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // turns it off.
     blacklistOnFreeze: onUnless(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
     abandonFreezeHours: number(env, 'OPERADOR_ABANDON_FREEZE_HOURS', Infinity),
-    maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
+    // One step, from the module the dashboard reads: the ladder a slot is
+    // priced with is the ladder the sweep buys.
+    maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', productionLadder(env).maxUsdPerLevel),
     dropInitPct: productionLadder(env).dropInitPct,
     minProfitPct: productionLadder(env).minProfitPct,
     impatientProfitPct: productionLadder(env).impatientProfitPct,
     urgentProfitPct: productionLadder(env).urgentProfitPct,
     idleSlotHours: number(env, 'OPERADOR_IDLE_HOURS', 3),
-    maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN),
-    // One entry reserved; each rung pays for itself out of the free capital.
-    // Capped by what the venue holds, from the same module the dashboard reads.
+    // Every step the venue must hold: twenty, the first buy included.
+    maxDcaPerToken: number(env, 'OPERADOR_MAX_DCA', productionLadder(env).maxOpenEntries - 1),
+    // The whole ladder reserved, capped by what the venue holds, from the same
+    // module the dashboard reads.
     reservedEntries: Math.min(
       productionLadder(env).reservedEntries,
-      number(env, 'OPERADOR_MAX_DCA', DEFAULT_MAX_DCA_PER_TOKEN) + 1,
+      number(env, 'OPERADOR_MAX_DCA', productionLadder(env).maxOpenEntries - 1) + 1,
     ),
+    stepUsd: productionLadder(env).stepUsd,
+    maxSteps: productionLadder(env).maxSteps,
+    dipPct: productionLadder(env).dipPct,
+    bouncePct: productionLadder(env).bouncePct,
+    slotUsd: productionLadder(env).slotUsd,
+    deepRung: productionLadder(env).deepRung,
+    cascadeEntries: productionLadder(env).cascadeEntries,
+    order: productionDoors(env).order,
+    minCostEdgePct: productionDoors(env).minCostEdgePct,
+    registryTokens: env.OPERADOR_REGISTRY_TOKENS?.trim() ? number(env, 'OPERADOR_REGISTRY_TOKENS', 1) : Number.POSITIVE_INFINITY,
     // Only an explicit "0" or "false" turns these off. A misspelt value must
     // not silently disable the strategy the engine is running, which is the
     // failure `OPERADOR_MAX_DCA=0` taught this codebase twice.
@@ -548,14 +595,15 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // liquidez y menos del 50% topholders.* Liquidity and concentration are
     // the whole rule, and the momentum window is not part of it any more.
     requireRising: (env.OPERADOR_REQUIRE_RISING ?? '0').trim() === '1',
-    // ON, and independently. Without it the executor's classic door decides,
-    // and it refuses exactly what a wide shortlist is full of.
-    buyOnSelection: (env.OPERADOR_BUY_ON_SELECTION ?? '').trim() !== '0' && (env.OPERADOR_BUY_ON_SELECTION ?? '').trim().toLowerCase() !== 'false',
-    // Unset: what the RESERVED entries need, derived below — one $15 buy, its
-    // gas and the price headroom. The rung is not in it: it asks the free
-    // capital for its own $20 when it fires.
+    // OFF now: *nada se compra cuando una moneda pasa a candidata.* Every buy,
+    // the first one included, waits for a 3% dip and a 2% bounce in the sweep.
+    // Only 1, true or yes reopens the door that bought in the same pass.
+    buyOnSelection: onlyIf(env, 'OPERADOR_BUY_ON_SELECTION'),
+    // Unset: exactly one slot, steps × step, set below — nothing grossed up.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
-    maxCostSharePct: number(env, 'OPERADOR_MAX_COST_SHARE_PCT', DEFAULT_MAX_COST_SHARE_PCT),
+    // ZERO — off — by default: the target a $1 step's round trip derives would
+    // lift the operator's +10% to about +35%. See `DEFAULT_MAX_COST_SHARE_PCT`.
+    maxCostSharePct: numberOrZero(env, 'OPERADOR_MAX_COST_SHARE_PCT', 0),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
     // stop, NET of the round trip — which on a $15 fill is 1.38% and lands on
     // both sides of the trade, so the advertised 1:3.9 was really 1:1.06.
@@ -636,8 +684,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,
     entryDoors: productionDoors(env).entryDoors,
-    // *La única puerta de entrada para los tokens es que la eficiencia de los
-    // costos esté arriba del 60%.* OPERADOR_MIN_COST_EFFICIENCY_PCT moves it.
+    // None: *puerta de entrada ninguna, todo es bienvenido.*
+    // OPERADOR_MIN_COST_EFFICIENCY_PCT brings a floor back.
     minComponents: productionDoors(env).minComponents,
     // *Cuando el puntaje cae 5 puntos, SL.* Points under the entry score at
     // which a held position is sold as it is. Zero turns it off.
@@ -679,14 +727,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     )
   }
 
-  // The slot the RESERVED entries need, when nobody fixed one: the exact
-  // inverse of what the tick deploys, so the first buy is the rung. One entry
-  // in production — the rungs are funded when they fire, not held for them.
+  // One slot, exactly steps × step, when nobody fixed another: *el tope son
+  // 5000 dividido 50.* Nothing grossed up — the fees come out of the free
+  // capital as the fills happen.
   return {
     ...config,
-    usdPerToken:
-      config.usdPerToken ??
-      ladderCapitalUsd({ ...DEFAULT_PARAMS, maxUsdPerLevel: config.maxUsdPerLevel }, config.reservedEntries, config.gasUsdPerSwap),
+    usdPerToken: config.usdPerToken ?? config.slotUsd,
   }
 }
 

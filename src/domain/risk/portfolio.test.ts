@@ -308,3 +308,30 @@ describe('the capital is split among whoever qualified, and the size follows', (
     for (const a of plan.allocations) expect(a.capitalUsd).toBeGreaterThanOrEqual(15)
   })
 })
+
+describe('planPortfolio — the cheapest to trade are served first', () => {
+  // *Que de los tokens candidatos elija los que tengan mejor eficiencia de
+  // costos.* The ranking orders the shortlist that way; the allocator used to
+  // re-sort it by SCORE, which would hand the last slots to the wrong tokens.
+  const priced = (address: string, score: number, costEfficiency: number): AllocationCandidate => ({
+    ...candidate(address, score),
+    costEfficiency,
+  })
+  const shortlist = [priced('scored', 95, 0.4), priced('cheap', 40, 0.9), priced('middle', 70, 0.6), priced('tie-hi', 80, 0.6)]
+  const slots: PortfolioPolicy = { ...P, totalCapitalUsd: 1_000, reservePct: 0, maxPositions: 0, minPositionUsd: 250, targetPositionUsd: 250, maxPositionPct: 100 }
+
+  it('serves cost efficiency first, and score only breaks a tie', () => {
+    const plan = planPortfolio(shortlist, DEFAULT_PARAMS, { ...slots, order: 'costEfficiency' })
+    expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['cheap', 'tie-hi', 'middle', 'scored'])
+  })
+
+  it('leaves the most expensive out when the capital runs short', () => {
+    const plan = planPortfolio(shortlist, DEFAULT_PARAMS, { ...slots, order: 'costEfficiency', totalCapitalUsd: 500 })
+    expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['cheap', 'tie-hi'])
+  })
+
+  it('still serves by score when the order is not asked for — the old behaviour exactly', () => {
+    const plan = planPortfolio(shortlist, DEFAULT_PARAMS, slots)
+    expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['scored', 'tie-hi', 'middle', 'cheap'])
+  })
+})

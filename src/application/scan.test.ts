@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { scanOnce, type ScanConfig, type ScanDeps } from './scan.js'
-import { DexScreener, DEXSCREENER_BASE, type DexPair } from '../infrastructure/adapters/dexscreener/dexscreener.js'
+import { DexScreener, DEXSCREENER_BASE, type DexPair, type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { GoPlus, GOPLUS_BASE, type GoPlusSolanaToken } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter, JUPITER_LITE_BASE } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { stubHttp } from '../infrastructure/http.js'
@@ -63,7 +63,7 @@ const seriesAged = (hoursAgo: number | null, bars = 300) => ({
 
 const config: ScanConfig = {
   chain: 'solana',
-  ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 5, minScore: 0, requireRising: false },
+  ranking: { gates: DEFAULT_GATE_POLICY, opportunity: DEFAULT_OPPORTUNITY_POLICY, watchSlots: 5, minScore: 0, requireRising: false, order: 'size' },
   referenceUsd: 100,
   spreadPct: 0.5,
   maxTokens: 50,
@@ -571,7 +571,9 @@ describe('scanOnce — the reserve has to be EXAMINED before it can be reserve',
       [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
       [`${DEXSCREENER_BASE}/tokens/v1/solana/newborn`]: { body: [newborn] },
     })
-    const out = await scanOnce(deps, config)
+    // Under STRICT, where the age gate still asks: production welcomes a
+    // newborn now — *todo es bienvenido* — and this proves the mechanism.
+    const out = await scanOnce(deps, { ...config, ranking: { ...config.ranking, gates: STRICT_GATE_POLICY } })
 
     expect(out.candidates).toEqual([])
     expect(http.calls.some((u) => u.includes('token_security'))).toBe(false)
@@ -1003,7 +1005,8 @@ describe('scanOnce — the registry is the memory the providers do not have', ()
       ...table('newborn'),
       [`${DEXSCREENER_BASE}/tokens/v1/solana/newborn`]: { body: [pair('newborn', { pairCreatedAt: NOW - 3_600_000 })] },
     })
-    const out = await scanOnce({ ...deps, store }, config)
+    // STRICT, where a pool an hour old is still refused — production welcomes it.
+    const out = await scanOnce({ ...deps, store }, { ...config, ranking: { ...config.ranking, gates: STRICT_GATE_POLICY } })
     expect(out.candidates).toEqual([])
     expect(registry.map((t) => t.contract)).toEqual(['newborn'])
   })
@@ -1173,3 +1176,139 @@ describe('scanOnce — Jupiter and the chain, no GoPlus', () => {
   })
 })
 
+describe('scanOnce — only as far as the free slots need', () => {
+  // *Primero revisá todos para tratar de llegar al máximo de tokens; luego
+  // descartá los 250 y sólo revisá tokens limitados hasta cubrir los cupos
+  // faltantes; no hacemos lectura y búsqueda al pedo.* The operator. The FREE
+  // SLOTS drive the work: none reads nothing new, k examines until k strangers
+  // pass every gate, and an empty book examines as far as it has to.
+  const market = (address: string, liquidityUsd: number): MarketSnapshot => ({
+    chain: 'solana', address, symbol: address.toUpperCase(), pairAddress: `pair-${address}`, dexId: 'raydium',
+    observedAt: NOW, priceUsd: 0.01, liquidityUsd, fdvUsd: 1_000_000,
+    volumeUsd: { h1: 35_000, h6: 180_000, h24: 525_000 }, priceChangePct: { h1: 2, h6: -3, h24: 5 },
+    txns: { h1: { buys: 40, sells: 30 }, h24: { buys: 900, sells: 850 } }, pairCreatedAt: NOW - 30 * DAY,
+  })
+  /** The deeper the pool, the cheaper it models to trade: `t19` is the cheapest of twenty. */
+  const depthOf = (address: string) => 150_000 + (Number(address.replace(/\D/g, '')) || 0) * 50_000
+
+  const production: ScanConfig = {
+    ...config,
+    maxTokens: Number.POSITIVE_INFINITY,
+    ranking: { ...config.ranking, order: 'costEfficiency', watchSlots: 3 },
+  }
+
+  const rig = (options: {
+    readonly discovered?: readonly string[]
+    readonly registry?: readonly string[]
+    readonly failing?: readonly string[]
+  } = {}) => {
+    const discovered = options.discovered ?? Array.from({ length: 20 }, (_, i) => `t${String(i).padStart(2, '0')}`)
+    const registry = options.registry ?? []
+    const failing = new Set(options.failing ?? [])
+    const quoted: string[] = []
+    const examined: string[] = []
+    const registryReads: [number, number][] = []
+    let discoveries = 0
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+    })
+    const { goplus: _unused, ...withoutGoPlus } = deps
+    const scanDeps: ScanDeps = {
+      ...withoutGoPlus,
+      decimals: {
+        decimals: async () => 6,
+        security: async () => ({ mintAuthorityActive: false, freezeAuthorityActive: false, topHoldersPct: 20, creatorPct: 1 }),
+        discover: async () => { discoveries++; return [...discovered] },
+      },
+      onChain: {
+        security: async (_chain, address) => {
+          examined.push(address)
+          return { mintAuthorityActive: failing.has(address), freezeAuthorityActive: false, transferTaxPct: 0, hasBlacklist: false }
+        },
+      },
+      markets: async (_chain, addresses) => addresses.map((a) => market(a, depthOf(a))),
+      sellProbe: { assessSell: async (address) => { quoted.push(address); return { sellQuote: 'ok', priceImpactPct: 0.1 } } },
+      store: {
+        rememberTokens: async () => {},
+        knownTokens: async (limit: number, offset = 0) => {
+          registryReads.push([limit, offset])
+          return registry.slice(offset, offset + limit).map((contract) => ({
+            contract, token: contract, pool: null, price: 0.01, volume24h: 1, liquidity: 1, marketCap: 1, txns: 1, lastUpdate: 1,
+          }))
+        },
+      },
+    }
+    return { scanDeps, quoted, examined, registryReads, discoveries: () => discoveries }
+  }
+
+  it('with NO free slot, reads no discovery and no registry, and quotes no stranger — only the book', async () => {
+    const { scanDeps, quoted, registryReads, discoveries } = rig()
+    const outcome = await scanOnce(scanDeps, {
+      ...production,
+      discover: false,
+      wanted: 0,
+      ranking: { ...production.ranking, watchSlots: 0 },
+      held: ['ours'],
+    })
+    expect(discoveries()).toBe(0)
+    expect(registryReads).toEqual([])
+    expect(quoted).toEqual(['ours'])
+    // Ours is never a candidate that takes a slot, and nothing else is one.
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['ours'])
+  })
+
+  it('with three free slots, stops examining after the third stranger passes — the cheapest first', async () => {
+    const { scanDeps, quoted, examined, registryReads } = rig({ registry: ['r1', 'r2'] })
+    const outcome = await scanOnce(scanDeps, { ...production, wanted: 3 })
+    expect(examined).toEqual(['t19', 't18', 't17'])
+    expect(quoted).toHaveLength(3)
+    expect(quoted.length).toBeLessThan(20)
+    // Covered by discovery: the registry was never read.
+    expect(registryReads).toEqual([])
+    expect(outcome.candidates.map((c) => c.snapshot.address).sort()).toEqual(['t17', 't18', 't19'])
+  })
+
+  it('reaches for the next cheapest when one fails, and only as far as it has to', async () => {
+    const { scanDeps, quoted, examined } = rig({ failing: ['t18'] })
+    const outcome = await scanOnce(scanDeps, { ...production, wanted: 3 })
+    expect(examined).toEqual(['t19', 't18', 't17', 't16'])
+    // The failed one was never quoted: its verdict could not change.
+    expect(quoted).toEqual(['t19', 't17', 't16'])
+    expect(outcome.candidates.map((c) => c.snapshot.address).sort()).toEqual(['t16', 't17', 't19'])
+  })
+
+  it('never counts a token we HOLD toward the slots, and examines it anyway', async () => {
+    const { scanDeps, examined } = rig()
+    const outcome = await scanOnce(scanDeps, { ...production, wanted: 2, ranking: { ...production.ranking, watchSlots: 2 }, held: ['t19'] })
+    expect(examined).toEqual(['t19', 't18', 't17'])
+    const strangers = outcome.candidates.filter((c) => c.snapshot.address !== 't19').map((c) => c.snapshot.address)
+    expect(strangers.sort()).toEqual(['t17', 't18'])
+  })
+
+  it('reads the registry a page at a time, only while short, and stops once covered', async () => {
+    const registry = Array.from({ length: 900 }, (_, i) => `r${i}`)
+    const { scanDeps, registryReads, examined } = rig({ discovered: ['t00', 't01'], registry })
+    await scanOnce(scanDeps, { ...production, wanted: 250, ranking: { ...production.ranking, watchSlots: 250 }, registryTokens: Number.POSITIVE_INFINITY })
+    expect(registryReads).toEqual([[500, 0]])
+    expect(examined).toHaveLength(250)
+  })
+
+  it('on an EMPTY book examines until the slots are full or the universe runs out', async () => {
+    const registry = Array.from({ length: 120 }, (_, i) => `r${i}`)
+    const { scanDeps, examined, registryReads } = rig({ registry })
+    const outcome = await scanOnce(scanDeps, { ...production, wanted: 250, ranking: { ...production.ranking, watchSlots: 250 }, registryTokens: Number.POSITIVE_INFINITY })
+    expect(examined).toHaveLength(140)
+    expect(registryReads).toEqual([[500, 0]])
+    expect(outcome.candidates).toHaveLength(140)
+  })
+
+  it('never reads the registry past its bound', async () => {
+    const registry = Array.from({ length: 900 }, (_, i) => `r${i}`)
+    const { scanDeps, examined, registryReads } = rig({ discovered: [], registry })
+    await scanOnce(scanDeps, { ...production, wanted: 250, ranking: { ...production.ranking, watchSlots: 250 }, registryTokens: 100 })
+    expect(registryReads).toEqual([[100, 0]])
+    expect(examined).toHaveLength(100)
+  })
+})

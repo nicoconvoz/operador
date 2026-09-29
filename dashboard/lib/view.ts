@@ -5,6 +5,7 @@ import { buildOperations } from '../../src/application/operations-view.js'
 import { buildDailyLog } from '../../src/application/daily-log.js'
 import { productionLadder } from '../../src/application/production-ladder.js'
 import { productionDoors } from '../../src/application/production-doors.js'
+import { bookCapital, freeSlots } from '../../src/application/free-capital.js'
 import { DEFAULT_PARAMS } from '../../src/domain/strategy/params.js'
 import { DexScreener, type MarketSnapshot } from '../../src/infrastructure/adapters/dexscreener/dexscreener.js'
 import { JupiterTokens } from '../../src/infrastructure/adapters/jupiter/jupiter-tokens.js'
@@ -59,6 +60,16 @@ export async function buildView(store: StatePort): Promise<ViewData> {
   // builder exists to prevent.
   const markets = liveMarkets(store)
 
+  // How many more tokens the free capital can take — the engine's own count,
+  // from the same function — so the canvas never draws more candidates than
+  // the engine would open. Only when the capital is known here: without
+  // OPERADOR_CAPITAL_USD the screen draws what the scan stored, which the
+  // engine already cut, and says nothing about free slots.
+  const capital = Number(process.env.OPERADOR_CAPITAL_USD?.trim())
+  const slots = Number.isFinite(capital) && capital > 0
+    ? freeSlots(bookCapital(capital, await store.allFills(), await store.loadPositions()), ladder.slotUsd)
+    : undefined
+
   const [dashboard, universe, operations, log] = await Promise.all([
     buildDashboard(store, { now }),
     // The same floors the engine ranks on. A screen that drew a token as
@@ -79,6 +90,10 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       // And its reserve switch: a token the engine will not buy is not drawn
       // as a fallback it might.
       reserve: doors.reserve,
+      // And its ORDER and its cut: the cheapest to trade first, and never more
+      // candidates than the capital can take.
+      order: doors.order,
+      ...(slots !== undefined ? { freeSlots: slots } : {}),
     }),
     buildOperations(store, {
       now,
@@ -92,11 +107,15 @@ export async function buildView(store: StatePort): Promise<ViewData> {
         urgentProfitPct: ladder.urgentProfitPct,
       },
       maxOpenEntries: ladder.maxOpenEntries,
-      // The ladder the engine BUYS: the $15 entry and the ONE rung, $20, armed
-      // once the holding's low is more than 80% under the first buy and bought
-      // on a 10% rebound off it — from the same module the engine reads, and
-      // off the low the sweep wrote down.
-      deepRung: { fallPct: ladder.deepRungFallPct, reboundPct: ladder.deepRungReboundPct, usd: ladder.deepRungUsd },
+      // The ladder the engine BUYS: every buy, the first included, $1 on a 3%
+      // dip and a 2% bounce, twenty at most — ONE box with the count and the
+      // watch in words, read off the watch the sweep wrote down. From the same
+      // module the engine reads.
+      dipBounce: { dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, stepUsd: ladder.stepUsd },
+      // The deep rung, drawn only when it is switched back on.
+      ...(ladder.deepRung
+        ? { deepRung: { fallPct: ladder.deepRungFallPct, reboundPct: ladder.deepRungReboundPct, usd: ladder.deepRungUsd } }
+        : {}),
       // Ladder A, drawn instead only when it is switched back on — the screen
       // never offers rungs the engine will not buy. At each position's own
       // spacing, behind the same switches the sweep reads.

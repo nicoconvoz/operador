@@ -4,6 +4,7 @@ import { estimatePriceImpactPct } from '../domain/market/market-quality.js'
 import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { withLiveMarket } from '../domain/scanner/live-market.js'
+import { type CandidateOrder } from '../domain/scanner/ranking.js'
 
 /**
  * The universe, as something you can look at.
@@ -56,7 +57,12 @@ export type TokenTier =
 
 /** One door a token did not clear, with what it read and what the door asks. */
 export interface HoldBack {
-  readonly kind: 'floor' | 'entry' | 'score'
+  /**
+   * `'slots'`: it cleared every door, and the free slots were taken by
+   * cheaper tokens — `value` is its cost efficiency and `floor` how many
+   * candidates the capital can take.
+   */
+  readonly kind: 'floor' | 'entry' | 'score' | 'slots'
   /** The component, or 'score'. */
   readonly name: string
   readonly value: number
@@ -154,6 +160,12 @@ export interface UniverseView {
   readonly tokens: readonly UniverseToken[]
   readonly counts: Readonly<Record<TokenTier, number>>
   readonly chains: readonly string[]
+  /**
+   * How many more tokens the free capital can take — the cut the candidates
+   * were drawn under — or null when the screen was not told. *Candidatos: N
+   * (lugares libres: N).*
+   */
+  readonly freeSlots: number | null
 }
 
 export interface UniverseOptions {
@@ -197,6 +209,19 @@ export interface UniverseOptions {
    * argument for these is that they are few and that they are ours.
    */
   readonly liveMarkets?: () => Promise<ReadonlyMap<string, Omit<TokenSnapshot, 'security'>>>
+  /**
+   * The engine's order: `'costEfficiency'` lists the cheapest to trade first,
+   * the score only breaking a tie — the same order the ranking cuts in. Absent:
+   * the score, as always.
+   */
+  readonly order?: CandidateOrder
+  /**
+   * How many more tokens the free capital can take — `freeSlots`, the engine's
+   * own count. The screen never draws more candidates than that: past it, in
+   * the engine's order, a token that cleared every door is drawn filtered and
+   * says the slots were taken. Absent: no cut, as before.
+   */
+  readonly freeSlots?: number
 }
 
 const TIERS: TokenTier[] = ['held', 'prime', 'eligible', 'reserve', 'pending', 'filtered', 'unsafe', 'dead']
@@ -436,6 +461,26 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     tokens.push(fromPositionAlone(position, holding.has(position.id), live.get(key), opportunityPolicy, spreadPct))
   }
 
+  // The engine's order, and its cut: never more candidates than the free
+  // capital can take. *Que no haya más candidatos de los que el capital pueda
+  // tomar.* Tokens we hold are 'held' and never counted.
+  const byCost = options.order === 'costEfficiency'
+  const efficiencyOf = (t: UniverseToken) => t.components.costEfficiency ?? 0
+  const inOrder = (a: UniverseToken, b: UniverseToken) =>
+    (byCost ? efficiencyOf(b) - efficiencyOf(a) : 0) || b.score - a.score || a.address.localeCompare(b.address)
+  if (options.freeSlots !== undefined) {
+    const candidate = new Set<TokenTier>(['prime', 'eligible', 'reserve'])
+    const ranked = tokens.filter((t) => candidate.has(t.tier)).sort(inOrder)
+    for (const cut of ranked.slice(Math.max(0, options.freeSlots))) {
+      const at = tokens.indexOf(cut)
+      tokens[at] = {
+        ...cut,
+        tier: 'filtered',
+        holdBack: [{ kind: 'slots', name: 'costEfficiency', value: efficiencyOf(cut), floor: options.freeSlots, strict: false }],
+      }
+    }
+  }
+
   const counts = Object.fromEntries(TIERS.map((tier) => [tier, tokens.filter((t) => t.tier === tier).length])) as Record<TokenTier, number>
 
   return {
@@ -444,10 +489,12 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
     // stalest half, and reporting the newest would let a healthy Solana scan
     // hide a BSC scanner that died three hours ago.
     scannedAt: scans.length === 0 ? null : Math.min(...scans.map((s) => s.scannedAt)),
-    // Brightest first, so a truncated render keeps the interesting ones.
-    tokens: [...tokens].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || b.score - a.score),
+    // Brightest first, so a truncated render keeps the interesting ones — and
+    // within a tier in the engine's own order.
+    tokens: [...tokens].sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier) || inOrder(a, b)),
     counts,
     chains: [...new Set(tokens.map((t) => t.chain))].sort(),
+    freeSlots: options.freeSlots ?? null,
   }
 }
 

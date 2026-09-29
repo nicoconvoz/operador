@@ -138,13 +138,21 @@ export function stepCascade(
   // rose, the hour is still green, the pool is deep and cheap — and re-asking
   // it here in the language of indicators is how the engine ended up choosing
   // sixteen candidates and buying five.
-  if (params.useMomentumEntry && s.level === 0 && bar.close > 0 && !boughtThisBar) {
+  //
+  // Every door OPENS a position and never adds to one: `!inPosition` as well as
+  // `level === 0`. In the reference the two are the same thing — the machine
+  // bought whatever is held — but a holding the dip-bounce sweep bought sits at
+  // level 0 while the broker holds it, and a door that read only the level
+  // would buy into it on every bar.
+  if (params.useMomentumEntry && s.level === 0 && !inPosition && bar.close > 0 && !boughtThisBar) {
     openPosition('🟢 Entry')
   }
 
   // ── Door 1: classic entry — drop from swing high inside a lateral zone
   if (
+    params.useClassicEntry &&
     s.level === 0 &&
+    !inPosition &&
     ctx.swingHigh !== null &&
     bar.close <= ctx.swingHigh * (1 - params.dropInitPct / 100) &&
     ctx.isLateral &&
@@ -158,6 +166,7 @@ export function stepCascade(
   if (
     params.useTrendReentry &&
     s.level === 0 &&
+    !inPosition &&
     s.awaitReentry &&
     ctx.trendBullish &&
     bar.close > 0 &&

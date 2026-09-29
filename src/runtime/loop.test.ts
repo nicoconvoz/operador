@@ -14,6 +14,7 @@ import { DEFAULT_GAIN_LOCK_POLICY, type GainLockPolicy } from '../domain/risk/ga
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
 import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
+import { DEFAULT_DIP_BOUNCE_POLICY } from '../domain/strategy/dip-bounce.js'
 
 const NOW = 1_800_000_000_000
 const quality: MarketQuality = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: NOW }
@@ -593,6 +594,58 @@ describe('runLoop — the stop does not clock off between cycles', () => {
 
     it('and buys nothing when no deep rung is wired', async () => {
       expect(await fallsThenRebounds(false)).toEqual(['Entry'])
+    })
+  })
+
+  describe('the dip-bounce steps are watched between cycles, alone', () => {
+    // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD.* With
+    // no stop, no break-even, no gain lock and no other ladder wired, the steps
+    // are reason enough to look between cycles: the bounce that buys usually
+    // arrives while the loop sleeps.
+    const at = (price: number, bars = 260): Candles => ({
+      time: Array.from({ length: bars }, (_, i) => i * 3_600_000),
+      open: Array(bars).fill(price), high: Array(bars).fill(price), low: Array(bars).fill(price),
+      close: Array(bars).fill(price), volume: Array(bars).fill(10_000),
+    })
+    const dipsThenBounces = async (wired: boolean) => {
+      let clock = NOW
+      let asked = 0
+      const store = new MemoryStore()
+      const { deps } = rig({
+        store,
+        now: () => clock,
+        candlesFor: async () => at(1),
+        // The high at 1 on the first look, 4% under it on the second, and a
+        // 2.1% bounce off that low once the loop is sleeping.
+        marketPrices: async () => new Map([['solana:Held', [1, 0.96][asked++] ?? 0.96 * 1.021]]),
+        brokerFor: async (pos) => {
+          const broker = new PaperBroker({ gasUsdPerSwap: 0.05, initialCapital: pos.capitalUsd, maxOpenEntries: 20, quality: () => quality })
+          broker.seed(await store.fillsFor(pos.id))
+          return broker
+        },
+        ...(wired ? { dipBounce: { policy: DEFAULT_DIP_BOUNCE_POLICY, stepUsd: 1, gasUsdPerSwap: 0.05 } } : {}),
+      })
+      // A reservation the tick has already priced: nothing bought yet.
+      await store.savePosition({
+        id: 'pos-1', chain: 'solana', tokenAddress: 'Held', pairAddress: 'PairHeld', symbol: 'HELD',
+        cascade: initialState(), deathWatch: startDeathWatch(1_000_000, NOW), quality, capitalUsd: 20,
+        lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: NOW, updatedAt: NOW,
+      })
+      await runLoop(
+        deps,
+        { ...config, breakEven: false, gainLock: null },
+        new AlertThrottle(60_000),
+        { intervalMs: 120_000, maxCycles: 1, sleep: async (ms) => { clock += ms } },
+      )
+      return (await store.allFills()).filter((f) => f.side === 'buy').map((f) => f.orderId)
+    }
+
+    it('buys the first dollar on a bounce that arrives while the loop sleeps', async () => {
+      expect(await dipsThenBounces(true)).toEqual(['Entry'])
+    })
+
+    it('and buys nothing when the steps are not wired', async () => {
+      expect(await dipsThenBounces(false)).toEqual([])
     })
   })
 

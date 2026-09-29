@@ -43,7 +43,9 @@ const policy: RankingPolicy = {
   minScore: 10,
   // Off here: these pin the gates and the scoring, not the strategy.
   requireRising: false,
-  
+  // The OLD order — small caps first, then score — which `OPERADOR_RANK_BY=size`
+  // brings back. Most tests here pin that order; production's is below.
+  order: 'size',
 }
 
 describe('ranking — gates first, then score, then slots', () => {
@@ -340,6 +342,84 @@ describe('ranking — a floor failure is REPORTED, not swallowed', () => {
   it('carries the score too, so the alert can say what it fell to', () => {
     const { switchedOff } = rankUniverse([token('toll')], new Map(), expensive, floors)
     expect(switchedOff[0]!.opportunity.score).toBeGreaterThanOrEqual(0)
+  })
+})
+
+describe('ranking — the cheapest to trade win, before any cut', () => {
+  // *Que de los tokens candidatos elija los que tengan mejor eficiencia de
+  // costos si hay más de 100.* The operator. Cost efficiency, highest first,
+  // ties by score — and BEFORE the cut, so the best-efficiency tokens are
+  // never cut before the allocator sees them.
+  //
+  // Efficiency is linear in the round trip: 1 − 2 × (spread + slippage) / 4.
+  // With a 0.5% spread, a slippage of 0.1% reads 0.7, 0.3% reads 0.6, 0.5%
+  // reads 0.5 — the neutral an unmeasured toll also reads — and 0.9% reads 0.3.
+  const bySlippage = (slippage: Readonly<Record<string, number>>) => (s: TokenSnapshot): MarketQuality => ({
+    liquidityUsd: s.liquidityUsd, spreadPct: 0.5, slippagePct: slippage[s.address] ?? 0.3, referenceUsd: 100, observedAt: s.observedAt,
+  })
+  const cost: RankingPolicy = { ...policy, order: 'costEfficiency', minScore: 0 }
+  const lively = { volumeUsd: { h1: 20_000, h6: 60_000, h24: 120_000 }, txns: { h1: { buys: 70, sells: 20 }, h24: { buys: 900, sells: 850 } } }
+  const quiet = { volumeUsd: { h1: 1_000, h6: 10_000, h24: 120_000 } }
+
+  it('orders by cost efficiency, highest first — whatever the score says', () => {
+    const dull = { ...quiet, priceChangePct: { h1: -2, h6: -4, h24: -6 } }
+    const universe = [token('PRICEY', lively), token('CHEAP', dull), token('MID', lively)]
+    const q = bySlippage({ PRICEY: 0.9, CHEAP: 0.1, MID: 0.3 })
+    const { candidates } = rankUniverse(universe, new Map(), q, { ...cost, watchSlots: 10 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['CHEAP', 'MID', 'PRICEY'])
+    const efficiency = candidates.map((c) => c.opportunity.components.costEfficiency)
+    expect(efficiency[0]).toBeCloseTo(0.7, 9)
+    expect(efficiency[1]).toBeCloseTo(0.6, 9)
+    expect(efficiency[2]).toBeCloseTo(0.3, 9)
+    // The quiet one scores lower and still leads: the toll decides.
+    expect(candidates[0]!.opportunity.score).toBeLessThan(candidates[1]!.opportunity.score)
+  })
+
+  it('breaks a tie in efficiency by score', () => {
+    const universe = [token('WEAK', quiet), token('STRONG', lively)]
+    const { candidates } = rankUniverse(universe, new Map(), bySlippage({}), { ...cost, watchSlots: 10 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['STRONG', 'WEAK'])
+  })
+
+  it('ignores the size of the name — small caps first is the OLD order', () => {
+    const universe = [token('BIG', { ...quiet, fdvUsd: 400_000_000 }), token('SMALL', { ...quiet, fdvUsd: 5_000_000 })]
+    const q = bySlippage({ BIG: 0.1, SMALL: 0.3 })
+    const { candidates } = rankUniverse(universe, new Map(), q, { ...cost, smallCapFdvUsd: 50_000_000, watchSlots: 10 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['BIG', 'SMALL'])
+  })
+
+  it('sorts an unmeasured toll by its neutral 0.5, like any other number', () => {
+    const universe = [token('LOW', quiet), token('NEUTRAL', quiet), token('HIGH', quiet)]
+    const q = bySlippage({ LOW: 0.9, NEUTRAL: 0.5, HIGH: 0.1 })
+    const { candidates } = rankUniverse(universe, new Map(), q, { ...cost, watchSlots: 10 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['HIGH', 'NEUTRAL', 'LOW'])
+    expect(candidates[1]!.opportunity.components.costEfficiency).toBeCloseTo(0.5, 9)
+  })
+
+  it('cuts AFTER ordering: the three cheapest of ten keep their places', () => {
+    const universe = Array.from({ length: 10 }, (_, i) => token(`t${i}`))
+    const slippage = Object.fromEntries(universe.map((t, i) => [t.address, 0.9 - i * 0.08]))
+    const { candidates } = rankUniverse(universe, new Map(), bySlippage(slippage), { ...cost, watchSlots: 3 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['t9', 't8', 't7'])
+  })
+
+  it('never counts a token we already HOLD against the free slots', () => {
+    // The slots are the FREE ones; a held token already has its own. Counted,
+    // two held tokens ranked cheapest would leave one free slot a candidate
+    // where three are free.
+    const universe = Array.from({ length: 6 }, (_, i) => token(`t${i}`))
+    const slippage = Object.fromEntries(universe.map((t, i) => [t.address, 0.9 - i * 0.1]))
+    const held = new Set(['solana:t5', 'solana:t4'])
+    const { candidates } = rankUniverse(universe, new Map(), bySlippage(slippage), { ...cost, watchSlots: 3, held })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['t5', 't4', 't3', 't2', 't1'])
+    expect(candidates.filter((c) => !held.has(tokenKey(c.snapshot)))).toHaveLength(3)
+  })
+
+  it('gives no new candidate at all when no slot is free', () => {
+    const universe = Array.from({ length: 4 }, (_, i) => token(`t${i}`))
+    const held = new Set(['solana:t0'])
+    const { candidates } = rankUniverse(universe, new Map(), bySlippage({}), { ...cost, watchSlots: 0, held })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['t0'])
   })
 })
 

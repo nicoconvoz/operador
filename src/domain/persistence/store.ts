@@ -30,6 +30,7 @@ import { type DeathWatchState } from '../risk/death-exit.js'
 import { type GainLock } from '../risk/gain-lock.js'
 import { type LiquidityWatch } from '../strategy/liquidity-brake.js'
 import { type PriceLow } from '../strategy/deep-rung.js'
+import { type DipWatch } from '../strategy/dip-bounce.js'
 import { type DailyPnl, type DailyPnlSample } from '../reporting/daily-pnl.js'
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeState, type Order } from '../strategy/state.js'
@@ -188,6 +189,20 @@ export interface PersistedPosition {
    */
   readonly priceLow?: PriceLow | null
   /**
+   * The dip-bounce watch: the reference a 3% dip is measured from — the high
+   * before the holding's first buy, the last buy after it — whether it is
+   * armed, the low it bounces off, and which holding it belongs to. *Ante una
+   * caída del 3% del precio y una subida del 2%, comprá 1 USD.* See
+   * `domain/strategy/dip-bounce.ts`.
+   *
+   * A reading, kept by both stores by one rule, `keepDipWatch`: the watch with
+   * the NEWER `at` wins, because every step of the cycle writes the whole row
+   * back from a snapshot read before the sweep moved it, and a stale snapshot
+   * must never disarm a watch, re-arm one, or put an old reference back.
+   * Absent: the sweep has not watched it yet.
+   */
+  readonly dipWatch?: DipWatch | null
+  /**
    * Orders emitted on that bar and NOT yet confirmed filled.
    *
    * This is the field that makes recovery safe. A process that dies between
@@ -343,13 +358,14 @@ export interface StatePort {
    * NEVER pruned. Every other cache in this store expires because it is an
    * optimisation; this one is the memory the providers do not have.
    *
-   * `limit` is not timidity: reading it whole would cost one DexScreener call
-   * per thirty rows, and the point is to reach further rather than to spend
+   * `limit` is not timidity: reading it whole would cost a share of a price
+   * request per row, and the point is to reach further rather than to spend
    * more. The order is last-known 24h volume, so a bounded read takes the ones
-   * worth re-pricing first.
+   * worth re-pricing first — and `offset` pages on from there, so a scan reads
+   * only as far as its free slots need. `Infinity`: every row past `offset`.
    */
   rememberTokens(tokens: readonly RememberedToken[]): Promise<void>
-  knownTokens(limit: number): Promise<readonly RememberedToken[]>
+  knownTokens(limit: number, offset?: number): Promise<readonly RememberedToken[]>
 
   /** Tokens the death exit has condemned. Never traded again. */
   blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void>

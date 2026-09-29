@@ -96,10 +96,11 @@ export interface EngineConfig {
    * How many entries the position's capital was ALLOCATED for, and so what the
    * tick divides it by. Never more than `maxOpenEntries`.
    *
-   * One in production: a slot is given its first buy, and each rung asks the
-   * book's free capital for its own fifteen dollars when it fires (see
-   * `DEFAULT_RESERVED_ENTRIES`). The venue still holds `maxOpenEntries`; this
-   * only says how many of them the slot's capital is meant to pay for.
+   * Twenty in production: a slot is given every dip-bounce step, its whole
+   * ladder (see `DEFAULT_RESERVED_ENTRIES`). It was one — the first buy, each
+   * rung asking the free capital for its own dollars when it fired. The venue
+   * holds `maxOpenEntries`; this only says how many of them the slot's
+   * capital is meant to pay for.
    *
    * Absent: `maxOpenEntries`, the whole ladder — what every caller did before,
    * so the parity harness and the offline paths keep meaning what they meant.

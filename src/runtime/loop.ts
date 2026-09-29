@@ -110,7 +110,10 @@ export async function runLoop(
     // is the gain lock: a rocket that set its floor during a pass falls through
     // it while the loop sleeps as easily as while it runs.
     const lockOn = config.gainLock !== undefined && config.gainLock !== null
-    const laddersOn = deps.pressureLadder !== undefined || deps.dropLadder !== undefined || deps.deepRung !== undefined
+    // The dip-bounce steps above all: they are every buy the book makes, the
+    // first included, and a bounce arrives while the loop sleeps as often as
+    // while it runs.
+    const laddersOn = deps.pressureLadder !== undefined || deps.dropLadder !== undefined || deps.deepRung !== undefined || deps.dipBounce !== undefined
     if (!stopOn && config.breakEven !== true && !lockOn && !laddersOn) return
     if (deps.marketPrices === undefined) return
     // The kill switch as the last pass found it. Its documented asymmetry is

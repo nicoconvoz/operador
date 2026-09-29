@@ -117,3 +117,71 @@ export function fundRungsFromFreeCapital(
     return funded
   }
 }
+
+/**
+ * How many more tokens the free capital can take: the free capital over the
+ * slot, rounded down. *No pongas tope, el tope son 5000 dividido 50, que es lo
+ * que tengo* — and at twenty steps of a dollar, capital / $20.
+ *
+ * ONE definition, read by the scan (how far to look), the ranking (where to cut)
+ * and the allocator (how many to open). Nothing is grossed up and no haircut
+ * shrinks the count: a slot is exactly steps × step, and the fees are paid out
+ * of the free capital as the fills happen (`fundStepFromFreeCapital`). The free
+ * capital already carries the common fund, so what the book made widens it and
+ * what the chain took narrows it.
+ */
+export function freeSlots(book: BookCapital, slotUsd: number): number {
+  if (!(slotUsd > 0)) return 0
+  // A hair of rounding room, so $5,000 over $20 is 250 and not 249.99….
+  return Math.max(0, Math.floor(book.freeUsd / slotUsd + 1e-9))
+}
+
+export interface StepFundingDeps {
+  readonly store: StatePort
+  readonly totalCapitalUsd: number
+  /**
+   * What the position's wallet has left to spend, as the broker that will fill
+   * the step counts it — built from the position's capital and its fills. The
+   * composition root hands in the broker's own number, so the funder and the
+   * broker cannot disagree about whether a step is affordable.
+   */
+  readonly cashOf: (position: PersistedPosition) => Promise<number>
+}
+
+/**
+ * Gives a position what its next step costs beyond the cash it has left, out
+ * of the book's free capital, at the moment the step fires.
+ *
+ * A slot reserves exactly steps × step — $20 — and nothing for the spread, the
+ * impact and the gas each $1 buy pays. *Las comisiones salen del capital libre
+ * y del fondo común a medida que se ejecutan.* So a step whose cash is short
+ * asks the free pool for the shortfall — never the whole step again — and the
+ * caller builds its broker from the position this returns.
+ *
+ * Null when the free capital cannot cover it: the step is not bought, it is
+ * said unfunded, and nothing is written. The step is never shrunk to fit.
+ *
+ * Reads the position from the STORE, never the caller's copy: a sweep holding a
+ * snapshot from before an earlier step was funded must neither pay twice nor
+ * write the smaller number back over the larger.
+ */
+export function fundStepFromFreeCapital(
+  deps: StepFundingDeps,
+): (position: PersistedPosition, costUsd: number) => Promise<PersistedPosition | null> {
+  return async (position, costUsd) => {
+    const book = await deps.store.loadPositions()
+    const stored = book.find((p) => p.id === position.id) ?? position
+    const cash = await deps.cashOf(stored)
+    if (cash >= costUsd) return stored
+
+    // A hair over the shortfall, so the broker's own float arithmetic never
+    // finds the step a thousandth of a cent short.
+    const extra = costUsd - cash + 1e-9
+    const free = bookCapital(deps.totalCapitalUsd, await deps.store.allFills(), book).freeUsd
+    if (free < extra) return null
+
+    const funded: PersistedPosition = { ...stored, capitalUsd: stored.capitalUsd + extra }
+    await deps.store.savePosition(funded)
+    return funded
+  }
+}

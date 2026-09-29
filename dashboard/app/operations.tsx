@@ -76,9 +76,8 @@ export function Operations({
     return (
       <section style={card()}>
         <div style={{ color: DIM }}>
-          Sin posiciones abiertas. El motor está escaneando; abre una cuando un token pasa todos los filtros Y se
-          disparan las condiciones de entrada de la estrategia: una caída del 10% desde el máximo reciente dentro de
-          una zona lateral.
+          Sin posiciones abiertas. El motor está escaneando; reserva un lugar para cada token que pasa los filtros de
+          seguridad mientras haya capital libre, y compra de a un paso después de cada caída seguida de un rebote.
         </div>
       </section>
     )
@@ -141,7 +140,10 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
             {stage}
             {position.hasPendingOrders ? ' ⏳' : ''}
           </span>
-          <span style={{ color: DIM, fontSize: 12 }}>{Math.max(0, position.ladder.filter((r) => r.filled).length - 1)} DCA</span>
+          {/* The dip-bounce ladder carries its count in its own box below. */}
+          {!position.steps && (
+            <span style={{ color: DIM, fontSize: 12 }}>{Math.max(0, position.ladder.filter((r) => r.filled).length - 1)} DCA</span>
+          )}
           <span style={{ flex: 1 }} />
           <span style={{ color: DIM }}>{open ? '▾' : '▸'}</span>
         </div>
@@ -165,8 +167,9 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
         </div>
       </button>
 
-      {/* The ladder, always visible: it is the shape of the position. */}
-      <Ladder rungs={position.ladder} />
+      {/* The ladder, always visible: it is the shape of the position. The
+          dip-bounce ladder is ONE box with its count, never a box per step. */}
+      {position.steps ? <Steps steps={position.steps} /> : <Ladder rungs={position.ladder} />}
 
       {/* Why the next rung is not firing. A ladder that is correctly waiting
           and a ladder that is broken looked exactly alike, which makes the
@@ -220,6 +223,40 @@ function Position({ position, open, onToggle }: { position: PositionOperations; 
         </div>
       )}
     </section>
+  )
+}
+
+/**
+ * The dip-bounce ladder as ONE box: the buys made, of the most it may make.
+ *
+ * *No vayas a poner 50 casilleros por token por los DCA, sólo dejá un
+ * casillero con el número de DCA.* The operator. No row of rungs and no bar of
+ * cells: a single box with the count, and under it the dollars in them. What
+ * the next dollar waits for is the watch line drawn below it, in words.
+ */
+function Steps({ steps }: { steps: NonNullable<PositionOperations['steps']> }) {
+  const full = steps.bought >= steps.max
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div
+        title={`compras: ${steps.bought} de ${steps.max}`}
+        style={{
+          display: 'inline-block',
+          padding: '3px 10px',
+          borderRadius: 3,
+          border: `1px solid ${steps.bought > 0 ? UP : '#21262d'}`,
+          background: steps.bought > 0 ? 'rgba(99,230,165,0.18)' : 'transparent',
+          color: full ? UP : '#e6e6e6',
+          fontSize: 12,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        DCA {steps.bought} / {steps.max}
+      </div>
+      <div style={{ color: DIM, fontSize: 11, marginTop: 4 }}>
+        compras: {steps.bought} de {steps.max} · {money(steps.investedUsd)} invertidos
+      </div>
+    </div>
   )
 }
 

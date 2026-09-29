@@ -12,29 +12,67 @@ import {
   DEFAULT_DEEP_RUNG_REBOUND_PCT,
   DEFAULT_DEEP_RUNG_USD,
   DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT,
+  DEFAULT_STEP_USD,
+  DEFAULT_MAX_STEPS,
+  DEFAULT_DIP_PCT,
+  DEFAULT_BOUNCE_PCT,
+  DEFAULT_DEEP_RUNG,
+  DEFAULT_CASCADE_ENTRIES,
 } from './production-ladder.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
-describe('productionLadder — one place for the two numbers that differ', () => {
-  it('defaults to TWO buys: $15 at entry, and one $20 rung past −80% on a 10% rebound', () => {
-    // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
-    // un rebote de 10%, nueva compra DCA de $20. Dejá el TP en 10%.* One entry
-    // reserved up front; the rung asks the free capital for its own $20 when it
-    // fires. Everything else that could buy a rung is OFF, each one a variable
-    // away: the chained drop ladder, its volatility spacing and the liquidity
-    // brake. Ladder A's lists stay as they were, dormant behind the switch.
+describe('productionLadder — one place for the numbers that differ', () => {
+  it('defaults to TWENTY buys of $1, every one on a 3% dip and a 2% bounce', () => {
+    // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
+    // armá escalones de 1 USD con la misma regla* — then *disminuí los
+    // escalones a 20.* The slot reserves the whole ladder, exactly steps ×
+    // step. Every other path that could buy is OFF, each one a variable away:
+    // the deep rung, the chained drop ladder, its volatility spacing, the
+    // liquidity brake and the cascade's own doors. The TP stays at 10%.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 15, maxOpenEntries: 2, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
+      maxUsdPerLevel: 1, maxOpenEntries: 20, dropInitPct: 0, minProfitPct: 10, impatientProfitPct: 10, urgentProfitPct: 25,
       dropLadder: false,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 1,
-      deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
+      deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
+      stepUsd: 1, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 20, cascadeEntries: false,
     })
+    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT]).toEqual([1, 20, 3, 2])
   })
 
-  it('puts at most $35 into one token: the $15 entry and the $20 rung', () => {
+  it('puts at most $20 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
     const ladder = productionLadder({})
-    expect(ladder.maxUsdPerLevel + ladder.deepRungUsd).toBe(35)
-    expect(ladder.maxOpenEntries).toBe(2)
+    expect(ladder.maxSteps * ladder.stepUsd).toBe(20)
+    expect(ladder.slotUsd).toBe(20)
+    expect(ladder.maxOpenEntries).toBe(20)
+  })
+
+  it('derives the slot from the two variables, never from a constant', () => {
+    expect(productionLadder({ OPERADOR_MAX_STEPS: '50' }).slotUsd).toBe(50)
+    expect(productionLadder({ OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '2' }))
+      .toMatchObject({ slotUsd: 100, maxOpenEntries: 50, reservedEntries: 50, maxUsdPerLevel: 2 })
+  })
+
+  it('reads the dip, the bounce, the step and the steps from the environment', () => {
+    expect(productionLadder({ OPERADOR_DIP_PCT: '5', OPERADOR_BOUNCE_PCT: '1.5', OPERADOR_STEP_USD: '0.5', OPERADOR_MAX_STEPS: '10' }))
+      .toMatchObject({ dipPct: 5, bouncePct: 1.5, stepUsd: 0.5, maxSteps: 10, slotUsd: 5 })
+  })
+
+  it('keeps the operator’s numbers on nonsense rather than trading on it', () => {
+    for (const bad of ['tres', '0', '-3', '100', ' ']) expect(productionLadder({ OPERADOR_DIP_PCT: bad }).dipPct, bad).toBe(3)
+    for (const bad of ['dos', '0', '-2', ' ']) expect(productionLadder({ OPERADOR_BOUNCE_PCT: bad }).bouncePct, bad).toBe(2)
+    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(1)
+    for (const bad of ['veinte', '0', '-1', '2.5', ' ']) expect(productionLadder({ OPERADOR_MAX_STEPS: bad }).maxSteps, bad).toBe(20)
+  })
+
+  it('keeps the deep rung and the cascade’s own doors OFF — each one a variable away', () => {
+    expect(DEFAULT_DEEP_RUNG).toBe(false)
+    expect(DEFAULT_CASCADE_ENTRIES).toBe(false)
+    expect(productionLadder({ OPERADOR_DEEP_RUNG: '1' }).deepRung).toBe(true)
+    expect(productionLadder({ OPERADOR_CASCADE_ENTRIES: 'yes' }).cascadeEntries).toBe(true)
+    for (const off of ['0', 'no', 'si', '']) {
+      expect(productionLadder({ OPERADOR_DEEP_RUNG: off }).deepRung).toBe(false)
+      expect(productionLadder({ OPERADOR_CASCADE_ENTRIES: off }).cascadeEntries).toBe(false)
+    }
   })
 
   it('counts the entry on top of the DCA rungs, because the entry is not one', () => {
@@ -48,7 +86,7 @@ describe('productionLadder — one place for the two numbers that differ', () =>
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 15, maxOpenEntries: 2 })
+      .toMatchObject({ maxUsdPerLevel: 1, maxOpenEntries: 20 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -111,8 +149,8 @@ describe('production ladder — depth ZERO is one buy and nothing after it', () 
 
   it('still defaults to whatever the decision above says', () => {
     expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
-    // The entry and the one deep rung.
-    expect(productionLadder({}).maxOpenEntries).toBe(2)
+    // Twenty steps, the first included.
+    expect(productionLadder({}).maxOpenEntries).toBe(20)
   })
 
   it('still refuses nonsense rather than taking it', () => {
@@ -169,29 +207,28 @@ describe('production ladder — each rung buys its OWN size, paired with its dro
   })
 })
 
-describe('production ladder — a position reserves its FIRST buy, not the whole ladder', () => {
-  // Live, before this: $2,887 committed against $1,395 deployed. Reserving
-  // four entries a token would hold about half as many tokens as the replay
-  // assumed, so each rung takes its capital from the free pool when it fires.
-  it('reserves one entry by default', () => {
-    expect(productionLadder({}).reservedEntries).toBe(1)
+describe('production ladder — a position reserves its WHOLE ladder', () => {
+  // With $1 steps a slot reserving one buy would open a thousand positions and
+  // drown the providers in candle requests. So a slot reserves every step it
+  // can buy, and the capital bounds the book: capital / $20.
+  it('reserves every step by default', () => {
+    expect(productionLadder({}).reservedEntries).toBe(20)
   })
 
-  it('takes an override — the whole ladder is one variable away', () => {
-    // Two entries is the whole ladder now: the $15 entry and the $20 rung.
+  it('takes an override', () => {
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '2' }).reservedEntries).toBe(2)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '4', OPERADOR_MAX_DCA: '5' }).reservedEntries).toBe(4)
   })
 
   it('never reserves more entries than the venue will hold', () => {
-    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9' }).reservedEntries).toBe(2)
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '90' }).reservedEntries).toBe(20)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '5' }).reservedEntries).toBe(6)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '1' }).reservedEntries).toBe(2)
   })
 
-  it('refuses nonsense: a position always reserves at least its first buy', () => {
+  it('refuses nonsense: the whole ladder, the decision', () => {
     for (const raw of ['0', '-1', 'uno', '1.5']) {
-      expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: raw }).reservedEntries).toBe(1)
+      expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: raw }).reservedEntries).toBe(20)
     }
   })
 })

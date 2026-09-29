@@ -11,6 +11,7 @@ import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.j
 import { keepGainLock } from '../../domain/risk/gain-lock.js'
 import { keepLiquidityWatch } from '../../domain/strategy/liquidity-brake.js'
 import { keepPriceLow } from '../../domain/strategy/deep-rung.js'
+import { keepDipWatch } from '../../domain/strategy/dip-bounce.js'
 import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
 import { foldDailySample, type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
 
@@ -72,10 +73,13 @@ export class MemoryStore implements StatePort {
     // holding keeps the LOWER price, a newer holding's replaces it, and a
     // write carrying none keeps what is stored.
     const priceLow = keepPriceLow(stored?.priceLow, position.priceLow)
+    // The dip-bounce watch, by the rule the upsert spells out in its CASE: the
+    // NEWER watch wins, and a write carrying none keeps what is stored.
+    const dipWatch = keepDipWatch(stored?.dipWatch, position.dipWatch)
     this.positions.set(position.id, structuredClone({
       ...position, breakEvenArmed: armed, entryScore, dcaScale, gainLock,
       dcaScaleNow: now?.scale ?? null, dcaScaleNowAt: now?.at ?? null,
-      liquidityWatch, priceLow,
+      liquidityWatch, priceLow, dipWatch,
     }))
   }
 
@@ -204,10 +208,11 @@ export class MemoryStore implements StatePort {
     for (const token of tokens) this.registry.set(token.contract, token)
   }
 
-  async knownTokens(limit: number): Promise<readonly RememberedToken[]> {
+  async knownTokens(limit: number, offset = 0): Promise<readonly RememberedToken[]> {
     return [...this.registry.values()]
-      .sort((a, b) => (b.volume24h ?? -1) - (a.volume24h ?? -1))
-      .slice(0, limit)
+      // The SQL's total order: the contract breaks a tie, so pages never overlap.
+      .sort((a, b) => (b.volume24h ?? -1) - (a.volume24h ?? -1) || a.contract.localeCompare(b.contract))
+      .slice(offset, offset + limit)
   }
 
   async blacklist(chain: string, tokenAddress: string, reason: string, at: number): Promise<void> {

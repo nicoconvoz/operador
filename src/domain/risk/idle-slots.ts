@@ -83,6 +83,13 @@ export interface IdleSlotPolicy {
    * TP que habíamos puesto se activa, cierre; si no, no.*
    */
   readonly swapHolders?: boolean
+  /**
+   * What `score` and `waiting` are counted in. `'costEfficiency'`: points of
+   * cost efficiency, 0..100 — *que elija los que tengan mejor eficiencia de
+   * costos* — and the edge is read in the same points. Only the words change;
+   * the rule is the same rule. Absent: the opportunity score.
+   */
+  readonly measure?: 'score' | 'costEfficiency'
 }
 
 /** Three hours: twelve bars at 15m, most of the 20-bar swing-high window. */
@@ -284,7 +291,8 @@ export function releasableSlots(
       continue
     }
     if (best >= holder.score + policy.minScoreEdge) {
-      decisions.push({ holder, reason: `hay un candidato ${(best - holder.score).toFixed(0)} puntos mejor esperando` })
+      const points = policy.measure === 'costEfficiency' ? 'puntos de eficiencia de costos' : 'puntos'
+      decisions.push({ holder, reason: `hay un candidato ${(best - holder.score).toFixed(0)} ${points} mejor esperando` })
       continue
     }
     if (!proven && waited) {

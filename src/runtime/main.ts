@@ -9,8 +9,7 @@ import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
-import { ladderCapitalUsd } from '../application/paper-run.js'
-import { fundRungsFromFreeCapital } from '../application/free-capital.js'
+import { fundRungsFromFreeCapital, fundStepFromFreeCapital } from '../application/free-capital.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type Chain, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
@@ -333,9 +332,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     const broker = new PaperBroker({
       gasUsdPerSwap: config.gasUsdPerSwap,
       initialCapital: position.capitalUsd,
-      // The entry and the one deep rung. The reference's ten stays in
-      // PYRAMIDING, which the parity harness asserts; production composes its
-      // own.
+      // Every dip-bounce step: twenty, the first buy included. The reference's
+      // ten stays in PYRAMIDING, which the parity harness asserts; production
+      // composes its own.
       maxOpenEntries: config.maxDcaPerToken + 1,
       quality: () => position.quality,
     })
@@ -362,6 +361,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // shortlist is now chosen for RISING, and door 1 refuses a bar making a
     // new twenty-bar high. Sixteen candidates produced five positions.
     useMomentumEntry: config.buyOnSelection,
+    // The cascade's OWN doors, switched off: *nada se compra cuando una moneda
+    // pasa a candidata.* Every buy, the first one included, is a dip-bounce
+    // step bought by the sweep; the machine is left to sell at the take-profit
+    // off the broker's average cost. OPERADOR_CASCADE_ENTRIES=1 reopens both.
+    useClassicEntry: config.cascadeEntries,
+    useTrendReentry: config.cascadeEntries,
     // The cascade's OWN rungs, switched off: a gap no price can clear. It
     // confirms a bottom on twenty strategy bars — five hours at 15m — while
     // the price ladder buys from the stop's sweep. Two paths buying rungs
@@ -377,9 +382,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
 
   /**
    * A rung's capital, taken from the book's FREE capital when the rung fires —
-   * the same definition of free the allocator opens positions with. A slot is
-   * allocated its first buy only (`DEFAULT_RESERVED_ENTRIES`), so every rung,
-   * on either ladder, pays for itself here or waits.
+   * the same definition of free the allocator opens positions with. Ladder A
+   * reserved its first buy only (`OPERADOR_RESERVED_ENTRIES=1` with it), so
+   * every rung, on either ladder, pays for itself here or waits.
    *
    * Priced at the rungs' OWN sizes — ladder A's $15 to $35 — on top of the
    * first buy `params` sizes. Priced as a flat ladder instead, DCA-5 would be
@@ -408,6 +413,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     params,
     gasUsdPerSwap: config.gasUsdPerSwap,
     rungsUsd: [config.deepRungUsd],
+  })
+  // A dip-bounce step's FEES, out of the free capital when the slot's exact $20
+  // runs short — asked of the very broker that will fill the step, so the two
+  // cannot disagree about whether it is affordable.
+  const fundStep = fundStepFromFreeCapital({
+    store,
+    totalCapitalUsd: config.totalCapitalUsd,
+    cashOf: async (position) => (await brokerFor(position)).equityCash,
   })
 
   const deps: CycleDeps = {
@@ -465,10 +478,26 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // capital — a slot holds its first buy only — and waits a sweep when there
     // is none. One `fund` for the cycle's sweeps and the loop's, since both
     // read these deps.
-    deepRung: {
+    //
+    // OFF now: every buy is a dip-bounce step. OPERADOR_DEEP_RUNG=1 brings it
+    // back, and absent, nothing it carries runs — no low followed, no write.
+    ...(config.deepRung ? { deepRung: {
       policy: { fallPct: config.deepRungFallPct, reboundPct: config.deepRungReboundPct, maxEntries: config.maxDcaPerToken + 1 },
       usd: config.deepRungUsd,
       fund: fundDeepRung,
+    } } : {}),
+    // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
+    // armá escalones de 1 USD con la misma regla* — twenty of them. EVERY buy,
+    // the first one included, bought by the sweep every thirty seconds at the
+    // live price. A new position is a reservation this watches until its first
+    // dip and bounce. The fees the slot's exact $20 does not hold are asked of
+    // the free capital as each step fills. One set of deps for the cycle's
+    // sweeps and the loop's.
+    dipBounce: {
+      policy: { dipPct: config.dipPct, bouncePct: config.bouncePct, maxSteps: config.maxSteps },
+      stepUsd: config.stepUsd,
+      gasUsdPerSwap: config.gasUsdPerSwap,
+      fund: fundStep,
     },
     // *Arriesguémonos, activá la A.* Five rungs of $15, $20, $25, $30 and $35
     // at −10, −15, −20, −25 and −30% of a $10 FIRST buy, bought by the sweep
@@ -727,23 +756,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // offline. Same policy, same gates, same measured impact — no network.
     // A free slot no longer waits out half an hour of throttled discovery
     // before anything can go in it.
-    recall: () =>
+    recall: async (slots) =>
       recallCandidates(store, {
         now: () => Date.now(),
         ranking: {
           gates,
           opportunity: DEFAULT_OPPORTUNITY_POLICY,
           smallCapFdvUsd: 50_000_000,
-          // NO CEILING when the book has none, which is what `maxPositions: 0`
-          // means everywhere else in this engine. It arrived here as 50 — the
-          // same zero-means-two-things trap this project has hit three times
-          // now — and it does not bite while a scan produces twelve candidates.
-          // It bites the moment the scan starts working.
-          //
-          // The candle bill is bounded SEPARATELY by `candleBudget`, priced off
-          // what the capital can actually fund, so a longer shortlist costs
-          // nothing extra to examine.
-          watchSlots: config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY,
+          // Never more candidates than the free capital can take — a stale
+          // shelf included. *Que no haya más candidatos de los que el capital
+          // pueda tomar.* Without a count, no ceiling when the book has none.
+          watchSlots: slots ?? (config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY),
+          // The operator's order: the cheapest to trade first, before the cut.
+          order: config.order,
+          // A token we hold is never counted against the free slots.
+          held: new Set((await store.loadPositions()).map((p) => `${p.chain}:${p.tokenAddress}`)),
           minScore: config.minScore,
           // *Sólo candidatas las que ya cumplan todas las condiciones.*
           reserve: config.reserve,
@@ -800,7 +827,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // is not a verdict about now, and this one can SELL.
     switchedOff: () => lastSwitchedOff,
     rejected: () => lastRejected,
-    scan: async (kind, betweenSteps) => {
+    scan: async (kind, betweenSteps, slots) => {
       lastSwitchedOff = []
       lastRejected = []
       const candidates: Candidate[] = []
@@ -812,14 +839,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // encontró en este ciclo", which means nobody had re-checked their
       // honeypot answer since the day they were bought.
       const open = await store.loadPositions()
-      // Priced exactly as the allocator prices it, so the scan buys candles for
-      // the number of positions the capital will actually open — not one more.
-      // A slot is the RESERVED entries, one in production: pricing it at the
-      // whole ladder would count half the tokens the book really opens.
-      const fundedSlots = Math.max(1, Math.ceil(
-        config.totalCapitalUsd /
-        (config.usdPerToken ?? ladderCapitalUsd(params, config.reservedEntries, config.gasUsdPerSwap)),
-      ))
+      // How many more tokens the capital can take — `freeSlots`, counted by the
+      // cycle before it scans, the ONE definition the allocator's count comes
+      // to. It drives everything below: how far discovery and the registry are
+      // read, how many tokens the paid stage examines, how many candles are
+      // bought and where the ranking cuts. *No hacemos lectura y búsqueda al
+      // pedo.* Without a count, the capital over one slot, as before.
+      const fundedSlots = slots ?? Math.max(1, Math.ceil(config.totalCapitalUsd / (config.usdPerToken ?? config.slotUsd)))
       for (const chain of config.chains) {
         // The counters live on adapters SHARED by every chain, so they are
         // cumulative. Reporting them raw labelled the second chain with the
@@ -909,7 +935,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // thirty tokens instead of five hundred. It is what lets the
               // expensive sweep be rare without leaving our own positions
               // unexamined for hours.
-              discover: kind === 'full',
+              //
+              // And so does a full pass with NO free slot: *no hacemos lectura
+              // y búsqueda al pedo.* Nothing is discovered, the registry is not
+              // read and no stranger is quoted — only the book's own checks.
+              discover: kind === 'full' && fundedSlots > 0,
               ranking: {
                 gates,
                 opportunity: DEFAULT_OPPORTUNITY_POLICY,
@@ -918,16 +948,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                 // cap ahead of every large one whatever the scores say, so a
                 // big name only ever takes a slot nothing smaller wanted.
                 smallCapFdvUsd: 50_000_000,
-                // NO CEILING when the book has none, which is what `maxPositions: 0`
-          // means everywhere else in this engine. It arrived here as 50 — the
-          // same zero-means-two-things trap this project has hit three times
-          // now — and it does not bite while a scan produces twelve candidates.
-          // It bites the moment the scan starts working.
-          //
-          // The candle bill is bounded SEPARATELY by `candleBudget`, priced off
-          // what the capital can actually fund, so a longer shortlist costs
-          // nothing extra to examine.
-          watchSlots: config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY,
+                // Never more candidates than the free capital can take: *que no
+                // haya más candidatos de los que el capital pueda tomar; cuando
+                // falten, que dependa del rescaneo.* A token we hold is never
+                // counted against them — the scan tells the ranking which.
+                watchSlots: slots ?? (config.maxPositions > 0 ? config.maxPositions : Number.POSITIVE_INFINITY),
+                // *Que elija los que tengan mejor eficiencia de costos.* Before
+                // the cut, so the cheapest to trade are never the ones cut.
+                order: config.order,
                 minScore: config.minScore,
                 // *Sólo candidatas las que ya cumplan todas las condiciones.*
                 reserve: config.reserve,
@@ -949,6 +977,14 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // the best across both, and halving it would starve one chain on
               // a day the other had nothing.
               candleBudget: fundedSlots,
+              // The paid stage — the chain's authorities and the sell quote —
+              // stops once this many strangers have passed every gate, spending
+              // in order of estimated cost efficiency. *Sólo revisá tokens
+              // limitados hasta cubrir los cupos faltantes.*
+              ...(slots !== undefined ? { wanted: slots } : {}),
+              // As far as the registry may be read — a bound, not a size: it is
+              // paged, and read only while the slots are short.
+              registryTokens: config.registryTokens,
               // A shortlist the engine can act on. One candle request per
               // CANDIDATE — after the gates cut ninety percent — so about
               // thirty a scan rather than three hundred.
@@ -985,7 +1021,12 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // gates cost nothing, and roughly one token in ten survives them.
               // A wider universe reaches further per scan rather than costing
               // proportionally more.
-              maxTokens: 5_000,
+              //
+              // No cap now: the FREE SLOTS bound the work — the registry is read
+              // a page at a time only while they are short, and the paid stage
+              // stops once they are covered. A count here would only decide the
+              // universe by arrival order.
+              maxTokens: Number.POSITIVE_INFINITY,
               // A bounded budget per chain, because each surviving token costs
               // about nine throttled seconds and a cycle has to finish inside
               // one bar. What it cannot reach is reported as unchecked rather
@@ -1041,14 +1082,30 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // the costs it will actually pay rather than against a guess.
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.maxDcaPerToken + 1,
-      // What a slot's capital pays for: its first buy. The venue still holds
-      // six entries; the rungs are funded from the free capital as they fire.
+      // What a slot's capital pays for: every step of its ladder.
       reservedEntries: config.reservedEntries,
-      // The ladder is sized for the rungs that can actually fill. Sizing for
-      // ten while the venue holds six would reserve capital for four rungs
-      // that are never coming.
-      sizing: { ...DEFAULT_SIZING_POLICY, maxOpenEntries: config.maxDcaPerToken + 1 },
-      portfolio: { ...DEFAULT_PORTFOLIO_POLICY, totalCapitalUsd: config.totalCapitalUsd, maxPositions: config.maxPositions },
+      // The ladder is sized for the steps that can actually fill — and a $1
+      // step is never refused, shrunk or merged by the fill floor: the floor is
+      // the gas floor ($5 at $0.05) or the step, whichever is SMALLER. At a
+      // dollar, gas is five percent of each buy; the operator chose the step.
+      sizing: {
+        ...DEFAULT_SIZING_POLICY,
+        maxOpenEntries: config.maxDcaPerToken + 1,
+        minFillUsd: Math.min(DEFAULT_SIZING_POLICY.minFillUsd, config.stepUsd),
+      },
+      portfolio: {
+        ...DEFAULT_PORTFOLIO_POLICY,
+        totalCapitalUsd: config.totalCapitalUsd,
+        maxPositions: config.maxPositions,
+        // No haircut on the COUNT: *el tope son 5000 dividido 50, que es lo que
+        // tengo.* The fees come out of the free capital as the fills happen.
+        reservePct: 0,
+        // The cheapest to trade are served first, as the ranking ordered them.
+        order: config.order === 'costEfficiency' ? 'costEfficiency' : 'score',
+      },
+      // Exactly steps × step: what the allocator hands out and the trim keeps,
+      // and what the free slots are counted in.
+      slotUsd: config.slotUsd,
       heartbeatMs: 60 * 60 * 1000,
       // So a pass can tell whether a position has a new bar to look at before
       // paying a throttled request to find out.
@@ -1100,7 +1157,11 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // Off by default: only a position's own exits close it.
         swapHolders: config.swapHolders,
         idleAfterMs: config.idleSlotHours * 60 * 60 * 1000,
-        minScoreEdge: config.minScoreEdge,
+        // "Better" is the operator's order: ten points of cost efficiency for a
+        // reservation to change hands — or the score, when the old order is back.
+        ...(config.order === 'costEfficiency'
+          ? { minScoreEdge: config.minCostEdgePct, measure: 'costEfficiency' as const }
+          : { minScoreEdge: config.minScoreEdge }),
       },
     },
     throttle: new AlertThrottle(30 * 60 * 1000),

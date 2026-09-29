@@ -43,6 +43,19 @@ export interface CascadeParams {
   readonly rescueLevels: number
   readonly breakevenArmPct: number
 
+  // 🟢 Classic entry
+  /**
+   * Whether door 1 — a drop from the swing high inside a lateral zone — may
+   * open a position. Not an input in the reference, where it is always on; ON
+   * in `DEFAULT_PARAMS`, which the parity harness asserts.
+   *
+   * Production switches it OFF: *nada se compra cuando una moneda pasa a
+   * candidata.* Every buy is a dip-bounce step bought by the sweep, and the
+   * machine is left to do the one thing it still does — sell at the
+   * take-profit, off the broker's average cost.
+   */
+  readonly useClassicEntry: boolean
+
   // 🚀 Trend Re-Entry
   readonly useTrendReentry: boolean
   /**
@@ -145,6 +158,7 @@ export const DEFAULT_PARAMS: CascadeParams = {
   rescueLevels: 10,
   breakevenArmPct: 1,
 
+  useClassicEntry: true,
   useTrendReentry: true,
   useMomentumEntry: false,
   trendAdxMin: 30,

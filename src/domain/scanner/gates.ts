@@ -237,7 +237,14 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // USDF is the token that already cost this project money, at 14,426x.
   //
   // You cannot read a 24-hour window on something younger than 24 hours.
-  minAgeHours: 24,
+  //
+  // ZERO now, and the argument above retired with the rule it served: nothing
+  // reads the day any more. *Puerta de entrada ninguna: todo es bienvenido* —
+  // every buy waits for a 3% dip and a 2% bounce on the live price, so a pool
+  // born this morning is as welcome as one a month old. What still stands in
+  // front of it is the SAFETY half, `priceMismatch` among it: the shape of
+  // USDF's 14,426x. STRICT keeps the day, so the gate stays tested.
+  minAgeHours: 0,
   minVolume24hUsd: 0,
   // The hour decides a collapse now, through the `headroom` floor at -3%. A
   // daily threshold on top was belt and braces against the same accident.
@@ -263,9 +270,17 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // It read 100 — off — while CLAUDE.md documented 15. A choice written down
   // and not implemented is this project most expensive failure mode, and this
   // is the fourth time.
-  maxDailyFallPct: 30,
+  //
+  // OFF again, and this time it is the decision: *puerta de entrada ninguna —
+  // todo es bienvenido.* A token down 40% on the day waits, like any other, for
+  // a 3% dip and a 2% bounce before a dollar goes in. The measured thirty is
+  // kept in `MEASURED_MAX_DAILY_FALL_PCT`, pinned by its tests.
+  maxDailyFallPct: 100,
   minTurnoverRatio: 0,
-  minHourlyTxns: 4,
+  // OFF, with the rest of the door: a quiet hour is not refused. The buy waits
+  // for the live price to dip and bounce, which a pool nobody trades never
+  // does. STRICT keeps the four.
+  minHourlyTxns: 0,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
   // Not asked: see `requireLpLock`. The threshold stays because the death
@@ -414,7 +429,20 @@ export const STRICT_GATE_POLICY: GatePolicy = {
   minHistoryBars: 60,
   // Kept for the same reason: production turned it off.
   maxBarAgeHours: 1,
+  // And these three, for the same reason: *puerta de entrada ninguna* turned
+  // them off in production, and spreading the default would carry the zero
+  // here and quietly delete the coverage with the behaviour.
+  minAgeHours: 24,
+  minHourlyTxns: 4,
 }
+
+/**
+ * The daily fall past which a token WAS refused: thirty, measured on 36 live
+ * positions by reconstructing how far each had already fallen when the engine
+ * bought it (`tools/freefall-what-if.ts`). Off in production — *todo es
+ * bienvenido* — and kept here, tested, for the day it is wanted back.
+ */
+export const MEASURED_MAX_DAILY_FALL_PCT = 30
 
 
 /**
@@ -508,9 +536,11 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
   if (snapshot.liquidityUsd < policy.minLiquidityUsd) {
     failures.push(fail('liquidity', 'failed', `liquidity $${snapshot.liquidityUsd.toFixed(0)} < $${policy.minLiquidityUsd}`))
   }
+  // A gate that asks for no age has nothing to fail, known or not: at zero it
+  // is off, and an unreported creation time is not a reason to refuse.
   const age = hoursOld(snapshot)
-  if (age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
-  else if (age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+  if (policy.minAgeHours > 0 && age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
+  else if (age !== null && age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
 
   // Can this engine SEE it trade? Only on a measured value: a scan that has not
   // asked the candle feed says nothing, and the entry confirmation asks again
@@ -715,9 +745,11 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
     failures.push(fail('liquidity', 'failed', `liquidity $${snapshot.liquidityUsd.toFixed(0)} < $${policy.minLiquidityUsd}`))
   }
 
+  // A gate that asks for no age has nothing to fail, known or not: at zero it
+  // is off, and an unreported creation time is not a reason to refuse.
   const age = hoursOld(snapshot)
-  if (age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
-  else if (age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+  if (policy.minAgeHours > 0 && age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
+  else if (age !== null && age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
 
   // Only fires on a measured count: a scanner pass that has not fetched
   // candles yet says nothing, and the executor checks again before trading.

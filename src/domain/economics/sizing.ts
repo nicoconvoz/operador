@@ -266,6 +266,19 @@ export const roundTripCostForFill = (fillUsd: number, quality: MarketQuality, ga
 }
 
 /**
+ * What one BUY takes out of the wallet: the dollars bought, grossed up by the
+ * venue spread and the impact of that size — charged exactly as the paper
+ * broker charges it, through `effectiveDepth` — plus one swap of gas.
+ *
+ * It is what a dip-bounce step needs in cash. A slot reserves steps × step and
+ * nothing for these, so when a step finds its cash short, this is what the
+ * free capital is asked for (`fundStepFromFreeCapital`). At $0.05 of gas a $1
+ * step costs over a twentieth more than itself — stated, not hidden.
+ */
+export const buyCostUsd = (usd: number, quality: MarketQuality, gasUsdPerSwap: number): number =>
+  usd * (1 + (quality.spreadPct + impactPct(usd, effectiveDepth(quality).usd)) / 100) + gasUsdPerSwap
+
+/**
  * What a position's WHOLE round trip costs, as a percentage of what it
  * deployed: the fees it already paid on every buy, plus what selling it now
  * would cost — spread, the impact of the sale's own size, one swap of gas.

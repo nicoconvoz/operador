@@ -311,3 +311,25 @@ describe('swapping a slot that is barely under water for a better token', () => 
     expect(decision?.reason).toContain('0.50%')
   })
 })
+
+describe('releasableSlots — measured in cost efficiency', () => {
+  // *Que elija los que tengan mejor eficiencia de costos.* A reservation that
+  // bought nothing goes to a waiting candidate 10 points of efficiency better —
+  // the same margin the score edge asks, read as 0.10. The caller hands both
+  // sides in points of efficiency; the rule is the same rule.
+  const efficiency = { ...policy, measure: 'costEfficiency' as const }
+
+  it('hands a reservation to a token 10 points cheaper to trade, and says it in those words', () => {
+    const [decision] = releasableSlots([holder({ score: 55 })], [66], NOW, efficiency)
+    expect(decision?.reason).toBe('hay un candidato 11 puntos de eficiencia de costos mejor esperando')
+  })
+
+  it('keeps a flat slot that sold for a token only 9 points better', () => {
+    expect(releasableSlots([holder({ openedAt: NOW - 1 * HOUR, hasFills: true, score: 55 })], [64], NOW, efficiency)).toEqual([])
+  })
+
+  it('never touches a position HOLDING something, however much cheaper the queue', () => {
+    const held = holder({ openQty: 1_000, hasFills: true, score: 5 })
+    expect(releasableSlots([held], [99], NOW, { ...efficiency, swapHolders: false })).toEqual([])
+  })
+})

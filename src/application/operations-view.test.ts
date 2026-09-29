@@ -786,7 +786,8 @@ describe('buildOperations — the deep rung, as the dashboard composes it', () =
   // rung — first at the line that arms it, then at the low it is measured
   // from, then filled. From the module the engine reads, and off the low the
   // sweep wrote down.
-  const D = productionLadder({})
+  // The deep rung as the environment brings it back: $15 entry, one $20 rung.
+  const D = productionLadder({ OPERADOR_DEEP_RUNG: '1', OPERADOR_MAX_USD_PER_LEVEL: '15', OPERADOR_MAX_DCA: '1' })
   const ladder = {
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: D.maxUsdPerLevel },
@@ -841,5 +842,77 @@ describe('buildOperations — the deep rung, as the dashboard composes it', () =
     const store = await seed([fill('Entry', 1, 15, BOUGHT)], held())
     const [p] = (await buildOperations(store, { ...ladder, maxOpenEntries: 6 })).positions
     expect(p!.ladder).toHaveLength(2)
+  })
+})
+
+describe('buildOperations — the dip-bounce ladder, one box and its watch', () => {
+  // *No vayas a poner 50 casilleros por token por los DCA, sólo dejá un
+  // casillero con el número de DCA.* The operator. ONE box — buys made of
+  // twenty — and under it, in words, what the next dollar waits for, read off
+  // the watch the sweep wrote down. From the module the engine reads.
+  const L = productionLadder({})
+  const dip = {
+    ...options,
+    params: { ...DEFAULT_PARAMS, maxUsdPerLevel: L.maxUsdPerLevel },
+    maxOpenEntries: L.maxOpenEntries,
+    dipBounce: { dipPct: L.dipPct, bouncePct: L.bouncePct, maxSteps: L.maxSteps, stepUsd: L.stepUsd },
+  }
+  const reservation = (over: Partial<PersistedPosition> = {}) => ({ cascade: initialState(), capitalUsd: 20, lastPriceUsd: 1, ...over })
+
+  it('draws no row of rungs: one count, "compras: 0 de 20 · $0 invertidos"', async () => {
+    const store = await seed([], reservation())
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.ladder).toEqual([])
+    expect(p!.steps).toEqual({ bought: 0, max: 20, investedUsd: 0 })
+  })
+
+  it('says what the FIRST dollar waits for: a 3% dip under the high the sweep saw', async () => {
+    const store = await seed([], reservation({ dipWatch: { reference: 1.25, low: null, armed: false, at: NOW, holdingSince: null } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando caída de 3% bajo $1.250 (compra si baja a $1.212)' }])
+  })
+
+  it('once armed, names the low and the price a 2% bounce buys at', async () => {
+    const store = await seed([], reservation({ dipWatch: { reference: 1.25, low: 1.2, armed: true, at: NOW, holdingSince: null } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'armado: mínimo $1.200 — compra al rebotar 2%, en $1.224' }])
+  })
+
+  it('counts the buys and the dollars in them, and measures the next dip from the LAST buy', async () => {
+    const first = NOW - 30 * MIN
+    const fills = [fill('Entry', 1, 1, first), fill('DCA-1', 0.96, 1 / 0.96, NOW - 20 * MIN), fill('DCA-2', 0.93, 1 / 0.93, NOW - 10 * MIN)]
+    const store = await seed(fills, reservation({ dipWatch: { reference: 0.93, low: null, armed: false, at: NOW - 10 * MIN, holdingSince: first } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.steps).toMatchObject({ bought: 3, max: 20 })
+    expect(p!.steps!.investedUsd).toBeCloseTo(3, 9)
+    expect(p!.locks![0]!.detail).toBe('esperando caída de 3% bajo $0.9300 (compra si baja a $0.9021)')
+  })
+
+  it('reads a watch left by ANOTHER holding as none, and waits off the last buy it can see', async () => {
+    const first = NOW - 30 * MIN
+    const store = await seed([fill('Entry', 0.8, 1 / 0.8, first)], reservation({ dipWatch: { reference: 5, low: 4, armed: true, at: NOW, holdingSince: first - 1 } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks![0]!.detail).toBe('esperando caída de 3% bajo $0.8000 (compra si baja a $0.7760)')
+  })
+
+  it('says a reservation the sweep has not priced yet is waiting for its first look', async () => {
+    const store = await seed([], reservation())
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'esperando el primer precio en vivo para vigilar la caída de 3%' }])
+  })
+
+  it('waits on nothing once the twenty are bought', async () => {
+    const fills = Array.from({ length: 20 }, (_, i) => fill(i === 0 ? 'Entry' : `DCA-${i}`, 1 - i * 0.03, 1 / (1 - i * 0.03), NOW - (40 - i) * MIN))
+    const store = await seed(fills, reservation())
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.steps).toMatchObject({ bought: 20, max: 20 })
+    expect(p!.locks).toBeNull()
+  })
+
+  it('keeps the old ladders drawn as they were when the dip-bounce is not the ladder', async () => {
+    const store = await seed([fill('Entry', 0.01, 1_000, NOW - 30 * MIN)])
+    const [p] = (await buildOperations(store, options)).positions
+    expect(p!.steps).toBeNull()
+    expect(p!.ladder.length).toBeGreaterThan(1)
   })
 })

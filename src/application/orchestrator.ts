@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder, type DeepRung } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type DropLadder, type DeepRung, type DipBounce } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -20,7 +20,7 @@ import { shouldStopOut, stopLossPctFor, drawdownPct, STOP_LOSS_COMMENT, NO_STOP_
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { settle } from './engine.js'
 import { positionLedger, openLotCostsUsd, type PositionLedger } from './ledger.js'
-import { bookCapital } from './free-capital.js'
+import { bookCapital, freeSlots } from './free-capital.js'
 import { ladderCapitalUsd, slotFloorUsd } from './paper-run.js'
 import { DEFAULT_SIZING_POLICY, positionTollPct } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
@@ -65,6 +65,11 @@ export interface CycleDeps {
    * 10% rebound off the low, while still at a loss. Absent: no deep rung.
    */
   readonly deepRung?: DeepRung
+  /**
+   * Every buy of a holding, the first included: $1 on a 3% dip and a 2% bounce,
+   * twenty at most. The only path that buys in production. Absent: none.
+   */
+  readonly dipBounce?: DipBounce
   /**
    * What the MARKET says every held token is worth, keyed `chain:address`.
    *
@@ -122,6 +127,13 @@ export interface CycleDeps {
      * work. The cycle puts the STOP in here; the scanner is not told that.
      */
     betweenSteps?: () => Promise<void>,
+    /**
+     * How many more tokens the free capital can take — `freeSlots`, counted
+     * by the cycle before it scans. The scan reads, examines and keeps only
+     * as many candidates as that; zero reads nothing new at all. Absent: the
+     * cycle has no fixed slot and says nothing.
+     */
+    slots?: number,
   ) => Promise<readonly Candidate[]>
   /**
    * The LAST scan, re-ranked from the shelf. No network.
@@ -131,7 +143,10 @@ export interface CycleDeps {
    * and the deciding half is pure. Returns nothing when the shelf is empty or
    * too old to count as evidence.
    */
-  readonly recall?: () => Promise<{
+  readonly recall?: (
+    /** The free slots, as for `scan`: a stale shelf never hands out more candidates than this. */
+    slots?: number,
+  ) => Promise<{
     readonly candidates: readonly Candidate[]
     readonly switchedOff: readonly SwitchedOff[]
     readonly rejected?: readonly Rejected[]
@@ -251,9 +266,9 @@ export interface CycleConfig {
   readonly maxStopPct?: number
   /**
    * Entries' worth of capital a position is ALLOCATED, and so what the tick
-   * divides its capital by. One in production: the first buy, with each rung
-   * asking the free capital for its own when it fires. Absent: the whole
-   * ladder, `maxOpenEntries`, which is what every caller before this did.
+   * divides its capital by. Twenty in production: every dip-bounce step, the
+   * slot's whole ladder. Absent: the whole ladder, `maxOpenEntries`, which is
+   * what every caller before this did.
    */
   readonly reservedEntries?: number
   /**
@@ -262,6 +277,14 @@ export interface CycleConfig {
    * ordinary candidate again from the next pass.
    */
   readonly blacklistOnFreeze?: boolean
+  /**
+   * What ONE slot is given, exactly — steps × step, $20 in production. When
+   * set, the allocator hands out this much and not a dollar more or less, the
+   * trim keeps it, and the free slots — `freeSlots`, capital over this — decide
+   * how far the scan looks. *El tope son 5000 dividido 50, que es lo que tengo.*
+   * Absent: the slot is priced from the ladder, as before.
+   */
+  readonly slotUsd?: number
 }
 
 /**
@@ -663,8 +686,16 @@ export async function runCycle(
     // throttled discovery before anything could go in it — with candidates
     // already examined, already stored, already good. The fusion was never
     // necessary.
-    const recalled = kind === 'watch' ? await deps.recall?.() : null
-    const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind, betweenSteps)
+    // How many more tokens the free capital can take, counted BEFORE the scan
+    // so the scan reads and examines only as far as they need. *No hacemos
+    // lectura y búsqueda al pedo.* The same `freeSlots` the allocator's count
+    // comes to below; slots a release frees later in this cycle are the next
+    // scan's to fill.
+    const slots = config.slotUsd === undefined
+      ? undefined
+      : freeSlots(bookCapital(config.portfolio.totalCapitalUsd, await deps.store.allFills(), await deps.store.loadPositions()), config.slotUsd)
+    const recalled = kind === 'watch' ? await deps.recall?.(slots) : null
+    const found = kind === 'watch' ? (recalled?.candidates ?? []) : await deps.scan(kind, betweenSteps, slots)
     // The scan handed the thread to the sweep, and the sweep may have funded a
     // rung since the ticks ran. Everything below writes whole rows — the score
     // baseline, the trim — so it starts from the store, not from the ticks.
@@ -886,7 +917,13 @@ export async function runCycle(
     }
     const rotated = new Set([...rotatedIds, ...stoppedIds])
 
-    const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, c.opportunity.score]))
+    // What "better" means when a slot changes hands: the score, or — the
+    // operator's order — cost efficiency in points, 0..100. *Que elija los que
+    // tengan mejor eficiencia de costos.* The holder and the queue are measured
+    // in the same unit, so the edge is read in it too.
+    const byEfficiency = config.idleSlots?.measure === 'costEfficiency'
+    const merit = (c: Candidate) => (byEfficiency ? c.opportunity.components.costEfficiency * 100 : c.opportunity.score)
+    const scoreOf = new Map(candidates.map((c) => [`${c.snapshot.chain}:${c.snapshot.address}`, merit(c)]))
     const heldNow = new Set(recovery.positions.map((r) => `${r.position.chain}:${r.position.tokenAddress}`))
     // What is QUEUING for a slot, which is not the same as what is on the list.
     //
@@ -939,7 +976,7 @@ export async function runCycle(
         // live. Null without a price, and the swap rule then declines to judge.
         ...standingOf(r.position),
       })),
-      kind === 'full' ? waiting.map((c) => c.opportunity.score) : [],
+      kind === 'full' ? waiting.map(merit) : [],
       at,
       config.idleSlots ?? DEFAULT_IDLE_SLOT_POLICY,
     )
@@ -1039,11 +1076,13 @@ export async function runCycle(
     // pretending otherwise would let the same dollars be handed out twice.
     //
     // What a slot NEEDS is the entries it was allocated, not the ladder it may
-    // one day climb: one in production. A rung pays for itself out of the free
-    // capital when it fires, and the deployed floor keeps whatever it bought.
-    // Measured live before this: $2,887 committed against $1,395 deployed —
-    // half the book reserved against rungs that almost never fired.
-    const ladderNeeds = ladderCapitalUsd(
+    // one day climb. A rung pays for itself out of the free capital when it
+    // fires, and the deployed floor keeps whatever it bought. Measured live
+    // before this: $2,887 committed against $1,395 deployed — half the book
+    // reserved against rungs that almost never fired.
+    // With a fixed slot, exactly that: the fees a step asked of the free
+    // capital were paid, and the common fund already carries them.
+    const ladderNeeds = config.slotUsd ?? ladderCapitalUsd(
       config.params,
       reservedEntries,
       config.gasUsdPerSwap ?? 0.05,
@@ -1150,7 +1189,12 @@ export async function runCycle(
 
     if (slotsLeft > 0 && free > 0) {
       const plan = planPortfolio(
-        eligible.map((c) => ({ snapshot: c.snapshot, quality: c.marketQuality, score: c.opportunity.score })),
+        eligible.map((c) => ({
+          snapshot: c.snapshot,
+          quality: c.marketQuality,
+          score: c.opportunity.score,
+          costEfficiency: c.opportunity.components.costEfficiency,
+        })),
         config.params,
         {
           ...config.portfolio,
@@ -1201,17 +1245,25 @@ export async function runCycle(
           // Fixed, the BOOK grows with the shortlist instead of the positions
           // shrinking with it. The operator asked for it in one line: *comprá
           // solo 15 usd por moneda.*
-          targetPositionUsd: config.usdPerToken ?? (eligible.length > 0 ? free / eligible.length : ladderNeeds),
+          // A FIXED slot when one is set — exactly steps × step, the count the
+          // free capital over it — and otherwise what came before.
+          targetPositionUsd: config.slotUsd ?? config.usdPerToken ?? (eligible.length > 0 ? free / eligible.length : ladderNeeds),
           // Priced for the entries a slot is ALLOCATED, like the trim above: a
           // floor priced for the whole ladder would refuse a slot that only
           // ever has to pay for its first buy.
-          minPositionUsd: slotFloorUsd(
+          //
+          // With a fixed slot the floor IS the slot: nothing grossed up raises
+          // it past the $20 a slot is given, so the count stays capital / $20.
+          minPositionUsd: config.slotUsd ?? slotFloorUsd(
             config.params,
             reservedEntries,
             config.gasUsdPerSwap ?? 0.05,
             (config.sizing ?? DEFAULT_SIZING_POLICY).minFillUsd,
           ),
         },
+        // The sizing the ENGINE runs — its fill floor and the entries the
+        // venue holds — so a $1 step is not refused by a floor priced for $5.
+        config.sizing,
       )
 
       if (plan.floorOverrodeCap) {
@@ -1441,8 +1493,8 @@ function freezeEvidence(position: PersistedPosition): string[] {
  * is tested on the path the engine runs, not on a copy of it.
  */
 export function tickConfigFrom(config: CycleConfig): EngineConfig & { readonly reservedEntries: number } {
-  // Entries' worth of capital a slot is ALLOCATED: one in production, the
-  // whole ladder when a caller says nothing. Never more than the venue holds.
+  // Entries' worth of capital a slot is ALLOCATED: every step in production,
+  // the whole ladder when a caller says nothing. Never more than the venue holds.
   const reservedEntries = Math.min(
     config.reservedEntries ?? config.maxOpenEntries ?? PYRAMIDING,
     config.maxOpenEntries ?? PYRAMIDING,

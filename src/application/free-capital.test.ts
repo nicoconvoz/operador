@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { bookCapital, fundRungsFromFreeCapital } from './free-capital.js'
+import { bookCapital, fundRungsFromFreeCapital, fundStepFromFreeCapital, freeSlots } from './free-capital.js'
 import { capitalForFillsUsd, ladderCapitalUsd } from './paper-run.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
@@ -123,5 +123,70 @@ describe('fundRungsFromFreeCapital — ladder A: each rung is priced at its OWN 
     expect(await fund(position('T', three), 4)).toBeNull()
     const enough = await rig(four + 0.01, position('T', three))
     expect((await enough.fund(position('T', three), 4))?.capitalUsd).toBeCloseTo(four, 9)
+  })
+})
+
+describe('freeSlots — ONE definition of how many tokens the free capital can still take', () => {
+  // *No pongas tope, el tope son 5000 dividido 50, que es lo que tengo.* Then
+  // twenty steps of a dollar: capital / $20, less what the open slots hold.
+  it('is the free capital over the slot, rounded down — nothing grossed up, no haircut', () => {
+    expect(freeSlots(bookCapital(5_000, [], []), 20)).toBe(250)
+    expect(freeSlots(bookCapital(1_500, [], []), 20)).toBe(75)
+    expect(freeSlots(bookCapital(5_000, [], Array.from({ length: 70 }, () => ({ capitalUsd: 20 }))), 20)).toBe(180)
+    expect(freeSlots(bookCapital(5_000, [], Array.from({ length: 250 }, () => ({ capitalUsd: 20 }))), 20)).toBe(0)
+  })
+
+  it('counts what the book made and paid: the common fund moves it', () => {
+    const lost = [fill('old', 'buy', 1, 30, 0), fill('old', 'sell', 0.5, 30, 1)]
+    expect(freeSlots(bookCapital(100, lost, []), 20)).toBe(4)
+  })
+
+  it('is zero on a slot of nothing, never infinite', () => {
+    expect(freeSlots(bookCapital(100, [], []), 0)).toBe(0)
+  })
+})
+
+describe('fundStepFromFreeCapital — the fees a step pays come out of the free capital', () => {
+  // A slot reserves exactly steps × step, so the spread, the impact and the gas
+  // of each $1 buy are not in it. When a step finds its cash short, the
+  // shortfall is asked of the book's FREE capital — the same definition the
+  // allocator opens positions with — and refused when there is none.
+  const rig = async (total: number, held: PersistedPosition, cash: number, others: readonly PersistedPosition[] = []) => {
+    const store = new MemoryStore()
+    await store.savePosition(held)
+    for (const other of others) await store.savePosition(other)
+    const asked: number[] = []
+    const fund = fundStepFromFreeCapital({
+      store,
+      totalCapitalUsd: total,
+      cashOf: async (p) => { asked.push(p.capitalUsd); return cash + (p.capitalUsd - held.capitalUsd) },
+    })
+    return { store, fund, asked }
+  }
+
+  it('returns the position as stored when its cash already pays for the step', async () => {
+    const { fund } = await rig(100, position('T', 20), 12)
+    expect((await fund(position('T', 20), 1.06))?.capitalUsd).toBe(20)
+  })
+
+  it('raises the capital by exactly the shortfall, and saves it', async () => {
+    const { store, fund } = await rig(100, position('T', 20), 0.5)
+    const funded = await fund(position('T', 20), 1.06)
+    expect(funded!.capitalUsd).toBeCloseTo(20.56, 6)
+    expect(funded!.capitalUsd).toBeGreaterThan(20.56)
+    expect((await store.loadPositions())[0]!.capitalUsd).toBeCloseTo(20.56, 6)
+  })
+
+  it('refuses when the free capital cannot cover the shortfall, and touches nothing', async () => {
+    // 40 − 20 − 20 leaves nothing free.
+    const { store, fund } = await rig(40, position('T', 20), 0.5, [position('U', 20)])
+    expect(await fund(position('T', 20), 1.06)).toBeNull()
+    expect((await store.loadPositions()).find((p) => p.id === 'T')!.capitalUsd).toBe(20)
+  })
+
+  it('reads the capital from the STORE, never from the caller’s snapshot', async () => {
+    const { fund, asked } = await rig(100, position('T', 25), 12)
+    await fund(position('T', 20), 1.06)
+    expect(asked).toEqual([25])
   })
 })

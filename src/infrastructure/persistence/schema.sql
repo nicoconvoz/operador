@@ -69,6 +69,13 @@ ALTER TABLE positions ADD COLUMN IF NOT EXISTS liquidity_watch JSONB;
 -- LOWER price for the same holding and a newer holding's whole, so a snapshot
 -- written back by a later step never raises it. Null until the sweep sees it.
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS price_low JSONB;
+-- The dip-bounce watch: every buy of a holding waits for a 3% dip under its
+-- reference — the high before the first buy, the last buy after it — and a 2%
+-- bounce off the low since — { reference, low, armed, at, holdingSince }. It
+-- has to survive a restart. The upsert keeps the watch with the NEWER time, so
+-- a snapshot written back by a later step never disarms it, re-arms it, or
+-- puts an old reference back. Null until the sweep watches it.
+ALTER TABLE positions ADD COLUMN IF NOT EXISTS dip_watch JSONB;
 
 -- Fills are keyed by the CLIENT's idempotency key, not by a serial id.
 -- That primary key is what makes a retry after an ambiguous network failure

@@ -693,6 +693,13 @@ export function Universe({ view, query = '' }: { view: UniverseView; query?: str
             {TIER_STYLE[tier].short} {view.counts[tier]}
           </Chip>
         ))}
+        {/* The engine's own cut, in words: never more candidates than the
+            capital can take. Only when the screen was told the free slots. */}
+        {view.freeSlots !== null && (
+          <span style={{ color: '#8b949e', fontSize: 11 }} title="Nunca hay más candidatos que lugares que el capital pueda tomar.">
+            candidatos: {view.counts.prime + view.counts.eligible + view.counts.reserve} (lugares libres: {view.freeSlots})
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         {hidden > 0 && (
           <span style={{ color: '#8b949e', fontSize: 11 }} title="Superan lo que el lienzo dibuja; siguen escaneados y operables.">

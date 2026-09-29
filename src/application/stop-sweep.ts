@@ -3,6 +3,7 @@ import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './led
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { nextDeepRung, nextPriceLow, priceLowWorthWriting, type DeepRungPolicy, type PriceLow } from '../domain/strategy/deep-rung.js'
+import { nextDipBounce, watchAfterBuy, dipWatchWorthWriting, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
 import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
 import {
@@ -15,7 +16,7 @@ import {
 } from '../domain/strategy/liquidity-brake.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
-import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct } from '../domain/economics/sizing.js'
+import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct, buyCostUsd } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import {
   gainLockFloorPct,
@@ -354,6 +355,34 @@ export interface DeepRung {
   readonly fund?: (position: PersistedPosition, entries: number) => Promise<PersistedPosition | null>
 }
 
+/**
+ * EVERY buy of a holding, the first one included, on one rule: a 3% dip under
+ * the reference and a 2% bounce off the low since — $1 a step, twenty at most.
+ * *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y armá
+ * escalones de 1 USD con la misma regla.* See `domain/strategy/dip-bounce.ts`.
+ *
+ * On the sweep for the reason every ladder is: it runs every thirty seconds, in
+ * all three places the book is watched, with the live price. It is the only
+ * path that buys in production — nothing is bought when a token becomes a
+ * candidate, and the cascade's own doors are off — so a new position is a
+ * RESERVATION the sweep watches until its first dip and bounce.
+ */
+export interface DipBounce {
+  readonly policy: DipBouncePolicy
+  /** What each step buys, in dollars. *Comprá 1 USD.* */
+  readonly stepUsd: number
+  /** Gas per swap, for what a step costs beyond its dollar. */
+  readonly gasUsdPerSwap: number
+  /**
+   * Raises the position's capital by what the next step costs beyond the cash
+   * it has left — the fees the slot's exact $20 does not hold — out of the
+   * book's FREE capital, and returns it as saved; null when nothing is free
+   * (`fundStepFromFreeCapital`). Absent: the step is bought out of what the
+   * position holds.
+   */
+  readonly fund?: (position: PersistedPosition, costUsd: number) => Promise<PersistedPosition | null>
+}
+
 /** What the liquidity watch said about one position on this sweep. */
 interface LiquidityVerdict {
   /** Rungs on the price line are held back. */
@@ -375,6 +404,8 @@ export interface StopSweepDeps {
   readonly dropLadder?: DropLadder
   /** Absent: no deep rung, and no low followed. */
   readonly deepRung?: DeepRung
+  /** Absent: no dip-bounce steps, and no watch kept. */
+  readonly dipBounce?: DipBounce
 }
 
 export async function sweepStops(
@@ -591,7 +622,9 @@ export async function sweepStops(
         stopped.push(position.id)
         continue
       }
-      if (held) await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low)
+      // A RESERVATION buys too: its first dollar is a dip-bounce step like
+      // every other, so the sweep watches a position that holds nothing yet.
+      if (held || (deps.dipBounce && price !== null && price > 0)) await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low)
       continue
     }
 
@@ -1185,10 +1218,11 @@ async function buyOnDrop(
 }
 
 /**
- * This sweep's rung, if any: the deep rung first, then the chained drop ladder
- * when it is switched on. ONE a sweep — a deep rung that bought, or that fired
- * and found no capital, leaves the drop ladder for the next sweep, so the same
- * fall is never bought twice off one stale read of the fills.
+ * This sweep's buy, if any: the dip-bounce step first, then the deep rung, then
+ * the chained drop ladder when they are switched on. ONE a sweep — a step or a
+ * rung that bought, or that fired and found no capital, leaves the rest for the
+ * next sweep, so the same fall is never bought twice off one stale read of the
+ * fills.
  */
 async function buyRungs(
   deps: StopSweepDeps,
@@ -1200,6 +1234,7 @@ async function buyRungs(
   liquidity: LiquidityVerdict | null,
   low: PriceLow | null,
 ): Promise<void> {
+  if (deps.dipBounce && (await buyOnDipBounce(deps, deps.dipBounce, position, fills, price, at, throttle)) !== null) return
   const deep = deps.deepRung ? await buyOnDeepRung(deps, deps.deepRung, position, fills, price, low, at, throttle) : null
   if (deep === null && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price, at, throttle, liquidity)
 }
@@ -1234,6 +1269,108 @@ async function watchLow(
 
 /** Dollars as the operator says them: $20, not $20.00. */
 const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`
+
+/**
+ * One dip-bounce step, if the watch says so — the first dollar of a holding or
+ * any later one, on the same rule. The watch is moved by this sweep's live
+ * price and written down only when it matters (`dipWatchWorthWriting`): armed
+ * or disarmed, a new reference, or the high or the low moving 0.1% or more —
+ * finer than both lines, so no decision changes, and a whole-row write every
+ * time a price ticks is network this project cannot spare.
+ *
+ * Every guard a buy has, kept:
+ *
+ * - never into a position the death watch has frozen or condemned — and then
+ *   nothing is watched either, because nothing is going to be bought;
+ * - never into one with no CANDLE CLOSE on record — the price guard above
+ *   compares the live price with the last close, and a reservation the tick
+ *   has not priced yet has none, only the scanner's own number;
+ * - the live price and that close agree within the band, and there is no order
+ *   in flight: both answered by the sweep before it gets here;
+ * - the fees are FUNDED out of the free capital first, and a step with nothing
+ *   free is said and not bought — never shrunk;
+ * - the fill is keyed by the sweep's clock and the step, and a step that did
+ *   not fill leaves the watch armed for the next sweep.
+ *
+ * No "at a loss" check, and none is needed: every step buys strictly under
+ * the one before it, so the average of what was paid is always above the next
+ * buy (see `domain/strategy/dip-bounce.ts`).
+ *
+ * Returns 'bought' when it bought, 'unfunded' when it fired and found nothing
+ * free — either way this sweep's buy — and null when it did not fire.
+ */
+async function buyOnDipBounce(
+  deps: StopSweepDeps,
+  ladder: DipBounce,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<'bought' | 'unfunded' | null> {
+  if (position.deathWatch.stage !== 'healthy') return null
+  if (position.lastBarTime < 0) return null
+  const buys = holdingBuys(fills)
+  const stored = position.dipWatch ?? null
+  const step = nextDipBounce(stored, { priceUsd: price, at, buys }, ladder.policy)
+  if (step.watch !== null && dipWatchWorthWriting(stored, step.watch, buys[buys.length - 1]?.time ?? null)) {
+    await deps.store.savePosition({ ...position, dipWatch: step.watch })
+  }
+  if (step.action !== 'buy' || step.watch === null) return null
+
+  const n = buys.length
+  const max = ladder.policy.maxSteps
+  const fell = (step.fellPct ?? 0).toFixed(1)
+  const rose = (step.bouncedPct ?? 0).toFixed(1)
+  const cost = buyCostUsd(ladder.stepUsd, position.quality, ladder.gasUsdPerSwap)
+  const funded = ladder.fund ? await ladder.fund(position, cost) : position
+  if (funded === null) {
+    const unfunded = alert(
+      'entry-refused',
+      `💤 ${position.symbol} sin capital libre para la compra ${n + 1} de ${max}`,
+      `Cayó ${fell}% y rebotó ${rose}%, pero no hay capital libre para las comisiones de la compra de ${dollars(ladder.stepUsd)}. Se vuelve a intentar en el próximo barrido; la compra no se achica.`,
+      at,
+      { position: position.id, token: position.tokenAddress },
+    )
+    if (throttle.shouldSend(unfunded, `unfunded:${position.id}`)) await deps.alerts.send(unfunded)
+    return 'unfunded'
+  }
+
+  // The first dollar opens the holding under the entry's own id; every later
+  // one is the next rung. Keyed by the sweep's clock, so a sweep run again
+  // collides with itself instead of buying twice.
+  const order = n === 0
+    ? { kind: 'entry' as const, id: 'Entry', level: 0, usd: ladder.stepUsd, qty: ladder.stepUsd / price, comment: '🟢 Entry' }
+    : { kind: 'entry' as const, id: `DCA-${n}`, level: n, usd: ladder.stepUsd, qty: ladder.stepUsd / price, comment: `DCA-${n}` }
+  const broker = await deps.brokerFor(funded)
+  await settle([order], at, price, at, funded, broker, deps.store)
+  const after = holdingBuys(await deps.store.fillsFor(position.id))
+  if (after.length === buys.length) return null
+  const bought = after[after.length - 1]!
+  // The reference is now what this step bought at, unarmed — and the watch is
+  // never older than the fill it describes.
+  await deps.store.savePosition({ ...funded, dipWatch: watchAfterBuy(price, bought.time, after[0]!.time, step.watch) })
+
+  const reference = step.watch.reference
+  const low = step.watch.low ?? price
+  const said = n === 0
+    ? alert(
+        'position-opened',
+        `🟢 ${position.symbol} compró ${dollars(ladder.stepUsd)} — cayó ${fell}% y rebotó ${rose}% (compra 1 de ${max})`,
+        `El máximo visto fue ${reference} y el mínimo ${low}. Compró ${dollars(ladder.stepUsd)} a ${price}. La próxima compra espera una caída de ${ladder.policy.dipPct}% bajo este precio y un rebote de ${ladder.policy.bouncePct}%.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+    : alert(
+        'dca-filled',
+        `🪜 ${position.symbol} promedió — compra ${n + 1} de ${max}: cayó ${fell}% y rebotó ${rose}%`,
+        `La compra anterior fue a ${reference} y el mínimo ${low}. Compró ${dollars(ladder.stepUsd)} a ${price}; costo promedio ${positionLedger(await deps.store.fillsFor(position.id)).avgCostUsd}.`,
+        at,
+        { position: position.id, token: position.tokenAddress },
+      )
+  if (throttle.shouldSend(said, `dip:${position.id}:${after[0]!.time}:${n + 1}`)) await deps.alerts.send(said)
+  return 'bought'
+}
 
 /**
  * The deep rung, if its three conditions hold now: the low more than 80% under

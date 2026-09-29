@@ -87,6 +87,8 @@ const view: UniverseView = {
     dead: tokens.filter((t) => t.tier === 'dead').length,
   },
   chains: ['bsc', 'solana'],
+  // A demo is not told the free capital: it draws no free-slot count.
+  freeSlots: null,
 }
 
 /**

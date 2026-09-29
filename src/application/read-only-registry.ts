@@ -25,14 +25,27 @@ type Registry = Pick<StatePort, 'rememberTokens' | 'knownTokens'>
  */
 export function readOnlyRegistry(store: Registry, options: { readonly everyMs: number; readonly now?: () => number }): Registry {
   const now = options.now ?? Date.now
-  let known: { at: number; tokens: readonly RememberedToken[] } | null = null
+  /**
+   * What has been read inside the window: the busiest rows, a PREFIX of the
+   * registry's own order — and whether the registry ran out under it. A scan
+   * reads a page at a time and only while its free slots are short, so the
+   * prefix grows only as far as some scan needed.
+   */
+  let known: { at: number; tokens: RememberedToken[]; complete: boolean } | null = null
 
   return {
-    async knownTokens(limit: number) {
-      if (known && now() - known.at < options.everyMs) return known.tokens.slice(0, limit)
-      const tokens = await store.knownTokens(limit)
-      known = { at: now(), tokens }
-      return tokens
+    async knownTokens(limit: number, offset = 0) {
+      if (!known || now() - known.at >= options.everyMs) known = { at: now(), tokens: [], complete: false }
+      const end = offset + limit
+      while (!known.complete && known.tokens.length < end) {
+        const want = end - known.tokens.length
+        // A failed read leaves the prefix as it was, so the next scan asks again
+        // rather than working from nothing.
+        const page = await store.knownTokens(want, known.tokens.length)
+        known.tokens.push(...page)
+        if (!Number.isFinite(want) || page.length < want) known.complete = true
+      }
+      return known.tokens.slice(offset, end)
     },
     // Nothing is stored beyond the candidates and the book.
     async rememberTokens() {},

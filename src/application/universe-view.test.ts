@@ -486,12 +486,22 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(back.find((b) => b.kind === 'entry')!.value).toBeLessThan(2)
   })
 
-  it('draws a token under the cost-efficiency door as filtered, and says what it read and what the door asks', async () => {
-    // *La única puerta de entrada para los tokens es que la eficiencia de los
-    // costos esté arriba del 60%.* The screen's 0.3% spread and 0.8% of
-    // measured impact is a 2.2% round trip: 1 - 2.2 / 4 = 45% — under the door.
+  it('draws an expensive token as a candidate like any other — *puerta de entrada ninguna*', async () => {
+    // The engine asks no door now, so the screen asks none: a 2.2% round trip
+    // is welcome, and it only sorts behind the cheaper ones.
     const store = await seed([token('DEAR', { measuredImpactPct: 0.8 })])
     const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    expect(view.tokens[0]!.tier).not.toBe('filtered')
+    expect(view.tokens[0]!.holdBack).toEqual([])
+  })
+
+  it('draws a token under the cost-efficiency door as filtered when the door is brought back, and says what it read and what it asks', async () => {
+    // *La única puerta de entrada para los tokens es que la eficiencia de los
+    // costos esté arriba del 60%* — one variable away now. The screen's 0.3%
+    // spread and 0.8% of measured impact is a 2.2% round trip: 1 - 2.2 / 4 =
+    // 45% — under the door.
+    const store = await seed([token('DEAR', { measuredImpactPct: 0.8 })])
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents })
     const dear = view.tokens[0]!
     expect(dear.tier).toBe('filtered')
     expect(dear.holdBack).toHaveLength(1)
@@ -504,7 +514,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     // 0.3% of spread and 0.5% of impact is a 1.6% round trip: 60% to the
     // rounding of the screen, and never above it.
     const store = await seed([token('EVEN', { measuredImpactPct: 0.5 })])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents })
     expect(view.tokens[0]!.tier).toBe('filtered')
     expect(describeHoldBack(view.tokens[0]!.holdBack[0]!, LABELS)).toBe('eficiencia de costo 60.0% (pide > 60%)')
   })
@@ -554,13 +564,13 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.blockers.join(' ')).toMatch(/liquidez/)
   })
 
-  it('leaves a token the strategy cannot run on in filtered', async () => {
-    // Under four trades an hour a 15m bar comes back empty, and an empty bar
-    // is how a position freezes. Not taste.
+  it('leaves a token the strategy cannot run on in filtered, under the policy that still asks', async () => {
+    // Under four trades an hour a 15m bar comes back empty. Production stopped
+    // asking — *todo es bienvenido* — and STRICT keeps the gate tested.
     const dead = token('DEAD', { txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } })
     const store = await seed([dead])
-    const view = await buildUniverse(store, options)
-    expect(view.tokens[0]?.tier).toBe('filtered')
+    expect((await buildUniverse(store, strictOptions)).tokens[0]?.tier).toBe('filtered')
+    expect((await buildUniverse(store, options)).tokens[0]?.tier).not.toBe('filtered')
   })
 })
 
@@ -676,5 +686,53 @@ describe('universe — a slot that holds nothing is a RESERVATION, not a trade',
     })
     const view = await buildUniverse(store, { now: () => NOW })
     expect(view.tokens[0]!.position?.holdsTokens).toBe(false)
+  })
+})
+
+describe('universe — never more candidates than the capital can take', () => {
+  // *Que no haya más candidatos de los que el capital pueda tomar.* The engine
+  // cuts its shortlist to the free slots, the cheapest to trade first; the
+  // screen draws the same cut. The measured impact decides the order: 0.1% of
+  // impact reads 75% of cost efficiency, 0.8% reads 45%.
+  const byImpact = (impact: Readonly<Record<string, number>>) =>
+    Object.entries(impact).map(([address, measuredImpactPct]) => token(address, { measuredImpactPct }))
+
+  it('draws only as many candidates as there are free slots — the cheapest — and says so', async () => {
+    const store = await seed(byImpact({ DEAR: 0.8, CHEAP: 0.1, MID: 0.3, OK: 0.5 }))
+    const view = await buildUniverse(store, { ...options, order: 'costEfficiency', freeSlots: 2 })
+    const candidates = view.tokens.filter((t) => t.tier === 'prime' || t.tier === 'eligible').map((t) => t.symbol)
+    expect(candidates).toEqual(['CHEAP', 'MID'])
+    expect(view.freeSlots).toBe(2)
+    const cut = view.tokens.find((t) => t.symbol === 'DEAR')!
+    expect(cut.tier).toBe('filtered')
+    expect(cut.holdBack).toEqual([{ kind: 'slots', name: 'costEfficiency', value: expect.closeTo(0.45, 9), floor: 2, strict: false }])
+    expect(describeHoldBack(cut.holdBack[0]!, LABELS)).toBe('sin lugar libre: el capital toma 2 y hay candidatas más baratas de operar (eficiencia de costo 45.0%)')
+  })
+
+  it('draws no candidate at all when no slot is free', async () => {
+    const store = await seed(byImpact({ CHEAP: 0.1, MID: 0.3 }))
+    const view = await buildUniverse(store, { ...options, order: 'costEfficiency', freeSlots: 0 })
+    expect(view.tokens.filter((t) => t.tier === 'prime' || t.tier === 'eligible')).toEqual([])
+  })
+
+  it('never counts a token we HOLD against the free slots', async () => {
+    const store = await seed(byImpact({ OURS: 0.1, CHEAP: 0.2, MID: 0.3 }))
+    await store.savePosition(position('OURS'))
+    const view = await buildUniverse(store, { ...options, order: 'costEfficiency', freeSlots: 2 })
+    expect(view.tokens.filter((t) => t.tier === 'prime' || t.tier === 'eligible').map((t) => t.symbol)).toEqual(['CHEAP', 'MID'])
+  })
+
+  it('lists the candidates in the engine’s order: cost efficiency first, the score only breaking a tie', async () => {
+    const store = await seed(byImpact({ DEAR: 0.8, CHEAP: 0.1, MID: 0.3 }))
+    const view = await buildUniverse(store, { ...options, order: 'costEfficiency', minScore: 0 })
+    const listed = view.tokens.filter((t) => t.tier !== 'held' && t.tier !== 'filtered')
+    expect(listed.map((t) => t.symbol)).toEqual(['CHEAP', 'MID', 'DEAR'])
+  })
+
+  it('says nothing about free slots when it was not told how many there are', async () => {
+    const store = await seed(byImpact({ CHEAP: 0.1, MID: 0.3, DEAR: 0.8 }))
+    const view = await buildUniverse(store, options)
+    expect(view.freeSlots).toBeNull()
+    expect(view.tokens.filter((t) => t.tier === 'filtered')).toEqual([])
   })
 })

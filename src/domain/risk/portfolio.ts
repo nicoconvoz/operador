@@ -86,6 +86,13 @@ export interface PortfolioPolicy {
   readonly targetPositionUsd?: number
   /** Held back from allocation for gas and rebalancing. */
   readonly reservePct: number
+  /**
+   * Who is served first. `'costEfficiency'`: the cheapest to trade, score only
+   * breaking a tie — the ranking's own order, so the allocator never hands the
+   * last slots to tokens the ranking put behind. *Que elija los que tengan
+   * mejor eficiencia de costos.* Absent: the highest score, as always.
+   */
+  readonly order?: 'score' | 'costEfficiency'
 }
 
 export const DEFAULT_PORTFOLIO_POLICY: PortfolioPolicy = {
@@ -101,6 +108,8 @@ export interface AllocationCandidate {
   readonly quality: MarketQuality
   /** 0..100 from the scanner. Higher gets served first. */
   readonly score: number
+  /** 0..1, the scanner's `costEfficiency`. Served first under `order: 'costEfficiency'`; absent reads zero. */
+  readonly costEfficiency?: number
 }
 
 export interface Allocation {
@@ -189,7 +198,9 @@ export function planPortfolio(
     return { allocations: [], skipped, deployableUsd, allocatedUsd: 0, reserveUsd, idleUsd: deployableUsd, floorOverrodeCap: false }
   }
 
-  const ranked = [...candidates].sort((a, b) => b.score - a.score || a.snapshot.address.localeCompare(b.snapshot.address))
+  const efficiency = (c: AllocationCandidate) => (policy.order === 'costEfficiency' ? c.costEfficiency ?? 0 : 0)
+  const ranked = [...candidates].sort((a, b) =>
+    efficiency(b) - efficiency(a) || b.score - a.score || a.snapshot.address.localeCompare(b.snapshot.address))
   // Zero is not a ceiling of zero — it is no ceiling at all, and the capital
   // decides. With every slot the same size, what bounds the damage one token
   // can do is that size, not the count.

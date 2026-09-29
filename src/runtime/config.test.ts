@@ -109,8 +109,9 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at $15 by default — the first buy; the rung carries its own size', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(15)
+  it('caps each level at ONE STEP by default — the dollar every dip-bounce buy is', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(1)
+    expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2' }).maxUsdPerLevel).toBe(2)
   })
 
   it('scales up when the capital does, without touching the reference', () => {
@@ -184,39 +185,49 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_REQUIRE_RISING: '1' }).requireRising).toBe(true)
   })
 
-  it('still BUYS on selection, and that is a separate switch', () => {
-    // The two were one, because the momentum rule needed door 3: the scanner
-    // selects risers and the classic door refuses a bar making a new high.
-    //
-    // They answer different questions — this one is HOW the executor enters,
-    // the other is WHICH tokens are worth entering. Tied together, turning the
-    // selection rule off would also close the only door those tokens can come
-    // through, and the engine would choose a wide shortlist and buy none of it.
-    expect(loadConfig(valid).buyOnSelection).toBe(true)
+  it('buys NOTHING on selection any more — one variable brings the old door back', () => {
+    // *Nada se compra cuando una moneda pasa a candidata.* Every buy, the first
+    // one included, waits for a 3% dip and a 2% bounce in the sweep. The door
+    // that bought in the same pass is off, and only 1, true or yes reopens it.
+    expect(loadConfig(valid).buyOnSelection).toBe(false)
+    for (const on of ['1', 'true', 'yes']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
     expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: '0' }).buyOnSelection).toBe(false)
   })
 
-  it('gives every token two buys: a fifteen-dollar first buy, then one $20 rung past −80% on a 10% rebound', () => {
-    // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
-    // un rebote de 10%, nueva compra DCA de $20.* The slot is what ONE $15 buy
-    // needs once gas and the price headroom are reserved, so the first buy is
-    // exactly 15; the rung asks the free capital for its own $20 when it fires.
+  it('gives every token twenty $1 steps on a 3% dip and a 2% bounce, and a slot of exactly $20', () => {
+    // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD* —
+    // *disminuí los escalones a 20.* The slot reserves the whole ladder, steps
+    // × step, with nothing grossed up: *el tope son 5000 dividido 50.*
     const config = loadConfig(valid)
-    expect(config.maxUsdPerLevel).toBe(15)
-    expect(config.maxDcaPerToken).toBe(1)
-    expect(config).toMatchObject({ deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20 })
-    // Nothing else buys a rung: the chained ladder, its spacing and the brake.
-    expect(config).toMatchObject({ dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false })
-    expect(config.reservedEntries).toBe(1)
-    const deployable = deployableCapital({
-      initialCapital: config.usdPerToken!,
-      gasUsdPerSwap: config.gasUsdPerSwap,
-      maxOpenEntries: config.reservedEntries,
-      params: DEFAULT_PARAMS,
-    })
-    expect(deployable).toBeCloseTo(15, 9)
-    expect(config.usdPerToken).toBeCloseTo(15.89, 2)
+    expect(config).toMatchObject({ stepUsd: 1, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 20 })
+    expect(config.maxDcaPerToken + 1).toBe(20)
+    expect(config.reservedEntries).toBe(20)
+    expect(config.usdPerToken).toBe(20)
+    // Nothing else buys: the deep rung, the chained ladder, its spacing, the
+    // brake, the pressure ladder and the cascade's own doors.
+    expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50' })).toMatchObject({ slotUsd: 50, usdPerToken: 50, reservedEntries: 50 })
+  })
+
+  it('keeps the take-profit at +10% over the average: no toll-derived target lifts it', () => {
+    // *Vendé si el promedio + 10% de ese promedio de ganancia.* A $1 step pays
+    // $0.05 of gas, so the old derivation — the target at three times the round
+    // trip — would ask the exit for about +35% on this ladder. It is off, and
+    // one variable brings it back.
+    expect(loadConfig(valid).maxCostSharePct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_COST_SHARE_PCT: '33' }).maxCostSharePct).toBe(33)
+  })
+
+  it('reads the registry as far as the free slots need, with an optional bound', () => {
+    expect(loadConfig(valid).registryTokens).toBe(Number.POSITIVE_INFINITY)
+    expect(loadConfig({ ...valid, OPERADOR_REGISTRY_TOKENS: '3000' }).registryTokens).toBe(3_000)
+    expect(() => loadConfig({ ...valid, OPERADOR_REGISTRY_TOKENS: 'todos' })).toThrow(ConfigError)
+  })
+
+  it('serves the cheapest to trade first, and hands a reservation to one 10 points of efficiency better', () => {
+    expect(loadConfig(valid)).toMatchObject({ order: 'costEfficiency', minCostEdgePct: 10 })
+    expect(loadConfig({ ...valid, OPERADOR_RANK_BY: 'size' }).order).toBe('size')
   })
 
   it('reads the rung sizes from the environment, beside the drops', () => {
@@ -225,28 +236,27 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.dcaRungsUsd).toEqual([15, 15, 15])
   })
 
-  it('reserves the whole ladder again when asked — one variable away', () => {
+  it('still reserves fewer entries when asked — one variable away', () => {
     const config = loadConfig({ ...valid, OPERADOR_RESERVED_ENTRIES: '2' })
     expect(config.reservedEntries).toBe(2)
     const deployable = deployableCapital({
-      initialCapital: config.usdPerToken!,
+      initialCapital: 20,
       gasUsdPerSwap: config.gasUsdPerSwap,
       maxOpenEntries: config.reservedEntries,
       params: DEFAULT_PARAMS,
     })
-    // Two FIRST buys' worth, so the tick's first buy is still fifteen dollars;
-    // the rung above it is still priced at its own size when it fires.
-    expect(deployable / 2).toBeCloseTo(15, 9)
+    expect(deployable).toBeGreaterThan(18)
   })
 
   it('brings each switched-off rung back from the environment', () => {
     const config = loadConfig({
       ...valid, OPERADOR_DROP_LADDER: '1', OPERADOR_DCA_ADAPTIVE: '1', OPERADOR_DCA_REALTIME: '1', OPERADOR_LIQUIDITY_BRAKE_PCT: '5',
-      OPERADOR_DEEP_RUNG_FALL_PCT: '70', OPERADOR_DEEP_RUNG_REBOUND_PCT: '15', OPERADOR_DEEP_RUNG_USD: '25',
+      OPERADOR_DEEP_RUNG: '1', OPERADOR_DEEP_RUNG_FALL_PCT: '70', OPERADOR_DEEP_RUNG_REBOUND_PCT: '15', OPERADOR_DEEP_RUNG_USD: '25',
+      OPERADOR_CASCADE_ENTRIES: '1',
     })
     expect(config).toMatchObject({
       dropLadder: true, dcaAdaptive: true, dcaRealtime: true, liquidityBrakePct: 5,
-      deepRungFallPct: 70, deepRungReboundPct: 15, deepRungUsd: 25,
+      deepRung: true, deepRungFallPct: 70, deepRungReboundPct: 15, deepRungUsd: 25, cascadeEntries: true,
     })
   })
 
@@ -387,18 +397,16 @@ describe('two rules stand, and the doors they need are separate switches', () =>
   })
 })
 
-describe('loadConfig — the only entry door is cost efficiency above 60%', () => {
-  // *La única puerta de entrada para los tokens es que la eficiencia de los
-  // costos esté arriba del 60%.* From the module the dashboard reads too, so
-  // the canvas and the engine cannot disagree about which tokens the book may
-  // buy.
-  it('asks cost efficiency STRICTLY over 60%, and nothing else of the components', () => {
-    expect(loadConfig(valid).minComponents).toEqual({ costEfficiency: { above: 0.6 } })
+describe('loadConfig — no entry door: *todo es bienvenido*', () => {
+  // From the module the dashboard reads too, so the canvas and the engine
+  // cannot disagree about which tokens the book may buy.
+  it('asks nothing of the components', () => {
+    expect(loadConfig(valid).minComponents).toEqual({})
   })
 
-  it('moves with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
+  it('brings the cost-efficiency floor back with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
     expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
     expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0' }).minComponents).toEqual({ costEfficiency: { above: 0 } })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({ costEfficiency: { above: 0.6 } })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({})
   })
 })

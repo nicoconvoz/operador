@@ -123,6 +123,71 @@ export interface RankingPolicy {
    * Absent means no preference: everything competes on score alone.
    */
   readonly smallCapFdvUsd?: number
+  /**
+   * Who wins when there are more candidates than slots — applied BEFORE the
+   * cut, so the tokens that win are never the ones cut.
+   *
+   * `'costEfficiency'`: the cheapest to trade first, ties by score. *Que de los
+   * tokens candidatos elija los que tengan mejor eficiencia de costos.* The
+   * operator, and production's.
+   *
+   * `'size'`: small caps first (`smallCapFdvUsd`), then score — the order this
+   * ranking always had, one variable away (`OPERADOR_RANK_BY=size`).
+   *
+   * REQUIRED, like `requireRising`: an optional field is where a composition
+   * root forgets to pass the operator's decision and nothing dies.
+   */
+  readonly order: CandidateOrder
+  /**
+   * Tokens we already HOLD, keyed `chain:address`. Ranked like any other, and
+   * never counted against `watchSlots` — the slots are the FREE ones, and a
+   * held token already has its own. Absent: nothing held.
+   */
+  readonly held?: ReadonlySet<string>
+}
+
+/** Who wins a slot. See `RankingPolicy.order`. */
+export type CandidateOrder = 'costEfficiency' | 'size'
+
+/** What the order reads: the token, and its score and components. */
+export interface Rankable {
+  readonly snapshot: TokenSnapshot
+  readonly opportunity: Opportunity
+}
+
+/**
+ * The ONE order candidates are served in — the ranking's cut, the scan's budget,
+ * the allocator and the screen all read it, so none of them can cut a token
+ * another one would have kept. The address breaks the last tie, so the order
+ * is total and the same on every machine.
+ */
+export function candidateComparator(order: CandidateOrder, smallCapFdvUsd?: number): (a: Rankable, b: Rankable) => number {
+  const byAddress = (a: Rankable, b: Rankable) => a.snapshot.address.localeCompare(b.snapshot.address)
+  if (order === 'costEfficiency') {
+    return (a, b) =>
+      b.opportunity.components.costEfficiency - a.opportunity.components.costEfficiency ||
+      b.opportunity.score - a.opportunity.score ||
+      byAddress(a, b)
+  }
+  // SIZE first, then score. An unknown FDV counts as small: it is the normal
+  // case on a young pool, and sorting it last would quietly demote exactly the
+  // tokens this system exists to trade.
+  const big = (s: TokenSnapshot) => (smallCapFdvUsd !== undefined && s.fdvUsd !== null && s.fdvUsd > smallCapFdvUsd ? 1 : 0)
+  return (a, b) => big(a.snapshot) - big(b.snapshot) || b.opportunity.score - a.opportunity.score || byAddress(a, b)
+}
+
+/**
+ * The first `slots` tokens we do not hold, and every one we do, in the order
+ * given. The slots are the FREE ones: a held token already has its own.
+ */
+export function cutToFreeSlots<T extends Rankable>(ranked: readonly T[], slots: number, held?: ReadonlySet<string>): T[] {
+  let taken = 0
+  return ranked.filter((c) => {
+    if (held?.has(tokenKey(c.snapshot))) return true
+    if (taken >= slots) return false
+    taken += 1
+    return true
+  })
 }
 
 /**
@@ -196,23 +261,17 @@ export function rankUniverse(
     else reserve.push({ snapshot, opportunity, marketQuality, forgiven })
   }
 
-  // SIZE first, then score. An unknown FDV counts as small: it is the normal
-  // case on a young pool, and sorting it last would quietly demote exactly the
-  // tokens this system exists to trade.
-  const big = (s: TokenSnapshot) =>
-    policy.smallCapFdvUsd !== undefined && s.fdvUsd !== null && s.fdvUsd > policy.smallCapFdvUsd ? 1 : 0
-  const byRank = (a: Candidate, b: Candidate) =>
-    big(a.snapshot) - big(b.snapshot) ||
-    b.opportunity.score - a.opportunity.score ||
-    a.snapshot.address.localeCompare(b.snapshot.address)
+  // The operator's order — cost efficiency, or size then score — BEFORE the cut.
+  const byRank = candidateComparator(policy.order, policy.smallCapFdvUsd)
   candidates.sort(byRank)
   reserve.sort(byRank)
 
   // The fallback goes BEHIND every token that qualified, whatever the scores
   // say, and is cut with them rather than in addition to them — a wider
   // shortlist is a wider candle bill, and the slots the reserve fills are the
-  // ones nothing else could.
-  return { candidates: [...candidates, ...reserve].slice(0, policy.watchSlots), rejected, switchedOff }
+  // ones nothing else could. A token we hold is never counted: the slots are
+  // the free ones.
+  return { candidates: cutToFreeSlots([...candidates, ...reserve], policy.watchSlots, policy.held), rejected, switchedOff }
 }
 
 export const tokenKey = (snapshot: TokenSnapshot): string => `${snapshot.chain}:${snapshot.address}`

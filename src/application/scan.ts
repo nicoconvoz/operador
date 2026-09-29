@@ -1,6 +1,6 @@
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { patientSellProbe } from './patient-sell-probe.js'
-import { type StatePort } from '../domain/persistence/store.js'
+import { type RememberedToken, type StatePort } from '../domain/persistence/store.js'
 import { type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
 import { evaluateMarketGates, evaluateSafetyGates, forgivableFailures } from '../domain/scanner/gates.js'
@@ -58,6 +58,13 @@ export interface DecimalsPort {
  */
 /** How many remembered tokens rejoin the universe when nobody says otherwise. */
 export const DEFAULT_REGISTRY_TOKENS = 600
+
+/**
+ * How many remembered tokens one read of the registry asks for. Five batched
+ * market requests' worth: a scan that is still short of candidates reads the
+ * next page, and one that is not reads none.
+ */
+export const REGISTRY_PAGE = 500
 
 export interface HistoryPort {
   /**
@@ -222,13 +229,24 @@ export interface ScanConfig {
   /** Cap on tokens whose MARKET data is fetched. Cheap: 30 per request. */
   readonly maxTokens: number
   /**
-   * How many remembered tokens rejoin the universe each scan.
+   * How FAR a scan may read the registry — an upper bound, never a read size.
+   * It is read in pages of `REGISTRY_PAGE`, busiest first, and only while the
+   * free slots are still short (`wanted`); a scan that already has what it
+   * needs reads none. Infinity: the whole registry, if the slots need it.
+   * Absent: `DEFAULT_REGISTRY_TOKENS`.
    *
-   * Every one costs a share of a price request, one per thirty, so this is
-   * what the registry's reach costs in requests. At 600 that is twenty extra
-   * calls to a provider that allows three hundred a minute.
+   * Every one read costs a share of a price request — a hundred per Jupiter
+   * call, thirty per DexScreener one.
    */
   readonly registryTokens?: number
+  /**
+   * How many candidates the free slots can take: the paid stage — the chain
+   * authorities and the sell quote — stops as soon as this many tokens we do
+   * not hold have passed every gate, spending in order of ESTIMATED cost
+   * efficiency. *Sólo revisá tokens limitados hasta cubrir los cupos
+   * faltantes.* Absent: every token is examined, as before.
+   */
+  readonly wanted?: number
   /**
    * Addresses we already hold on this chain. They are never candidates.
    *
@@ -334,20 +352,23 @@ export interface ScanOutcome extends ScanResult {
 }
 
 /**
- * The opportunity score from market data alone — no security, no quote.
+ * The opportunity from market data alone — no security, no quote — with the
+ * impact MODELLED from reported liquidity, the same formula the universe view
+ * draws with.
  *
- * Only used to decide who gets the expensive checks. The real score is
+ * Only used to decide who gets the expensive checks, and in which order: its
+ * `costEfficiency` is the ESTIMATE the paid stage spends by. The real score is
  * computed after them, with measured quality; this one exists because ranking
  * with free information beats ranking by arrival order.
  */
-const provisionalScore = (market: Omit<TokenSnapshot, 'security' | 'historyBars'>, config: ScanConfig): number =>
+const provisionalOpportunity = (market: Omit<TokenSnapshot, 'security' | 'historyBars'>, config: ScanConfig) =>
   scoreOpportunity({ ...market, security: UNKNOWN_SECURITY, historyBars: null }, config.ranking.opportunity, null, {
     liquidityUsd: market.liquidityUsd,
     spreadPct: config.spreadPct,
     slippagePct: market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100,
     referenceUsd: config.referenceUsd,
     observedAt: market.observedAt,
-  }).score
+  })
 
 /** Two hours. See the note on `securityTtlMs`. */
 const DEFAULT_SECURITY_TTL_MS = 2 * 60 * 60 * 1000
@@ -494,7 +515,8 @@ export async function scanOnce(
   // discovery leaves the universe as exactly the book, and everything after
   // this point is unchanged: the same gates, the same security call, the same
   // sell quote, the same candles. It is the same scan with a smaller universe,
-  // not a lesser one.
+  // not a lesser one. It is also what a book with NO free slot runs: *no
+  // hacemos lectura y búsqueda al pedo.*
   if (config.discover !== false) {
   if (deps.decimals.discover) {
     try {
@@ -521,38 +543,6 @@ export async function scanOnce(
   await deps.betweenSteps?.()
   for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
   deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
-
-  // ── And everything this engine has EVER priced ────────────────────────────
-  //
-  // The operator's idea, and it answers the constraint the whole scanner ran
-  // into: the free providers cap a sweep at about 570 and no threshold widens
-  // that. Ten pages is GeckoTerminal's ceiling — page eleven answers 401 —
-  // Jupiter's lists cap at 100 each, and DexScreener's boosts are paid
-  // promotions. The only lever left is TIME.
-  //
-  // So a registry accumulates what every sweep found and hands it back,
-  // ordered by last-known activity. A week of scans knows far more than any
-  // one of them, and a token that stopped trending is not a token that
-  // stopped existing.
-  //
-  // BOUNDED, and the bound is not timidity: every address here costs a share
-  // of a price request, one per thirty. The order is what makes the bound
-  // useful — the busiest first, so the ones worth re-pricing are the ones
-  // that get re-priced.
-  //
-  // Never fatal. A registry that cannot be read leaves the universe as
-  // whatever the providers just said, which is exactly what it was before.
-  if (deps.store?.knownTokens) {
-    try {
-      for (const known of await deps.store.knownTokens(config.registryTokens ?? DEFAULT_REGISTRY_TOKENS)) {
-        universe.add(known.contract)
-        if (known.pool && !poolOf.has(known.contract)) poolOf.set(known.contract, known.pool)
-      }
-      deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'registro', found: universe.size })
-    } catch (error) {
-      errors.push({ address: '*', stage: 'market', error: `registry: ${String(error)}` })
-    }
-  }
   }
   // The cap bounds DISCOVERY, never what we hold. A book wider than the cap
   // would otherwise start dropping its own positions out of the scan, which is
@@ -560,6 +550,8 @@ export async function scanOnce(
   const discovered = [...universe].filter((address) => !held.has(address))
   const room = Math.max(0, config.maxTokens - held.size)
   const addresses = [...held, ...discovered.slice(0, room)]
+  /** How many more the cap lets in — the registry's pages share it. */
+  let roomLeft = Math.max(0, room - discovered.length)
   // What the cap THREW AWAY, not only what it kept. A cut this size is a
   // decision about the universe, and a log that prints the survivors alone
   // reads identically whether the cap bit or the day was quiet — so the number
@@ -571,6 +563,28 @@ export async function scanOnce(
     dropped: Math.max(0, discovered.length - room),
   })
 
+  // The ranking the whole scan runs on. A token we HOLD is never counted
+  // against the free slots: it already has its own.
+  const heldKeys = new Set([...held].map((address) => `${config.chain}:${address}`))
+  const ranking: RankingPolicy = { ...config.ranking, held: heldKeys }
+
+  const snapshots: TokenSnapshot[] = []
+  const quality = new Map<string, MarketQuality>()
+  /** Cleared the free gates and the door, and not examined yet — the paid stage's queue. */
+  const queue: MarketSnapshot[] = []
+  /** What the security cache already knew, fresh — fully evaluated at no network cost. */
+  const remembered = new Map<string, CachedSecurity>()
+  /** Every address this scan has asked the market about, so a registry page never asks twice. */
+  const asked = new Set<string>(addresses)
+  const ttl = config.securityTtlMs ?? DEFAULT_SECURITY_TTL_MS
+
+  /**
+   * One batch of addresses through the cheap stages: the market, what the
+   * registry remembers, the free gates, the door and the security cache. What
+   * survives joins the paid stage's queue; everything else is written down as
+   * a snapshot, exactly as before.
+   */
+  const intake = async (batch: readonly string[]): Promise<void> => {
   // ── 2. Market, in batches of 30 ────────────────────────────────────────────
   // Deduplicated ACROSS batches, not only within one.
   //
@@ -579,8 +593,8 @@ export async function scanOnce(
   // endpoint returns every pair for the addresses asked, and a pair's base
   // token is not always the one requested — and the same token then entered
   // the universe twice, was examined twice, and was counted twice on screen.
-  const bestByAddress = new Map<string, (typeof markets)[number]>()
-  const markets: ReturnType<typeof deps.dex.toMarketSnapshots> = []
+  const bestByAddress = new Map<string, MarketSnapshot>()
+  const markets: MarketSnapshot[] = []
   if (deps.markets) {
     // An injected market source replaces DexScreener outright. On Solana it is
     // Jupiter, per MINT — the same source as the candles, so the liquidity the
@@ -588,25 +602,25 @@ export async function scanOnce(
     // provider's numbers, and a ratio between them means something.
     try {
       await deps.betweenSteps?.()
-      for (const market of await deps.markets(config.chain, addresses)) {
+      for (const market of await deps.markets(config.chain, batch)) {
         const current = bestByAddress.get(market.address)
         if (!current || market.liquidityUsd > current.liquidityUsd) bestByAddress.set(market.address, market)
       }
     } catch (error) {
-      for (const address of addresses) errors.push({ address, stage: 'market', error: String(error) })
+      for (const address of batch) errors.push({ address, stage: 'market', error: String(error) })
     }
   }
-  for (let i = 0; !deps.markets && i < addresses.length; i += 30) {
-    const batch = addresses.slice(i, i + 30)
+  for (let i = 0; !deps.markets && i < batch.length; i += 30) {
+    const slice = batch.slice(i, i + 30)
     try {
-      const pairs = await deps.dex.tokens(config.chain, batch)
+      const pairs = await deps.dex.tokens(config.chain, slice)
       await deps.betweenSteps?.()
       for (const market of deps.dex.toMarketSnapshots(config.chain, pairs)) {
         const current = bestByAddress.get(market.address)
         if (!current || market.liquidityUsd > current.liquidityUsd) bestByAddress.set(market.address, market)
       }
     } catch (error) {
-      for (const address of batch) errors.push({ address, stage: 'market', error: String(error) })
+      for (const address of slice) errors.push({ address, stage: 'market', error: String(error) })
     }
   }
   // ── 2b. What the price provider could not see, asked at its own pool ──────
@@ -623,7 +637,7 @@ export async function scanOnce(
   // token. It cannot come from the discovery CACHE, which stands six hours and
   // whose market half would be six hours stale — so it is re-asked, thirty
   // pools per call, only for what is actually missing.
-  const missing = addresses.filter((address) => !bestByAddress.has(address) && poolOf.has(address))
+  const missing = batch.filter((address) => !bestByAddress.has(address) && poolOf.has(address))
   let recovered = 0
   if (deps.history && missing.length > 0) {
     try {
@@ -643,17 +657,11 @@ export async function scanOnce(
   }
   markets.push(...bestByAddress.values())
 
-  // What the price provider COULD NOT answer, and how much of it came back.
-  //
-  // A log that prints the survivors alone reads identically whether a provider
-  // is blind to a third of the universe or the day was quiet — and that is
-  // exactly the number nobody could see while the book starved: 323 discovered
-  // became 173 priced and the 150 in between were invisible.
   // Everything priced goes into the registry, whatever happens to it next.
   //
   // Deliberately BEFORE any gate: a token refused today for being four hours
   // old is a token worth knowing about tomorrow, and the whole point is to
-  // remember what the providers forget. It is written once per scan rather
+  // remember what the providers forget. It is written once per batch rather
   // than per token, because a free tier whose limit is network transfer once
   // took this project offline for thirty-four hours.
   if (deps.store?.rememberTokens) {
@@ -676,11 +684,17 @@ export async function scanOnce(
     }
   }
 
+  // What the price provider COULD NOT answer, and how much of it came back.
+  //
+  // A log that prints the survivors alone reads identically whether a provider
+  // is blind to a third of the universe or the day was quiet — and that is
+  // exactly the number nobody could see while the book starved: 323 discovered
+  // became 173 priced and the 150 in between were invisible.
   deps.onProgress?.({
     stage: 'market',
     chain: config.chain,
     priced: markets.length,
-    asked: addresses.length,
+    asked: batch.length,
     recovered,
   })
 
@@ -689,10 +703,7 @@ export async function scanOnce(
   // than that budget, so what can be decided from the market snapshot alone is
   // decided first. A token rejected here was rejected on the same rules it
   // would have faced anyway — this reorders the work, it does not soften it.
-  const snapshots: TokenSnapshot[] = []
-  const quality = new Map<string, MarketQuality>()
-  const affordable: typeof markets = []
-
+  const affordable: MarketSnapshot[] = []
   for (const market of markets) {
     // securityChecked: FALSE, and true for neither of them yet. A token
     // rejected here was never examined — saying otherwise made every thin pool
@@ -707,11 +718,6 @@ export async function scanOnce(
     // means `forgivableFailures` can never clear it and the reserve stays
     // empty by construction. Measured after the relaunch that shipped it: ONE
     // token held, ZERO in reserve, and 108 filtered by `turnover` alone.
-    //
-    // The cost is bounded by what is forgivable, and that set was chosen for
-    // this reason as much as any other: `age` is the single largest rejection
-    // here — most of what the deep sweep returns — and forgiving it would buy
-    // a throttled request per newborn pool that no indicator could ever use.
     if (cheap.passed || forgivableFailures(cheap) !== null) affordable.push(market)
     else snapshots.push(provisional)
   }
@@ -719,132 +725,90 @@ export async function scanOnce(
   // ── 3a-bis. The DOOR, asked before anything is paid for ────────────────────
   //
   // The operator: *¿no podemos filtrar antes a los tokens, de pasarlos por la
-  // revisión de Gecko?*
-  //
-  // `provisionalScore` already existed and was only used to ORDER a bounded
-  // budget — so with the budget unbounded it did not even sort, and every
-  // token clearing the free gates cost a throttled security call, two sell
-  // quotes and a history count. About 2.5 seconds each, set by the slowest
-  // throttle rather than by any latency.
-  //
-  // Asking the score door and the component floors FIRST is safe, and provably
-  // rather than approximately. The provisional score models slippage from
-  // REPORTED liquidity, which overstates depth — HEV reported $186k against
-  // $3.8k of real depth. Overstated depth means understated cost, so the
-  // provisional `costEfficiency`, and therefore the provisional score, are an
-  // UPPER BOUND on the real ones: a token below the door provisionally is
-  // below it really. `headroom` and `momentum` come out identical either way,
-  // because they read the same price changes.
-  //
-  // So this can only ever drop tokens the full evaluation would have dropped
-  // anyway, which is the property that makes it an economy rather than a
-  // softening of the rules.
-  const wanted = affordable.filter((market) => {
+  // revisión de Gecko?* The provisional score models slippage from REPORTED
+  // liquidity, which overstates depth, so the provisional `costEfficiency` and
+  // score are an UPPER BOUND on the real ones: a token below the door
+  // provisionally is below it really. This can only ever drop tokens the full
+  // evaluation would have dropped anyway — an economy, not a softening.
+  for (const market of affordable) {
     // Ours is never filtered out. Its security is the answer we most need
     // current, because it is the one a rug would cost us — and the score
     // decides what to BUY, never what to keep watching.
-    if (held.has(market.address)) return true
-    const provisional = scoreOpportunity(
-      { ...market, security: UNKNOWN_SECURITY, historyBars: null },
-      config.ranking.opportunity,
-      null,
-      {
+    const passes =
+      held.has(market.address) ||
+      (() => {
+        const provisional = provisionalOpportunity(market, config)
+        return provisional.score >= config.ranking.minScore && meetsMinimums(provisional.components, config.ranking.minComponents)
+      })()
+    if (!passes) {
+      snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
+      continue
+    }
+    // ── 3b. What is already known does not need paying for again ────────────
+    // A cached report keeps the token fully evaluated at no network cost,
+    // which is what frees the budget to reach the ones nobody has looked at.
+    const known = deps.securityCache ? await deps.securityCache.cachedSecurity(config.chain, market.address) : null
+    if (known && scannedAt - known.measuredAt < ttl) {
+      remembered.set(market.address, known)
+      snapshots.push({ ...market, security: known.security, historyBars: null, securityChecked: true, measuredImpactPct: known.slippagePct })
+      quality.set(`${config.chain}:${market.address}`, {
         liquidityUsd: market.liquidityUsd,
         spreadPct: config.spreadPct,
-        slippagePct: market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100,
+        slippagePct: known.slippagePct ?? (market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100),
         referenceUsd: config.referenceUsd,
-        observedAt: market.observedAt,
-      },
-    )
-    if (provisional.score < config.ranking.minScore) return false
-    return meetsMinimums(provisional.components, config.ranking.minComponents)
-  })
-  for (const market of affordable) {
-    if (!wanted.includes(market)) {
-      snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
+        observedAt: scannedAt,
+      })
+      continue
     }
+    queue.push(market)
   }
-  affordable.length = 0
-  affordable.push(...wanted)
-
-  // ── 3b. What is already known does not need paying for again ──────────────
-  // A cached report keeps the token fully evaluated at no network cost, which
-  // is what frees the budget to reach the ones nobody has looked at yet.
-  const ttl = config.securityTtlMs ?? DEFAULT_SECURITY_TTL_MS
-  const remembered = new Map<string, CachedSecurity>()
-  if (deps.securityCache) {
-    for (const market of affordable) {
-      const known = await deps.securityCache.cachedSecurity(config.chain, market.address)
-      if (known && scannedAt - known.measuredAt < ttl) remembered.set(market.address, known)
-    }
   }
 
-  for (const market of affordable) {
-    const known = remembered.get(market.address)
-    if (!known) continue
-    const snapshot: TokenSnapshot = {
-      ...market,
-      security: known.security,
-      historyBars: null,
-      securityChecked: true,
-      measuredImpactPct: known.slippagePct,
+  await intake(addresses)
+
+  // ── 4. The paid stage: only as far as the free slots need ─────────────────
+  //
+  // *Luego descartá los 250 y sólo revisá tokens limitados hasta cubrir los
+  // cupos faltantes; no hacemos lectura y búsqueda al pedo.* The operator. The
+  // chain authorities and the sell quote are what a token costs, so they are
+  // spent in order of what the token is worth — its ESTIMATED cost efficiency,
+  // from the cheap market half — and stop as soon as `wanted` tokens we do not
+  // hold have passed every gate. Absent `wanted`, every token is examined, as
+  // before.
+  //
+  // Without `wanted`, and when the budget cannot cover everyone, the old order
+  // stands: the provisional score. Taking the first N in discovery order would
+  // spend a throttled call on whichever token a provider listed first — on a
+  // bounded budget, the order IS the choice.
+  const wanted = config.wanted ?? Number.POSITIVE_INFINITY
+  const budget = config.maxSecurityChecks ?? Number.POSITIVE_INFINITY
+  const estimated = new Map<string, { readonly costEfficiency: number; readonly score: number }>()
+  const estimate = (market: MarketSnapshot) => {
+    let found = estimated.get(market.address)
+    if (!found) {
+      const provisional = provisionalOpportunity(market, config)
+      found = { costEfficiency: provisional.components.costEfficiency, score: provisional.score }
+      estimated.set(market.address, found)
     }
-    snapshots.push(snapshot)
-    quality.set(tokenKey(snapshot), {
-      liquidityUsd: market.liquidityUsd,
-      spreadPct: config.spreadPct,
-      slippagePct: known.slippagePct ?? (market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100),
-      referenceUsd: config.referenceUsd,
-      observedAt: scannedAt,
-    })
+    return found
   }
-
-  // ── 4. Rank BEFORE spending, when the budget cannot cover everyone ─────────
-  // Ordered by the opportunity score computed from market data alone, which
-  // costs nothing. Taking the first N in discovery order would spend a
-  // throttled security call and a sell quote on whichever token a provider
-  // happened to list first — and on a bounded budget, the order IS the choice.
-  // Only what is NOT already known competes for the budget. That single line
-  // is what makes the budget rotate: a token examined this cycle is cached
-  // next cycle, so the next cycle's budget reaches further down the list.
-  const unexamined = affordable.filter((market) => !remembered.has(market.address))
-  const budget = config.maxSecurityChecks ?? unexamined.length
-  const byScore =
-    budget >= unexamined.length
-      ? unexamined
-      : [...unexamined].sort((a, b) => provisionalScore(b, config) - provisionalScore(a, config))
-  // Ours first, unranked. A held token is not competing with candidates for a
-  // look — the money is already in it, and an unexamined position is one whose
-  // honeypot answer nobody has refreshed since it was bought.
-  const ordered = [...byScore.filter((m) => held.has(m.address)), ...byScore.filter((m) => !held.has(m.address))]
-
-  // What the budget could not reach still goes on the screen, marked unchecked.
-  // The gates fail closed, so an unexamined token is never a candidate — but
-  // "nobody has looked at this yet" and "we looked and it is dangerous" are
-  // different claims and must not render the same.
-  for (const market of ordered.slice(budget)) {
-    snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
-  }
-
-  deps.onProgress?.({
-    stage: 'budget',
-    chain: config.chain,
-    affordable: affordable.length,
-    checking: Math.min(budget, unexamined.length),
-  })
-
-  // Everything the loop is about to examine, asked in batches before it starts.
-  // A hundred mints per request to Jupiter and to the chain, against one
-  // address per call on a two-second interval before — measured at 3.5s a token
-  // over 137 tokens. A failure is recorded, never fatal: each token is still
-  // asked on its own below.
-  const toExamine = ordered.slice(0, budget).map((m) => m.address)
-  if (deps.prefetch && toExamine.length > 0) {
-    try {
-      await deps.prefetch(config.chain, toExamine)
-    } catch (error) {
-      errors.push({ address: 'prefetch', stage: 'security', error: String(error) })
-    }
+  const examined = new Set<string>()
+  let spent = 0
+  /** Ours first, unranked — then the rest, in the order the paid stage spends on them. */
+  const pending = (): MarketSnapshot[] => {
+    const left = queue.filter((market) => !examined.has(market.address))
+    const ours = left.filter((market) => held.has(market.address))
+    const theirs = left.filter((market) => !held.has(market.address))
+    const ordered =
+      config.wanted !== undefined
+        ? [...theirs].sort((a, b) =>
+            estimate(b).costEfficiency - estimate(a).costEfficiency ||
+            estimate(b).score - estimate(a).score ||
+            a.address.localeCompare(b.address))
+        : budget - spent >= theirs.length
+          ? theirs
+          : [...theirs].sort((a, b) => estimate(b).score - estimate(a).score)
+    return [...ours, ...ordered]
   }
 
   // Whether a sell quote could still change the verdict: the gates can only
@@ -853,46 +817,129 @@ export async function scanOnce(
   const shouldProbe = (provisional: TokenSnapshot) => evaluateSafetyGates(provisional, config.ranking.gates).passed
 
   let done = 0
-  for (const market of ordered.slice(0, budget)) {
-    done += 1
-    // Before the token, not after, so the FIRST one does not get a free pass.
-    await deps.betweenSteps?.()
-    // Every tenth, not every one: a log that scrolls is a log nobody reads.
-    if (done % 10 === 0) {
-      deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: Math.min(budget, unexamined.length) })
+  /** Examines one batch: asked for in bulk first, then token by token. */
+  const examine = async (batch: readonly MarketSnapshot[]): Promise<void> => {
+    // Everything this batch is about to examine, asked in batches before it
+    // starts. A hundred mints per request to Jupiter and to the chain, against
+    // one address per call on a two-second interval before — measured at 3.5s
+    // a token over 137 tokens. A failure is recorded, never fatal: each token
+    // is still asked on its own below.
+    if (deps.prefetch && batch.length > 0) {
+      try {
+        await deps.prefetch(config.chain, batch.map((market) => market.address))
+      } catch (error) {
+        errors.push({ address: 'prefetch', stage: 'security', error: String(error) })
+      }
     }
-    // Three providers, three independent rate limiters — and until the first
-    // real cycle measured it, three queues waited on each other for nothing.
-    // 16.8 seconds per token against a 15-minute bar, because the sum of three
-    // unrelated waits is not a cost anyone chose. A token now costs the
-    // LONGEST branch rather than their total.
-    //
-    // The sell quote is the one real dependency: it needs the decimals to size
-    // a $100 order, so it stays behind them, inside its own branch.
-    const record = (stage: ScanError['stage'], error: unknown) =>
-      errors.push({ address: market.address, stage, error: String(error) })
-
-    // A token we HOLD waits for its sale quote; a stranger gets one try.
-    const probing =
-      deps.patience && deps.sellProbe && held.has(market.address)
-        ? { ...deps, sellProbe: patientSellProbe(deps.sellProbe, deps.patience) }
-        : deps
-    const { snapshot, slippagePct } = await examineToken(probing, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
-    snapshots.push(snapshot)
-    quality.set(tokenKey(snapshot), {
-      liquidityUsd: market.liquidityUsd,
-      spreadPct: config.spreadPct,
-      // A measured impact beats the model; the model beats nothing.
-      slippagePct: slippagePct ?? (market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100),
-      referenceUsd: config.referenceUsd,
-      observedAt: scannedAt,
-    })
+    for (const market of batch) {
+      examined.add(market.address)
+      spent += 1
+      done += 1
+      // Before the token, not after, so the FIRST one does not get a free pass.
+      await deps.betweenSteps?.()
+      // Every tenth, not every one: a log that scrolls is a log nobody reads.
+      if (done % 10 === 0) deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: done + pending().length })
+      const record = (stage: ScanError['stage'], error: unknown) =>
+        errors.push({ address: market.address, stage, error: String(error) })
+      // A token we HOLD waits for its sale quote; a stranger gets one try.
+      const probing =
+        deps.patience && deps.sellProbe && held.has(market.address)
+          ? { ...deps, sellProbe: patientSellProbe(deps.sellProbe, deps.patience) }
+          : deps
+      const { snapshot, slippagePct } = await examineToken(probing, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
+      snapshots.push(snapshot)
+      quality.set(tokenKey(snapshot), {
+        liquidityUsd: market.liquidityUsd,
+        spreadPct: config.spreadPct,
+        // A measured impact beats the model; the model beats nothing.
+        slippagePct: slippagePct ?? (market.liquidityUsd > 0 ? estimatePriceImpactPct(config.referenceUsd, market.liquidityUsd) : 100),
+        referenceUsd: config.referenceUsd,
+        observedAt: scannedAt,
+      })
+    }
   }
 
-  // ── 4. Gates → score → rank ────────────────────────────────────────────────
-  let ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
+  /** Tokens we do NOT hold that have passed every gate so far. */
+  const passing = (): number =>
+    rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, { ...ranking, watchSlots: Number.POSITIVE_INFINITY })
+      .candidates.filter((c) => !heldKeys.has(tokenKey(c.snapshot))).length
 
-  // ── 4b. And can we actually SEE it trade? ──────────────────────────────────
+  deps.onProgress?.({
+    stage: 'budget',
+    chain: config.chain,
+    affordable: queue.length + remembered.size,
+    checking: Math.min(budget, queue.length),
+  })
+
+  /** Examine until `wanted` pass, the queue runs out, or the budget does. */
+  const examineWhatIsNeeded = async (): Promise<void> => {
+    // Ours first and always: their own checks are what the death watch reads,
+    // and they are never candidates, so they never count toward `wanted`.
+    await examine(pending().filter((market) => held.has(market.address)).slice(0, Math.max(0, budget - spent)))
+    await untilFilled(
+      wanted,
+      passing,
+      () => pending().slice(0, Math.max(0, budget - spent)),
+      examine,
+    )
+  }
+  await examineWhatIsNeeded()
+
+  // ── 4a. And everything this engine has EVER priced, only while it is needed
+  //
+  // The operator's idea: the free providers cap a sweep at about 570 and no
+  // threshold widens that, so a registry accumulates what every sweep found
+  // and hands it back, busiest first. *Acordate de usar la base de datos de los
+  // tokens registrados.*
+  //
+  // Read in PAGES, and only while the free slots are still short — a page is a
+  // share of a price request per token, and a scan that already found what it
+  // needs has no reason to spend it. `registryTokens` bounds how far it may
+  // read. Never fatal: a registry that cannot be read leaves the universe as
+  // whatever the providers just said.
+  if (config.discover !== false && deps.store?.knownTokens) {
+    const bound = config.registryTokens ?? DEFAULT_REGISTRY_TOKENS
+    let offset = 0
+    while (offset < bound && roomLeft > 0 && passing() < wanted) {
+      const size = Math.min(REGISTRY_PAGE, bound - offset)
+      let page: readonly RememberedToken[]
+      try {
+        page = await deps.store.knownTokens(size, offset)
+      } catch (error) {
+        errors.push({ address: '*', stage: 'market', error: `registry: ${String(error)}` })
+        break
+      }
+      offset += size
+      const fresh: string[] = []
+      for (const known of page) {
+        if (roomLeft <= 0) break
+        if (asked.has(known.contract)) continue
+        asked.add(known.contract)
+        fresh.push(known.contract)
+        roomLeft -= 1
+        if (known.pool && !poolOf.has(known.contract)) poolOf.set(known.contract, known.pool)
+      }
+      deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'registro', found: asked.size })
+      if (fresh.length > 0) {
+        await intake(fresh)
+        await examineWhatIsNeeded()
+      }
+      if (page.length < size) break
+    }
+  }
+
+  // What the paid stage did not reach still goes on the screen, marked
+  // unchecked. The gates fail closed, so an unexamined token is never a
+  // candidate — but "nobody has looked at this yet" and "we looked and it is
+  // dangerous" are different claims and must not render the same.
+  for (const market of queue) {
+    if (!examined.has(market.address)) snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
+  }
+
+  // ── 5. Gates → score → rank, by the MEASURED numbers ──────────────────────
+  let ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, ranking)
+
+  // ── 5b. And can we actually SEE it trade? ──────────────────────────────────
   //
   // Measured LAST, and only for what survived everything else, because it costs
   // one candle request each. Written onto the SNAPSHOT rather than filtered out
@@ -902,103 +949,79 @@ export async function scanOnce(
   // disagreement the read model exists to prevent. Eighteen of twenty-seven
   // Solana tokens were in that state.
   if (deps.poolCandles && config.maxBarAgeHours !== undefined) {
-    // Fill the slots, topping up from the next best score.
+    // Fill the slots, topping up from the next best — the SAME shortfall the
+    // paid stage asks for (`untilFilled`), so there is one way of doing it.
     //
     // The three candle gates — `history`, `staleBars`, `priceMismatch` — can
-    // only fire AFTER the download, so some of the best-scoring tokens die
-    // here. A fixed overshoot cannot answer that: too small and a bad batch
-    // leaves capital idle, which is the failure this book spent a morning on;
-    // too large and every scan pays for candles nobody will use.
-    //
-    // Asking for the SHORTFALL does neither. If they all survive it downloads
-    // exactly what the budget funds; if one fails it reaches for the next
-    // highest score, and only as far as it has to.
+    // only fire AFTER the download, so some of the best tokens die here. A
+    // fixed overshoot cannot answer that: too small and a bad batch leaves
+    // capital idle, too large and every scan pays for candles nobody will use.
+    // Asking for the SHORTFALL does neither.
     const target = config.candleBudget ?? Number.POSITIVE_INFINITY
     const attempted = new Set<string>()
     const measured = new Map<string, number | null>()
     const priced = new Map<string, number | null>()
     const bars = new Map<string, number>()
 
-    for (;;) {
+    await untilFilled(
+      target,
       // Survivors are the ones we PAID for that are still candidates after the
-      // re-rank. A token condemned by its own candles is not one of them.
-      const survivors = ranked.candidates.filter((c) => attempted.has(tokenKey(c.snapshot))).length
-      const shortfall = target - survivors
-      if (shortfall <= 0) break
-      const next = ranked.candidates.filter((c) => !attempted.has(tokenKey(c.snapshot))).slice(0, shortfall)
-      if (next.length === 0) break
-
-      for (const candidate of next) {
-        const key = tokenKey(candidate.snapshot)
-        // Marked ATTEMPTED, not measured: a request that threw must not be
-        // asked again on the next round, or a rate-limited provider becomes an
-        // infinite loop.
-        attempted.add(key)
-        try {
-          // ONE request, three answers. They all come out of the same series and
-          // were three separate downloads: the history count per affordable
-          // token, the bar age per candidate, and the candle price per candidate
-          // again — about 205 requests a chain to the provider that rate-limits
-          // hardest. The doc comment beside the price already claimed they shared
-          // a fetch; they did not.
-          const series = await deps.poolCandles(candidate.snapshot)
-          bars.set(key, series.time.length)
-          // `now()`, not `scannedAt`. The scan starts minutes before this loop
-          // runs — four in steady state, fifteen cold — so anchoring to the
-          // start under-reports idleness by the whole duration, against a
-          // threshold of one hour. `hoursSinceLastTrade` is deliberately
-          // conservative in the other direction: over-reporting idleness only
-          // ever makes the watch more careful, and this was doing the opposite.
-          measured.set(key, hoursSinceLastTrade(series, now()))
-          priced.set(key, series.close.at(-1) ?? null)
-        } catch (error) {
-          errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
-          // NOT a verdict. `null` means the feed answered and nobody had traded —
-          // the strongest form of "this engine cannot watch it", and rightly a
-          // safety failure. A request that never got an answer says nothing about
-          // the TOKEN; it says something about us.
-          //
-          // Collapsing the two turned 26 of 29 live positions red at once, Bonk
-          // among them, the moment a tighter retry budget let 429s through. The
-          // screen announced that the whole book had gone dangerous; what had
-          // happened was that we had run out of quota. It is the sell probe's own
-          // rule, broken here: an RPC failure is never read as "no route".
-          //
-          // Left ABSENT, the gate stays silent — it fires on evidence — and
-          // `confirmEntry` asks again, live, before any capital moves.
+      // re-rank — and never one we hold, which takes no free slot.
+      () => ranked.candidates.filter((c) => attempted.has(tokenKey(c.snapshot)) && !heldKeys.has(tokenKey(c.snapshot))).length,
+      () => ranked.candidates.filter((c) => !attempted.has(tokenKey(c.snapshot))),
+      async (next) => {
+        for (const candidate of next) {
+          const key = tokenKey(candidate.snapshot)
+          // Marked ATTEMPTED, not measured: a request that threw must not be
+          // asked again on the next round, or a rate-limited provider becomes an
+          // infinite loop.
+          attempted.add(key)
+          try {
+            // ONE request, three answers: the history count, the bar age and
+            // the candle price, out of the same series.
+            const series = await deps.poolCandles!(candidate.snapshot)
+            bars.set(key, series.time.length)
+            // `now()`, not `scannedAt`: the scan starts minutes before this loop
+            // runs, and anchoring to the start under-reports idleness.
+            measured.set(key, hoursSinceLastTrade(series, now()))
+            priced.set(key, series.close.at(-1) ?? null)
+          } catch (error) {
+            errors.push({ address: candidate.snapshot.address, stage: 'history', error: String(error) })
+            // NOT a verdict. `null` means the feed answered and nobody had
+            // traded — the strongest form of "this engine cannot watch it". A
+            // request that never got an answer says nothing about the TOKEN; it
+            // says something about us. Collapsing the two turned 26 of 29 live
+            // positions red at once the moment 429s got through. Left ABSENT,
+            // the gate stays silent, and `confirmEntry` asks again, live.
+          }
         }
-      }
+        const withAge = snapshots.map((s) =>
+          measured.has(tokenKey(s))
+            ? {
+                ...s,
+                lastTradeAgoHours: measured.get(tokenKey(s))!,
+                ...(bars.has(tokenKey(s)) ? { historyBars: bars.get(tokenKey(s))! } : {}),
+                ...(priced.has(tokenKey(s)) ? { lastCandlePriceUsd: priced.get(tokenKey(s))! } : {}),
+              }
+            : s,
+        )
+        snapshots.length = 0
+        snapshots.push(...withAge)
+        // Re-ranked on the completed evidence, so `staleBars` decides here
+        // exactly as it will on the screen and at the door.
+        ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, ranking)
+      },
+    )
 
-      const withAge = snapshots.map((s) =>
-        measured.has(tokenKey(s))
-          ? {
-              ...s,
-              lastTradeAgoHours: measured.get(tokenKey(s))!,
-              ...(bars.has(tokenKey(s)) ? { historyBars: bars.get(tokenKey(s))! } : {}),
-              ...(priced.has(tokenKey(s)) ? { lastCandlePriceUsd: priced.get(tokenKey(s))! } : {}),
-            }
-          : s,
-      )
-      snapshots.length = 0
-      snapshots.push(...withAge)
-      // Re-ranked on the completed evidence, so `staleBars` decides here exactly
-      // as it will on the screen and at the door. One gate, one definition —
-      // and it is what tells the loop whether the slot was really filled.
-      ranked = rankUniverse(snapshots, previous, (s) => quality.get(tokenKey(s))!, config.ranking)
-    }
-
-    // We only vouch for what we PAID to check.
-    //
-    // The re-rank shrinks the list — the candle gates can only add failures —
+    // We only vouch for what we PAID to check: the re-rank shrinks the list,
     // so tokens below the cut get pulled up into it carrying no measurement at
-    // all. Handing those on would let the allocator spend on a pool whose
-    // history, freshness and price nobody looked at, and `confirmEntry` cannot
-    // save it: `history` is an OPPORTUNITY gate, so the door never re-asks it.
-    //
-    // Only with a budget. Without one every candidate was measured anyway, and
-    // filtering would be a no-op wearing a rule's clothes.
+    // all. Only with a budget — without one every candidate was measured. A
+    // token we hold stays: it takes no slot and is never opened.
     if (config.candleBudget !== undefined) {
-      ranked = { ...ranked, candidates: ranked.candidates.filter((c) => attempted.has(tokenKey(c.snapshot))) }
+      ranked = {
+        ...ranked,
+        candidates: ranked.candidates.filter((c) => attempted.has(tokenKey(c.snapshot)) || heldKeys.has(tokenKey(c.snapshot))),
+      }
     }
   }
 
@@ -1009,4 +1032,31 @@ export async function scanOnce(
     elapsedMs: now() - scannedAt,
   })
   return { ...ranked, snapshots, errors, scannedAt }
+}
+
+/**
+ * Asks for the SHORTFALL, round after round, until `target` pass or nothing is
+ * left to ask about.
+ *
+ * The paid stage and the candle stage both have the same problem: some of the
+ * best-looking tokens fail only AFTER the money is spent on them. A fixed
+ * overshoot cannot answer that — too small and a bad batch leaves slots empty,
+ * too large and every scan pays for work nobody will use. Asking for exactly
+ * what is still missing does neither: if every one passes it spends exactly the
+ * target, and if some fail it reaches for the next best, and only as far as it
+ * has to. ONE implementation, so the two stages cannot disagree about it.
+ */
+async function untilFilled<T>(
+  target: number,
+  passing: () => number,
+  pending: () => readonly T[],
+  work: (batch: readonly T[]) => Promise<void>,
+): Promise<void> {
+  for (;;) {
+    const shortfall = target - passing()
+    if (shortfall <= 0) return
+    const next = pending().slice(0, shortfall)
+    if (next.length === 0) return
+    await work(next)
+  }
 }

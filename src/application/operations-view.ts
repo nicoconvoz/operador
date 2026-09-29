@@ -2,6 +2,7 @@ import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { usableScale } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { deepRungArmed, deepRungLine, reboundLine, type DeepRungPolicy } from '../domain/strategy/deep-rung.js'
+import { dipArmLine, bounceLine, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
@@ -47,7 +48,7 @@ export interface LadderRung {
  * broken looked exactly alike, which makes the correct one impossible to trust.
  */
 export interface LadderLock {
-  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'pressure' | 'drop' | 'deep'
+  readonly name: 'trigger' | 'separation' | 'confirmation' | 'rebound' | 'pressure' | 'drop' | 'deep' | 'dip'
   readonly held: boolean
   /** What it is waiting for, in the numbers it is waiting on. */
   readonly detail: string
@@ -74,6 +75,13 @@ export interface PositionOperations {
   readonly costsUsd: number
 
   readonly ladder: readonly LadderRung[]
+  /**
+   * The dip-bounce ladder as ONE count — buys made of the most it may make, and
+   * the dollars in them — or null when another ladder is drawn. *No vayas a
+   * poner 50 casilleros por token por los DCA, sólo dejá un casillero con el
+   * número de DCA.* No row of rungs is drawn beside it: `ladder` is empty.
+   */
+  readonly steps: { readonly bought: number; readonly max: number; readonly investedUsd: number } | null
   /**
    * What the next rung is waiting for, or null when flat.
    *
@@ -196,6 +204,13 @@ export interface OperationsOptions {
     readonly reboundPct: number
     readonly usd: number
   }
+  /**
+   * The ladder the ENGINE buys in production: every buy, the first included,
+   * $1 on a 3% dip and a 2% bounce, twenty at most — drawn as ONE count and
+   * the watch in words, read off the `dipWatch` the sweep wrote down. Drawn
+   * when given and no `dropLadder` is.
+   */
+  readonly dipBounce?: DipBouncePolicy & { readonly stepUsd: number }
 }
 
 export async function buildOperations(store: StatePort, options: OperationsOptions): Promise<OperationsView> {
@@ -276,13 +291,17 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
     // swapped — usually the engine refuses what the screen offers.
     const fillable = Math.min(params.maxLevels + 1, options.maxOpenEntries ?? PYRAMIDING, 12)
     const drop = options.dropLadder
-    const deep = drop ? undefined : options.deepRung
+    const dip = drop ? undefined : options.dipBounce
+    const deep = drop || dip ? undefined : options.deepRung
     const pressure = options.pressureLadder
     // The position's own spacing, read exactly as the sweep reads it — the
     // same switches, the same stored scales — so each line is drawn where it
     // will be bought, and the lock says which volatility put it there.
     const { scale, why } = drop ? ladderScale(position, drop, generatedAt) : { scale: 1, why: '' }
-    const ladder: LadderRung[] = drop
+    const ladder: LadderRung[] = dip
+      // ONE count, never a box per step.
+      ? []
+      : drop
       ? dropRungs(filledByLevel, fillable, drop, scale, params, inFlight?.level ?? filledByLevel.size)
       : deep
       ? deepRungs(filledByLevel, fillable, deep, params, inFlight?.level ?? filledByLevel.size)
@@ -317,7 +336,10 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
       unrealisedPct: unrealisedUsd !== null && deployedUsd > 0 ? (unrealisedUsd / deployedUsd) * 100 : null,
       costsUsd,
       ladder,
-      locks: drop
+      steps: dip ? { bought: buys.length, max: dip.maxSteps, investedUsd: deployedUsd } : null,
+      locks: dip
+        ? dipLocks(position, buys, dip)
+        : drop
         ? dropLocks(buys, price, fillable, drop, scale, why, params)
         : deep
         ? deepLocks(position, buys, price, fillable, deep)
@@ -565,6 +587,38 @@ function deepLocks(
       detail: `mínimo $${low.toPrecision(4)} — compra al rebotar ${rung.reboundPct}%, en $${rebound.toPrecision(4)}`,
     },
   ]
+}
+
+/**
+ * What the next dip-bounce dollar waits for, in words, read off the watch the
+ * sweep wrote down — and only THIS holding's: a watch left by the holding
+ * before a sale, or older than the last buy, is read the way the sweep reads
+ * it, as none, and the next dip is measured from what the last buy PAID.
+ *
+ * - unarmed: *esperando caída de 3% bajo $R (compra si baja a $A)*
+ * - armed: *armado: mínimo $L — compra al rebotar 2%, en $B*
+ *
+ * Null once the twenty are bought: nothing is waited on.
+ */
+function dipLocks(
+  position: PersistedPosition,
+  buys: readonly PersistedFill[],
+  dip: DipBouncePolicy,
+): readonly LadderLock[] | null {
+  if (buys.length >= dip.maxSteps) return null
+  const first = buys[0] ?? null
+  const last = buys[buys.length - 1] ?? null
+  const stored = position.dipWatch ?? null
+  const watch =
+    stored && stored.holdingSince === (first?.time ?? null) && (last === null || stored.at >= last.time) ? stored : null
+  const say = (detail: string): readonly LadderLock[] => [{ name: 'dip', held: false, detail }]
+  const money = (usd: number) => `$${usd.toPrecision(4)}`
+  if (watch?.armed === true && watch.low !== null) {
+    return say(`armado: mínimo ${money(watch.low)} — compra al rebotar ${dip.bouncePct}%, en ${money(bounceLine(watch.low, dip))}`)
+  }
+  const reference = watch?.reference ?? last?.price ?? null
+  if (reference === null) return say(`esperando el primer precio en vivo para vigilar la caída de ${dip.dipPct}%`)
+  return say(`esperando caída de ${dip.dipPct}% bajo ${money(reference)} (compra si baja a ${money(dipArmLine(reference, dip))})`)
 }
 
 /**

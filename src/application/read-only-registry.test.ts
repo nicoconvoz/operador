@@ -54,3 +54,51 @@ describe('readOnlyRegistry — nothing is stored beyond the candidates and the b
     expect(await registry.knownTokens(600)).toHaveLength(1)
   })
 })
+
+describe('readOnlyRegistry — read in pages, and each page once per window', () => {
+  // A scan reads the registry only while its free slots are short, a page at a
+  // time. The window still holds: a page already read is not read again inside
+  // it, and a page never read is asked for exactly once.
+  const rows = Array.from({ length: 1_200 }, (_, i) => token(`t${i}`))
+
+  const paged = () => {
+    let clock = 0
+    const asked: [number, number][] = []
+    const store = {
+      knownTokens: async (limit: number, offset = 0) => {
+        asked.push([limit, offset])
+        return rows.slice(offset, offset + limit)
+      },
+      rememberTokens: async () => {},
+    }
+    return { registry: readOnlyRegistry(store, { everyMs: 15 * 60_000, now: () => clock }), asked, advance: (ms: number) => { clock += ms } }
+  }
+
+  it('asks the store only for what it has not read yet', async () => {
+    const { registry, asked } = paged()
+    expect((await registry.knownTokens(500, 0)).map((t) => t.contract).slice(0, 2)).toEqual(['t0', 't1'])
+    expect((await registry.knownTokens(500, 500))[0]!.contract).toBe('t500')
+    expect(await registry.knownTokens(500, 0)).toHaveLength(500)
+    expect(asked).toEqual([[500, 0], [500, 500]])
+  })
+
+  it('knows when the registry ran out, and stops asking', async () => {
+    const { registry, asked } = paged()
+    expect(await registry.knownTokens(500, 1_000)).toHaveLength(200)
+    expect(await registry.knownTokens(500, 1_500)).toEqual([])
+    expect(asked).toEqual([[1_500, 0]])
+  })
+
+  it('reads the whole of it when asked for no limit', async () => {
+    const { registry } = paged()
+    expect(await registry.knownTokens(Number.POSITIVE_INFINITY)).toHaveLength(1_200)
+  })
+
+  it('reads it again once the window has passed', async () => {
+    const { registry, asked, advance } = paged()
+    await registry.knownTokens(500, 0)
+    advance(15 * 60_000)
+    await registry.knownTokens(500, 0)
+    expect(asked).toEqual([[500, 0], [500, 0]])
+  })
+})

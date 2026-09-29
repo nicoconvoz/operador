@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, stopForRatio, roundTripCostForFill, positionTollPct } from './sizing.js'
+import { DEFAULT_SIZING_POLICY as P, effectiveDepth, gasFloorUsd, sizeLadder , roundTripCostPct, minProfitPctFor, stopForRatio, roundTripCostForFill, positionTollPct, buyCostUsd } from './sizing.js'
 import { DEFAULT_PARAMS, PYRAMIDING } from '../strategy/params.js'
 import { type MarketQuality } from '../market/market-quality.js'
 
@@ -358,5 +358,25 @@ describe('positionTollPct — what the whole round trip of a position costs', ()
 
   it('is unclearable for a position that deployed nothing', () => {
     expect(positionTollPct(0, 0, 0, deep, 0.05)).toBe(Infinity)
+  })
+})
+
+describe('buyCostUsd — what one buy takes out of the wallet', () => {
+  // The dollars bought, plus the venue spread and the impact of that size —
+  // charged the way the paper broker charges them — plus one swap of gas. It
+  // is what a $1 step needs in cash, and at $0.05 of gas it is over a twentieth
+  // more than the step itself.
+  const deep = { liquidityUsd: 1_000_000, spreadPct: 0.25, slippagePct: 0.05, referenceUsd: 100, observedAt: 0 }
+
+  it('is the step, its spread and impact, and one swap of gas', () => {
+    // Depth from the measured quote: 200 × 100 / 0.05 = $400,000, so a $1 buy
+    // moves the price 1 / 200,000 × 100 = 0.0005%.
+    expect(buyCostUsd(1, deep, 0.05)).toBeCloseTo(1 * (1 + (0.25 + 0.0005) / 100) + 0.05, 12)
+  })
+
+  it('grows with the order on a thin pool, as the broker charges it', () => {
+    const thin = { ...deep, liquidityUsd: 10_000, slippagePct: 2 }
+    // Depth 200 × 100 / 2 = $10,000: $100 moves it 2%.
+    expect(buyCostUsd(100, thin, 0)).toBeCloseTo(100 * (1 + (0.25 + 2) / 100), 9)
   })
 })

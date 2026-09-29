@@ -343,3 +343,53 @@ describe('MemoryStore — the price low: a stale snapshot never raises it', () =
     expect(await stored(store)).toEqual(low(0.9, 2))
   })
 })
+
+describe('MemoryStore — the dip-bounce watch: the newer reading wins', () => {
+  // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD.* The
+  // sweep arms, tracks the low and moves the reference; every other step of the
+  // cycle writes the whole row back from a snapshot read before it. Exactly as
+  // the SQL keeps it: the watch with the NEWER `at` wins, and none keeps what is
+  // stored.
+  const base = {
+    id: 'p', chain: 'solana' as const, tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+    cascade: initialState(), deathWatch: startDeathWatch(1, 0),
+    quality: { liquidityUsd: 1, spreadPct: 0, slippagePct: 0, referenceUsd: 1, observedAt: 0 },
+    capitalUsd: 20, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+  }
+  const armed = { reference: 1, low: 0.95, armed: true, at: 10, holdingSince: null }
+  const bought = { reference: 0.969, low: null, armed: false, at: 20, holdingSince: 15 }
+  const stored = async (store: MemoryStore) => (await store.loadPositions())[0]!.dipWatch
+
+  it('is absent until a sweep writes one', async () => {
+    const store = new MemoryStore()
+    await store.savePosition(base)
+    expect(await stored(store)).toBeNull()
+  })
+
+  it('takes a newer watch, and never lets a stale snapshot put an older one — or none — back', async () => {
+    const store = new MemoryStore()
+    await store.savePosition({ ...base, dipWatch: armed })
+    await store.savePosition({ ...base, dipWatch: bought })
+    await store.savePosition({ ...base, lastBarTime: 1, dipWatch: armed })
+    await store.savePosition({ ...base, lastBarTime: 2, dipWatch: null })
+    await store.savePosition({ ...base, lastBarTime: 3 })
+    expect(await stored(store)).toEqual(bought)
+    expect((await store.loadPositions())[0]!.lastBarTime).toBe(3)
+  })
+})
+
+describe('MemoryStore — the registry, read in pages', () => {
+  const row = (contract: string, volume24h: number): RememberedToken => ({
+    contract, token: contract, pool: null, price: 1, volume24h, liquidity: 1, marketCap: 1, txns: 1, lastUpdate: 1,
+  })
+
+  it('pages on from an offset, busiest first, and reads everything with no limit', async () => {
+    const store = new MemoryStore()
+    await store.rememberTokens(Array.from({ length: 12 }, (_, i) => row(`t${i}`, i)))
+    expect((await store.knownTokens(5)).map((t) => t.contract)).toEqual(['t11', 't10', 't9', 't8', 't7'])
+    expect((await store.knownTokens(5, 5)).map((t) => t.contract)).toEqual(['t6', 't5', 't4', 't3', 't2'])
+    expect((await store.knownTokens(5, 10)).map((t) => t.contract)).toEqual(['t1', 't0'])
+    expect(await store.knownTokens(Number.POSITIVE_INFINITY)).toHaveLength(12)
+    expect(await store.knownTokens(Number.POSITIVE_INFINITY, 10)).toHaveLength(2)
+  })
+})

@@ -18,15 +18,53 @@
  */
 
 import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
+import { DEFAULT_DIP_BOUNCE_POLICY } from '../domain/strategy/dip-bounce.js'
 
 /**
- * USD cap per level of the reference ladder — which in production is the FIRST
- * buy alone, because the cascade's own rungs are switched off and the sweep
- * buys the one DCA rung at its own size (`DEFAULT_DEEP_RUNG_USD`).
+ * What every buy of a holding is, in dollars, the first included. *Comprá 1
+ * USD, y armá escalones de 1 USD con la misma regla.* The operator.
+ */
+export const DEFAULT_STEP_USD = 1
+
+/**
+ * Buys per holding, the first included: $20 a token at a dollar a step. It was
+ * fifty — *disminuí los escalones a 20.*
+ */
+export const DEFAULT_MAX_STEPS = DEFAULT_DIP_BOUNCE_POLICY.maxSteps
+
+/**
+ * The dip that arms the watch and the bounce off its low that buys, in
+ * percent. *Ante una caída del 3% del precio y una subida del 2%.* See
+ * `domain/strategy/dip-bounce.ts` for the rule — the same for every buy, the
+ * first one included.
+ */
+export const DEFAULT_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.dipPct
+export const DEFAULT_BOUNCE_PCT = DEFAULT_DIP_BOUNCE_POLICY.bouncePct
+
+/**
+ * Whether the deep rung — $20 after a fall of more than 80% and a 10% rebound —
+ * still buys. OFF: every buy is a dip-bounce step now. `OPERADOR_DEEP_RUNG=1`
+ * brings it back, and its numbers below are still its own.
+ */
+export const DEFAULT_DEEP_RUNG = false
+
+/**
+ * Whether the cascade's own doors — the classic drop from the swing high and
+ * the trend re-entry — may buy. OFF: *nada se compra cuando una moneda pasa a
+ * candidata*; only the dip-bounce sweep buys. `OPERADOR_CASCADE_ENTRIES=1`
+ * brings them back. The momentum door (`OPERADOR_BUY_ON_SELECTION`) is its own
+ * switch, and off too.
+ */
+export const DEFAULT_CASCADE_ENTRIES = false
+
+/**
+ * USD cap per level of the reference ladder — which in production is ONE
+ * STEP, the dollar every dip-bounce buy is. The cascade's own entries and
+ * rungs are switched off; the number still prices the slot's ladder the way
+ * the allocator and the trim read it.
  *
- * FIFTEEN: *dos escalones solamente: uno con $15.* Bought in the same pass the
- * token becomes a candidate. The slot reserves this buy alone
- * (`DEFAULT_RESERVED_ENTRIES`).
+ * It was FIFTEEN: *dos escalones solamente: uno con $15.* Bought in the same
+ * pass the token became a candidate, the slot reserving that buy alone.
  *
  * It was TEN, with ladder A: *arriesguémonos, activá la A.* A smaller first buy
  * and bigger rungs under it, so the money goes in where the price is lower.
@@ -34,7 +72,7 @@ import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
  * that fifteen, flat: `min(1000 × (1 + 1.2n), 15)` is 15 everywhere, and the
  * rungs bought the same fifteen.
  */
-export const DEFAULT_MAX_USD_PER_LEVEL = 15
+export const DEFAULT_MAX_USD_PER_LEVEL = DEFAULT_STEP_USD
 
 /**
  * DCA rungs production will fill, per token. The entry is not one of them, so
@@ -144,8 +182,12 @@ export const DEFAULT_MAX_USD_PER_LEVEL = 15
  * lo que vale, volver a comprar — sólo esa condición.* The sweep bought it,
  * every thirty seconds, at half the last buy. It is the rule the replay above
  * measured against, and the one three rungs replaced.
+ *
+ * Then NINETEEN: twenty dip-bounce steps, the first one included, so the venue
+ * holds twenty entries. Derived from the steps rather than written twice —
+ * `OPERADOR_MAX_STEPS` moves both, and `OPERADOR_MAX_DCA` still overrides.
  */
-export const DEFAULT_MAX_DCA_PER_TOKEN = 1
+export const DEFAULT_MAX_DCA_PER_TOKEN = DEFAULT_MAX_STEPS - 1
 
 /**
  * How far under the FIRST buy each rung buys, in percent: DCA-1 at −10%, then
@@ -300,8 +342,15 @@ export const DEFAULT_DEEP_RUNG_USD = 20
  * That is the cheaper failure — a rung not bought is a basis not improved,
  * while capital parked against every possible rung is a token not bought at
  * all, on every position, every day.
+ *
+ * Now EVERY step: a slot reserves its whole ladder, exactly steps × step — $20.
+ * With $1 steps a slot that reserved one buy would open over a thousand
+ * positions, and the per-position candle requests would drown the providers.
+ * The capital bounds the book instead: *el tope son 5000 dividido 50, que es lo
+ * que tengo* — and at twenty steps, capital / $20. The fees are paid out of
+ * the free capital as the fills happen (`fundStepFromFreeCapital`).
  */
-export const DEFAULT_RESERVED_ENTRIES = 1
+export const DEFAULT_RESERVED_ENTRIES = DEFAULT_MAX_STEPS
 
 /**
  * The drop from the 20-bar swing high the classic entry demands, in percent.
@@ -415,6 +464,24 @@ export interface ProductionLadder {
   readonly deepRungReboundPct: number
   /** What the deep rung buys, in dollars. */
   readonly deepRungUsd: number
+  /** Whether the deep rung buys at all. See `DEFAULT_DEEP_RUNG`. */
+  readonly deepRung: boolean
+  /** What every dip-bounce buy is, in dollars. */
+  readonly stepUsd: number
+  /** Buys per holding, the first included. */
+  readonly maxSteps: number
+  /** The dip, in percent under the reference, that arms the watch. */
+  readonly dipPct: number
+  /** The bounce, in percent over the low, that buys. */
+  readonly bouncePct: number
+  /**
+   * What a slot is given, exactly: steps × step. No gas, no price headroom and
+   * no floor raise it, and no haircut shrinks the count — *el tope son 5000
+   * dividido 50*. The allocator hands it out and the trim keeps it.
+   */
+  readonly slotUsd: number
+  /** Whether the cascade's own doors may buy. See `DEFAULT_CASCADE_ENTRIES`. */
+  readonly cascadeEntries: boolean
 }
 
 /** Reads the overrides, falling back to the decisions above. */
@@ -491,11 +558,23 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     return raw?.trim() && Number.isInteger(value) && value >= 1 ? value : fallback
   }
 
-  const maxOpenEntries = rungs(env.OPERADOR_MAX_DCA, DEFAULT_MAX_DCA_PER_TOKEN) + 1
+  /** A percentage strictly between 0 and 100: a dip of nothing arms on every price. */
+  const share = (raw: string | undefined, fallback: number) => {
+    const value = Number(raw?.trim())
+    return raw?.trim() && Number.isFinite(value) && value > 0 && value < 100 ? value : fallback
+  }
+
+  const stepUsd = positive(env.OPERADOR_STEP_USD, DEFAULT_STEP_USD)
+  const maxSteps = entries(env.OPERADOR_MAX_STEPS, DEFAULT_MAX_STEPS)
+  // The venue holds every step unless someone asked for another depth: the
+  // steps are what the sweep buys, so they are what the broker must hold.
+  const maxOpenEntries = env.OPERADOR_MAX_DCA?.trim() ? rungs(env.OPERADOR_MAX_DCA, maxSteps - 1) + 1 : maxSteps
   const dcaDropsPct = drops(env.OPERADOR_DCA_DROPS_PCT, DEFAULT_DCA_DROPS_PCT)
 
   return {
-    maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, DEFAULT_MAX_USD_PER_LEVEL),
+    // One step unless someone asks otherwise: the ladder the slot is priced
+    // with is the ladder the sweep buys.
+    maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, stepUsd),
     // ZERO is a real value: one entry and no ladder at all, which is the
     // operator's structural change. Read through `positive` it would fall back
     // to the default and silently run a five-rung ladder — his decision
@@ -523,14 +602,24 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // switch off — so it reads through `percent`, never `positive`; anything
     // unreadable keeps it off rather than quietly running a brake that buys.
     liquidityBrakePct: percent(env.OPERADOR_LIQUIDITY_BRAKE_PCT, DEFAULT_PRODUCTION_LIQUIDITY_BRAKE_PCT),
-    // Capped by what the venue holds: reserving capital for an entry the
-    // broker will refuse is capital held against nothing.
-    reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, DEFAULT_RESERVED_ENTRIES), maxOpenEntries),
+    // The whole ladder, capped by what the venue holds: reserving capital for
+    // an entry the broker will refuse is capital held against nothing.
+    reservedEntries: Math.min(entries(env.OPERADOR_RESERVED_ENTRIES, maxOpenEntries), maxOpenEntries),
     // *Si el precio cae más de 80% y hay un rebote de 10%, nueva compra DCA de
     // $20.* Zero is a real value for both percentages; the fall stays under a
     // hundred, because no price can fall a hundred percent and still be a price.
     deepRungFallPct: percent(env.OPERADOR_DEEP_RUNG_FALL_PCT, DEFAULT_DEEP_RUNG_FALL_PCT),
     deepRungReboundPct: nonNegative(env.OPERADOR_DEEP_RUNG_REBOUND_PCT, DEFAULT_DEEP_RUNG_REBOUND_PCT),
     deepRungUsd: positive(env.OPERADOR_DEEP_RUNG_USD, DEFAULT_DEEP_RUNG_USD),
+    // OFF: every buy is a dip-bounce step. Only 1, true and yes bring it back.
+    deepRung: onlyIf(env.OPERADOR_DEEP_RUNG) || DEFAULT_DEEP_RUNG,
+    stepUsd,
+    maxSteps,
+    dipPct: share(env.OPERADOR_DIP_PCT, DEFAULT_DIP_PCT),
+    bouncePct: share(env.OPERADOR_BOUNCE_PCT, DEFAULT_BOUNCE_PCT),
+    // Derived from the two variables, never written down on its own: a slot of
+    // twenty steps of a dollar is twenty dollars, and nothing is grossed up.
+    slotUsd: maxSteps * stepUsd,
+    cascadeEntries: onlyIf(env.OPERADOR_CASCADE_ENTRIES) || DEFAULT_CASCADE_ENTRIES,
   }
 }

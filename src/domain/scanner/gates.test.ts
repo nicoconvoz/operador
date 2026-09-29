@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_PARAMS } from '../strategy/params.js'
-import { minAgeForHistory, evaluateSafetyGates, DEFAULT_GATE_POLICY, STRICT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates } from './gates.js'
+import { minAgeForHistory, evaluateSafetyGates, DEFAULT_GATE_POLICY, STRICT_GATE_POLICY, DEFAULT_GATE_POLICY as P, evaluateGates, evaluateMarketGates, MEASURED_MAX_DAILY_FALL_PCT } from './gates.js'
 import { type SecurityReport, type TokenSnapshot } from './snapshot.js'
 
 const HOUR = 3_600_000
@@ -498,7 +498,7 @@ describe('gates — an hour with no trades in it', () => {
   it('says how many trades it counted, and against what', () => {
     const [failure] = evaluateGates(
       clean({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } }),
-      DEFAULT_GATE_POLICY,
+      STRICT_GATE_POLICY,
     ).failures
     expect(failure!.detail).toContain('1')
     expect(failure!.detail).toContain('4')
@@ -523,7 +523,7 @@ describe('minAgeForHistory — the cheapest rejection is the one that needs no r
     // 24h is the standing minimum and answers a different question — a pool
     // that has existed for a day. This raises it to what history needs; it must
     // not lower it if someone deliberately demands more.
-    expect(Math.max(DEFAULT_GATE_POLICY.minAgeHours, minAgeForHistory(250, 15))).toBe(62.5)
+    expect(Math.max(STRICT_GATE_POLICY.minAgeHours, minAgeForHistory(250, 15))).toBe(62.5)
   })
 })
 
@@ -559,8 +559,8 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
     // on a full universe. At the door there is no universe to compare against —
     // only this token, and whether it is safe.
     const quiet = clean({ volumeUsd: { h1: 10, h6: 60, h24: 240 }, txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 10, sells: 8 } } })
-    expect(evaluateGates(quiet, DEFAULT_GATE_POLICY).passed).toBe(false)
-    expect(evaluateSafetyGates(quiet, DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateGates(quiet, STRICT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(quiet, STRICT_GATE_POLICY).passed).toBe(true)
   })
 
   it('keeps refusing what is not a trade at all', () => {
@@ -594,27 +594,32 @@ describe('history is ZERO, because door 3 asks for no indicator', () => {
     expect(DEFAULT_GATE_POLICY.minHistoryBars).toBe(0)
   })
 
-  it('and the AGE gate survives, because it is not the same question', () => {
-    // *Anulá todos los filtros* did not reach this one, and the reason is the
-    // operator's own rule rather than an exception to it. He asks whether the
-    // token is up more than 5% over the DAY — and a pool that has not existed
-    // for a day has no such number. What the provider reports is the change
-    // since inception.
-    //
-    // That is exactly where the absurd readings come from. Measured in the
-    // sweep this rule was sized on: NTDA at 3,706,097%, WOTF at 1,569,644%,
-    // USDF at 1,443,687%. None of them a move; all of them a starting price
-    // near zero. USDF is the token that already cost this project money.
-    //
-    // You cannot read a 24-hour window on something younger than 24 hours.
-    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(24)
+  it('and the AGE gate is off too: *puerta de entrada ninguna, todo es bienvenido*', () => {
+    // It survived *anulá todos los filtros* on the argument that a pool younger
+    // than a day has no daily change to read — the rule it served asked for a
+    // rise over the DAY. No rule reads that window now: every buy waits for a
+    // 3% dip and a 2% bounce on the live price, so a pool born this morning is
+    // as welcome as one a month old. The SAFETY gates still stand in front of
+    // it, `priceMismatch` among them — the shape of USDF's 14,426x.
+    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(0)
+    expect(evaluateGates(clean({ pairCreatedAt: NOW - 3 * HOUR }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    // STRICT keeps the day, so the gate's logic stays tested.
+    expect(STRICT_GATE_POLICY.minAgeHours).toBe(24)
     expect(failedGates(clean({ pairCreatedAt: NOW - 3 * HOUR }))).toEqual(['age:failed'])
   })
 
-  it('and the derived floor no longer raises it, since no bars are required', () => {
+  it('an unknown age is not refused by a gate that asks for none', () => {
+    // At zero the gate asks nothing, so an unreported creation time has
+    // nothing to fail. Under a real floor, unknown still fails — closed.
+    expect(evaluateGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateMarketGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(failedGates(clean({ pairCreatedAt: null }))).toEqual(['age:unknown'])
+  })
+
+  it('and the derived floor does not raise it, since no bars are required', () => {
     // `minAgeForHistory` exists so a pool too young to HOLD the bars is refused
     // by subtraction instead of by a thousand-row download. With no bars
-    // required there is nothing to subtract, and the standing 24h stands alone.
+    // required there is nothing to subtract.
     expect(minAgeForHistory(DEFAULT_GATE_POLICY.minHistoryBars, 15)).toBe(0)
   })
 })
@@ -711,7 +716,19 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(quiet, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('volume')
   })
 
-  it('refuses again a token that already collapsed TODAY — the hour cannot see it', () => {
+  it('no longer refuses a token that already collapsed TODAY — *todo es bienvenido*', () => {
+    // It refused past a 30% fall on the day, measured on PERK: the day sees a
+    // collapse that happened before we arrived. The operator took the door out
+    // with every other one — *puerta de entrada ninguna* — and a token down 40%
+    // now waits, like any other, for a 3% dip and a 2% bounce. STRICT keeps the
+    // gate's logic tested.
+    const collapsed = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
+    expect(DEFAULT_GATE_POLICY.maxDailyFallPct).toBe(100)
+    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
+    expect(evaluateMarketGates(collapsed, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
+  })
+
+  it('what it said when it refused a collapse, kept under STRICT', () => {
     // This test recorded turning the daily gate off, on the argument that the
     // hour already decides through the `headroom` floor and a daily threshold
     // was belt and braces against the same accident.
@@ -725,7 +742,7 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     // Measured across 36 live positions: of the capital a >30% band would have
     // refused, 18.5% was lost, against 3.4% for the book overall.
     const collapsed = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
-    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
+    expect(evaluateMarketGates(collapsed, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
   })
 
   it('but still buys an ordinary bad day, which is what the ladder is for', () => {
@@ -736,14 +753,35 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(dip, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
   })
 
-  it('still refuses a pool the machine cannot compute an entry on', () => {
+  it('no longer refuses a newborn pool — the dip-bounce buy reads no indicator', () => {
     const newborn = gentle({ pairCreatedAt: NOW - 60 * 60 * 1000 })
-    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
+    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('age')
+    expect(evaluateMarketGates(newborn, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
   })
 
-  it('still refuses a pool whose bars come back empty', () => {
+  it('no longer refuses a quiet hour — the buy waits for the live price to move anyway', () => {
     const still = gentle({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 40, sells: 30 } } })
-    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
+    expect(DEFAULT_GATE_POLICY.minHourlyTxns).toBe(0)
+    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('idle')
+    expect(evaluateMarketGates(still, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
+    expect(STRICT_GATE_POLICY.minHourlyTxns).toBe(4)
+  })
+
+  it('keeps every SAFETY gate, failing closed — they were never a door', () => {
+    // *Puerta de entrada ninguna* is about the OPPORTUNITY. A honeypot, a live
+    // authority, a thin pool, a tax, concentration, a price nobody agrees on:
+    // each still refuses under the production policy, and unknown still fails.
+    const safetyOf = (over: Partial<TokenSnapshot>, security: Partial<SecurityReport> = {}) =>
+      evaluateGates(clean(over, security), DEFAULT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)
+    expect(safetyOf({}, { honeypot: true })).toEqual(['honeypot:failed'])
+    expect(safetyOf({}, { honeypot: null })).toEqual(['honeypot:unknown'])
+    expect(safetyOf({}, { mintAuthorityActive: true })).toEqual(['mintAuthority:failed'])
+    expect(safetyOf({}, { freezeAuthorityActive: true })).toEqual(['freezeAuthority:failed'])
+    expect(safetyOf({}, { transferTaxPct: 30 })).toEqual(['transferTax:failed'])
+    expect(safetyOf({}, { topHoldersPct: 70 })).toEqual(['topHolders:failed'])
+    expect(safetyOf({ liquidityUsd: 50_000 })).toEqual(['liquidity:failed'])
+    expect(safetyOf({ measuredImpactPct: 40 })).toEqual(['impact:failed'])
+    expect(safetyOf({ priceUsd: 0.1318, lastCandlePriceUsd: 1_429.49 })).toEqual(['priceMismatch:failed'])
   })
 })
 
@@ -809,8 +847,18 @@ describe('the day-long collapse, measured on the book that paid for it', () => {
   // That is the strategy's own thesis, so the gate must not eat it. CASCADE DCA
   // exists to buy weakness; this exists to refuse a collapse already in
   // progress. Thirty is where the measurement puts the line between them.
+  //
+  // OFF in production now: *puerta de entrada ninguna — todo es bienvenido.*
+  // The measured thirty is kept as `MEASURED_MAX_DAILY_FALL_PCT`, and what is
+  // pinned below is that number, on the policy the day it comes back.
   const production = (over: Partial<TokenSnapshot>) =>
-    evaluateGates(clean(over), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)
+    evaluateGates(clean(over), { ...DEFAULT_GATE_POLICY, maxDailyFallPct: MEASURED_MAX_DAILY_FALL_PCT }).failures.map((f) => f.gate)
+
+  it('is OFF in production: PERK at −92.6% is welcome, and waits for its dip and bounce like any other', () => {
+    expect(MEASURED_MAX_DAILY_FALL_PCT).toBe(30)
+    expect(evaluateGates(clean({ priceChangePct: { h1: -21.7, h6: -60, h24: -92.6 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate))
+      .not.toContain('freefall')
+  })
 
   it('refuses a token that already collapsed before we arrived — PERK, −92.6%', () => {
     expect(production({ priceChangePct: { h1: -21.7, h6: -60, h24: -92.6 } })).toContain('freefall')

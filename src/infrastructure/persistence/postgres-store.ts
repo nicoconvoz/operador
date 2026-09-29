@@ -14,6 +14,7 @@ import { type DeathWatchState } from '../../domain/risk/death-exit.js'
 import { type GainLock } from '../../domain/risk/gain-lock.js'
 import { type LiquidityWatch } from '../../domain/strategy/liquidity-brake.js'
 import { type PriceLow } from '../../domain/strategy/deep-rung.js'
+import { type DipWatch } from '../../domain/strategy/dip-bounce.js'
 import { type MarketQuality } from '../../domain/market/market-quality.js'
 import { type Chain, type SecurityReport, type TokenSnapshot } from '../../domain/scanner/snapshot.js'
 import { type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
@@ -75,6 +76,7 @@ interface PositionRow {
   dca_scale_now_at?: string | number | null
   liquidity_watch?: unknown
   price_low?: unknown
+  dip_watch?: unknown
 }
 
 const present = (value: string | number | null | undefined): value is string | number => value !== null && value !== undefined
@@ -136,6 +138,31 @@ const priceLowOf = (raw: unknown): PriceLow | null => {
 }
 
 /**
+ * The dip-bounce watch as the JSONB column holds it, and only if it is whole.
+ * A watch with a field missing cannot say what the next dip is measured from,
+ * and a reference or a low that is not a price would make every price a dip,
+ * or a bounce, off nothing.
+ */
+const dipWatchOf = (raw: unknown): DipWatch | null => {
+  let value = raw
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  if (value === null || typeof value !== 'object') return null
+  const w = value as Record<string, unknown>
+  const price = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x) && x > 0
+  const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x)
+  if (!price(w.reference) || typeof w.armed !== 'boolean' || !finite(w.at)) return null
+  if (!(w.low === null || price(w.low))) return null
+  if (!(w.holdingSince === null || finite(w.holdingSince))) return null
+  return { reference: w.reference, low: w.low, armed: w.armed, at: w.at, holdingSince: w.holdingSince }
+}
+
+/**
  * Postgres returns NUMERIC and BIGINT as STRINGS, to avoid silently losing
  * precision in a JS number. Reading them as-is is a classic way to end up
  * comparing "1800000000000" to 1800000000000 and getting false.
@@ -178,6 +205,7 @@ export class PostgresStore implements StatePort {
         : { dcaScaleNow: null, dcaScaleNowAt: null }),
       liquidityWatch: liquidityWatchOf(row.liquidity_watch),
       priceLow: priceLowOf(row.price_low),
+      dipWatch: dipWatchOf(row.dip_watch),
     }))
   }
 
@@ -185,8 +213,8 @@ export class PostgresStore implements StatePort {
     await this.sql.query(
       `INSERT INTO positions (id, chain, token_address, pair_address, symbol, cascade, death_watch, quality,
                               capital_usd, last_bar_time, last_price_usd, pending_orders, opened_at, updated_at,
-                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at, liquidity_watch, price_low)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+                              break_even_armed, entry_score, dca_scale, gain_lock_pct, gain_lock_since, dca_scale_now, dca_scale_now_at, liquidity_watch, price_low, dip_watch)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
        ON CONFLICT (id) DO UPDATE SET
          cascade = EXCLUDED.cascade,
          death_watch = EXCLUDED.death_watch,
@@ -258,6 +286,18 @@ export class PostgresStore implements StatePort {
            WHEN (EXCLUDED.price_low->>'holdingSince')::bigint = (positions.price_low->>'holdingSince')::bigint
             AND (EXCLUDED.price_low->>'price')::double precision < (positions.price_low->>'price')::double precision THEN EXCLUDED.price_low
            ELSE positions.price_low
+         END,
+         -- The DIP-BOUNCE WATCH, keepDipWatch spelled in SQL: the NEWER watch
+         -- wins, by its own time. The sweep arms it, lowers its low and moves
+         -- its reference; the tick, the trim and a funded step write the row
+         -- back from snapshots read before it, and none of those may disarm it,
+         -- re-arm it or put an old reference back by writing an older watch,
+         -- or none, over it.
+         dip_watch = CASE
+           WHEN EXCLUDED.dip_watch IS NOT NULL
+            AND (positions.dip_watch IS NULL
+                 OR (EXCLUDED.dip_watch->>'at')::bigint > (positions.dip_watch->>'at')::bigint)
+           THEN EXCLUDED.dip_watch ELSE positions.dip_watch
          END`,
       [p.id, p.chain, p.tokenAddress, p.pairAddress, p.symbol, JSON.stringify(p.cascade), JSON.stringify(p.deathWatch),
        JSON.stringify(p.quality), p.capitalUsd, p.lastBarTime, p.lastPriceUsd, JSON.stringify(p.pendingOrders), p.openedAt, p.updatedAt,
@@ -267,7 +307,8 @@ export class PostgresStore implements StatePort {
        // Both or neither, for the lock's reason: a scale with no time is no reading.
        ...(present(p.dcaScaleNow) && present(p.dcaScaleNowAt) ? [p.dcaScaleNow, p.dcaScaleNowAt] : [null, null]),
        p.liquidityWatch ? JSON.stringify(p.liquidityWatch) : null,
-       p.priceLow ? JSON.stringify(p.priceLow) : null],
+       p.priceLow ? JSON.stringify(p.priceLow) : null,
+       p.dipWatch ? JSON.stringify(p.dipWatch) : null],
     )
   }
 
@@ -560,11 +601,15 @@ export class PostgresStore implements StatePort {
    * unmeasured volume sorts LAST rather than being excluded — silence is not a
    * zero, and the registry's job is remembering what the providers forgot.
    */
-  async knownTokens(limit: number): Promise<readonly RememberedToken[]> {
+  async knownTokens(limit: number, offset = 0): Promise<readonly RememberedToken[]> {
+    // Paged, and in a TOTAL order — the contract breaks a tie in volume — so a
+    // scan reading page after page never sees a row twice or skips one. No
+    // limit reads LIMIT ALL: Infinity is not a number Postgres can bind.
+    const bounded = Number.isFinite(limit)
     const { rows } = await this.sql.query<Record<string, unknown>>(
       `SELECT contract, token, pool, price, volume24h, liquidity, market_cap, txns, last_update
-       FROM solana_cache ORDER BY volume24h DESC NULLS LAST LIMIT $1`,
-      [limit],
+       FROM solana_cache ORDER BY volume24h DESC NULLS LAST, contract ${bounded ? 'LIMIT $1 OFFSET $2' : 'LIMIT ALL OFFSET $1'}`,
+      bounded ? [limit, offset] : [offset],
     )
     const maybe = (value: unknown): number | null => (value === null || value === undefined ? null : Number(value))
     return rows.map((row) => ({
