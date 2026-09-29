@@ -44,6 +44,16 @@ export const DEFAULT_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.dipPct
 export const DEFAULT_BOUNCE_PCT = DEFAULT_DIP_BOUNCE_POLICY.bouncePct
 
 /**
+ * The deepest fall a step still buys on, in percent under the reference. "If
+ * it fell more than 20% it is a collapse, not a dip: don't buy there. Wait
+ * until it is back within 20%." The operator, on the first hour and a half at
+ * $5: every token doing well bought on falls of 3% to 15.6%, while YAP and
+ * BAGSPAY bought on 31–34% and lost $35 of the $52 that went. Zero turns it
+ * off: `OPERADOR_MAX_DIP_PCT=0`. See `domain/strategy/dip-bounce.ts`.
+ */
+export const DEFAULT_MAX_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.maxDipPct
+
+/**
  * Whether the deep rung — $20 after a fall of more than 80% and a 10% rebound —
  * still buys. OFF: every buy is a dip-bounce step now. `OPERADOR_DEEP_RUNG=1`
  * brings it back, and its numbers below are still its own.
@@ -476,6 +486,8 @@ export interface ProductionLadder {
   readonly dipPct: number
   /** The bounce, in percent over the low, that buys. */
   readonly bouncePct: number
+  /** A fall of more than this, in percent under the reference, is a collapse: no step buys. Zero: off. */
+  readonly maxDipPct: number
   /**
    * What a slot is given, exactly: steps × step. No gas, no price headroom and
    * no floor raise it, and no haircut shrinks the count — *el tope son 5000
@@ -619,6 +631,9 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     maxSteps,
     dipPct: share(env.OPERADOR_DIP_PCT, DEFAULT_DIP_PCT),
     bouncePct: share(env.OPERADOR_BOUNCE_PCT, DEFAULT_BOUNCE_PCT),
+    // Zero is a REAL value — the ceiling off — so it reads through `percent`,
+    // never `positive`; nonsense keeps the operator's twenty.
+    maxDipPct: percent(env.OPERADOR_MAX_DIP_PCT, DEFAULT_MAX_DIP_PCT),
     // Derived from the two variables, never written down on its own: a slot of
     // twenty steps of a dollar is twenty dollars, and nothing is grossed up.
     slotUsd: maxSteps * stepUsd,

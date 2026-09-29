@@ -855,7 +855,7 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: L.maxUsdPerLevel },
     maxOpenEntries: L.maxOpenEntries,
-    dipBounce: { dipPct: L.dipPct, bouncePct: L.bouncePct, maxSteps: L.maxSteps, stepUsd: L.stepUsd },
+    dipBounce: { dipPct: L.dipPct, bouncePct: L.bouncePct, maxSteps: L.maxSteps, maxDipPct: L.maxDipPct, stepUsd: L.stepUsd },
   }
   const reservation = (over: Partial<PersistedPosition> = {}) => ({ cascade: initialState(), capitalUsd: 20, lastPriceUsd: 1, ...over })
 
@@ -876,6 +876,23 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
     const store = await seed([], reservation({ dipWatch: { reference: 1.25, low: 1.2, armed: true, at: NOW, holdingSince: null } }))
     const [p] = (await buildOperations(store, dip)).positions
     expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'armado: mínimo $1.200 — compra al rebotar 2%, en $1.224' }])
+  })
+
+  it('says a COLLAPSE — how deep, and the price it waits to be back over — instead of a bounce it will not buy', async () => {
+    // "If it fell more than 20% it is a collapse, not a dip." The watch the
+    // sweep wrote: armed at the high of 1.25, down to 0.855 — 31.6% — and
+    // nothing bought until the price is back over 1.25 less 20%.
+    const store = await seed([], reservation({ dipWatch: { reference: 1.25, low: 0.855, armed: true, at: NOW, holdingSince: null, crashed: true } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks).toEqual([{ name: 'dip', held: false, detail: 'derrumbe: −31.6% (espera volver sobre $1.000)' }])
+  })
+
+  it('measures a later collapse from the last buy, as the sweep does', async () => {
+    const first = NOW - 30 * MIN
+    const fills = [fill('Entry', 1, 1, first)]
+    const store = await seed(fills, reservation({ dipWatch: { reference: 1, low: 0.75, armed: true, at: NOW, holdingSince: first, crashed: true } }))
+    const [p] = (await buildOperations(store, dip)).positions
+    expect(p!.locks![0]!.detail).toBe('derrumbe: −25.0% (espera volver sobre $0.8000)')
   })
 
   it('counts the buys and the dollars in them, and measures the next dip from the LAST buy', async () => {

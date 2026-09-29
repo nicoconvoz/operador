@@ -142,6 +142,10 @@ const priceLowOf = (raw: unknown): PriceLow | null => {
  * A watch with a field missing cannot say what the next dip is measured from,
  * and a reference or a low that is not a price would make every price a dip,
  * or a bounce, off nothing.
+ *
+ * `crashed` is the one field that may be absent: every row written before the
+ * collapse ceiling existed has none, and reads as not collapsed — as does
+ * anything but `true`. The domain only ever writes it while true.
  */
 const dipWatchOf = (raw: unknown): DipWatch | null => {
   let value = raw
@@ -159,7 +163,10 @@ const dipWatchOf = (raw: unknown): DipWatch | null => {
   if (!price(w.reference) || typeof w.armed !== 'boolean' || !finite(w.at)) return null
   if (!(w.low === null || price(w.low))) return null
   if (!(w.holdingSince === null || finite(w.holdingSince))) return null
-  return { reference: w.reference, low: w.low, armed: w.armed, at: w.at, holdingSince: w.holdingSince }
+  return {
+    reference: w.reference, low: w.low, armed: w.armed, at: w.at, holdingSince: w.holdingSince,
+    ...(w.crashed === true ? { crashed: true as const } : {}),
+  }
 }
 
 /**

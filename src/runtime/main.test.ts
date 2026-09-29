@@ -162,10 +162,22 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a 20.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20 })
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20 })
     expect(deps.dipBounce?.stepUsd).toBe(5)
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(20)
+  })
+
+  it('never buys past a 20% fall unless the environment turns the ceiling off', () => {
+    expect(runtime({ OPERADOR_MAX_DIP_PCT: '0' }).deps.dipBounce?.policy.maxDipPct).toBe(0)
+    expect(runtime({ OPERADOR_MAX_DIP_PCT: '25' }).deps.dipBounce?.policy.maxDipPct).toBe(25)
+  })
+
+  it('asks the pool before every step against the death watch’s OWN freeze line — the policy the tick runs, not a number of its own', () => {
+    const { deps, cycleConfig } = runtime()
+    expect(deps.dipBounce?.pool?.liquidity).toBeDefined()
+    expect(deps.dipBounce?.pool?.deathPolicy).toBe(tickConfigFrom(cycleConfig).deathPolicy)
+    expect(deps.dipBounce?.pool?.deathPolicy.liquidityFreezeRatio).toBe(0.5)
   })
 
   it('wires nothing else that could buy — each one a variable away', () => {
@@ -601,14 +613,34 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     return { sweep, buys, store, slot, deps, cycleConfig }
   }
 
-  it('buys $5 on every dip and bounce — at −30%, −50% and −85% alike — and never a $20 rung', async () => {
+  it('buys $5 on every dip and bounce within 20% — nothing on a −30%, −50% or −85% collapse — and never a $20 rung', async () => {
+    // "If it fell more than 20% it is a collapse, not a dip: don't buy there.
+    // Wait until it is back within 20%." This bought three more $5 steps on
+    // these falls before the ceiling; now the collapse buys nothing until the
+    // price is back within 20% of the last buy (0.98) and bounces off there.
     const { sweep, buys } = await book()
     for (const price of [1, 0.96, 0.98, 0.7, 0.714, 0.5, 0.51, 0.15, 0.153]) await sweep(price)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    for (const price of [0.8, 0.8 * 1.021]) await sweep(price)
     const bought = await buys()
-    expect(bought.map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2', 'DCA-3'])
+    expect(bought.map((f) => f.orderId)).toEqual(['Entry', 'DCA-1'])
     // Each one $5, inside the same half percent a $1 step was held to — the
     // spread the fill pays over the quote scales with the step.
     for (const f of bought) expect((f.qty * f.price) / 5).toBeCloseTo(1, 2)
+  })
+
+  it('buys every dip and bounce on the old falls with the ceiling off — OPERADOR_MAX_DIP_PCT=0', async () => {
+    const { deps, cycleConfig, store } = onMemory({ OPERADOR_MAX_DIP_PCT: '0' })
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
+    await store.savePosition(slot)
+    let clock = 1_000
+    for (const price of [1, 0.96, 0.98, 0.7, 0.714, 0.5, 0.51, 0.15, 0.153]) {
+      await sweepStops(
+        deps, (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)), new AlertThrottle(0),
+        (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000),
+      )
+    }
+    expect((await store.fillsFor(slot.id)).map((f) => f.orderId)).toEqual(['Entry', 'DCA-1', 'DCA-2', 'DCA-3'])
   })
 
   it('buys nothing on a price that only falls — the bounce is half the rule', async () => {
@@ -661,6 +693,82 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     expect(ticked.minProfitPct).toBe(10)
     expect(sells.length).toBe(3)
     for (const f of sells) expect(f.price).toBeGreaterThanOrEqual(avg * 1.1)
+  })
+})
+
+describe('the pool is asked live before every step, through the path the engine runs', () => {
+  // YAP froze with "sell quote implausible · liquidity $52,380 = 26.6% of
+  // entry" — assessed by the tick once a 15-minute bar, while the 30-second
+  // sweep bought four more steps into the draining pool, 14:05 to 14:12. The
+  // production runtime from an EMPTY environment, the SAME sweep the cycle and
+  // the loop run, and Jupiter answering the pool the way the runtime asks it.
+  const ENTRY = 196_917
+  const searched: string[] = []
+  let depth = ENTRY
+  beforeEach(() => {
+    searched.length = 0
+    depth = ENTRY
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(1_800_000_000_000)
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (!url.includes('/tokens/v2/search')) throw new Error('no network in this test')
+      searched.push(url)
+      const token = { id: 'T', name: 'T', symbol: 'T', decimals: 6, usdPrice: 1, liquidity: depth, stats5m: {}, stats1h: {} }
+      return new Response(JSON.stringify([token]), { status: 200 })
+    })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  const book = async () => {
+    const { deps, cycleConfig, store } = onMemory()
+    // A reservation opened on a $196,917 pool: the death watch's own baseline.
+    const slot = {
+      ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0,
+      deathWatch: startDeathWatch(ENTRY, 0), quality: { ...held.quality, liquidityUsd: ENTRY },
+    }
+    await store.savePosition(slot)
+    const sent: string[] = []
+    // One sweep at a live price, a minute apart: the runtime's reader holds an
+    // answer for a minute, so each sweep sees the pool as it is now.
+    const sweep = async (price: number) => {
+      await sweepStops(
+        { ...deps, alerts: { send: async (a) => { sent.push(a.title) } } },
+        (position) => exitLevelsFor(position, exitSizingFrom(cycleConfig)),
+        new AlertThrottle(0),
+        (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })),
+        new Map([['solana:T', price]]),
+        Date.now(),
+      )
+      vi.setSystemTime(Date.now() + 61_000)
+    }
+    const buys = async () => (await store.fillsFor(slot.id)).filter((f) => f.side === 'buy').map((f) => f.orderId)
+    return { sweep, buys, sent }
+  }
+
+  it('buys NOTHING into YAP’s pool at 26.6% of its entry liquidity, and says so once', async () => {
+    const { sweep, buys, sent } = await book()
+    depth = 52_380
+    for (const price of [1, 0.96, 0.98, 0.985, 0.99]) await sweep(price)
+    expect(await buys()).toEqual([])
+    expect(sent.filter((t) => t.startsWith('🧊'))).toEqual(['🧊 T: el pool perdió liquidez (queda 26.6% de la entrada) — no compra'])
+    expect(searched.some((url) => url.includes('query=T'))).toBe(true)
+  })
+
+  it('buys as before on a pool at 90% of its entry liquidity', async () => {
+    const { sweep, buys, sent } = await book()
+    depth = ENTRY * 0.9
+    for (const price of [1, 0.96, 0.98]) await sweep(price)
+    expect(await buys()).toEqual(['Entry'])
+    expect(sent.filter((t) => t.startsWith('🧊'))).toEqual([])
+  })
+
+  it('buys as before when Jupiter does not answer — silence is not a drained pool', async () => {
+    vi.stubGlobal('fetch', async () => { throw new Error('no network in this test') })
+    const { sweep, buys } = await book()
+    for (const price of [1, 0.96, 0.98]) await sweep(price)
+    expect(await buys()).toEqual(['Entry'])
   })
 })
 

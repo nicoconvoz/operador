@@ -3,7 +3,8 @@ import { positionLedger, tokenNetUsd, openLotCostsUsd, holdingBuys } from './led
 import { nextPressureRung, pressureOf, buyersFellThrough, BUYERS_GONE_COMMENT, type PressureLadderPolicy } from '../domain/strategy/pressure-ladder.js'
 import { nextDropRung, usableScale, type DropLadderPolicy } from '../domain/strategy/drop-ladder.js'
 import { nextDeepRung, nextPriceLow, priceLowWorthWriting, type DeepRungPolicy, type PriceLow } from '../domain/strategy/deep-rung.js'
-import { nextDipBounce, watchAfterBuy, dipWatchWorthWriting, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
+import { nextDipBounce, watchAfterBuy, dipWatchWorthWriting, crashLine, type DipBouncePolicy, type DipBounceStep } from '../domain/strategy/dip-bounce.js'
+import { liquidityBelowFreeze, type DeathExitPolicy } from '../domain/risk/death-exit.js'
 import { scaledDropPct, dropLabel, realtimeDcaScale, REALTIME_DCA_SCALE_POLICY } from '../domain/strategy/dca-scale.js'
 import { type RecentVolatility } from './recent-volatility.js'
 import {
@@ -381,6 +382,39 @@ export interface DipBounce {
    * position holds.
    */
   readonly fund?: (position: PersistedPosition, costUsd: number) => Promise<PersistedPosition | null>
+  /**
+   * The pool, asked LIVE before every step. Absent: no check — every caller
+   * that predates it.
+   *
+   * YAP froze with "sell quote implausible · liquidity $52,380 = 26.6% of
+   * entry", but the death watch is assessed by the tick, once a 15-minute bar,
+   * and this sweep runs every thirty seconds: it bought four more steps into
+   * the draining pool, 14:05 to 14:12, before the freeze landed. So the sweep
+   * reads the pool itself and refuses the step the next tick would freeze.
+   */
+  readonly pool?: DipBouncePool
+}
+
+export interface DipBouncePool {
+  /**
+   * The book's pools, keyed `chain:token` — the runtime's ONE minute-cached
+   * Jupiter reader, the liquidity watch's own, asked once a sweep for the
+   * whole book and only when a step fires. A token missing from the answer, a
+   * depth unreported, or a throw is silence: the step is NOT refused.
+   */
+  readonly liquidity: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>
+  /**
+   * The death watch's policy — the SAME object the tick assesses with — whose
+   * freeze line refuses the step. Never a number of this sweep's own: two
+   * lines for one pool would disagree about which one is draining.
+   */
+  readonly deathPolicy: Pick<DeathExitPolicy, 'liquidityFreezeRatio'>
+  /**
+   * Positions whose step a drained pool is refusing right now, so the refusal
+   * is said once when it starts, never once a sweep. Owned by the caller, so
+   * the cycle's sweeps and the loop's share one memory.
+   */
+  readonly refusing: Set<string>
 }
 
 /** What the liquidity watch said about one position on this sweep. */
@@ -425,6 +459,11 @@ export async function sweepStops(
   let tape: readonly PersistedFill[] | null = null
   // The book's pools, in one call for every position this sweep may touch.
   const pools = await readPools(deps.dropLadder, positions.filter((p) => p.pendingOrders.length === 0))
+  // The same book's pools for the dip-bounce's last check — asked only when a
+  // step fires, and then once for every position this sweep may touch.
+  const stepPools = deps.dipBounce?.pool
+    ? oncePerSweep(deps.dipBounce.pool, positions.filter((p) => p.pendingOrders.length === 0))
+    : null
 
   for (const position of positions) {
     // In flight means unresolved means halted. Never guess on top of it.
@@ -587,7 +626,7 @@ export async function sweepStops(
           stopped.push(position.id)
           continue
         }
-        await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low)
+        await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low, stepPools)
         continue
       }
       await deps.store.closePosition(position.id)
@@ -624,7 +663,7 @@ export async function sweepStops(
       }
       // A RESERVATION buys too: its first dollar is a dip-bounce step like
       // every other, so the sweep watches a position that holds nothing yet.
-      if (held || (deps.dipBounce && price !== null && price > 0)) await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low)
+      if (held || (deps.dipBounce && price !== null && price > 0)) await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low, stepPools)
       continue
     }
 
@@ -1220,9 +1259,10 @@ async function buyOnDrop(
 /**
  * This sweep's buy, if any: the dip-bounce step first, then the deep rung, then
  * the chained drop ladder when they are switched on. ONE a sweep — a step or a
- * rung that bought, or that fired and found no capital, leaves the rest for the
- * next sweep, so the same fall is never bought twice off one stale read of the
- * fills.
+ * rung that bought, that fired and found no capital, or that fired into a
+ * drained pool, leaves the rest for the next sweep, so the same fall is never
+ * bought twice off one stale read of the fills, and a pool refused for one
+ * ladder is not bought into by another.
  */
 async function buyRungs(
   deps: StopSweepDeps,
@@ -1233,8 +1273,9 @@ async function buyRungs(
   throttle: AlertThrottle,
   liquidity: LiquidityVerdict | null,
   low: PriceLow | null,
+  stepPools: StepPools | null,
 ): Promise<void> {
-  if (deps.dipBounce && (await buyOnDipBounce(deps, deps.dipBounce, position, fills, price, at, throttle)) !== null) return
+  if (deps.dipBounce && (await buyOnDipBounce(deps, deps.dipBounce, position, fills, price, at, throttle, stepPools)) !== null) return
   const deep = deps.deepRung ? await buyOnDeepRung(deps, deps.deepRung, position, fills, price, low, at, throttle) : null
   if (deep === null && deps.dropLadder) await buyOnDrop(deps, deps.dropLadder, position, fills, price, at, throttle, liquidity)
 }
@@ -1270,6 +1311,104 @@ async function watchLow(
 /** Dollars as the operator says them: $20, not $20.00. */
 const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.toFixed(2)}`
 
+/** The book's pools for one sweep's dip-bounce steps, and the check they are read for. */
+interface StepPools {
+  readonly pool: DipBouncePool
+  /** The readings, asked on the first call and shared by every later one in the sweep. */
+  readonly read: () => Promise<ReadonlyMap<string, LiquidityReading>>
+}
+
+/**
+ * The book's pools for one sweep, asked on the FIRST step that fires and never
+ * again in that sweep — and never at all on a sweep where no step fires, which
+ * is nearly all of them. One request for the whole book, not one per step.
+ *
+ * A throw is silence for every token: no step is refused on a request nobody
+ * answered.
+ */
+function oncePerSweep(pool: DipBouncePool, positions: readonly PersistedPosition[]): StepPools {
+  let asked: Promise<ReadonlyMap<string, LiquidityReading>> | null = null
+  const read = () => {
+    asked ??= pool.liquidity(positions).catch(() => new Map<string, LiquidityReading>())
+    return asked
+  }
+  return { pool, read }
+}
+
+/**
+ * Whether the pool refuses this step, and — the first sweep it does — says so.
+ *
+ * Refused when the pool's live depth is under the line the death watch
+ * FREEZES on, measured against the liquidity the watch recorded at opening:
+ * the step the next tick would freeze is never bought in the thirty seconds
+ * before it. A reading nobody gave refuses nothing.
+ *
+ * INFO, once per refusal: the position is remembered as refusing until a
+ * later step finds the pool above the line, so a pool that stays drained is
+ * said once, and one that drains again is said again.
+ */
+async function poolRefuses(
+  deps: StopSweepDeps,
+  pools: StepPools,
+  position: PersistedPosition,
+  stepIndex: number,
+  max: number,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<boolean> {
+  const { pool } = pools
+  const reading = (await pools.read()).get(`${position.chain}:${position.tokenAddress}`) ?? null
+  const entry = position.deathWatch.entryLiquidityUsd
+  if (!liquidityBelowFreeze(reading?.usd, entry, pool.deathPolicy)) {
+    pool.refusing.delete(position.id)
+    return false
+  }
+  if (pool.refusing.has(position.id)) return true
+  pool.refusing.add(position.id)
+  const usd = reading!.usd!
+  const left = ((usd / entry) * 100).toFixed(1)
+  const line = (pool.deathPolicy.liquidityFreezeRatio * 100).toFixed(0)
+  const refused = alert(
+    'entry-refused',
+    `🧊 ${position.symbol}: el pool perdió liquidez (queda ${left}% de la entrada) — no compra`,
+    `La liquidez del pool es $${usd.toFixed(0)} y al abrir la posición era $${entry.toFixed(0)}. Bajo el ${line}% de la entrada el vigilante congela la posición en el próximo tick, así que la compra ${stepIndex} de ${max} no se hace mientras siga así.`,
+    at,
+    { position: position.id, token: position.tokenAddress, liquidityUsd: usd, entryLiquidityUsd: entry },
+  )
+  if (throttle.shouldSend(refused, `drained:${position.id}`)) await deps.alerts.send(refused)
+  return true
+}
+
+/**
+ * A step's watch just COLLAPSED: the low went more than `maxDipPct` under the
+ * reference. Said on the look it happened — the domain signals it once, and
+ * the watch carries it from then on — never once a sweep. INFO: nothing was
+ * bought and nothing is at risk.
+ */
+async function sayCollapsed(
+  deps: StopSweepDeps,
+  ladder: DipBounce,
+  position: PersistedPosition,
+  step: DipBounceStep,
+  firstBuy: boolean,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<void> {
+  const watch = step.watch
+  if (step.crashedPct === null || watch === null) return
+  const { maxDipPct, bouncePct } = ladder.policy
+  const fell = step.crashedPct.toFixed(1)
+  const from = firstBuy ? 'el máximo visto' : 'la compra anterior'
+  const said = alert(
+    'entry-refused',
+    `🧊 ${position.symbol}: cayó ${fell}% — más de ${maxDipPct}% es un derrumbe; no compra hasta que vuelva a estar a menos de ${maxDipPct}% de $${watch.reference}`,
+    `El mínimo ${watch.low} quedó ${fell}% bajo ${from} (${watch.reference}). Una caída de más de ${maxDipPct}% no es una baja: no se compra hasta que el precio vuelva sobre ${crashLine(watch.reference, ladder.policy)}, y desde ahí la compra espera un rebote de ${bouncePct}%.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(said, `collapse:${position.id}`)) await deps.alerts.send(said)
+}
+
 /**
  * One dip-bounce step, if the watch says so — the first dollar of a holding or
  * any later one, on the same rule. The watch is moved by this sweep's live
@@ -1287,6 +1426,10 @@ const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.t
  *   has not priced yet has none, only the scanner's own number;
  * - the live price and that close agree within the band, and there is no order
  *   in flight: both answered by the sweep before it gets here;
+ * - never on a fall of more than `maxDipPct` — a collapse, which the watch
+ *   itself refuses and says once (see `domain/strategy/dip-bounce.ts`);
+ * - never into a pool under the line the death watch freezes on, read LIVE
+ *   (`DipBounce.pool`) — the tick would freeze it at the next bar;
  * - the fees are FUNDED out of the free capital first, and a step with nothing
  *   free is said and not bought — never shrunk;
  * - the fill is keyed by the sweep's clock and the step, and a step that did
@@ -1297,7 +1440,8 @@ const dollars = (usd: number): string => `$${Number.isInteger(usd) ? usd : usd.t
  * buy (see `domain/strategy/dip-bounce.ts`).
  *
  * Returns 'bought' when it bought, 'unfunded' when it fired and found nothing
- * free — either way this sweep's buy — and null when it did not fire.
+ * free, 'refused' when it fired into a drained pool — each of them this
+ * sweep's buy — and null when it did not fire.
  */
 async function buyOnDipBounce(
   deps: StopSweepDeps,
@@ -1307,7 +1451,8 @@ async function buyOnDipBounce(
   price: number,
   at: number,
   throttle: AlertThrottle,
-): Promise<'bought' | 'unfunded' | null> {
+  stepPools: StepPools | null,
+): Promise<'bought' | 'unfunded' | 'refused' | null> {
   if (position.deathWatch.stage !== 'healthy') return null
   if (position.lastBarTime < 0) return null
   const buys = holdingBuys(fills)
@@ -1316,10 +1461,14 @@ async function buyOnDipBounce(
   if (step.watch !== null && dipWatchWorthWriting(stored, step.watch, buys[buys.length - 1]?.time ?? null)) {
     await deps.store.savePosition({ ...position, dipWatch: step.watch })
   }
+  await sayCollapsed(deps, ladder, position, step, buys.length === 0, at, throttle)
   if (step.action !== 'buy' || step.watch === null) return null
 
   const n = buys.length
   const max = ladder.policy.maxSteps
+  // The pool last, right before the money: only a step that fired costs the
+  // book's one request, and the watch stays armed for the sweep it recovers.
+  if (stepPools !== null && (await poolRefuses(deps, stepPools, position, n + 1, max, at, throttle))) return 'refused'
   const fell = (step.fellPct ?? 0).toFixed(1)
   const rose = (step.bouncedPct ?? 0).toFixed(1)
   const cost = buyCostUsd(ladder.stepUsd, position.quality, ladder.gasUsdPerSwap)

@@ -110,8 +110,9 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       // The ladder the engine BUYS: every buy, the first included, $1 on a 3%
       // dip and a 2% bounce, twenty at most — ONE box with the count and the
       // watch in words, read off the watch the sweep wrote down. From the same
-      // module the engine reads.
-      dipBounce: { dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, stepUsd: ladder.stepUsd },
+      // module the engine reads — the 20% collapse ceiling included, so a
+      // collapsed watch is drawn as the line it waits to be back over.
+      dipBounce: { dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, maxDipPct: ladder.maxDipPct, stepUsd: ladder.stepUsd },
       // The deep rung, drawn only when it is switched back on.
       ...(ladder.deepRung
         ? { deepRung: { fallPct: ladder.deepRungFallPct, reboundPct: ladder.deepRungReboundPct, usd: ladder.deepRungUsd } }

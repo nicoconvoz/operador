@@ -5,10 +5,11 @@ import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { PaperBroker } from '../infrastructure/brokers/paper-broker.js'
 import { AlertThrottle, type Alert } from '../domain/notifications/alerts.js'
 import { initialState } from '../domain/strategy/state.js'
-import { startDeathWatch, type DeathWatchState } from '../domain/risk/death-exit.js'
+import { startDeathWatch, DEFAULT_DEATH_EXIT_POLICY, type DeathWatchState } from '../domain/risk/death-exit.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
 import { type MarketQuality } from '../domain/market/market-quality.js'
-import { DEFAULT_DIP_BOUNCE_POLICY } from '../domain/strategy/dip-bounce.js'
+import { DEFAULT_DIP_BOUNCE_POLICY, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
+import { type LiquidityReading } from '../domain/strategy/liquidity-brake.js'
 
 /**
  * *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y armá
@@ -37,7 +38,14 @@ const reservation = (over: Partial<PersistedPosition> = {}): PersistedPosition =
 
 const NO_STOP: ExitLevels = { stop: { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 0 }, armAtPct: null, breakEvenPct: 0, gainLock: null }
 
-const rig = async (options: { readonly held?: PersistedPosition; readonly bookUsd?: number; readonly others?: readonly PersistedPosition[] } = {}) => {
+const rig = async (options: {
+  readonly held?: PersistedPosition
+  readonly bookUsd?: number
+  readonly others?: readonly PersistedPosition[]
+  readonly policy?: DipBouncePolicy
+  /** The book's pools, as the runtime's Jupiter reader answers them. Absent: no pool check. */
+  readonly pool?: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>
+} = {}) => {
   const store = new MemoryStore()
   await store.savePosition(options.held ?? reservation())
   for (const other of options.others ?? []) await store.savePosition(other)
@@ -64,7 +72,7 @@ const rig = async (options: { readonly held?: PersistedPosition; readonly bookUs
     return broker
   }
   const dipBounce: DipBounce = {
-    policy: DEFAULT_DIP_BOUNCE_POLICY,
+    policy: options.policy ?? DEFAULT_DIP_BOUNCE_POLICY,
     stepUsd: 1,
     gasUsdPerSwap: GAS,
     fund: fundStepFromFreeCapital({
@@ -72,6 +80,7 @@ const rig = async (options: { readonly held?: PersistedPosition; readonly bookUs
       totalCapitalUsd: options.bookUsd ?? 1_000,
       cashOf: async (p) => (await brokerFor(p)).equityCash,
     }),
+    ...(options.pool ? { pool: { liquidity: options.pool, deathPolicy: DEFAULT_DEATH_EXIT_POLICY, refusing: new Set<string>() } } : {}),
   }
   const deps: StopSweepDeps = {
     store: counting,
@@ -253,5 +262,142 @@ describe('the dip-bounce ladder, through the sweep — what it writes', () => {
     expect(await buys()).toEqual([])
     await run(0.97)
     expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+  })
+})
+
+describe('the dip-bounce ladder, through the sweep — a fall of more than 20% is a collapse, not a dip', () => {
+  // "If it fell more than 20% it is a collapse, not a dip: don't buy there.
+  // Wait until it is back within 20%." YAP and BAGSPAY bought on 31–34%.
+  const collapses = (sent: readonly Alert[]) => sent.filter((a) => a.title.includes('es un derrumbe'))
+
+  for (const pct of [4, 10, 15.6]) {
+    it(`a ${pct}% dip buys exactly what it bought before — the same fill and the same watch`, async () => {
+      const walk = async (policy: DipBouncePolicy) => {
+        const r = await rig({ policy })
+        for (const price of [1, 1 - pct / 100, (1 - pct / 100) * 1.021]) await r.run(price)
+        return { fills: (await r.buys()).map(({ orderId, price, qty }) => ({ orderId, price, qty })), watch: await r.watch() }
+      }
+      const on = await walk(DEFAULT_DIP_BOUNCE_POLICY)
+      expect(on.fills.map((f) => f.orderId)).toEqual(['Entry'])
+      expect(on).toEqual(await walk({ ...DEFAULT_DIP_BOUNCE_POLICY, maxDipPct: 0 }))
+    })
+  }
+
+  it('buys nothing on a 31.6% first dip however it bounces, says so ONCE, and writes the collapse down', async () => {
+    const { run, buys, watch, sent } = await rig()
+    for (const price of [1, 0.684, 0.684 * 1.021, 0.684 * 1.05, 0.7, 0.66, 0.68]) await run(price)
+    expect(await buys()).toEqual([])
+    expect(collapses(sent).map((a) => a.title)).toEqual([
+      '🧊 T: cayó 31.6% — más de 20% es un derrumbe; no compra hasta que vuelva a estar a menos de 20% de $1',
+    ])
+    expect(collapses(sent)[0]!.level).toBe('info')
+    expect(await watch()).toMatchObject({ reference: 1, armed: true, crashed: true })
+  })
+
+  it('buys once the price is back within 20% and bounces 2% off the NEW low — back to −18%, then +2%', async () => {
+    const { run, buys, sent } = await rig()
+    for (const price of [1, 0.684, 0.7, 0.82]) await run(price)
+    expect(await buys()).toEqual([])
+    await run(0.82 * 1.021)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    expect(sent.find((a) => a.kind === 'position-opened')?.title).toBe('🟢 T compró $1 — cayó 18.0% y rebotó 2.1% (compra 1 de 20)')
+  })
+
+  it('holds every later buy to the same ceiling, measured from the last buy — and says which price it waits to be near', async () => {
+    const { run, buys, sent } = await rig()
+    await run(1)
+    const first = await oneStep(run, 1)
+    for (const price of [first * 0.75, first * 0.75 * 1.03, first * 0.7, first * 0.72]) await run(price)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    expect(collapses(sent).map((a) => a.title)).toEqual([
+      `🧊 T: cayó 25.0% — más de 20% es un derrumbe; no compra hasta que vuelva a estar a menos de 20% de $${first}`,
+    ])
+  })
+
+  it('says a second collapse after a recovery — once per collapse, never once per sweep', async () => {
+    const { run, buys, sent } = await rig()
+    // Collapsed at −30%, back to −10% (armed, the new low), then −25%: a second collapse.
+    for (const price of [1, 0.7, 0.69, 0.9, 0.89, 0.75, 0.74, 0.73]) await run(price)
+    expect(await buys()).toEqual([])
+    expect(collapses(sent).map((a) => a.title.slice(0, 16))).toEqual(['🧊 T: cayó 30.0%', '🧊 T: cayó 25.0%'])
+  })
+})
+
+describe('the dip-bounce ladder, through the sweep — the pool, asked live before every step', () => {
+  // YAP froze with "liquidity $52,380 = 26.6% of entry" — but the freeze is
+  // assessed by the tick, once a bar, and the thirty-second sweep bought four
+  // more steps into the draining pool before it landed.
+  const ENTRY = 196_917
+  const YAP = 52_380
+  const draining = (usd: { value: number | null }, calls: (readonly string[])[] = []) =>
+    async (positions: readonly PersistedPosition[]) => {
+      calls.push(positions.map((p) => p.id))
+      return new Map<string, LiquidityReading>([['solana:T', { m5: null, h1: null, usd: usd.value }]])
+    }
+  const pooled = (over: Partial<PersistedPosition> = {}) => reservation({ deathWatch: startDeathWatch(ENTRY, 0), ...over })
+  const drained = (sent: readonly Alert[]) => sent.filter((a) => a.title.includes('el pool perdió liquidez'))
+
+  it('refuses the step on YAP’s pool — 26.6% of entry — says so ONCE, and keeps the watch armed for when it comes back', async () => {
+    const usd = { value: YAP as number | null }
+    const { run, buys, watch, sent } = await rig({ held: pooled(), pool: draining(usd) })
+    for (const price of [1, 0.96, 0.98, 0.985, 0.99]) await run(price)
+    expect(await buys()).toEqual([])
+    expect(drained(sent).map((a) => a.title)).toEqual(['🧊 T: el pool perdió liquidez (queda 26.6% de la entrada) — no compra'])
+    expect(drained(sent)[0]!.level).toBe('info')
+    expect(await watch()).toMatchObject({ armed: true, low: 0.96 })
+    // The pool comes back to 90% of entry: the same bounce buys.
+    usd.value = ENTRY * 0.9
+    await run(0.99)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    // And a pool that drains AGAIN is said again: a second refusal, not the same one.
+    usd.value = YAP
+    await oneStep(run, 0.99)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    expect(drained(sent)).toHaveLength(2)
+  })
+
+  it('buys as before on a pool at 90% of entry — and at exactly the freeze line', async () => {
+    for (const share of [0.9, 0.5]) {
+      const { run, buys, sent } = await rig({ held: pooled(), pool: draining({ value: ENTRY * share }) })
+      for (const price of [1, 0.96, 0.98]) await run(price)
+      expect((await buys()).map((f) => f.orderId), `${share}`).toEqual(['Entry'])
+      expect(drained(sent)).toEqual([])
+    }
+  })
+
+  it('refuses a later step the same way — every buy, the first included', async () => {
+    const usd = { value: ENTRY as number | null }
+    const { run, buys } = await rig({ held: pooled(), pool: draining(usd) })
+    await run(1)
+    const first = await oneStep(run, 1)
+    usd.value = ENTRY * 0.3
+    await oneStep(run, first)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+  })
+
+  it('never refuses on a reading nobody gave: a token missing, a depth unreported, a refused request', async () => {
+    const answers: ((positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>)[] = [
+      async () => new Map(),
+      draining({ value: null }),
+      async () => { throw new Error('429') },
+    ]
+    for (const pool of answers) {
+      const { run, buys } = await rig({ held: pooled(), pool })
+      for (const price of [1, 0.96, 0.98]) await run(price)
+      expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    }
+  })
+
+  it('asks ONCE a sweep for the whole book, and never on a sweep with no step to buy', async () => {
+    const calls: (readonly string[])[] = []
+    const other = pooled({ id: 'solana:U:1', tokenAddress: 'U', pairAddress: 'Q', symbol: 'U' })
+    const { run, buys } = await rig({ held: pooled(), others: [other], pool: draining({ value: ENTRY }, calls) })
+    await run(1)
+    await run(0.96)
+    expect(calls).toEqual([])
+    await run(0.98)
+    expect((await buys()).map((f) => f.orderId)).toEqual(['Entry'])
+    expect(calls).toHaveLength(1)
+    expect([...calls[0]!].sort()).toEqual(['solana:T:1', 'solana:U:1'])
   })
 })

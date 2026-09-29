@@ -199,7 +199,10 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // *disminuí los escalones a 20.* The slot reserves the whole ladder, steps
     // × step, with nothing grossed up: *el tope son 5000 dividido 50.*
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 100 })
+    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 20, slotUsd: 100 })
+    // Nothing is bought on a fall of more than 20%; zero turns the ceiling off.
+    expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
     expect(config.maxDcaPerToken + 1).toBe(20)
     expect(config.reservedEntries).toBe(20)
     expect(config.usdPerToken).toBe(100)

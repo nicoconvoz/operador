@@ -164,6 +164,30 @@ export function startDeathWatch(entryLiquidityUsd: number, startedAt: number): D
   return { stage: 'healthy', entryLiquidityUsd, startedAt, exitEvidence: 0, cleanStreak: 0, evidence: [] }
 }
 
+/**
+ * Whether a live reading of the pool is under the line this watch FREEZES a
+ * position on: less than `liquidityFreezeRatio` of the liquidity at entry. The
+ * stage-2 line, `liquidityExitRatio`, is lower, so everything under it is under
+ * this one too.
+ *
+ * Asked by the dip-bounce sweep before every step, with the policy the engine
+ * runs, so the sweep refuses exactly the pool the next tick would freeze: YAP's
+ * froze at 26.6% of entry, and the sweep had bought four steps into it between
+ * two ticks.
+ *
+ * False on a reading nobody gave — null, zero, not a number — and against a
+ * baseline that is not one. Silence is not evidence.
+ */
+export function liquidityBelowFreeze(
+  liquidityUsd: number | null | undefined,
+  entryLiquidityUsd: number,
+  policy: Pick<DeathExitPolicy, 'liquidityFreezeRatio'>,
+): boolean {
+  const known = (x: number | null | undefined): x is number => typeof x === 'number' && Number.isFinite(x) && x > 0
+  if (!known(liquidityUsd) || !known(entryLiquidityUsd)) return false
+  return liquidityUsd / entryLiquidityUsd < policy.liquidityFreezeRatio
+}
+
 /** Pure: which invalidation signals does this observation carry? */
 export function evaluateSignals(
   obs: AssetHealthObservation,
@@ -207,7 +231,7 @@ export function evaluateSignals(
         kind: 'liquidityCollapse', stage: 2,
         detail: `liquidity $${obs.liquidityUsd.toFixed(0)} = ${(ratio * 100).toFixed(1)}% of entry`,
       })
-    } else if (ratio < policy.liquidityFreezeRatio) {
+    } else if (liquidityBelowFreeze(obs.liquidityUsd, state.entryLiquidityUsd, policy)) {
       signals.push({
         kind: 'liquidityCollapse', stage: 1,
         detail: `liquidity $${obs.liquidityUsd.toFixed(0)} = ${(ratio * 100).toFixed(1)}% of entry`,

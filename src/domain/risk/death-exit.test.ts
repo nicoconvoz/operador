@@ -6,6 +6,7 @@ import {
   applyDeathVerdict,
   assessAssetHealth,
   evaluateSignals,
+  liquidityBelowFreeze,
   startDeathWatch,
   type AssetHealthObservation,
   type DeathWatchState,
@@ -234,6 +235,44 @@ describe('death exit — policy sanity', () => {
     const gateHours = 1
     expect(P.abandonmentFreezeHours).toBeLessThanOrEqual(gateHours * 4)
     expect(P.abandonmentExitHours).toBeLessThan(24)
+  })
+})
+
+describe('death watch — the liquidity line a buy is refused under', () => {
+  // The dip-bounce sweep asks this before every step, so it refuses exactly
+  // the pool the next tick would freeze: YAP's froze at 26.6% of entry after
+  // the sweep had bought four more steps into it between two ticks.
+  it('is the line the watch freezes on: under half the entry liquidity', () => {
+    expect(liquidityBelowFreeze(ENTRY_LIQ * 0.266, ENTRY_LIQ, P)).toBe(true)
+    expect(liquidityBelowFreeze(ENTRY_LIQ * 0.499, ENTRY_LIQ, P)).toBe(true)
+    expect(liquidityBelowFreeze(ENTRY_LIQ * 0.5, ENTRY_LIQ, P)).toBe(false)
+    expect(liquidityBelowFreeze(ENTRY_LIQ * 0.9, ENTRY_LIQ, P)).toBe(false)
+  })
+
+  it('agrees with the watch itself on every share of the entry: refused exactly where one look would freeze on it', () => {
+    // Every reading here is over the absolute floor, which is a rule about
+    // dollars rather than about the entry, and not this line.
+    for (const share of [0.1, 0.19, 0.2, 0.3, 0.45, 0.49, 0.5, 0.51, 0.75, 1, 1.4]) {
+      const liquidityUsd = ENTRY_LIQ * share
+      expect(liquidityUsd).toBeGreaterThanOrEqual(P.liquidityFloorUsd)
+      const freezes = evaluateSignals(healthy({ liquidityUsd }), startDeathWatch(ENTRY_LIQ, 0), P)
+        .some((s) => s.kind === 'liquidityCollapse')
+      expect(liquidityBelowFreeze(liquidityUsd, ENTRY_LIQ, P), `${share}`).toBe(freezes)
+    }
+  })
+
+  it('reads its line from the policy it is handed, never from a number of its own', () => {
+    expect(liquidityBelowFreeze(ENTRY_LIQ * 0.6, ENTRY_LIQ, { ...P, liquidityFreezeRatio: 0.7 })).toBe(true)
+    expect(liquidityBelowFreeze(ENTRY_LIQ * 0.6, ENTRY_LIQ, P)).toBe(false)
+  })
+
+  it('never refuses on a reading nobody gave — silence is not evidence', () => {
+    for (const unknown of [null, undefined, 0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(liquidityBelowFreeze(unknown, ENTRY_LIQ, P), `${unknown}`).toBe(false)
+    }
+    // Nor against a baseline that is not one.
+    expect(liquidityBelowFreeze(10, 0, P)).toBe(false)
+    expect(liquidityBelowFreeze(10, Number.NaN, P)).toBe(false)
   })
 })
 

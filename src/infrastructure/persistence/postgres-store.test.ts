@@ -4,6 +4,7 @@ import { PostgresStore, type SqlClient } from './postgres-store.js'
 import { initialState } from '../../domain/strategy/state.js'
 import { startDeathWatch } from '../../domain/risk/death-exit.js'
 import { type PersistedPosition } from '../../domain/persistence/store.js'
+import { type DipWatch } from '../../domain/strategy/dip-bounce.js'
 
 const NOW = 1_800_000_000_000
 
@@ -658,6 +659,20 @@ describe('PostgresStore — the dip-bounce watch: the newer reading wins, in SQL
     expect(await load({ dip_watch: { ...watch, low: -1 } })).toBeNull()
     expect(await load({ dip_watch: { reference: 1, low: null, armed: false, at: 1 } })).toBeNull()
     expect(await load({ dip_watch: '{not json' })).toBeNull()
+  })
+
+  it('writes and reads back a COLLAPSED watch — and a row from before the field reads as not collapsed', async () => {
+    const crashed: DipWatch = { reference: 1, low: 0.684, armed: true, at: 2_100, holdingSince: null, crashed: true }
+    expect(JSON.parse((await upsert({ ...position, dipWatch: crashed })).params.at(-1) as string)).toEqual(crashed)
+    expect(await load({ dip_watch: crashed })).toEqual(crashed)
+    expect(await load({ dip_watch: JSON.stringify(crashed) })).toEqual(crashed)
+    // Every row written before the field existed, and anything but `true`.
+    expect(await load({ dip_watch: watch })).not.toHaveProperty('crashed')
+    for (const odd of [false, 'yes', 1, null]) {
+      const read = await load({ dip_watch: { ...watch, crashed: odd } })
+      expect(read, String(odd)).toEqual(watch)
+      expect(read, String(odd)).not.toHaveProperty('crashed')
+    }
   })
 
   it('adds the column to a table that already holds money, without a truncate', () => {

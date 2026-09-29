@@ -2,7 +2,7 @@ import { triggerPrice, usdForLevel } from '../domain/strategy/ladder.js'
 import { usableScale } from '../domain/strategy/drop-ladder.js'
 import { scaledDropPct, dropLabel } from '../domain/strategy/dca-scale.js'
 import { deepRungArmed, deepRungLine, reboundLine, type DeepRungPolicy } from '../domain/strategy/deep-rung.js'
-import { dipArmLine, bounceLine, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
+import { dipArmLine, bounceLine, crashLine, type DipBouncePolicy } from '../domain/strategy/dip-bounce.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
@@ -597,6 +597,10 @@ function deepLocks(
  *
  * - unarmed: *esperando caída de 3% bajo $R (compra si baja a $A)*
  * - armed: *armado: mínimo $L — compra al rebotar 2%, en $B*
+ * - collapsed: *derrumbe: −X% (espera volver sobre $L)* — the low fell more
+ *   than `maxDipPct` under the reference, and no bounce buys until the price
+ *   is back over that line. Drawing the bounce line instead would describe a
+ *   buy the sweep has already refused.
  *
  * Null once the twenty are bought: nothing is waited on.
  */
@@ -613,6 +617,10 @@ function dipLocks(
     stored && stored.holdingSince === (first?.time ?? null) && (last === null || stored.at >= last.time) ? stored : null
   const say = (detail: string): readonly LadderLock[] => [{ name: 'dip', held: false, detail }]
   const money = (usd: number) => `$${usd.toPrecision(4)}`
+  if (watch?.armed === true && watch.crashed === true && watch.low !== null) {
+    const fell = ((1 - watch.low / watch.reference) * 100).toFixed(1)
+    return say(`derrumbe: −${fell}% (espera volver sobre ${money(crashLine(watch.reference, dip))})`)
+  }
   if (watch?.armed === true && watch.low !== null) {
     return say(`armado: mínimo ${money(watch.low)} — compra al rebotar ${dip.bouncePct}%, en ${money(bounceLine(watch.low, dip))}`)
   }

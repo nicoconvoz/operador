@@ -33,6 +33,29 @@
  * undone — and buying there would buy ABOVE the last buy. So it disarms
  * instead, and the next buy waits for a new dip.
  *
+ * ## A fall of more than `maxDipPct` is a collapse, not a dip
+ *
+ * "If it fell more than 20% it is a collapse, not a dip: don't buy there. Wait
+ * until it is back within 20%." The operator, on the first hour and a half at
+ * $5 a step: every token doing well bought on falls of 3% to 15.6%, and the
+ * losers bought on 22% to 37% — YAP and BAGSPAY on 31–34%, −$35 of the −$52
+ * lost between them.
+ *
+ * So an armed watch whose low goes MORE than `maxDipPct` under the reference
+ * is CRASHED, and a crashed watch buys on no bounce. Once the live price is
+ * back within `maxDipPct` of the reference, the collapse clears and the low
+ * starts again at that price — still armed if it is still a 3% dip — so a buy
+ * then needs a 2% bounce off the NEW low, and the dip that buys is always
+ * between `dipPct` and `maxDipPct`. The same for the first buy, off the high,
+ * and for every later one, off the last buy. A token that collapsed and never
+ * comes back within the line simply never buys again: nothing is sold, it
+ * stops adding.
+ *
+ * Exactly `maxDipPct` still buys — "more than" is what blocks — and zero turns
+ * the ceiling off. A walk that never falls past it produces the very same
+ * watches and the very same buys as the rule without it, field for field: the
+ * crashed flag is only ever written while true.
+ *
  * ## Why the watch is a state
  *
  * The high and the low are prices the sweep saw minutes or hours ago, so they
@@ -53,10 +76,16 @@ export interface DipBouncePolicy {
   readonly bouncePct: number
   /** Buys per holding, the first included. */
   readonly maxSteps: number
+  /**
+   * The deepest dip that still buys, in percent under the reference: a low
+   * MORE than this under it is a collapse, and nothing is bought until the
+   * price is back within it. Zero: no ceiling.
+   */
+  readonly maxDipPct: number
 }
 
-/** A 3% dip, a 2% bounce, twenty buys. The operator's three numbers. */
-export const DEFAULT_DIP_BOUNCE_POLICY: DipBouncePolicy = { dipPct: 3, bouncePct: 2, maxSteps: 20 }
+/** A 3% dip, a 2% bounce, twenty buys, and nothing bought past a 20% fall. The operator's four numbers. */
+export const DEFAULT_DIP_BOUNCE_POLICY: DipBouncePolicy = { dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 20 }
 
 /** One holding's watch, as the store keeps it. */
 export interface DipWatch {
@@ -69,6 +98,13 @@ export interface DipWatch {
   readonly at: number
   /** The time of the holding's first buy — which holding this is — or null before any. */
   readonly holdingSince: number | null
+  /**
+   * True while the armed low is more than `maxDipPct` under the reference and
+   * the price has not come back within it: no bounce buys. Only ever present
+   * while true — a watch without it, every row written before it existed
+   * included, is not crashed.
+   */
+  readonly crashed?: true
 }
 
 export interface DipBounceInput {
@@ -89,6 +125,12 @@ export interface DipBounceStep {
   readonly fellPct: number | null
   /** On a buy: how far the price came back off the low, in percent. */
   readonly bouncedPct: number | null
+  /**
+   * On the look the watch COLLAPSED — and only on that one: how far the low
+   * fell under the reference, in percent. Null on every other look, so the
+   * caller says it once per collapse, never once per sweep.
+   */
+  readonly crashedPct: number | null
 }
 
 /**
@@ -108,6 +150,20 @@ export const dipArmLine = (reference: number, policy: DipBouncePolicy): number =
 export const bounceLine = (low: number, policy: DipBouncePolicy): number =>
   (low * (100 + policy.bouncePct)) / 100
 
+/**
+ * The collapse line: the reference less `maxDipPct`. A low strictly under it
+ * is a collapse; a price back at or over it is within the ceiling again.
+ */
+export const crashLine = (reference: number, policy: DipBouncePolicy): number =>
+  (reference * (100 - policy.maxDipPct)) / 100
+
+/** Whether a low is a collapse rather than a dip: MORE than `maxDipPct` under the reference. Never, with the ceiling off. */
+const collapsed = (low: number, reference: number, policy: DipBouncePolicy): boolean =>
+  policy.maxDipPct > 0 && low < crashLine(reference, policy) * (1 - EPSILON)
+
+/** How far a low fell under the reference, in percent. */
+const fallPct = (low: number, reference: number): number => (1 - low / reference) * 100
+
 /** A moved watch is stamped after the one it replaces, so the store's newer-wins merge always takes it. */
 const stampAfter = (at: number, stored: DipWatch | null | undefined): number =>
   stored ? Math.max(at, stored.at + 1) : at
@@ -120,7 +176,8 @@ export function nextDipBounce(
 ): DipBounceStep {
   const { priceUsd: price, at, buys } = input
   const step = buys.length + 1
-  const none = (watch: DipWatch | null): DipBounceStep => ({ watch, action: 'none', step, fellPct: null, bouncedPct: null })
+  const none = (watch: DipWatch | null, crashedPct: number | null = null): DipBounceStep =>
+    ({ watch, action: 'none', step, fellPct: null, bouncedPct: null, crashedPct })
   // Silence is not a dip: a price that is not a price moves nothing.
   if (!positive(price)) return none(stored ?? null)
 
@@ -135,39 +192,71 @@ export function nextDipBounce(
   const stamp = stampAfter(at, stored)
   const firstBuy = last === null
 
+  /**
+   * A watch that has just armed at this price — which is its low — and, if
+   * that price is already past the ceiling, collapsed on the same look: a gap
+   * straight through the line is the same collapse as a slide.
+   */
+  const armedAt = (reference: number): DipBounceStep =>
+    collapsed(price, reference, policy)
+      ? none({ reference, low: price, armed: true, at: stamp, holdingSince, crashed: true }, fallPct(price, reference))
+      : none({ reference, low: price, armed: true, at: stamp, holdingSince })
+
   if (current === null) {
     // A fresh watch: what the last buy paid, or the first price seen.
     const reference = last?.price ?? price
-    const armed = price <= dipArmLine(reference, policy) * (1 + EPSILON)
-    return none({ reference, low: armed ? price : null, armed, at: stamp, holdingSince })
+    if (price <= dipArmLine(reference, policy) * (1 + EPSILON)) return armedAt(reference)
+    return none({ reference, low: null, armed: false, at: stamp, holdingSince })
   }
 
   if (!current.armed) {
     // Before the first buy the reference is the HIGH, and it follows the price
     // up; after it, the reference is the last buy and never moves.
     const reference = firstBuy ? Math.max(current.reference, price) : current.reference
-    const armed = price <= dipArmLine(reference, policy) * (1 + EPSILON)
-    if (!armed && reference === current.reference) return none(current)
-    return none({ reference, low: armed ? price : null, armed, at: stamp, holdingSince })
+    if (price <= dipArmLine(reference, policy) * (1 + EPSILON)) return armedAt(reference)
+    if (reference === current.reference) return none(current)
+    return none({ reference, low: null, armed: false, at: stamp, holdingSince })
   }
 
   // Armed, and the price is back at or over the reference: the dip was undone
   // between two looks, not bounced. Disarmed, never bought — a buy here would
-  // be above the last one.
+  // be above the last one. A collapse is undone with it.
   if (price >= current.reference) {
     const reference = firstBuy ? Math.max(current.reference, price) : current.reference
     return none({ reference, low: null, armed: false, at: stamp, holdingSince })
   }
 
+  if (current.crashed === true) {
+    // Collapsed, and still past the line: no bounce buys. The low goes on
+    // being followed, so the screen can say how deep it went.
+    if (price < crashLine(current.reference, policy) * (1 - EPSILON)) {
+      const low = Math.min(current.low ?? price, price)
+      return none(low === current.low ? current : { ...current, low, at: stamp })
+    }
+    // Back within the ceiling: the collapse clears, and the low starts again
+    // HERE — so the bounce that buys is measured off a price inside the line,
+    // never off the bottom of the collapse. Still armed while it is a dip.
+    const { reference } = current
+    if (price <= dipArmLine(reference, policy) * (1 + EPSILON)) {
+      return none({ reference, low: price, armed: true, at: stamp, holdingSince })
+    }
+    return none({ reference, low: null, armed: false, at: stamp, holdingSince })
+  }
+
   const low = Math.min(current.low ?? price, price)
+  // The low slid past the ceiling: a collapse, said on this look, and no buy.
+  if (collapsed(low, current.reference, policy)) {
+    return none({ ...current, low, at: stamp, crashed: true }, fallPct(low, current.reference))
+  }
   const watch: DipWatch = low === current.low ? current : { ...current, low, at: stamp }
   if (price < bounceLine(low, policy) * (1 - EPSILON)) return none(watch)
   return {
     watch,
     action: 'buy',
     step,
-    fellPct: (1 - low / current.reference) * 100,
+    fellPct: fallPct(low, current.reference),
     bouncedPct: (price / low - 1) * 100,
+    crashedPct: null,
   }
 }
 
@@ -197,9 +286,9 @@ export const DIP_WATCH_WRITE_STEP_PCT = 0.1
 
 /**
  * Whether a new watch is worth writing over the stored one: a first watch,
- * another holding's, a stale one, the watch arming or disarming, the reference
- * changing, or the high or the armed low moving 0.1% or more. Never the clock
- * alone.
+ * another holding's, a stale one, the watch arming or disarming, collapsing or
+ * clearing, the reference changing, or the high or the armed low moving 0.1%
+ * or more. Never the clock alone.
  */
 export function dipWatchWorthWriting(
   stored: DipWatch | null | undefined,
@@ -209,6 +298,7 @@ export function dipWatchWorthWriting(
 ): boolean {
   if (next === null) return false
   if (!stored || stored.holdingSince !== next.holdingSince || stored.armed !== next.armed) return true
+  if ((stored.crashed === true) !== (next.crashed === true)) return true
   if (lastBuyTime !== null && stored.at < lastBuyTime) return true
   const step = DIP_WATCH_WRITE_STEP_PCT / 100 - 1e-12
   if (Math.abs(next.reference / stored.reference - 1) >= step) return true

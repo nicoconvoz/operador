@@ -430,6 +430,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     totalCapitalUsd: config.totalCapitalUsd,
     cashOf: async (position) => (await brokerFor(position)).equityCash,
   })
+  /**
+   * The death watch's policy, ONE object: the tick assesses every position
+   * with it, and the dip-bounce sweep refuses a step on its freeze line — so
+   * the sweep refuses exactly the pool the next tick would freeze, and a
+   * change to either is a change to both.
+   */
+  const deathPolicy = { ...DEFAULT_DEATH_EXIT_POLICY, abandonmentFreezeHours: config.abandonFreezeHours }
 
   const deps: CycleDeps = {
     store,
@@ -501,11 +508,20 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // dip and bounce. The fees the slot's exact $20 does not hold are asked of
     // the free capital as each step fills. One set of deps for the cycle's
     // sweeps and the loop's.
+    //
+    // "If it fell more than 20% it is a collapse, not a dip: don't buy there.
+    // Wait until it is back within 20%." `maxDipPct`; OPERADOR_MAX_DIP_PCT=0
+    // turns it off. And the pool is read LIVE before every step, against the
+    // death watch's own freeze line: YAP's froze at 26.6% of entry after four
+    // more steps went into it between two ticks. The reader is the liquidity
+    // watch's, one request a minute for the whole book, asked only when a step
+    // fires.
     dipBounce: {
-      policy: { dipPct: config.dipPct, bouncePct: config.bouncePct, maxSteps: config.maxSteps },
+      policy: { dipPct: config.dipPct, bouncePct: config.bouncePct, maxSteps: config.maxSteps, maxDipPct: config.maxDipPct },
       stepUsd: config.stepUsd,
       gasUsdPerSwap: config.gasUsdPerSwap,
       fund: fundStep,
+      pool: { liquidity: liquidityChange, deathPolicy, refusing: new Set<string>() },
     },
     // *Arriesguémonos, activá la A.* Five rungs of $15, $20, $25, $30 and $35
     // at −10, −15, −20, −25 and −30% of a $10 FIRST buy, bought by the sweep
@@ -1125,8 +1141,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // released holding nothing — never at the verdict, while a sale may
       // still be waiting to fill.
       blacklistOnFreeze: config.blacklistOnFreeze,
-      // Two hours without a trade freezes it, and the freeze sells it.
-      deathPolicy: { ...DEFAULT_DEATH_EXIT_POLICY, abandonmentFreezeHours: config.abandonFreezeHours },
+      // Two hours without a trade freezes it, and the freeze sells it. The
+      // SAME object the dip-bounce sweep reads its freeze line from.
+      deathPolicy,
       // A slot handed to a token that never enters is capital held against
       // nothing. Measured live at five hours and twenty minutes.
       // The stop, composed HERE rather than defaulted in the orchestrator —

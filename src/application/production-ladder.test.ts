@@ -16,6 +16,7 @@ import {
   DEFAULT_MAX_STEPS,
   DEFAULT_DIP_PCT,
   DEFAULT_BOUNCE_PCT,
+  DEFAULT_MAX_DIP_PCT,
   DEFAULT_DEEP_RUNG,
   DEFAULT_CASCADE_ENTRIES,
 } from './production-ladder.js'
@@ -34,9 +35,15 @@ describe('productionLadder — one place for the numbers that differ', () => {
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, slotUsd: 100, cascadeEntries: false,
+      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 20, slotUsd: 100, cascadeEntries: false,
     })
-    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT]).toEqual([5, 20, 3, 2])
+    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 20, 3, 2, 20])
+  })
+
+  it('refuses to buy on a fall of more than 20% — a collapse, not a dip — and zero turns that off', () => {
+    expect(productionLadder({ OPERADOR_MAX_DIP_PCT: '25' }).maxDipPct).toBe(25)
+    expect(productionLadder({ OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
+    for (const bad of ['veinte', '-1', '100', '250', ' ']) expect(productionLadder({ OPERADOR_MAX_DIP_PCT: bad }).maxDipPct, bad).toBe(20)
   })
 
   it('puts at most $100 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
