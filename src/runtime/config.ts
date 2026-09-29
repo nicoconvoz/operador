@@ -140,9 +140,12 @@ export interface RuntimeConfig {
    * Hours without a single trade before the death watch freezes a position —
    * and, with `exitOnFreeze`, sells it and bans the token on release.
    *
-   * TWO in production: *las que no tengan barras en 2h, congelarlas y
-   * recuperar el dinero.* The reference's three stays in
-   * `DEFAULT_DEATH_EXIT_POLICY`; the exit at twelve is unchanged.
+   * OFF in production (Infinity): *ya no quiero que vendan por dos horas sin
+   * operaciones, sacalo.* It was two — *las que no tengan barras en 2h,
+   * congelarlas y recuperar el dinero* — and with `exitOnFreeze` a freeze is a
+   * sale. A number in OPERADOR_ABANDON_FREEZE_HOURS brings it back. The
+   * reference's three stays in `DEFAULT_DEATH_EXIT_POLICY`; the death exit at
+   * twelve hours without a trade is unchanged.
    */
   readonly abandonFreezeHours: number
   /**
@@ -524,7 +527,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // once its slot is released and holds nothing. OPERADOR_BLACKLIST_ON_FREEZE=0
     // turns it off.
     blacklistOnFreeze: onUnless(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
-    abandonFreezeHours: number(env, 'OPERADOR_ABANDON_FREEZE_HOURS', 2),
+    abandonFreezeHours: number(env, 'OPERADOR_ABANDON_FREEZE_HOURS', Infinity),
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', DEFAULT_MAX_USD_PER_LEVEL),
     dropInitPct: productionLadder(env).dropInitPct,
     minProfitPct: productionLadder(env).minProfitPct,

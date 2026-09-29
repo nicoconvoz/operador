@@ -61,7 +61,7 @@ const held: PersistedPosition = {
   capitalUsd: 15.89, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
 }
 
-describe('abandonment freezes at TWO hours, through the path the engine runs', () => {
+describe('the abandonment freeze is OFF, through the path the engine runs', () => {
   // *Las que no tengan barras en 2h, congelarlas y recuperar el dinero.* A
   // freeze with `exitOnFreeze` on sells the position and the release bans it.
   const quiet = (hoursSinceLastTrade: number) => ({
@@ -70,11 +70,16 @@ describe('abandonment freezes at TWO hours, through the path the engine runs', (
     topHolderMovedPct: null, hoursSinceLastTrade,
   })
 
-  it('freezes a position whose token has not traded for two hours', () => {
+  it('never freezes a position for hours without a trade — the operator took it out', () => {
+    // *Ya no quiero que vendan por dos horas sin operaciones, sacalo.* With
+    // `exitOnFreeze` a freeze IS a sale, so the abandonment freeze is off on
+    // the path the engine runs, at any number of quiet hours short of the
+    // death exit's twelve.
     const policy = tickConfigFrom(runtime().cycleConfig).deathPolicy!
-    expect(policy.abandonmentFreezeHours).toBe(2)
-    expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(1.9)).state.stage).toBe('healthy')
-    expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(2)).state.stage).toBe('frozen')
+    expect(policy.abandonmentFreezeHours).toBe(Infinity)
+    for (const hours of [2, 3, 6, 11.9]) {
+      expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(hours)).state.stage, `${hours}h`).toBe('healthy')
+    }
   })
 
   it('takes another threshold from the environment', () => {
