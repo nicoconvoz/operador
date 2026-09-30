@@ -227,8 +227,14 @@ the death exit at twelve hours stays. No price stop exists.
   a day at 30 positions and 2.5 GB at 250. The book now lives in the same
   in-memory store as the tape; a save reaches Postgres first and is folded into
   memory by `mergeSavedPosition`, the upsert's own ratchets in one function the
-  reference store shares. Still heavy: the dashboard's 2-minute tape cache grows
-  with the tape, and a scan still writes its whole snapshot every pass.
+  reference store shares. The last scan per chain lives there as well: the
+  health pass re-read the scan the engine had just written, about 250 KB a
+  pass at 166 positions.
+- **The dashboard reads what is new** (`incrementalTape`): the whole tape once,
+  then the fills of the last two hours and a count; a count that does not
+  match — a stamp older than the overlap, a truncate — reads everything again.
+- **Alerts older than three days are deleted** at every engine start
+  (`ALERT_RETENTION_MS`); the phone reads forward from a cursor.
 - **A pass takes longer with a big book**: each held token costs a candle
   request and a sell probe per tick.
 
