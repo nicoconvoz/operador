@@ -48,6 +48,18 @@ export function Operations({
   // By name, nearest its take-profit, or the biggest losers first — the
   // reader's pick, name by default. See `sortPositions`.
   const [order, setOrder] = useState<PositionOrder>('alphabetical')
+  // The reader's pick outlives the tab: *la opción que toqué no queda
+  // guardada.* localStorage, not sessionStorage — it is a preference, not
+  // where the reader just was — and read AFTER mounting, because the server
+  // has no storage and a first render that disagreed with it would not hydrate.
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ORDER_KEY)
+      if (ORDERS.some((o) => o.order === saved)) setOrder(saved as PositionOrder)
+    } catch {
+      // Storage blocked or unavailable: the name order stands.
+    }
+  }, [])
   const positions = useMemo(() => sortPositions(given, order), [given, order])
   const [open, setOpen] = useState<string | null>(positions[0]?.id ?? null)
 
@@ -69,6 +81,11 @@ export function Operations({
   // A new order starts again at the top of page one, with nothing open.
   const pick = (to: PositionOrder) => {
     setOrder(to)
+    try {
+      localStorage.setItem(ORDER_KEY, to)
+    } catch {
+      // Not remembered, still applied.
+    }
     setPageAt(0)
     setOpen(null)
   }
@@ -352,6 +369,9 @@ const card = (): React.CSSProperties => ({
  * The three orders the book can be read in. *Un filtro por orden alfabético,
  * por mayor ganancia — más cerca del 12.5% — y otro para las más perdedoras.*
  */
+/** Where the reader's pick is remembered. */
+const ORDER_KEY = 'operador:operations-order'
+
 const ORDERS: readonly { readonly order: PositionOrder; readonly label: string }[] = [
   { order: 'alphabetical', label: 'A–Z' },
   { order: 'nearestTp', label: 'Más cerca del TP' },
