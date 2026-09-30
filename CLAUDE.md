@@ -28,7 +28,7 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | safe, and **moving at least 1% every five minutes** — nothing else | `gates.ts` (`volatility`), `volatility-probe.ts`, `production-doors.ts` |
+| **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
 | **The book** | a slot is **6 × $5 = $30**; the book holds **capital / $30** tokens (166 at $5,000), the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
 | **Every later buy** | **five DCAs of $5**, from a **15% dip and an 8% bounce**, growing 2 and 1 with each, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
@@ -53,6 +53,15 @@ market-wide turn:
 - **One door.** *Nada de dos puertas: sólo medí volatilidad.* The rising door
   is off (`OPERADOR_ENTRY_RISING=1` brings it back); the volatility door is the
   only opportunity condition, and the ladder buys the falls anyway.
+- **Then no door at all: volatility is the ORDER.** *Que entren todos los tokens
+  posibles, sólo que se le dé más prioridad a los de mayor volatilidad, pero que
+  sigan por los menos volátiles hasta llenar el cupo.* The 1% floor is 0
+  (`OPERADOR_MIN_VOLATILITY_PCT=1` restores it) and `DEFAULT_CANDIDATE_ORDER` is
+  `volatility`: the scan measures every stranger that clears the free gates, a
+  few at a time, before it pays for any, then examines the most volatile first
+  and stops at the free slots; the ranking and the allocator serve in the same
+  order (`volatilityRank`), the unmeasured last. `OPERADOR_RANK_BY=cost` brings
+  the cost order back.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.
