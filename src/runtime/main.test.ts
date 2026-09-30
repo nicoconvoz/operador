@@ -290,6 +290,13 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(broker.execute(entries, 1, 0)).toHaveLength(6)
   })
 
+  it('ticks on the live price by default, and reads candles only for a position idle six hours', () => {
+    // *Quiero el precio directamente* — *si ha pasado mucho tiempo sin actuar, ahí sí consultamos sólo la última vela.*
+    expect(runtime().deps.liveBars?.staleAfterMs).toBe(6 * 3_600_000)
+    expect(runtime({ OPERADOR_STALE_CHECK_HOURS: '3' }).deps.liveBars?.staleAfterMs).toBe(3 * 3_600_000)
+    expect(runtime({ OPERADOR_LIVE_PRICE: '0' }).deps.liveBars).toBeUndefined()
+  })
+
   it('blacklists a frozen token on release unless told not to', () => {
     expect(runtime().cycleConfig.blacklistOnFreeze).toBe(true)
     expect(runtime({ OPERADOR_BLACKLIST_ON_FREEZE: '0' }).cycleConfig.blacklistOnFreeze).toBe(false)
@@ -621,8 +628,11 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
   // off through every path.* So these build the runtime from an EMPTY
   // environment — production's defaults — and run the SAME sweep the cycle and
   // the loop run, on a book read back from the store the way production reads it.
+  // These follow a reservation whose FIRST dollar waits for a dip and a bounce
+  // — the rule with buy-on-selection off. With it on, the sweep buys that first
+  // step at once (see "the FIRST step is bought on selection").
   const book = async (env: Record<string, string> = {}) => {
-    const { deps, cycleConfig, store } = onMemory(env)
+    const { deps, cycleConfig, store } = onMemory({ OPERADOR_BUY_ON_SELECTION: '0', ...env })
     // A reservation the allocator sized and the tick has priced: nothing bought.
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
@@ -860,7 +870,7 @@ describe('the pool is asked live before every step, through the path the engine 
   })
 
   const book = async () => {
-    const { deps, cycleConfig, store } = onMemory()
+    const { deps, cycleConfig, store } = onMemory({ OPERADOR_BUY_ON_SELECTION: '0' })
     // A reservation opened on a $196,917 pool: the death watch's own baseline.
     const slot = {
       ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0,
@@ -1031,6 +1041,27 @@ describe('the FIRST step is bought on selection, through the cycle the engine ru
     expect((buys[0]!.qty * buys[0]!.price) / 5).toBeCloseTo(1, 2)
     const said = (setup.deps.alerts as RecordingAlerts).sent.find((a) => a.kind === 'position-opened')
     expect(said?.title).toBe('🟢 NEW compró $5 al entrar como candidata (compra 1 de 20)')
+  })
+
+  it('buys the first step on the next sweep when the opening pass could not — a reservation never waits for a dip to START', async () => {
+    // The opening pass had no candle close for it — a provider refusing, a
+    // price that could not be confirmed — so it saved the slot and bought
+    // nothing. On 2026-09-30 fifty-four reservations sat like that, each
+    // waiting for a 15% dip and an 8% bounce to buy its FIRST dollar.
+    const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000' })
+    // A reservation as that pass left it, once the next one put a close on record.
+    const reserved = { ...held, id: 'solana:NEW:1', tokenAddress: 'NEW', pairAddress: 'pair-NEW', symbol: 'NEW', capitalUsd: 100, lastBarTime: T0 - 15 * 60_000, lastPriceUsd: 1 }
+    await setup.store.savePosition(reserved)
+    expect(await setup.store.fillsFor(reserved.id)).toEqual([])
+    await sweepStops(
+      setup.deps,
+      (p) => exitLevelsFor(p, exitSizingFrom(setup.cycleConfig)),
+      new AlertThrottle(0),
+      await setup.store.loadPositions(),
+      new Map([['solana:NEW', 1]]),
+      T0 + 60_000,
+    )
+    expect((await setup.store.fillsFor(reserved.id)).map((f) => f.orderId)).toEqual(['Entry'])
   })
 
   it('never buys a second first step on the next pass — and the next buy needs a 3% dip under it and a 2% bounce', async () => {

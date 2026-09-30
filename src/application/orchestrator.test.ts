@@ -2831,3 +2831,74 @@ describe('runCycle — every pass writes the day’s result into the Log', () =>
     expect(said[0]!.body).toContain('daily_pnl')
   })
 })
+
+describe('runCycle — the live price, not the candles', () => {
+  // *Quiero el precio directamente, que vaya con el precio en vivo* — and *si
+  // ha pasado mucho tiempo sin actuar, ahí sí consultamos sólo la última vela.*
+  // The operator. The tick is handed ONE bar made of the price this cycle
+  // already fetched; only a position that has not bought in six hours asks for
+  // a short read of real candles, so the death watch can still see a pool that
+  // stopped trading.
+  const FIFTEEN = 15 * 60_000
+  const paced: CycleConfig = { ...config, barMs: FIFTEEN }
+  const latestClosed = Math.floor(NOW / FIFTEEN) * FIFTEEN - FIFTEEN
+  const priced = (price: number | null) => async (positions: readonly PersistedPosition[]) =>
+    new Map(price === null ? [] : positions.map((p) => [`${p.chain}:${p.tokenAddress}`, price] as const))
+  const live = (price: number | null, over: Partial<CycleDeps> = {}) => {
+    const count = { candles: 0, recent: 0, healthLengths: [] as number[] }
+    const built = rig({
+      candlesFor: async () => { count.candles++; return flat() },
+      healthFor: async (_p, candles) => { count.healthLengths.push(candles.time.length); return null },
+      marketPrices: priced(price),
+      liveBars: { staleAfterMs: 6 * HOUR, recentCandles: async () => { count.recent++; return flat(16) } },
+      scan: async () => [],
+      ...over,
+    })
+    return { ...built, count }
+  }
+
+  it('ticks a held position on its live price and asks for no candle', async () => {
+    const { deps, store, throttle, count } = live(1.02)
+    await store.savePosition(position())
+    await runCycle(deps, paced, throttle)
+    const [after] = await store.loadPositions()
+    expect(count.candles).toBe(0)
+    expect(count.recent).toBe(0)
+    expect(after!.lastBarTime).toBe(latestClosed)
+    expect(after!.lastPriceUsd).toBe(1.02)
+  })
+
+  it('asks for a short read of real candles only for a position that has not acted in six hours', async () => {
+    const { deps, store, throttle, count } = live(1.02)
+    await store.savePosition(position({ openedAt: NOW - 7 * HOUR }))
+    await runCycle(deps, paced, throttle)
+    expect(count.candles).toBe(0)
+    expect(count.recent).toBe(1)
+    // The death watch reads the real series; the tick still runs on the price.
+    expect(count.healthLengths).toEqual([16])
+  })
+
+  it('does not ask for one when the position bought within the six hours', async () => {
+    const { deps, store, throttle, count } = live(1.02)
+    await store.savePosition(position({ openedAt: NOW - 7 * HOUR }))
+    await store.recordFill({ positionId: 'pos-1', orderId: 'Step-1', side: 'buy', time: NOW - HOUR, price: 1, qty: 1, costUsd: 0.05, comment: 'step', idempotencyKey: 'k1' })
+    await runCycle(deps, paced, throttle)
+    expect(count.recent).toBe(0)
+  })
+
+  it('says a position with no live price this cycle is unreachable, and still asks no candle', async () => {
+    const { deps, store, throttle, count } = live(null)
+    await store.savePosition(position())
+    const result = await runCycle(deps, paced, throttle)
+    expect(count.candles).toBe(0)
+    expect(result.unreachableIds).toEqual(['pos-1'])
+  })
+
+  it('ticks a position it opens this pass on the scanner’s price, without a candle', async () => {
+    const { deps, store, throttle, count } = live(null, { scan: async () => [candidate('a', 90)] })
+    await runCycle(deps, paced, throttle)
+    const opened = (await store.loadPositions()).find((p) => p.tokenAddress === 'a')
+    expect(count.candles).toBe(0)
+    expect(opened?.lastBarTime).toBe(latestClosed)
+  })
+})

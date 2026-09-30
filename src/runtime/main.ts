@@ -18,7 +18,7 @@ import { scanOnce, examineToken, type ScanError } from '../application/scan.js'
 import { type CycleConfig, type CycleDeps } from '../application/orchestrator.js'
 
 import { DexScreener } from '../infrastructure/adapters/dexscreener/dexscreener.js'
-import { GeckoTerminal, barMinutes, FIVE_MINUTES, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
+import { GeckoTerminal, barMinutes, FIVE_MINUTES, ONE_HOUR, type BarSize } from '../infrastructure/adapters/geckoterminal/geckoterminal.js'
 import { GoPlus } from '../infrastructure/adapters/goplus/goplus.js'
 import { Jupiter } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { PancakeSwap, jsonRpcEthCall } from '../infrastructure/adapters/pancakeswap/pancakeswap.js'
@@ -27,7 +27,6 @@ import { JupiterTokens } from '../infrastructure/adapters/jupiter/jupiter-tokens
 import { SolanaMints } from '../infrastructure/adapters/solana/mint-facts.js'
 import { JupiterCharts } from '../infrastructure/adapters/jupiter/jupiter-charts.js'
 import { tokenCandles } from '../application/candle-source.js'
-import { volatilityProbe, VOLATILITY_CANDLES } from '../application/volatility-probe.js'
 import { lastHourVolatility } from '../application/recent-volatility.js'
 import { recentLiquidityChange } from '../application/liquidity-change.js'
 import { type LiquidityReading } from '../domain/strategy/liquidity-brake.js'
@@ -164,21 +163,6 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    * sweeps and the loop's, so its per-bar memory is one memory: the 30-second
    * sweep asks each token once per 5-minute bar, never once per pass.
    */
-  /**
-   * How much a stranger moves every five minutes, for the volatility door: six
-   * hours of closed 5-minute bars through the same route as every other candle.
-   * ONE instance, so an answer stands ten minutes across passes instead of
-   * costing a chart request every pass while slots are free.
-   */
-  const moves = volatilityProbe({
-    // No source answering is a failure, not a verdict: thrown, never remembered.
-    candles: async (t) => {
-      const series = await candlesOf(t.chain, t.address, t.pairAddress, FIVE_MINUTES, VOLATILITY_CANDLES + 1)
-      if (series === null) throw new Error(`no candle source answered for ${t.address}`)
-      return series
-    },
-    now: () => Date.now(),
-  })
   const recentVolatility = lastHourVolatility({
     candles: (position) => candlesOf(position.chain, position.tokenAddress, position.pairAddress, FIVE_MINUTES, 16),
     now: () => Date.now(),
@@ -491,6 +475,20 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // book whose every tick depends on it must not go blind when it moves.
     candlesFor: (position) =>
       candlesOf(position.chain, position.tokenAddress, position.pairAddress, config.barSize, 1000),
+    // *Quiero el precio directamente, que vaya con el precio en vivo.* The tick
+    // runs on one bar made of the price the cycle already fetched; only a
+    // position that has not bought in `staleCheckHours` asks a short read of
+    // hourly candles — sixteen closed hours — so the death watch still sees a
+    // pool that stopped trading. OPERADOR_LIVE_PRICE=0 brings the downloads back.
+    ...(config.livePrice
+      ? {
+          liveBars: {
+            staleAfterMs: config.staleCheckHours * 3_600_000,
+            recentCandles: (position: PersistedPosition) =>
+              candlesOf(position.chain, position.tokenAddress, position.pairAddress, ONE_HOUR, 17),
+          },
+        }
+      : {}),
     // *Aplicalo para el DCA también — nada de escalones, esa regla.* A $15
     // rung each time buy pressure crosses 1% upward. The hour's counts come
     // from Jupiter, per mint, out of the response the book's live prices just
@@ -988,8 +986,6 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
                       gecko.candles(snapshot.chain, snapshot.pairAddress, config.barSize, POOL_CANDLES),
                   }
                 : {}),
-              // The volatility door, measured before anything is paid for.
-              volatility5m: moves,
               // A scan spends minutes inside throttled calls. Saying where it
               // is turns a timeout from a mystery into a measurement.
               onProgress: (p) => console.log(`[scan:${p.stage}]`, JSON.stringify(p)),

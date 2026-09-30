@@ -291,6 +291,19 @@ export interface RuntimeConfig {
    */
   readonly buyOnSelection: boolean
   /**
+   * The LIVE PRICE instead of the candles: each pass ticks a position on one
+   * bar made of the price it already fetched. *Quiero el precio directamente.*
+   * ON; OPERADOR_LIVE_PRICE=0 brings the candle downloads back.
+   */
+  readonly livePrice: boolean
+  /**
+   * Hours without a buy after which a position asks one short read of real
+   * candles, so the death watch can still see a pool that stopped trading.
+   * *Si ha pasado mucho tiempo sin actuar, ahí sí consultamos sólo la última
+   * vela.* OPERADOR_STALE_CHECK_HOURS, 6.
+   */
+  readonly staleCheckHours: number
+  /**
    * Fixed dollars per token, or absent to split the capital among whoever
    * qualified.
    *
@@ -626,6 +639,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // cuando una moneda pasa a candidata* — and only an explicit 0 or false
     // puts it back off.
     buyOnSelection: onUnless(env, 'OPERADOR_BUY_ON_SELECTION'),
+    livePrice: onUnless(env, 'OPERADOR_LIVE_PRICE'),
+    staleCheckHours: number(env, 'OPERADOR_STALE_CHECK_HOURS', 6),
     // Unset: exactly one slot, steps × step, set below — nothing grossed up.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
     // ZERO — off — by default: the target a $1 step's round trip derives would

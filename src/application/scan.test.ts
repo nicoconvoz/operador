@@ -1400,6 +1400,17 @@ describe('scanOnce — only as far as the free slots need', () => {
       expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['a3', 'a2', 'a1'])
     })
 
+    it('with no probe, orders by the price changes the market already reports — no candle, no request', async () => {
+      // *No quiero velas.* The operator.
+      const { scanDeps, examined } = rig()
+      const moving = { ...scanDeps, markets: async (_c: 'solana' | 'bsc', addresses: readonly string[]) =>
+        addresses.map((a) => ({ ...market(a, depthOf(a)), priceChangePct: { m5: a === 't04' ? 9 : a === 't12' ? 6 : 0.1, h1: 0, h6: 0, h24: 0 } })) }
+      const byVolatility = { ...production, ranking: { ...production.ranking, order: 'volatility' as const } }
+      const outcome = await scanOnce(moving, { ...byVolatility, wanted: 2 })
+      expect(examined).toEqual(['t04', 't12'])
+      expect(outcome.candidates.map((c) => c.snapshot.volatility5mPct)).toEqual([expect.closeTo(3, 9), expect.closeTo(2, 9)])
+    })
+
     it('with the door off, measures nothing and examines exactly as before', async () => {
       const { scanDeps, examined } = rig()
       const measured: string[] = []

@@ -726,6 +726,13 @@ export async function sweepStops(
         stopped.push(position.id)
         continue
       }
+      // *Que la primera compra entre automáticamente* — and not only on the
+      // pass that opened the slot. A reservation that pass could not buy (no
+      // close on record yet, a price it could not confirm) buys its first step
+      // on the first sweep that can, never waiting for a dip to START.
+      if (!held && fills.length === 0 && deps.dipBounce?.onSelection === true && price !== null && price > 0) {
+        if ((await buyFirstStepOnSelection(deps, position, price, at, throttle)) !== null) continue
+      }
       // A RESERVATION buys too: its first dollar is a dip-bounce step like
       // every other, so the sweep watches a position that holds nothing yet.
       if (held || (deps.dipBounce && price !== null && price > 0)) await buyRungs(deps, position, fills, price!, at, throttle, liquidity, low, stepPools)

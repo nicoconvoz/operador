@@ -1,3 +1,4 @@
+import { marketVolatilityPct } from '../domain/scanner/market-volatility.js'
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
 import { patientSellProbe } from './patient-sell-probe.js'
 import { type RememberedToken, type StatePort } from '../domain/persistence/store.js'
@@ -585,12 +586,13 @@ export async function scanOnce(
   const queue: MarketSnapshot[] = []
   /** What the security cache already knew, fresh — fully evaluated at no network cost. */
   const remembered = new Map<string, CachedSecurity>()
-  // The volatility door: on when the policy asks for movement and something
-  // can measure it.
-  const volatilityDoor = deps.volatility5m !== undefined && config.ranking.gates.minVolatility5mPct > 0
+  // The volatility door: on when the policy asks for movement.
+  const volatilityDoor = config.ranking.gates.minVolatility5mPct > 0
   // Measured whenever the door asks for it or the ORDER is the volatility —
-  // before anything is paid for, so the scan can spend in that order.
-  const measureVolatility = deps.volatility5m !== undefined && (volatilityDoor || config.ranking.order === 'volatility')
+  // before anything is paid for, so the scan can spend in that order. With a
+  // probe, from candles; without one, from the price changes the market feed
+  // already reported (`marketVolatilityPct`) — no request at all.
+  const measureVolatility = volatilityDoor || config.ranking.order === 'volatility'
   /** Each measured stranger's volatility; absent when the request failed. */
   const volatility = new Map<string, number | null>()
   const withVolatility = (address: string): Partial<TokenSnapshot> =>
@@ -786,7 +788,9 @@ export async function scanOnce(
   // probe. Ours is never measured: the order and the door decide what ENTERS.
   // A failed request leaves the value absent — the door refuses it, the order
   // serves it last — and is never fatal.
-  if (measureVolatility) {
+  if (measureVolatility && deps.volatility5m === undefined) {
+    for (const market of passing) if (!held.has(market.address)) volatility.set(market.address, marketVolatilityPct(market.priceChangePct))
+  } else if (measureVolatility) {
     const strangers = passing.filter((market) => !held.has(market.address))
     let next = 0
     await Promise.all(Array.from({ length: Math.min(VOLATILITY_CONCURRENCY, strangers.length) }, async () => {

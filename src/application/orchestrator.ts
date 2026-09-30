@@ -54,6 +54,19 @@ export interface CycleDeps {
   /** Candles for a position, oldest first. Null when unavailable this cycle. */
   readonly candlesFor: (position: PersistedPosition) => Promise<Candles | null>
   /**
+   * The LIVE PRICE instead of the candles. *Quiero el precio directamente, que
+   * vaya con el precio en vivo* — the operator. Present: the tick is handed ONE
+   * bar made of the price this cycle already fetched, and `candlesFor` is never
+   * asked. *Si ha pasado mucho tiempo sin actuar, ahí sí consultamos sólo la
+   * última vela:* a position that has not bought in `staleAfterMs` asks
+   * `recentCandles` — a short read — for the death watch alone, so a pool that
+   * stopped trading can still be seen. Absent: the candles, as before.
+   */
+  readonly liveBars?: {
+    readonly staleAfterMs: number
+    readonly recentCandles: (position: PersistedPosition) => Promise<Candles | null>
+  }
+  /**
    * The DCA ladder, bought on a floor of one-minute candles by the same sweep
    * that runs the stop. Absent: no ladder.
    */
@@ -350,6 +363,11 @@ export interface CycleResult {
  * money is the caller's job, because a function that both decides and acts is
  * a function that cannot be tested without a chain.
  */
+/** ONE bar made of a live price, stamped with the bar it stands for. */
+const liveBar = (price: number, time: number): Candles => ({
+  time: [time], open: [price], high: [price], low: [price], close: [price], volume: [1],
+})
+
 export async function runCycle(
   deps: CycleDeps,
   config: CycleConfig,
@@ -437,6 +455,24 @@ export async function runCycle(
   // engine acts on closed bars only — asking anyway is how it spends the quota
   // that the positions with real work to do then cannot get.
   const latestClosedBar = config.barMs === undefined ? null : Math.floor(at / config.barMs) * config.barMs - config.barMs
+
+  /**
+   * What the death watch reads. On the live price it is the live bar — which
+   * says the pool traded now, so abandonment cannot fire on it — unless the
+   * position has not bought in `staleAfterMs`: then one short read of real
+   * candles, so a pool that stopped trading is still seen. A read that fails
+   * is not evidence: the live bar stands.
+   */
+  const healthCandles = async (position: PersistedPosition, candles: Candles): Promise<Candles> => {
+    if (!deps.liveBars) return candles
+    const lastAct = (await deps.store.fillsFor(position.id)).reduce((latest, f) => Math.max(latest, f.time), position.openedAt)
+    if (at - lastAct < deps.liveBars.staleAfterMs) return candles
+    try {
+      return (await deps.liveBars.recentCandles(position)) ?? candles
+    } catch {
+      return candles
+    }
+  }
 
   // One batched ask for the whole book, before the loop. A failure is not
   // fatal and not evidence: an empty map leaves every position exactly as it
@@ -642,7 +678,10 @@ export async function runCycle(
     // do it.
     if (stopped.has(position.id)) continue
 
-    const candles = await deps.candlesFor(position)
+    const livePrice = marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null
+    const candles = deps.liveBars && latestClosedBar !== null
+      ? (livePrice !== null && livePrice > 0 ? liveBar(livePrice, latestClosedBar) : null)
+      : await deps.candlesFor(position)
     if (!candles) {
       // Never silently. A position was skipped here without a word, and the
       // book drifted into bars four hours apart while every pass logged
@@ -651,7 +690,9 @@ export async function runCycle(
       const unreachable = alert(
         'provider-degraded',
         `📡 ${position.symbol} sin datos`,
-        'No se pudieron traer sus velas, así que esta pasada no avanzó ni corrió su vigilancia de muerte. Suele ser un límite de tasa del proveedor; si se repite durante horas, la posición está sin vigilar.',
+        deps.liveBars
+          ? 'No llegó su precio en vivo, así que esta pasada no avanzó ni corrió su vigilancia de muerte. Suele ser un límite de tasa del proveedor; si se repite durante horas, la posición está sin vigilar.'
+          : 'No se pudieron traer sus velas, así que esta pasada no avanzó ni corrió su vigilancia de muerte. Suele ser un límite de tasa del proveedor; si se repite durante horas, la posición está sin vigilar.',
         at,
         { position: position.id },
       )
@@ -663,7 +704,7 @@ export async function runCycle(
       {
         position,
         candles,
-        health: await deps.healthFor(position, candles),
+        health: await deps.healthFor(position, await healthCandles(position, candles)),
         broker: await deps.brokerFor(position),
         marketPriceUsd: marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? null,
       },
@@ -1363,7 +1404,10 @@ export async function runCycle(
   // replaces — so the worst case is the old one.
   for (const position of opened) {
     try {
-      const candles = await deps.candlesFor(position)
+      const bornAt = marketPrices.get(`${position.chain}:${position.tokenAddress}`) ?? position.lastPriceUsd
+      const candles = deps.liveBars && latestClosedBar !== null
+        ? (bornAt !== null && bornAt !== undefined && bornAt > 0 ? liveBar(bornAt, latestClosedBar) : null)
+        : await deps.candlesFor(position)
       if (candles === null) continue
       const result = await tickPosition(
         {
