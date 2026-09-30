@@ -9,6 +9,7 @@ import {
 import { type Alert } from '../domain/notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../domain/scanner/snapshot.js'
 import { type DailyPnlSample } from '../domain/reporting/daily-pnl.js'
+import { mergeSavedPosition } from '../domain/persistence/position-merge.js'
 
 /**
  * The fill tape, read from the database ONCE per engine process and then
@@ -101,6 +102,22 @@ function append(tape: Tape, given: PersistedFill): void {
   else tape.byPosition.set(fill.positionId, [fill])
 }
 
+/**
+ * The BOOK, by the same argument as the tape. *Sólo guardemos los datos que nos
+ * sirvan, que no pesen nada, para no ocupar ni espacio ni red.* The operator.
+ * The engine re-read every position whole on each thirty-second sweep and six
+ * to eight times a pass — about ten thousand full reads a day, measured at
+ * 280 MB a day with 30 positions and 2.5 GB with 250 — and the book grew to 166.
+ *
+ * The engine is the only writer of positions while it runs, so after one read
+ * every change passes through here. A save reaches the database first and is
+ * then folded into memory by `mergeSavedPosition` — the ratchets the upsert
+ * keeps in SQL — never taken as the row it was handed. A failed save or close
+ * drops the book, and the next read asks the database. Returned in the order
+ * the database returns them, by `openedAt`, and always as copies.
+ */
+const byOpening = (a: PersistedPosition, b: PersistedPosition) => a.openedAt - b.openedAt
+
 class CachedTape implements StatePort {
   private tape: Tape | null = null
   /** The load in flight, shared by every reader that arrives while it runs. */
@@ -112,7 +129,35 @@ class CachedTape implements StatePort {
    */
   private generation = 0
 
+  private book: Map<string, PersistedPosition> | null = null
+  private bookLoading: Promise<Map<string, PersistedPosition>> | null = null
+  private bookGeneration = 0
+
   constructor(private readonly store: StatePort) {}
+
+  private loadBook(): Promise<Map<string, PersistedPosition>> {
+    if (this.book) return Promise.resolve(this.book)
+    if (this.bookLoading) return this.bookLoading
+    const generation = this.bookGeneration
+    const loading = this.store
+      .loadPositions()
+      .then((positions) => {
+        const book = new Map(positions.map((p) => [p.id, structuredClone(p)] as const))
+        if (generation === this.bookGeneration) this.book = book
+        return book
+      })
+      .finally(() => {
+        if (this.bookLoading === loading) this.bookLoading = null
+      })
+    this.bookLoading = loading
+    return loading
+  }
+
+  private forgetBook(): void {
+    this.book = null
+    this.bookLoading = null
+    this.bookGeneration++
+  }
 
   private load(): Promise<Tape> {
     if (this.tape) return Promise.resolve(this.tape)
@@ -167,11 +212,35 @@ class CachedTape implements StatePort {
     return (await this.load()).keys.has(idempotencyKey)
   }
 
+  async loadPositions(): Promise<readonly PersistedPosition[]> {
+    return [...(await this.loadBook()).values()].sort(byOpening).map((p) => structuredClone(p))
+  }
+
+  async savePosition(position: PersistedPosition): Promise<void> {
+    try {
+      await this.store.savePosition(position)
+    } catch (error) {
+      this.forgetBook()
+      throw error
+    }
+    if (this.bookLoading) await this.bookLoading.catch(() => undefined)
+    const book = this.book
+    if (book) book.set(position.id, structuredClone(mergeSavedPosition(book.get(position.id), position)))
+  }
+
+  async closePosition(positionId: string): Promise<void> {
+    try {
+      await this.store.closePosition(positionId)
+    } catch (error) {
+      this.forgetBook()
+      throw error
+    }
+    if (this.bookLoading) await this.bookLoading.catch(() => undefined)
+    this.book?.delete(positionId)
+  }
+
   // ── Everything else is the store's own ──────────────────────────────────────
 
-  loadPositions(): Promise<readonly PersistedPosition[]> { return this.store.loadPositions() }
-  savePosition(position: PersistedPosition): Promise<void> { return this.store.savePosition(position) }
-  closePosition(positionId: string): Promise<void> { return this.store.closePosition(positionId) }
   saveScan(scan: PersistedScan): Promise<void> { return this.store.saveScan(scan) }
   latestScan(): Promise<PersistedScan | null> { return this.store.latestScan() }
   latestScansByChain(): Promise<readonly PersistedScan[]> { return this.store.latestScansByChain() }

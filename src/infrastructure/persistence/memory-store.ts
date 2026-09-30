@@ -8,19 +8,9 @@ import {
 } from '../../domain/persistence/store.js'
 import { type Alert } from '../../domain/notifications/alerts.js'
 import { type Chain, type SecurityReport } from '../../domain/scanner/snapshot.js'
-import { keepGainLock } from '../../domain/risk/gain-lock.js'
-import { keepLiquidityWatch } from '../../domain/strategy/liquidity-brake.js'
-import { keepPriceLow } from '../../domain/strategy/deep-rung.js'
-import { keepDipWatch } from '../../domain/strategy/dip-bounce.js'
+import { mergeSavedPosition } from '../../domain/persistence/position-merge.js'
 import { type CachedSecurity , type RememberedToken } from '../../domain/persistence/store.js'
 import { foldDailySample, type DailyPnl, type DailyPnlSample } from '../../domain/reporting/daily-pnl.js'
-
-/** A position's real-time DCA scale as a whole pair, or null. */
-const readingOf = (position: PersistedPosition | undefined): { scale: number; at: number } | null =>
-  position?.dcaScaleNow !== null && position?.dcaScaleNow !== undefined &&
-  position.dcaScaleNowAt !== null && position.dcaScaleNowAt !== undefined
-    ? { scale: position.dcaScaleNow, at: position.dcaScaleNowAt }
-    : null
 
 /**
  * In-memory StatePort — for tests, paper runs, and as the reference that
@@ -49,38 +39,10 @@ export class MemoryStore implements StatePort {
   }
 
   async savePosition(position: PersistedPosition): Promise<void> {
-    // The break-even ratchet, kept exactly as the SQL keeps it. A reference
-    // store looser than production would let the tests pass on a rule the real
-    // one enforces and this one does not.
-    const stored = this.positions.get(position.id)
-    const armed = stored?.breakEvenArmed === true || position.breakEvenArmed === true
-    // The score baseline, kept exactly as the SQL keeps it: the first
-    // non-null value, never moved by a later save.
-    const entryScore = stored?.entryScore ?? position.entryScore ?? null
-    // The DCA scale, by the same rule: measured once, never erased.
-    const dcaScale = stored?.dcaScale ?? position.dcaScale ?? null
-    // The gain lock, by the same rule the upsert spells out in its CASE.
-    const gainLock = keepGainLock(stored?.gainLock, position.gainLock)
-    // The real-time DCA scale, by the rule the upsert spells out in its CASE:
-    // the NEWER pair wins, and a half pair is no reading at all.
-    const written = readingOf(position)
-    const kept = readingOf(stored)
-    const now = written !== null && (kept === null || written.at > kept.at) ? written : kept
-    // The liquidity watch, by the rule the upsert spells out in its CASE: the
-    // NEWER watch wins, and a write carrying none keeps what is stored.
-    const liquidityWatch = keepLiquidityWatch(stored?.liquidityWatch, position.liquidityWatch)
-    // The price low, by the rule the upsert spells out in its CASE: the same
-    // holding keeps the LOWER price, a newer holding's replaces it, and a
-    // write carrying none keeps what is stored.
-    const priceLow = keepPriceLow(stored?.priceLow, position.priceLow)
-    // The dip-bounce watch, by the rule the upsert spells out in its CASE: the
-    // NEWER watch wins, and a write carrying none keeps what is stored.
-    const dipWatch = keepDipWatch(stored?.dipWatch, position.dipWatch)
-    this.positions.set(position.id, structuredClone({
-      ...position, breakEvenArmed: armed, entryScore, dcaScale, gainLock,
-      dcaScaleNow: now?.scale ?? null, dcaScaleNowAt: now?.at ?? null,
-      liquidityWatch, priceLow, dipWatch,
-    }))
+    // The ratchets, kept exactly as the SQL keeps them — `mergeSavedPosition`.
+    // A reference store looser than production would let the tests pass on a
+    // rule the real one enforces and this one does not.
+    this.positions.set(position.id, structuredClone(mergeSavedPosition(this.positions.get(position.id), position)))
   }
 
   async closePosition(positionId: string): Promise<void> {

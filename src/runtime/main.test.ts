@@ -1185,7 +1185,7 @@ describe('with no free slot, the scan reads nothing new — through the scan the
   })
 })
 
-describe('the fill tape is read ONCE per process, through the path the engine runs', () => {
+describe('the fill tape and the book are read ONCE per process, through the path the engine runs', () => {
   // 5156a9b holds up to 250 positions buying up to twenty $1 steps, and the
   // sweep read every held position's fills from Postgres every thirty seconds
   // while the cycle re-read the whole tape about three times a pass — gigabytes
@@ -1230,6 +1230,8 @@ describe('the fill tape is read ONCE per process, through the path the engine ru
       /** Every read of the fills table — `allFills`, `fillsFor` and `hasFill` alike. */
       fillReads: () => queries.filter((q) => /\bFROM fills\b/.test(q)).length,
       inserts: () => queries.filter((q) => /INSERT INTO fills/.test(q)).length,
+      /** Every read of the positions table. */
+      bookReads: () => queries.filter((q) => q.includes('FROM positions')).length,
     }
   }
 
@@ -1255,5 +1257,15 @@ describe('the fill tape is read ONCE per process, through the path the engine ru
     expect(await deps.store.allFills()).toHaveLength(2 * BOOK)
     expect(await deps.store.fillsFor(book[0]!.id)).toHaveLength(2)
     expect(fillReads()).toBe(1)
+  })
+
+  it('reads the book from the database once, however many sweeps and passes ask for it', async () => {
+    // *Sólo los datos que nos sirvan, que no pesen nada.* The sweep asked for
+    // the whole book every thirty seconds and the pass six to eight times more.
+    const { deps, bookReads } = wired()
+    for (let i = 0; i < 5; i++) await deps.store.loadPositions()
+    await deps.store.savePosition(book[0]!)
+    expect((await deps.store.loadPositions()).map((p) => p.id)).toEqual([book[0]!.id])
+    expect(bookReads()).toBe(1)
   })
 })

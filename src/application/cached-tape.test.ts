@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { cachedTape } from './cached-tape.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { type PersistedFill, type StatePort } from '../domain/persistence/store.js'
+import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
 
@@ -22,10 +22,22 @@ const fill = (key: string, over: Partial<PersistedFill> = {}): PersistedFill => 
 
 /** A MemoryStore that counts what the cache asks of it — the database, in these tests. */
 const counting = (store = new MemoryStore()) => {
-  const calls = { allFills: 0, fillsFor: 0, hasFill: 0, recordFill: 0 }
+  const calls = { allFills: 0, fillsFor: 0, hasFill: 0, recordFill: 0, loadPositions: 0, savePosition: 0, closePosition: 0 }
   let failNextLoad = false
   let loseNextReply = false
+  let failNextSave = false
   const tapeMethods: Partial<StatePort> = {
+    loadPositions: async () => { calls.loadPositions++; return store.loadPositions() },
+    savePosition: async (position: PersistedPosition) => {
+      calls.savePosition++
+      await store.savePosition(position)
+      // The row landed and the reply did not.
+      if (failNextSave) {
+        failNextSave = false
+        throw new Error('connection reset')
+      }
+    },
+    closePosition: async (id: string) => { calls.closePosition++; return store.closePosition(id) },
     allFills: async () => {
       calls.allFills++
       if (failNextLoad) {
@@ -62,6 +74,7 @@ const counting = (store = new MemoryStore()) => {
     calls,
     failNextLoad: () => { failNextLoad = true },
     loseNextReply: () => { loseNextReply = true },
+    failNextSave: () => { failNextSave = true },
     /** Tape reads the database answered: the thing the quota pays for. */
     reads: () => calls.allFills + calls.fillsFor + calls.hasFill,
   }
@@ -275,5 +288,95 @@ describe('cachedTape — the tape is read once per process, and then from memory
     expect((await tape.loadPositions()).map((p) => p.id)).toEqual(['p'])
     await tape.saveCheckpoint({ savedAt: 1, lastCompletedBar: 2, killSwitchEngaged: true })
     expect(await rig.store.loadCheckpoint()).toEqual({ savedAt: 1, lastCompletedBar: 2, killSwitchEngaged: true })
+  })
+})
+
+describe('cachedTape — the book is read once per process, and then from memory', () => {
+  // *Sólo guardemos los datos que nos sirvan, que no pesen nada, para no ocupar
+  // ni espacio ni red.* The operator. The engine re-read the whole book on every
+  // thirty-second sweep and six to eight times a pass — about ten thousand full
+  // reads a day, measured at 280 MB a day with 30 positions and 2.5 GB with 250,
+  // against a book heading for 166. The engine is the only writer of positions,
+  // so after one read every change passes through here.
+  const position = (id: string, over: Partial<PersistedPosition> = {}): PersistedPosition => ({
+    id, chain: 'solana', tokenAddress: id, pairAddress: `pair-${id}`, symbol: id,
+    cascade: initialState(), deathWatch: startDeathWatch(1_000, 0),
+    quality: { liquidityUsd: 1_000, spreadPct: 0.3, slippagePct: 0.1, referenceUsd: 100, observedAt: 0 },
+    capitalUsd: 30, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0, ...over,
+  })
+
+  it('answers every loadPositions from ONE read, however often it is asked', async () => {
+    const rig = counting()
+    await rig.store.savePosition(position('a'))
+    const book = cachedTape(rig.db)
+    for (let i = 0; i < 5; i++) expect((await book.loadPositions()).map((p) => p.id)).toEqual(['a'])
+    expect(rig.calls.loadPositions).toBe(1)
+  })
+
+  it('serves what it saves without another read — and the write still reaches the database', async () => {
+    const rig = counting()
+    const book = cachedTape(rig.db)
+    await book.loadPositions()
+    await book.savePosition(position('a', { lastPriceUsd: 2 }))
+    expect((await book.loadPositions()).map((p) => [p.id, p.lastPriceUsd])).toEqual([['a', 2]])
+    expect((await rig.store.loadPositions()).map((p) => p.lastPriceUsd)).toEqual([2])
+    expect(rig.calls.loadPositions).toBe(1)
+  })
+
+  it('keeps what the database keeps: a stale save cannot erase the gain lock, the entry score or the break-even', async () => {
+    // The upsert ratchets these in SQL, so memory folds a save by the SAME rules
+    // the reference store runs — never the row as it was handed in.
+    const rig = counting()
+    const book = cachedTape(rig.db)
+    await book.savePosition(position('a', { gainLock: { pct: 10, since: 5 }, entryScore: 70, breakEvenArmed: true }))
+    await book.loadPositions()
+    await book.savePosition(position('a', { gainLock: null, entryScore: 40, breakEvenArmed: false, lastPriceUsd: 3 }))
+    const [kept] = await book.loadPositions()
+    const [stored] = await rig.store.loadPositions()
+    expect(kept).toEqual(stored)
+    expect([kept!.gainLock, kept!.entryScore, kept!.breakEvenArmed, kept!.lastPriceUsd]).toEqual([{ pct: 10, since: 5 }, 70, true, 3])
+  })
+
+  it('forgets a closed position without another read', async () => {
+    const rig = counting()
+    await rig.store.savePosition(position('a'))
+    await rig.store.savePosition(position('b', { openedAt: 1 }))
+    const book = cachedTape(rig.db)
+    await book.loadPositions()
+    await book.closePosition('a')
+    expect((await book.loadPositions()).map((p) => p.id)).toEqual(['b'])
+    expect((await rig.store.loadPositions()).map((p) => p.id)).toEqual(['b'])
+    expect(rig.calls.loadPositions).toBe(1)
+  })
+
+  it('returns the book in the order the database does: by the time it was opened', async () => {
+    const rig = counting()
+    const book = cachedTape(rig.db)
+    await book.loadPositions()
+    await book.savePosition(position('late', { openedAt: 9 }))
+    await book.savePosition(position('early', { openedAt: 1 }))
+    expect((await book.loadPositions()).map((p) => p.id)).toEqual(['early', 'late'])
+  })
+
+  it('a save whose reply was lost is re-read from the database, never guessed at', async () => {
+    const rig = counting()
+    const book = cachedTape(rig.db)
+    await book.loadPositions()
+    rig.failNextSave()
+    await expect(book.savePosition(position('a'))).rejects.toThrow('connection reset')
+    expect((await book.loadPositions()).map((p) => p.id)).toEqual(['a'])
+    expect(rig.calls.loadPositions).toBe(2)
+  })
+
+  it('a caller cannot change the book by changing what it was handed, or what it handed in', async () => {
+    const rig = counting()
+    const book = cachedTape(rig.db)
+    const handed = position('a') as { lastPriceUsd: number | null }
+    await book.savePosition(handed as PersistedPosition)
+    await book.loadPositions()
+    handed.lastPriceUsd = 99
+    const [read] = (await book.loadPositions()) as unknown as { lastPriceUsd: number | null }[]
+    read!.lastPriceUsd = 77
+    expect((await book.loadPositions())[0]!.lastPriceUsd).toBe(1)
   })
 })
