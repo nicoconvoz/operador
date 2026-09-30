@@ -96,6 +96,9 @@ export function Operations({
 
   return (
     <>
+      {/* How the book is read — first, above the figures. */}
+      <OrderPicker order={order} onPick={pick} />
+
       {/* The profit itself lives in the header now, above the tabs, so it is
           visible from the Universe too. Repeating it here would be the same
           number twice on one screen. What belongs here is the detail behind
@@ -120,8 +123,6 @@ export function Operations({
           </div>
         </section>
       )}
-
-      <OrderPicker order={order} onPick={pick} />
 
       <Pager page={page} onTurn={turn} />
 
