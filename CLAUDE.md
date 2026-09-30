@@ -28,13 +28,36 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | safe, **rising in the last hour**, and **moving at least 1% every five minutes** | `production-doors.ts`, `momentum.ts` (`risingInTheHour`), `gates.ts` (`volatility`), `volatility-probe.ts` |
-| **The book** | a slot is **20 × $5 = $100**; the book holds **capital / $100** tokens, the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
+| **Candidate** | safe, and **moving at least 1% every five minutes** — nothing else | `gates.ts` (`volatility`), `volatility-probe.ts`, `production-doors.ts` |
+| **The book** | a slot is **6 × $5 = $30**; the book holds **capital / $30** tokens (166 at $5,000), the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
-| **Every later buy** | **$5** on a dip and a bounce that **grow with each DCA**, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
+| **Every later buy** | **five DCAs of $5**, from a **15% dip and an 8% bounce**, growing 2 and 1 with each, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
 | **Exits** | a **fixed TP at +12.5%** over the average, the **freeze** exit, the **death** exit | `fixed-tp.ts`, the stop sweep, `death-exit.ts` |
 
-### The door: rising in the last hour
+### 2026-09-30: five DCAs from 15%/8%, and one door
+
+Three operator decisions, the same day, with the book at −$34 after a
+market-wide turn:
+
+- **The ladder starts where DCA 7 was.** *El DCA 1 = el DCA 7, el DCA 2 = el
+  DCA 8.* `OPERADOR_DIP_PCT` 15 and `OPERADOR_BOUNCE_PCT` 8 by default, still
+  growing 2 and 1 per DCA: 15/8, 17/9, 19/10, 21/11, 23/12 — at least 8%, 17%,
+  26%, 35% and 44% under the first buy. Replayed on the day's 126 positions it
+  held half the capital under water (−$81 on $475 against −$165 on $920) for
+  three fewer take-profits.
+- **Five DCAs, not nineteen.** `OPERADOR_MAX_STEPS` 6: a $30 slot, 166 tokens
+  at $5,000. The $1 experiment was stable because the same capital sat in up to
+  250 tokens; fifty $100 slots put a day in the hands of the two or three that
+  sank (SDOG and CURVE were −$30 between them). Only 3 of the 126 replayed
+  positions ever reached a sixth buy.
+- **One door.** *Nada de dos puertas: sólo medí volatilidad.* The rising door
+  is off (`OPERADOR_ENTRY_RISING=1` brings it back); the volatility door is the
+  only opportunity condition, and the ladder buys the falls anyway.
+
+The sections below that speak of twenty $5 steps, 3%/2% and the rising door
+describe the configuration this replaced.
+
+### The door: rising in the last hour — OFF since 2026-09-30
 
 *Que la barrera de entrada sea solamente que los tokens suban, como marca la
 barra de estudio.* A candidate needs `priceChangePct.h1 > 0` — strictly, and an
