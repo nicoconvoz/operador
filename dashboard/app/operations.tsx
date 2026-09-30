@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { OperationsView, PositionOperations, LadderRung } from '../../src/application/operations-view.js'
-import { alphabetical } from '../../src/application/position-order.js'
+import { sortPositions, type PositionOrder } from '../../src/application/position-order.js'
 import { pageOf, type Page } from '../../src/application/pagination.js'
 
 /**
@@ -45,8 +45,10 @@ export function Operations({
   positions?: readonly PositionOperations[]
   query?: string
 }) {
-  // By name, whatever order the book was stored in. See `alphabetical`.
-  const positions = useMemo(() => alphabetical(given), [given])
+  // By name, nearest its take-profit, or the biggest losers first — the
+  // reader's pick, name by default. See `sortPositions`.
+  const [order, setOrder] = useState<PositionOrder>('alphabetical')
+  const positions = useMemo(() => sortPositions(given, order), [given, order])
   const [open, setOpen] = useState<string | null>(positions[0]?.id ?? null)
 
   // Fifty cards at a time, never the whole book: see `pageOf`. A new search
@@ -63,6 +65,13 @@ export function Operations({
     // Only when the QUERY changes. A poll hands over fresh objects every ten
     // seconds, and a card the reader closed must not spring open again.
   }, [query])
+
+  // A new order starts again at the top of page one, with nothing open.
+  const pick = (to: PositionOrder) => {
+    setOrder(to)
+    setPageAt(0)
+    setOpen(null)
+  }
 
   // Turning the page closes the open card: nothing below the fold is rendered
   // open, and the page the reader lands on starts at its top.
@@ -111,6 +120,8 @@ export function Operations({
           </div>
         </section>
       )}
+
+      <OrderPicker order={order} onPick={pick} />
 
       <Pager page={page} onTurn={turn} />
 
@@ -336,6 +347,46 @@ const card = (): React.CSSProperties => ({
  * below the cards; nothing at all when the book fits on one page. Buttons are
  * 44 px tall so a thumb finds them.
  */
+/**
+ * The three orders the book can be read in. *Un filtro por orden alfabético,
+ * por mayor ganancia — más cerca del 12.5% — y otro para las más perdedoras.*
+ */
+const ORDERS: readonly { readonly order: PositionOrder; readonly label: string }[] = [
+  { order: 'alphabetical', label: 'A–Z' },
+  { order: 'nearestTp', label: 'Más cerca del TP' },
+  { order: 'losers', label: 'Más perdedoras' },
+]
+
+function OrderPicker({ order, onPick }: { order: PositionOrder; onPick: (to: PositionOrder) => void }) {
+  return (
+    <div role="group" aria-label="Ordenar posiciones" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, margin: '0 0 8px' }}>
+      {ORDERS.map((o) => {
+        const on = o.order === order
+        return (
+          <button
+            key={o.order}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onPick(o.order)}
+            style={{
+              minHeight: 44,
+              padding: '0 14px',
+              borderRadius: 999,
+              border: `1px solid ${on ? '#63e6a5' : '#30363d'}`,
+              background: on ? 'rgba(99,230,165,0.12)' : 'rgba(22,27,34,0.9)',
+              color: on ? '#63e6a5' : '#e6edf3',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function Pager({ page, onTurn }: { page: Page<PositionOperations>; onTurn: (to: number) => void }) {
   if (page.pages <= 1) return null
   const button = (label: string, to: number, enabled: boolean) => (
