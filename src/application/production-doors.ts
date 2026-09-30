@@ -140,10 +140,18 @@ export const DEFAULT_ENTRY_RISING = false
  * allocator sees them. An unmeasured toll sorts by its neutral 0.5, like any
  * other number.
  *
- * It replaces "small caps first, then score" (`smallCapFdvUsd`), which
+ * It replaced "small caps first, then score" (`smallCapFdvUsd`), which
  * `OPERADOR_RANK_BY=size` brings back.
+ *
+ * And since 2026-09-30 it is VOLATILITY: *que entren todos los tokens posibles,
+ * sólo que se le dé más prioridad a los de mayor volatilidad, pero que sigan
+ * por los menos volátiles hasta llenar el cupo.* The token that moves most
+ * every five minutes first (`volatility5mPct`), the unmeasured last, ties by
+ * score. The scan measures every stranger before it spends on any, so it can
+ * examine in this order and stop at the free slots. `OPERADOR_RANK_BY=cost`
+ * brings the cost order back.
  */
-export const DEFAULT_CANDIDATE_ORDER: CandidateOrder = 'costEfficiency'
+export const DEFAULT_CANDIDATE_ORDER: CandidateOrder = 'volatility'
 
 /**
  * How much better, in points of cost efficiency, a waiting candidate must be
@@ -167,8 +175,12 @@ export const DEFAULT_MIN_COST_EDGE_PCT = 10
  * 2026-09-29: of 179 measured, 51 cleared it, 24 of them rising at that
  * moment, while the book's own median was 0.88%. `OPERADOR_MIN_VOLATILITY_PCT`
  * moves it; zero turns it off.
+ *
+ * ZERO since 2026-09-30: the volatility became the ORDER instead — see
+ * `DEFAULT_CANDIDATE_ORDER` — so a calm token still fills a slot the movers
+ * left empty. `OPERADOR_MIN_VOLATILITY_PCT=1` brings the door back.
  */
-export const DEFAULT_MIN_VOLATILITY_PCT = 1
+export const DEFAULT_MIN_VOLATILITY_PCT = 0
 
 /**
  * The lowest total score the book will open a position on.
@@ -271,8 +283,9 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
     : ['1', 'true', 'yes'].includes(risingRaw) || DEFAULT_ENTRY_RISING
   const minComponents: ComponentFloors = { ...costDoor, ...(risingOn ? risingDoor : {}) }
 
-  // Only `size` brings the old order back; anything else keeps the operator's.
-  const order: CandidateOrder = env.OPERADOR_RANK_BY?.trim().toLowerCase() === 'size' ? 'size' : DEFAULT_CANDIDATE_ORDER
+  // `size` and `cost` bring the old orders back; anything else keeps the operator's.
+  const rankBy = env.OPERADOR_RANK_BY?.trim().toLowerCase()
+  const order: CandidateOrder = rankBy === 'size' ? 'size' : rankBy === 'cost' ? 'costEfficiency' : DEFAULT_CANDIDATE_ORDER
 
   // Zero is a real value: any better token takes an idle reservation's slot.
   const edgeRaw = env.OPERADOR_MIN_COST_EDGE_PCT?.trim()

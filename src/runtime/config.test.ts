@@ -230,9 +230,11 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(() => loadConfig({ ...valid, OPERADOR_REGISTRY_TOKENS: 'todos' })).toThrow(ConfigError)
   })
 
-  it('serves the cheapest to trade first, and hands a reservation to one 10 points of efficiency better', () => {
-    expect(loadConfig(valid)).toMatchObject({ order: 'costEfficiency', minCostEdgePct: 10 })
+  it('serves the token that moves most first, with no floor; the cost order and the 1% door are one variable away', () => {
+    expect(loadConfig(valid)).toMatchObject({ order: 'volatility', minCostEdgePct: 10, minVolatilityPct: 0 })
+    expect(loadConfig({ ...valid, OPERADOR_RANK_BY: 'cost' }).order).toBe('costEfficiency')
     expect(loadConfig({ ...valid, OPERADOR_RANK_BY: 'size' }).order).toBe('size')
+    expect(loadConfig({ ...valid, OPERADOR_MIN_VOLATILITY_PCT: '1' }).minVolatilityPct).toBe(1)
   })
 
   it('reads the rung sizes from the environment, beside the drops', () => {

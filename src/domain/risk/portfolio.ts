@@ -2,6 +2,7 @@ import { sizeLadder, type LadderSizing, type SizingPolicy } from '../economics/s
 import { type MarketQuality } from '../market/market-quality.js'
 import { type CascadeParams } from '../strategy/params.js'
 import { type TokenSnapshot } from '../scanner/snapshot.js'
+import { volatilityRank } from '../scanner/ranking.js'
 
 /**
  * Portfolio allocation — the answer to the capital-floor experiment's second
@@ -92,7 +93,7 @@ export interface PortfolioPolicy {
    * last slots to tokens the ranking put behind. *Que elija los que tengan
    * mejor eficiencia de costos.* Absent: the highest score, as always.
    */
-  readonly order?: 'score' | 'costEfficiency'
+  readonly order?: 'score' | 'costEfficiency' | 'volatility'
 }
 
 export const DEFAULT_PORTFOLIO_POLICY: PortfolioPolicy = {
@@ -199,8 +200,15 @@ export function planPortfolio(
   }
 
   const efficiency = (c: AllocationCandidate) => (policy.order === 'costEfficiency' ? c.costEfficiency ?? 0 : 0)
-  const ranked = [...candidates].sort((a, b) =>
-    efficiency(b) - efficiency(a) || b.score - a.score || a.snapshot.address.localeCompare(b.snapshot.address))
+  // Under the volatility order, the ranking's own measure: the token that moves
+  // most first, the unmeasured last — see `volatilityRank`.
+  const moves = (c: AllocationCandidate) => (policy.order === 'volatility' ? volatilityRank(c.snapshot) : 0)
+  const ranked = [...candidates].sort((a, b) => {
+    const ma = moves(a)
+    const mb = moves(b)
+    return (mb === ma ? 0 : mb > ma ? 1 : -1) ||
+      efficiency(b) - efficiency(a) || b.score - a.score || a.snapshot.address.localeCompare(b.snapshot.address)
+  })
   // Zero is not a ceiling of zero — it is no ceiling at all, and the capital
   // decides. With every slot the same size, what bounds the damage one token
   // can do is that size, not the count.

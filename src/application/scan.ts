@@ -85,6 +85,9 @@ export interface HistoryPort {
   poolMarkets(chain: Chain, poolAddresses: readonly string[]): Promise<MarketSnapshot[]>
 }
 
+/** How many volatility measurements run at once: a few, not the whole universe. */
+const VOLATILITY_CONCURRENCY = 4
+
 export interface ScanDeps {
   readonly dex: DexScreener
   /**
@@ -585,8 +588,13 @@ export async function scanOnce(
   // The volatility door: on when the policy asks for movement and something
   // can measure it.
   const volatilityDoor = deps.volatility5m !== undefined && config.ranking.gates.minVolatility5mPct > 0
-  /** Remembered strangers waiting in the queue for the door. */
-  let deferred = 0
+  // Measured whenever the door asks for it or the ORDER is the volatility —
+  // before anything is paid for, so the scan can spend in that order.
+  const measureVolatility = deps.volatility5m !== undefined && (volatilityDoor || config.ranking.order === 'volatility')
+  /** Each measured stranger's volatility; absent when the request failed. */
+  const volatility = new Map<string, number | null>()
+  const withVolatility = (address: string): Partial<TokenSnapshot> =>
+    volatility.has(address) ? { volatility5mPct: volatility.get(address)! } : {}
   /** A token whose security is remembered: fully evaluated, at no network cost. */
   const pushRemembered = (market: MarketSnapshot, known: CachedSecurity, extra: Partial<TokenSnapshot> = {}) => {
     snapshots.push({ ...market, security: known.security, historyBars: null, securityChecked: true, measuredImpactPct: known.slippagePct, ...extra })
@@ -754,6 +762,7 @@ export async function scanOnce(
   // score are an UPPER BOUND on the real ones: a token below the door
   // provisionally is below it really. This can only ever drop tokens the full
   // evaluation would have dropped anyway — an economy, not a softening.
+  const passing: MarketSnapshot[] = []
   for (const market of affordable) {
     // Ours is never filtered out. Its security is the answer we most need
     // current, because it is the one a rug would cost us — and the score
@@ -768,21 +777,47 @@ export async function scanOnce(
       snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false })
       continue
     }
+    passing.push(market)
+  }
+
+  // ── 3a-ter. How much each stranger moves, before anything is paid for ─────
+  //
+  // One chart request each, a few at a time, answers cached ten minutes by the
+  // probe. Ours is never measured: the order and the door decide what ENTERS.
+  // A failed request leaves the value absent — the door refuses it, the order
+  // serves it last — and is never fatal.
+  if (measureVolatility) {
+    const strangers = passing.filter((market) => !held.has(market.address))
+    let next = 0
+    await Promise.all(Array.from({ length: Math.min(VOLATILITY_CONCURRENCY, strangers.length) }, async () => {
+      while (next < strangers.length) {
+        const market = strangers[next++]!
+        try {
+          volatility.set(market.address, await deps.volatility5m!(market))
+        } catch (error) {
+          errors.push({ address: market.address, stage: 'volatility', error: String(error) })
+        }
+      }
+    }))
+  }
+
+  for (const market of passing) {
+    // The door: a calm stranger, or one nobody could measure, is refused here —
+    // its authorities and its sale quote are never asked.
+    if (volatilityDoor && !held.has(market.address)) {
+      const moved = volatility.get(market.address)
+      if (moved === undefined || moved === null || moved < config.ranking.gates.minVolatility5mPct) {
+        snapshots.push({ ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false, ...withVolatility(market.address) })
+        continue
+      }
+    }
     // ── 3b. What is already known does not need paying for again ────────────
     // A cached report keeps the token fully evaluated at no network cost,
     // which is what frees the budget to reach the ones nobody has looked at.
     const known = deps.securityCache ? await deps.securityCache.cachedSecurity(config.chain, market.address) : null
     if (known && scannedAt - known.measuredAt < ttl) {
       remembered.set(market.address, known)
-      // Behind the volatility door a remembered stranger still has to MOVE, so
-      // it waits in the queue like the rest: measured in turn, and its security
-      // taken from the cache instead of paid for again.
-      if (volatilityDoor && !held.has(market.address)) {
-        deferred += 1
-        queue.push(market)
-        continue
-      }
-      pushRemembered(market, known)
+      pushRemembered(market, known, withVolatility(market.address))
       continue
     }
     queue.push(market)
@@ -824,8 +859,17 @@ export async function scanOnce(
     const left = queue.filter((market) => !examined.has(market.address))
     const ours = left.filter((market) => held.has(market.address))
     const theirs = left.filter((market) => !held.has(market.address))
+    const moves = (market: MarketSnapshot) => {
+      const v = volatility.get(market.address)
+      return typeof v === 'number' && Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY
+    }
     const ordered =
-      config.wanted !== undefined
+      config.wanted !== undefined && config.ranking.order === 'volatility'
+        ? [...theirs].sort((a, b) =>
+            (moves(b) === moves(a) ? 0 : moves(b) > moves(a) ? 1 : -1) ||
+            estimate(b).score - estimate(a).score ||
+            a.address.localeCompare(b.address))
+        : config.wanted !== undefined
         ? [...theirs].sort((a, b) =>
             estimate(b).costEfficiency - estimate(a).costEfficiency ||
             estimate(b).score - estimate(a).score ||
@@ -871,32 +915,8 @@ export async function scanOnce(
         deps.patience && deps.sellProbe && held.has(market.address)
           ? { ...deps, sellProbe: patientSellProbe(deps.sellProbe, deps.patience) }
           : deps
-      // The volatility door, before anything is paid for. A calm token, or one
-      // nobody could measure, is refused here: its authorities and its sale
-      // quote are never asked. Ours is never measured — the door decides what
-      // enters, never what is kept.
-      let volatility5mPct: number | null | undefined
-      if (volatilityDoor && !held.has(market.address)) {
-        try {
-          volatility5mPct = await deps.volatility5m!(market)
-        } catch (error) {
-          record('volatility', error)
-        }
-        if (volatility5mPct === undefined || volatility5mPct === null || volatility5mPct < config.ranking.gates.minVolatility5mPct) {
-          snapshots.push({
-            ...market, security: UNKNOWN_SECURITY, historyBars: null, securityChecked: false,
-            ...(volatility5mPct !== undefined ? { volatility5mPct } : {}),
-          })
-          continue
-        }
-        const known = remembered.get(market.address)
-        if (known) {
-          pushRemembered(market, known, { volatility5mPct })
-          continue
-        }
-      }
       const { snapshot, slippagePct } = await examineToken(probing, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
-      snapshots.push(volatility5mPct !== undefined ? { ...snapshot, volatility5mPct } : snapshot)
+      snapshots.push({ ...snapshot, ...withVolatility(market.address) })
       quality.set(tokenKey(snapshot), {
         liquidityUsd: market.liquidityUsd,
         spreadPct: config.spreadPct,
@@ -916,7 +936,7 @@ export async function scanOnce(
   deps.onProgress?.({
     stage: 'budget',
     chain: config.chain,
-    affordable: queue.length + remembered.size - deferred,
+    affordable: queue.length + remembered.size,
     checking: Math.min(budget, queue.length),
   })
 

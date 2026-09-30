@@ -134,6 +134,11 @@ export interface RankingPolicy {
    * `'size'`: small caps first (`smallCapFdvUsd`), then score — the order this
    * ranking always had, one variable away (`OPERADOR_RANK_BY=size`).
    *
+   * `'volatility'`: the token that moves most every five minutes first
+   * (`volatility5mPct`), then the calmer ones, the unmeasured last; ties by
+   * score. *Que se le dé más prioridad a los de mayor volatilidad, pero que
+   * sigan por los menos volátiles hasta llenar el cupo.* Production's.
+   *
    * REQUIRED, like `requireRising`: an optional field is where a composition
    * root forgets to pass the operator's decision and nothing dies.
    */
@@ -147,7 +152,16 @@ export interface RankingPolicy {
 }
 
 /** Who wins a slot. See `RankingPolicy.order`. */
-export type CandidateOrder = 'costEfficiency' | 'size'
+export type CandidateOrder = 'costEfficiency' | 'size' | 'volatility'
+
+/**
+ * How much a token moves, for ordering: its measured `volatility5mPct`, and
+ * minus infinity when nobody measured it — so an unmeasured token is served
+ * after every measured one, never refused for it. Shared by the ranking and the
+ * allocator, so the two cannot serve in different orders.
+ */
+export const volatilityRank = (s: TokenSnapshot): number =>
+  typeof s.volatility5mPct === 'number' && Number.isFinite(s.volatility5mPct) ? s.volatility5mPct : Number.NEGATIVE_INFINITY
 
 /** What the order reads: the token, and its score and components. */
 export interface Rankable {
@@ -163,6 +177,13 @@ export interface Rankable {
  */
 export function candidateComparator(order: CandidateOrder, smallCapFdvUsd?: number): (a: Rankable, b: Rankable) => number {
   const byAddress = (a: Rankable, b: Rankable) => a.snapshot.address.localeCompare(b.snapshot.address)
+  if (order === 'volatility') {
+    return (a, b) => {
+      const va = volatilityRank(a.snapshot)
+      const vb = volatilityRank(b.snapshot)
+      return (vb === va ? 0 : vb > va ? 1 : -1) || b.opportunity.score - a.opportunity.score || byAddress(a, b)
+    }
+  }
   if (order === 'costEfficiency') {
     return (a, b) =>
       b.opportunity.components.costEfficiency - a.opportunity.components.costEfficiency ||

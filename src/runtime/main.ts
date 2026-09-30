@@ -1167,7 +1167,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // tengo.* The fees come out of the free capital as the fills happen.
         reservePct: 0,
         // The cheapest to trade are served first, as the ranking ordered them.
-        order: config.order === 'costEfficiency' ? 'costEfficiency' : 'score',
+        order: config.order === 'costEfficiency' || config.order === 'volatility' ? config.order : 'score',
       },
       // Exactly steps × step: what the allocator hands out and the trim keeps,
       // and what the free slots are counted in.

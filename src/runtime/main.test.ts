@@ -60,6 +60,13 @@ const runtime = (env: Record<string, string> = {}) =>
 const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20' }
 
 /**
+ * And the order they were argued with: the cheapest to trade first. Production
+ * serves the most volatile first now; the book and the shelf scenarios below
+ * are about the cut and the free slots, so they pin the order they read.
+ */
+const LEGACY_ORDER = { OPERADOR_RANK_BY: 'cost' }
+
+/**
  * Ladder A, brought back from the environment: five chained rungs with their
  * volatility spacing and the liquidity brake, and one entry reserved. OFF in
  * production — every buy is a dip-bounce step — and these are the variables
@@ -581,7 +588,7 @@ describe('the deep rung, brought back, through the path the engine runs', () => 
  * test's store, because the runtime's own read the (empty) database.
  */
 const onMemory = (env: Record<string, string> = {}) => {
-  const { deps: built, cycleConfig } = runtime({ ...LEGACY_LADDER, ...env })
+  const { deps: built, cycleConfig } = runtime({ ...LEGACY_LADDER, ...LEGACY_ORDER, ...env })
   const store = new MemoryStore()
   const brokers = new Map<string, PaperBroker>()
   const brokerFor = async (p: PersistedPosition) => {
@@ -938,7 +945,7 @@ describe('the rising door, brought back (OPERADOR_ENTRY_RISING=1), through the s
           ? { rows: [{ scanned_at: String(Date.now() - 60_000), chain: 'solana', snapshots: shelf }] as T[] }
           : { rows: [] as T[] },
     }
-    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_ENTRY_RISING: '1', ...env }), {
+    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_ENTRY_RISING: '1', OPERADOR_MIN_VOLATILITY_PCT: '1', ...LEGACY_ORDER, ...env }), {
       sql,
       postJson: async () => { throw new Error('no network in this test') },
     })

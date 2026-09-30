@@ -95,9 +95,14 @@ describe('productionDoors — one definition of what the book may buy', () => {
 })
 
 describe('productionDoors — who wins when there are more candidates than slots', () => {
-  it('orders by cost efficiency, best first: *que elija los que tengan mejor eficiencia de costos*', () => {
-    expect(DEFAULT_CANDIDATE_ORDER).toBe('costEfficiency')
-    expect(productionDoors({}).order).toBe('costEfficiency')
+  it('orders by volatility, the token that moves most first: *que se le dé más prioridad a los de mayor volatilidad*', () => {
+    expect(DEFAULT_CANDIDATE_ORDER).toBe('volatility')
+    expect(productionDoors({}).order).toBe('volatility')
+  })
+
+  it('brings back the cheapest to trade first with OPERADOR_RANK_BY=cost', () => {
+    expect(productionDoors({ OPERADOR_RANK_BY: 'cost' }).order).toBe('costEfficiency')
+    expect(productionDoors({ OPERADOR_RANK_BY: ' COST ' }).order).toBe('costEfficiency')
   })
 
   it('brings back small caps first, then score, with OPERADOR_RANK_BY=size', () => {
@@ -106,8 +111,8 @@ describe('productionDoors — who wins when there are more candidates than slots
   })
 
   it('keeps the operator’s order on anything else', () => {
-    for (const other of ['score', 'cost', '', '  ', 'sizes']) {
-      expect(productionDoors({ OPERADOR_RANK_BY: other }).order, other).toBe('costEfficiency')
+    for (const other of ['score', 'costs', '', '  ', 'sizes']) {
+      expect(productionDoors({ OPERADOR_RANK_BY: other }).order, other).toBe('volatility')
     }
   })
 
@@ -127,9 +132,12 @@ describe('productionDoors — only tokens that move may enter', () => {
   // volatilidad.* The operator. At least 1% every five minutes, over the last
   // six hours: about where the fiftieth most volatile liquid token sat the day
   // it was measured.
-  it('asks for 1% by default', () => {
-    expect(DEFAULT_MIN_VOLATILITY_PCT).toBe(1)
-    expect(productionDoors({}).minVolatilityPct).toBe(1)
+  it('asks for no floor by default: every token may enter, the most volatile first', () => {
+    // *Que entren todos los tokens posibles, sólo que se le dé más prioridad a
+    // los de mayor volatilidad, pero que sigan por los menos volátiles hasta
+    // llenar el cupo.* The volatility is the ORDER now, not a door.
+    expect(DEFAULT_MIN_VOLATILITY_PCT).toBe(0)
+    expect(productionDoors({}).minVolatilityPct).toBe(0)
   })
 
   it('moves with OPERADOR_MIN_VOLATILITY_PCT, and zero turns it off', () => {
@@ -139,7 +147,7 @@ describe('productionDoors — only tokens that move may enter', () => {
 
   it('keeps the default on a value that is not a threshold', () => {
     for (const bad of ['uno', '-1', '', 'Infinity']) {
-      expect(productionDoors({ OPERADOR_MIN_VOLATILITY_PCT: bad }).minVolatilityPct, bad).toBe(1)
+      expect(productionDoors({ OPERADOR_MIN_VOLATILITY_PCT: bad }).minVolatilityPct, bad).toBe(0)
     }
   })
 })

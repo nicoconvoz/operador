@@ -330,6 +330,16 @@ describe('planPortfolio — the cheapest to trade are served first', () => {
     expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['cheap', 'tie-hi'])
   })
 
+  it('with the volatility order, serves the token that moves most first and the unmeasured last', () => {
+    const moving = (address: string, score: number, volatility5mPct?: number | null): AllocationCandidate => ({
+      ...candidate(address, score),
+      snapshot: { address, symbol: address, chain: 'solana', ...(volatility5mPct !== undefined ? { volatility5mPct } : {}) } as TokenSnapshot,
+    })
+    const list = [moving('calm', 99, 0.3), moving('blind', 98), moving('wild', 10, 7), moving('mid', 50, 2)]
+    const plan = planPortfolio(list, DEFAULT_PARAMS, { ...slots, order: 'volatility', totalCapitalUsd: 750 })
+    expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['wild', 'mid', 'calm'])
+  })
+
   it('still serves by score when the order is not asked for — the old behaviour exactly', () => {
     const plan = planPortfolio(shortlist, DEFAULT_PARAMS, slots)
     expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['scored', 'tie-hi', 'middle', 'cheap'])

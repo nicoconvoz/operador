@@ -1329,7 +1329,8 @@ describe('scanOnce — only as far as the free slots need', () => {
       const { scanDeps, examined, quoted } = rig()
       const measured: string[] = []
       const outcome = await scanOnce({ ...scanDeps, volatility5m: probe({ t19: 0.5 }, measured) }, { ...door, wanted: 3 })
-      expect(measured).toEqual(['t19', 't18', 't17', 't16'])
+      // Every stranger is measured before any is paid for — one chart request each.
+      expect([...measured].sort()).toEqual(Array.from({ length: 20 }, (_, i) => `t${String(i).padStart(2, '0')}`))
       expect(examined).toEqual(['t18', 't17', 't16'])
       expect(quoted).toEqual(['t18', 't17', 't16'])
       expect(outcome.candidates.map((c) => c.snapshot.address).sort()).toEqual(['t16', 't17', 't18'])
@@ -1360,7 +1361,8 @@ describe('scanOnce — only as far as the free slots need', () => {
       const falling = { ...scanDeps, markets: async (_c: 'solana' | 'bsc', addresses: readonly string[]) =>
         addresses.map((a) => ({ ...market(a, depthOf(a)), priceChangePct: { h1: a === 't19' ? -1 : 2, h6: -3, h24: 5 } })) }
       await scanOnce({ ...falling, volatility5m: probe({}, measured) }, { ...rising, wanted: 1 })
-      expect(measured).toEqual(['t18'])
+      expect(measured).not.toContain('t19')
+      expect(measured).toHaveLength(19)
     })
 
     it('makes a remembered token clear the door too, at no cost for its security', async () => {
@@ -1377,6 +1379,25 @@ describe('scanOnce — only as far as the free slots need', () => {
       expect(strangers).not.toContain('t19')
       expect(strangers).toContain('t18')
       expect(examined).not.toContain('t18')
+    })
+
+    it('with the VOLATILITY order and no floor, examines the most volatile first and stops at the free slots', async () => {
+      // *Que entren todos los tokens posibles, sólo que se le dé más prioridad
+      // a los de mayor volatilidad, pero que sigan por los menos volátiles
+      // hasta llenar el cupo.* The operator.
+      const { scanDeps, examined } = rig()
+      const byVolatility = { ...production, ranking: { ...production.ranking, order: 'volatility' as const } }
+      const outcome = await scanOnce({ ...scanDeps, volatility5m: probe({ t03: 9, t11: 8, t07: 7 }, []) }, { ...byVolatility, wanted: 3 })
+      expect(examined).toEqual(['t03', 't11', 't07'])
+      expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['t03', 't11', 't07'])
+    })
+
+    it('with the VOLATILITY order, serves a stranger nobody could measure LAST — never refuses it', async () => {
+      const { scanDeps, examined } = rig({ discovered: ['a1', 'a2', 'a3'] })
+      const byVolatility = { ...production, ranking: { ...production.ranking, order: 'volatility' as const, watchSlots: 3 } }
+      const outcome = await scanOnce({ ...scanDeps, volatility5m: probe({ a1: new Error('429'), a2: 0.2, a3: 3 }, []) }, { ...byVolatility, wanted: 3 })
+      expect(examined).toEqual(['a3', 'a2', 'a1'])
+      expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['a3', 'a2', 'a1'])
     })
 
     it('with the door off, measures nothing and examines exactly as before', async () => {

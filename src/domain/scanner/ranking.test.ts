@@ -388,6 +388,26 @@ describe('ranking — the cheapest to trade win, before any cut', () => {
     expect(candidates.map((c) => c.snapshot.address)).toEqual(['BIG', 'SMALL'])
   })
 
+  it('with the VOLATILITY order, serves the token that moves most first, then the calmer ones — and the unmeasured last', () => {
+    // *Que entren todos los tokens posibles, sólo que se le dé más prioridad a
+    // los de mayor volatilidad, pero que sigan por los menos volátiles hasta
+    // llenar el cupo.* The operator.
+    const universe = [
+      token('CALM', { ...quiet, volatility5mPct: 0.4 }), token('BLIND', quiet),
+      token('WILD', { ...quiet, volatility5mPct: 6.2 }), token('MID', { ...quiet, volatility5mPct: 1.3 }),
+      token('NULL', { ...quiet, volatility5mPct: null }),
+    ]
+    const { candidates } = rankUniverse(universe, new Map(), bySlippage({}), { ...policy, order: 'volatility', minScore: 0, watchSlots: 10 })
+    expect(candidates.map((c) => c.snapshot.address).slice(0, 3)).toEqual(['WILD', 'MID', 'CALM'])
+    expect(candidates.map((c) => c.snapshot.address).slice(3).sort()).toEqual(['BLIND', 'NULL'])
+  })
+
+  it('with the VOLATILITY order, cuts the calmest when the slots run short', () => {
+    const universe = [token('CALM', { ...quiet, volatility5mPct: 0.4 }), token('WILD', { ...quiet, volatility5mPct: 6.2 }), token('MID', { ...quiet, volatility5mPct: 1.3 })]
+    const { candidates } = rankUniverse(universe, new Map(), bySlippage({}), { ...policy, order: 'volatility', minScore: 0, watchSlots: 2 })
+    expect(candidates.map((c) => c.snapshot.address)).toEqual(['WILD', 'MID'])
+  })
+
   it('sorts an unmeasured toll by its neutral 0.5, like any other number', () => {
     const universe = [token('LOW', quiet), token('NEUTRAL', quiet), token('HIGH', quiet)]
     const q = bySlippage({ LOW: 0.9, NEUTRAL: 0.5, HIGH: 0.1 })
