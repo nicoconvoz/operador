@@ -1268,12 +1268,19 @@ export const schemaSql = (): string =>
  */
 const POOL_CANDLES = 60
 
+/** How long an alert is kept: three days, pruned at every engine start. */
+export const ALERT_RETENTION_MS = 3 * 86_400_000
+
 export async function main(ports: RuntimePorts): Promise<void> {
   const config = loadConfig()
   console.log('[boot]', JSON.stringify(describeConfig(config)))
 
   const store = new PostgresStore(ports.sql)
   await store.migrate(schemaSql())
+  // *Sólo guardemos los datos que nos sirvan.* Alerts older than three days are
+  // let go at every start: the phone reads forward from a cursor and never
+  // needs them, and the table only ever grew. Never fatal.
+  await store.pruneAlerts(Date.now() - ALERT_RETENTION_MS).catch((error) => console.error('[alerts:prune]', error))
 
   const { deps, cycleConfig, throttle } = buildRuntime(config, ports)
 

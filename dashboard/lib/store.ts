@@ -2,6 +2,7 @@ import { Pool } from 'pg'
 import { PostgresStore } from '../../src/infrastructure/persistence/postgres-store.js'
 import { cacheFor, type CachedRead } from '../../src/application/read-cache.js'
 import { LOG_READ_DAYS } from '../../src/application/daily-log.js'
+import { incrementalTape } from '../../src/application/incremental-tape.js'
 
 /**
  * One pool for the whole app. Next.js reuses the module across requests, and
@@ -121,7 +122,10 @@ export function openStore(): PostgresStore {
     scan: cacheFor(() => store.latestScan(), CACHE_SCAN_MS),
     blacklist: cacheFor(() => store.blacklisted(), CACHE_SCAN_MS),
     positions: cacheFor(() => store.loadPositions(), CACHE_STATE_MS),
-    fills: cacheFor(() => store.allFills(), CACHE_STATE_MS),
+    // The whole tape once, then the last two hours and a count — see
+    // `incrementalTape`. The tape grows all day; re-reading it whole every two
+    // minutes was the one read here that grew with it.
+    fills: cacheFor(incrementalTape(store), CACHE_STATE_MS),
     checkpoint: cacheFor(() => store.loadCheckpoint(), CACHE_STATE_MS),
     // The day log: ninety-one rows of eight numbers, a few kilobytes, written
     // once a cycle — on the engine's clock, like the positions.

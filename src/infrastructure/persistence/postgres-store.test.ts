@@ -189,6 +189,29 @@ describe('the registry writes in chunks, because a statement has a parameter lim
   })
 })
 
+describe('the dashboard reads what is new, and old alerts are let go', () => {
+  it('asks for the fills stamped since a time, in the tape’s own order', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).fillsSince(1_000)
+    expect(calls[0]!.sql).toContain('WHERE time >= $1')
+    expect(calls[0]!.sql).toContain("CASE side WHEN 'buy' THEN 0 ELSE 1 END")
+    expect(calls[0]!.params).toEqual([1_000])
+  })
+
+  it('counts the fills with one number, not the rows', async () => {
+    const { client, calls } = fakeSql([[{ n: '42' }]])
+    expect(await new PostgresStore(client).fillCount()).toBe(42)
+    expect(calls[0]!.sql).toContain('count(*)')
+  })
+
+  it('deletes alerts older than a time — the phone reads forward from a cursor and never needs them', async () => {
+    const { client, calls } = fakeSql()
+    await new PostgresStore(client).pruneAlerts(5_000)
+    expect(calls[0]!.sql).toContain('DELETE FROM alerts WHERE at < $1')
+    expect(calls[0]!.params).toEqual([5_000])
+  })
+})
+
 describe('the fill queries ask for a deterministic order', () => {
   // The figure this protects is the one the whole system exists to produce,
   // and it was not reproducible from the same data.

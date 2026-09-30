@@ -371,6 +371,32 @@ export class PostgresStore implements StatePort {
     return rows.map(toFill)
   }
 
+  /**
+   * The fills stamped at or after `time`, in `allFills`'s order — what the
+   * dashboard's incremental tape asks for instead of the whole tape.
+   */
+  async fillsSince(time: number): Promise<readonly PersistedFill[]> {
+    const { rows } = await this.sql.query<Record<string, string | number>>(
+      `SELECT * FROM fills WHERE time >= $1 ORDER BY time, CASE side WHEN 'buy' THEN 0 ELSE 1 END, idempotency_key`, [time],
+    )
+    return rows.map(toFill)
+  }
+
+  /** How many fills the table holds — one number, for the incremental tape's check. */
+  async fillCount(): Promise<number> {
+    const { rows } = await this.sql.query<{ n: string | number }>('SELECT count(*) AS n FROM fills')
+    return Number(rows[0]?.n ?? 0)
+  }
+
+  /**
+   * Lets go of alerts stamped before `at`. The phone reads forward from a
+   * cursor and the dashboard shows the recent ones; the rest was a table that
+   * only grew. The sequence keeps climbing, so no cursor is disturbed.
+   */
+  async pruneAlerts(at: number): Promise<void> {
+    await this.sql.query('DELETE FROM alerts WHERE at < $1', [at])
+  }
+
   async hasFill(idempotencyKey: string): Promise<boolean> {
     const { rows } = await this.sql.query('SELECT 1 FROM fills WHERE idempotency_key = $1', [idempotencyKey])
     return rows.length > 0

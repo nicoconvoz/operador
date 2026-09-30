@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { cachedTape } from './cached-tape.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
+import { type PersistedFill, type PersistedPosition, type PersistedScan, type StatePort } from '../domain/persistence/store.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch } from '../domain/risk/death-exit.js'
 
@@ -22,7 +22,7 @@ const fill = (key: string, over: Partial<PersistedFill> = {}): PersistedFill => 
 
 /** A MemoryStore that counts what the cache asks of it — the database, in these tests. */
 const counting = (store = new MemoryStore()) => {
-  const calls = { allFills: 0, fillsFor: 0, hasFill: 0, recordFill: 0, loadPositions: 0, savePosition: 0, closePosition: 0 }
+  const calls = { allFills: 0, fillsFor: 0, hasFill: 0, recordFill: 0, loadPositions: 0, savePosition: 0, closePosition: 0, scanReads: 0 }
   let failNextLoad = false
   let loseNextReply = false
   let failNextSave = false
@@ -38,6 +38,8 @@ const counting = (store = new MemoryStore()) => {
       }
     },
     closePosition: async (id: string) => { calls.closePosition++; return store.closePosition(id) },
+    latestScansByChain: async () => { calls.scanReads++; return store.latestScansByChain() },
+    latestScan: async () => { calls.scanReads++; return store.latestScan() },
     allFills: async () => {
       calls.allFills++
       if (failNextLoad) {
@@ -378,5 +380,50 @@ describe('cachedTape — the book is read once per process, and then from memory
     const [read] = (await book.loadPositions()) as unknown as { lastPriceUsd: number | null }[]
     read!.lastPriceUsd = 77
     expect((await book.loadPositions())[0]!.lastPriceUsd).toBe(1)
+  })
+})
+
+describe('cachedTape — the last scan is read once per process, and then from memory', () => {
+  // The health pass asked the database for the scan the engine had just written
+  // — about once a pass, the whole stored universe each time: some 250 KB at
+  // 166 positions, a quarter of a gigabyte a day for an answer already in hand.
+  const scan = (chain: 'solana' | 'bsc', scannedAt: number, symbols: readonly string[]): PersistedScan => ({
+    chain, scannedAt,
+    snapshots: symbols.map((symbol) => ({ symbol }) as unknown as PersistedScan['snapshots'][number]),
+  })
+
+  it('answers the latest scans from ONE read, and serves what it saves without another', async () => {
+    const rig = counting()
+    await rig.store.saveScan(scan('solana', 1, ['OLD']))
+    const cache = cachedTape(rig.db)
+    for (let i = 0; i < 3; i++) expect((await cache.latestScansByChain()).map((x) => x.scannedAt)).toEqual([1])
+    await cache.saveScan(scan('solana', 2, ['NEW']))
+    expect((await cache.latestScansByChain()).map((x) => [x.chain, x.scannedAt])).toEqual([['solana', 2]])
+    expect((await cache.latestScan())?.scannedAt).toBe(2)
+    expect((await rig.store.latestScan())?.scannedAt).toBe(2)
+    expect(rig.calls.scanReads).toBe(1)
+  })
+
+  it('keeps one scan per chain, and the latest is the newest of them', async () => {
+    const rig = counting()
+    const cache = cachedTape(rig.db)
+    await cache.saveScan(scan('solana', 5, ['S']))
+    await cache.saveScan(scan('bsc', 7, ['B']))
+    await cache.saveScan(scan('solana', 9, ['S2']))
+    expect((await cache.latestScansByChain()).map((x) => [x.chain, x.scannedAt]).sort()).toEqual([['bsc', 7], ['solana', 9]])
+    expect((await cache.latestScan())?.scannedAt).toBe(9)
+  })
+
+  it('a failed save drops the memory and the next read asks the database', async () => {
+    const rig = counting()
+    const cache = cachedTape(new Proxy(rig.db, {
+      get: (target, name) => name === 'saveScan'
+        ? async () => { throw new Error('connection reset') }
+        : Reflect.get(target, name),
+    }) as StatePort)
+    await cache.latestScansByChain()
+    await expect(cache.saveScan(scan('solana', 3, ['X']))).rejects.toThrow('connection reset')
+    await cache.latestScansByChain()
+    expect(rig.calls.scanReads).toBe(2)
   })
 })

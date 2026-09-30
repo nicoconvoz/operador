@@ -68,7 +68,7 @@ export function cachedTape(store: StatePort): StatePort {
 const sideRank = (fill: PersistedFill): number => (fill.side === 'buy' ? 0 : 1)
 
 /** `ORDER BY time, CASE side WHEN 'buy' THEN 0 ELSE 1 END, idempotency_key`. */
-const tapeOrder = (a: PersistedFill, b: PersistedFill): number =>
+export const tapeOrder = (a: PersistedFill, b: PersistedFill): number =>
   a.time - b.time ||
   sideRank(a) - sideRank(b) ||
   (a.idempotencyKey < b.idempotencyKey ? -1 : a.idempotencyKey > b.idempotencyKey ? 1 : 0)
@@ -118,6 +118,19 @@ function append(tape: Tape, given: PersistedFill): void {
  */
 const byOpening = (a: PersistedPosition, b: PersistedPosition) => a.openedAt - b.openedAt
 
+/**
+ * And the LAST SCAN per chain. The health pass asked the database for the scan
+ * this engine had just written — about once a pass, the whole stored universe
+ * each time: some 250 KB at 166 positions, a quarter of a gigabyte a day for an
+ * answer already in hand. The engine is the only writer of scans, so after one
+ * read it answers from what it saved. A failed save drops the memory.
+ */
+const newest = (scans: Iterable<PersistedScan>): PersistedScan | null => {
+  let best: PersistedScan | null = null
+  for (const scan of scans) if (best === null || scan.scannedAt > best.scannedAt) best = scan
+  return best
+}
+
 class CachedTape implements StatePort {
   private tape: Tape | null = null
   /** The load in flight, shared by every reader that arrives while it runs. */
@@ -132,6 +145,9 @@ class CachedTape implements StatePort {
   private book: Map<string, PersistedPosition> | null = null
   private bookLoading: Promise<Map<string, PersistedPosition>> | null = null
   private bookGeneration = 0
+  private scans: Map<string, PersistedScan> | null = null
+  private scansLoading: Promise<Map<string, PersistedScan>> | null = null
+  private scansGeneration = 0
 
   constructor(private readonly store: StatePort) {}
 
@@ -151,6 +167,30 @@ class CachedTape implements StatePort {
       })
     this.bookLoading = loading
     return loading
+  }
+
+  private loadScans(): Promise<Map<string, PersistedScan>> {
+    if (this.scans) return Promise.resolve(this.scans)
+    if (this.scansLoading) return this.scansLoading
+    const generation = this.scansGeneration
+    const loading = this.store
+      .latestScansByChain()
+      .then((scans) => {
+        const byChain = new Map(scans.map((scan) => [scan.chain, structuredClone(scan)] as const))
+        if (generation === this.scansGeneration) this.scans = byChain
+        return byChain
+      })
+      .finally(() => {
+        if (this.scansLoading === loading) this.scansLoading = null
+      })
+    this.scansLoading = loading
+    return loading
+  }
+
+  private forgetScans(): void {
+    this.scans = null
+    this.scansLoading = null
+    this.scansGeneration++
   }
 
   private forgetBook(): void {
@@ -239,11 +279,30 @@ class CachedTape implements StatePort {
     this.book?.delete(positionId)
   }
 
+  async saveScan(scan: PersistedScan): Promise<void> {
+    try {
+      await this.store.saveScan(scan)
+    } catch (error) {
+      this.forgetScans()
+      throw error
+    }
+    if (this.scansLoading) await this.scansLoading.catch(() => undefined)
+    const scans = this.scans
+    const kept = scans?.get(scan.chain)
+    if (scans && (kept === undefined || scan.scannedAt >= kept.scannedAt)) scans.set(scan.chain, structuredClone(scan))
+  }
+
+  async latestScansByChain(): Promise<readonly PersistedScan[]> {
+    return [...(await this.loadScans()).values()].map((scan) => structuredClone(scan))
+  }
+
+  async latestScan(): Promise<PersistedScan | null> {
+    const scan = newest((await this.loadScans()).values())
+    return scan === null ? null : structuredClone(scan)
+  }
+
   // ── Everything else is the store's own ──────────────────────────────────────
 
-  saveScan(scan: PersistedScan): Promise<void> { return this.store.saveScan(scan) }
-  latestScan(): Promise<PersistedScan | null> { return this.store.latestScan() }
-  latestScansByChain(): Promise<readonly PersistedScan[]> { return this.store.latestScansByChain() }
   saveCheckpoint(checkpoint: EngineCheckpoint): Promise<void> { return this.store.saveCheckpoint(checkpoint) }
   loadCheckpoint(): Promise<EngineCheckpoint | null> { return this.store.loadCheckpoint() }
   recordAlert(alert: Alert) { return this.store.recordAlert(alert) }
