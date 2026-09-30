@@ -63,6 +63,20 @@ market-wide turn:
   order (`volatilityRank`), the unmeasured last. `OPERADOR_RANK_BY=cost` brings
   the cost order back.
 
+- **The live price, not candles.** *Quiero el precio directamente, que vaya con
+  el precio en vivo.* Each pass ticks a position on ONE bar made of the price the
+  cycle already fetched (`liveBars`), so the engine downloads no candles; the
+  volatility order reads Jupiter's own 5-minute, 1-hour and 6-hour changes
+  (`marketVolatilityPct`). The one exception is the operator's: *si ha pasado
+  mucho tiempo sin actuar, ahí sí consultamos sólo la última vela* — a position
+  that has not bought in `OPERADOR_STALE_CHECK_HOURS` (6) reads sixteen closed
+  hourly candles, so the death watch still sees a pool that stopped trading.
+  `OPERADOR_LIVE_PRICE=0` brings the downloads back. Found the hard way: the
+  candle probe that measured volatility burst hundreds of unthrottled chart
+  requests, the tick's candles failed behind it, and 54 reservations bought
+  nothing. The sweep now buys a reservation's FIRST step whenever the opening
+  pass could not.
+
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.
 
