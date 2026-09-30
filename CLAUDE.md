@@ -222,9 +222,13 @@ the death exit at twelve hours stays. No price stop exists.
 - **The engine reads the fill tape once per process** (`cachedTape`) and
   answers it from memory; before, it re-read the whole tape several times a
   pass — about 10 GB a day at 250 positions against a 5 GB monthly quota.
-- **Still heavy, and measured, not fixed:** `loadPositions` runs several times a
-  pass, about 280 MB a day at 30 positions and 2.5 GB at 250; the dashboard's
-  2-minute tape cache grows with the tape. Watch the database's usage panel.
+- **The engine reads the book once per process too** (2026-09-30). `loadPositions`
+  ran on every thirty-second sweep and six to eight times a pass — about 280 MB
+  a day at 30 positions and 2.5 GB at 250. The book now lives in the same
+  in-memory store as the tape; a save reaches Postgres first and is folded into
+  memory by `mergeSavedPosition`, the upsert's own ratchets in one function the
+  reference store shares. Still heavy: the dashboard's 2-minute tape cache grows
+  with the tape, and a scan still writes its whole snapshot every pass.
 - **A pass takes longer with a big book**: each held token costs a candle
   request and a sell probe per tick.
 
