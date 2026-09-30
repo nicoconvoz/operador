@@ -526,7 +526,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]!.holdBack).toEqual([])
   })
 
-  it('draws a token that is not rising in the last hour as filtered, and says so with the hour it read', async () => {
+  it('with the rising door on (OPERADOR_ENTRY_RISING=1), draws a token that is not rising in the last hour as filtered, and says so with the hour it read', async () => {
     // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
     // marca la barra de estudio.* The engine's door, from the module it reads.
     const store = await seed([
@@ -535,7 +535,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
       token('FLAT', { priceChangePct: { h1: 0, h6: 0, h24: 0 } }),
       token('QUIET', { priceChangePct: { h1: null, h6: 0, h24: 0 } }),
     ])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_RISING: '1' }).minComponents })
     const by = (symbol: string) => view.tokens.find((t) => t.symbol === symbol)!
     expect(by('UP').tier).not.toBe('filtered')
     expect(by('UP').holdBack).toEqual([])

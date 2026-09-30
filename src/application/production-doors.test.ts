@@ -12,22 +12,25 @@ import {
 import { meetsMinimums } from '../domain/scanner/opportunity.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
-  it('asks a candidate ONE thing: that it is rising in the last hour', () => {
-    // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
-    // marca la barra de estudio de los 49 tokens.* The operator. It was no door
-    // at all — *todo es bienvenido* — and before that cost efficiency above
-    // 60%, buy pressure, liquidity growth, activity, trend. Every component
-    // stays, scored and drawn. The SAFETY gates are not conditions of this kind
-    // and stay, as they always do.
-    expect(DEFAULT_ENTRY_RISING).toBe(true)
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ risingHour: 1 })
-    expect(productionDoors({}).minComponents).toEqual({ risingHour: 1 })
+  it('asks a candidate NO component floor — the volatility door is the only one', () => {
+    // *Nada de dos puertas de entrada: sólo medí volatilidad, no quiero la que
+    // haya subido también.* The operator. The rising door was the only one
+    // before the volatility door joined it; now the volatility door stands
+    // alone. Every component stays, scored and drawn. The SAFETY gates are not
+    // conditions of this kind and stay, as they always do.
+    expect(DEFAULT_ENTRY_RISING).toBe(false)
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({})
+    expect(productionDoors({}).minComponents).toEqual({})
     expect(DEFAULT_MIN_SCORE).toBe(0)
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
   })
 
-  it('lets a RISING token through whatever else it reads — an unmeasured toll, a dead pool, buyers leaving', () => {
-    const floors = productionDoors({}).minComponents
+  it('lets a falling token through by default: whether it moves is the volatility door’s question', () => {
+    expect(meetsMinimums({ risingHour: 0, costEfficiency: 0 }, productionDoors({}).minComponents)).toBe(true)
+  })
+
+  it('with the rising door on, lets a RISING token through whatever else it reads — an unmeasured toll, a dead pool, buyers leaving', () => {
+    const floors = productionDoors({ OPERADOR_ENTRY_RISING: '1' }).minComponents
     expect(meetsMinimums({ risingHour: 1, costEfficiency: 0 }, floors)).toBe(true)
     expect(meetsMinimums({ risingHour: 1, costEfficiency: 0.1, buyPressure: 0, activity: 0, liquidityGrowth: 0 }, floors)).toBe(true)
     // And nothing that is not rising, however good the rest is.
@@ -35,11 +38,9 @@ describe('productionDoors — one definition of what the book may buy', () => {
     expect(meetsMinimums({ costEfficiency: 1 }, floors)).toBe(false)
   })
 
-  it('takes the door off with OPERADOR_ENTRY_RISING=0 — and only an explicit off does', () => {
-    for (const off of ['0', 'false', 'no', ' 0 ']) expect(productionDoors({ OPERADOR_ENTRY_RISING: off }).minComponents, off).toEqual({})
-    for (const on of ['1', 'true', 'sí', 'cero', '']) expect(productionDoors({ OPERADOR_ENTRY_RISING: on }).minComponents, on).toEqual({ risingHour: 1 })
-    const open = productionDoors({ OPERADOR_ENTRY_RISING: '0' }).minComponents
-    expect(meetsMinimums({ risingHour: 0, costEfficiency: 0 }, open)).toBe(true)
+  it('brings the rising door back with OPERADOR_ENTRY_RISING=1 — and only an explicit on does', () => {
+    for (const on of ['1', 'true', 'yes', ' 1 ']) expect(productionDoors({ OPERADOR_ENTRY_RISING: on }).minComponents, on).toEqual({ risingHour: 1 })
+    for (const off of ['0', 'false', 'sí', 'cero', '']) expect(productionDoors({ OPERADOR_ENTRY_RISING: off }).minComponents, off).toEqual({})
   })
 
   it('brings a cost-efficiency floor back with OPERADOR_MIN_COST_EFFICIENCY_PCT, read as ABOVE', () => {
@@ -51,7 +52,7 @@ describe('productionDoors — one definition of what the book may buy', () => {
     expect(zero).toEqual({ costEfficiency: { above: 0 } })
     expect(meetsMinimums({ costEfficiency: 0 }, zero)).toBe(false)
     // Beside the rising door, never instead of it.
-    expect(productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents).toEqual({ costEfficiency: { above: 0.6 }, risingHour: 1 })
+    expect(productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents).toEqual({ costEfficiency: { above: 0.6 } })
   })
 
   it('keeps NO door on nonsense rather than inventing one', () => {
@@ -89,7 +90,7 @@ describe('productionDoors — one definition of what the book may buy', () => {
     const env = { OPERADOR_MIN_SCORE: '55', OPERADOR_MIN_COST_EFFICIENCY_PCT: '70', OPERADOR_RANK_BY: 'size' }
     expect(productionDoors(env)).toEqual(productionDoors(env))
     expect(productionDoors(env).minScore).toBe(55)
-    expect(productionDoors(env).minComponents).toEqual({ costEfficiency: { above: 0.7 }, risingHour: 1 })
+    expect(productionDoors(env).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
   })
 })
 

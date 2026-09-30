@@ -95,11 +95,11 @@ const costEfficiencyDoor = (pct: number): ComponentFloors => ({ costEfficiency: 
  * the history of how the key got here; `OPERADOR_MIN_COST_EFFICIENCY_PCT`
  * brings the cost floor back, BESIDE the one below.
  *
- * TODAY it is ONE: the token is rising in the last hour. *Hacé que la barrera
- * de entrada sea solamente que los tokens suban, como marca la barra de
- * estudio de los 49 tokens.* The operator. See `DEFAULT_ENTRY_RISING`.
+ * TODAY there are NONE: the volatility door (`DEFAULT_MIN_VOLATILITY_PCT`) is
+ * the only opportunity condition. The rising door is off — see
+ * `DEFAULT_ENTRY_RISING`.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = { risingHour: 1 }
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {}
 
 /** The rising door as a floor: `risingHour` is 1 or 0, so at least 1 means rising. */
 const risingDoor: ComponentFloors = { risingHour: 1 }
@@ -120,10 +120,15 @@ const risingDoor: ComponentFloors = { risingHour: 1 }
  * (−1.2%)*.
  *
  * The SAFETY gates are not conditions of this kind and are untouched, as
- * always. `OPERADOR_ENTRY_RISING=0` takes the door off; only an explicit off
- * does, so a mistyped value keeps the operator's rule.
+ * always.
+ *
+ * OFF since 2026-09-30: *nada de dos puertas de entrada — sólo medí
+ * volatilidad, no quiero la que haya subido también.* The operator. A token
+ * that moves is welcome whichever way its last hour went; the dip-bounce
+ * ladder buys the falls anyway. `OPERADOR_ENTRY_RISING=1` brings it back;
+ * only an explicit on does, so a mistyped value keeps the operator's rule.
  */
-export const DEFAULT_ENTRY_RISING = true
+export const DEFAULT_ENTRY_RISING = false
 
 /**
  * Who wins when there are more candidates than free slots.

@@ -852,7 +852,9 @@ describe('buildOperations — the dip-bounce ladder, one box and its watch', () 
   // the watch the sweep wrote down. From the module the engine reads.
   // The ceiling is OFF in production; these draw a collapse, so they read the
   // screen under the policy that still has one — `OPERADOR_MAX_DIP_PCT=20`.
-  const L = productionLadder({ OPERADOR_MAX_DIP_PCT: '20' })
+  // And they draw the ladder the rule was argued with — 3% and 2%, twenty
+  // steps — pinned here, since production now starts at 15% and 8% with six.
+  const L = productionLadder({ OPERADOR_MAX_DIP_PCT: '20', OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20' })
   const dip = {
     ...options,
     params: { ...DEFAULT_PARAMS, maxUsdPerLevel: L.maxUsdPerLevel },

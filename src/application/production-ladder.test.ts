@@ -27,7 +27,7 @@ import {
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the numbers that differ', () => {
-  it('defaults to TWENTY buys of $5, every one on a 3% dip and a 2% bounce', () => {
+  it('defaults to SIX buys of $5, the DCAs from a 15% dip and an 8% bounce', () => {
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — then *disminuí los
     // escalones a 20.* The slot reserves the whole ladder, exactly steps ×
@@ -36,13 +36,13 @@ describe('productionLadder — one place for the numbers that differ', () => {
     // liquidity brake and the cascade's own doors. The TP is FIXED at +12.5%,
     // and the strategy exit never sells under it.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 5, maxOpenEntries: 20, dropInitPct: 0, minProfitPct: 12.5, fixedTpPct: 12.5, impatientProfitPct: 10, urgentProfitPct: 25,
+      maxUsdPerLevel: 5, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 12.5, fixedTpPct: 12.5, impatientProfitPct: 10, urgentProfitPct: 25,
       dropLadder: false,
-      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 20,
+      dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 6,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 100, cascadeEntries: false,
+      stepUsd: 5, maxSteps: 6, dipPct: 15, bouncePct: 8, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 30, cascadeEntries: false,
     })
-    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 20, 3, 2, 0])
+    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 6, 15, 8, 0])
   })
 
   it('sells everything at a FIXED +12.5% over the average, and the strategy exit never sells under it', () => {
@@ -84,11 +84,21 @@ describe('productionLadder — one place for the numbers that differ', () => {
     for (const bad of ['veinte', '-1', '100', '250', ' ']) expect(productionLadder({ OPERADOR_MAX_DIP_PCT: bad }).maxDipPct, bad).toBe(0)
   })
 
-  it('puts at most $100 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
+  it('puts at most $30 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
+    // *Usemos sólo 5 DCA por token.* The first buy and five DCAs: $30, so
+    // $5,000 holds 166 tokens instead of 50.
     const ladder = productionLadder({})
-    expect(ladder.maxSteps * ladder.stepUsd).toBe(100)
-    expect(ladder.slotUsd).toBe(100)
-    expect(ladder.maxOpenEntries).toBe(20)
+    expect(ladder.maxSteps * ladder.stepUsd).toBe(30)
+    expect(ladder.slotUsd).toBe(30)
+    expect(ladder.maxOpenEntries).toBe(6)
+  })
+
+  it('starts the DCAs where the old seventh one was — 15% down, 8% back — and keeps growing 2 and 1', () => {
+    // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8, y así.* The operator. The
+    // shallow rungs bought into every chop; the ladder now begins where the
+    // old one had already fallen far enough to mean it.
+    const ladder = productionLadder({})
+    expect([ladder.dipPct, ladder.bouncePct, ladder.dipStepPct, ladder.bounceStepPct]).toEqual([15, 8, 2, 1])
   })
 
   it('derives the slot from the two variables, never from a constant', () => {
@@ -103,10 +113,10 @@ describe('productionLadder — one place for the numbers that differ', () => {
   })
 
   it('keeps the operator’s numbers on nonsense rather than trading on it', () => {
-    for (const bad of ['tres', '0', '-3', '100', ' ']) expect(productionLadder({ OPERADOR_DIP_PCT: bad }).dipPct, bad).toBe(3)
-    for (const bad of ['dos', '0', '-2', ' ']) expect(productionLadder({ OPERADOR_BOUNCE_PCT: bad }).bouncePct, bad).toBe(2)
+    for (const bad of ['tres', '0', '-3', '100', ' ']) expect(productionLadder({ OPERADOR_DIP_PCT: bad }).dipPct, bad).toBe(15)
+    for (const bad of ['dos', '0', '-2', ' ']) expect(productionLadder({ OPERADOR_BOUNCE_PCT: bad }).bouncePct, bad).toBe(8)
     for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(5)
-    for (const bad of ['veinte', '0', '-1', '2.5', ' ']) expect(productionLadder({ OPERADOR_MAX_STEPS: bad }).maxSteps, bad).toBe(20)
+    for (const bad of ['veinte', '0', '-1', '2.5', ' ']) expect(productionLadder({ OPERADOR_MAX_STEPS: bad }).maxSteps, bad).toBe(6)
   })
 
   it('keeps the deep rung and the cascade’s own doors OFF — each one a variable away', () => {
@@ -131,7 +141,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 5, maxOpenEntries: 20 })
+      .toMatchObject({ maxUsdPerLevel: 5, maxOpenEntries: 6 })
   })
 
   it('never expresses itself by editing the evidence', () => {
@@ -194,8 +204,8 @@ describe('production ladder — depth ZERO is one buy and nothing after it', () 
 
   it('still defaults to whatever the decision above says', () => {
     expect(productionLadder({}).maxOpenEntries).toBe(DEFAULT_MAX_DCA_PER_TOKEN + 1)
-    // Twenty steps, the first included.
-    expect(productionLadder({}).maxOpenEntries).toBe(20)
+    // Six steps, the first included.
+    expect(productionLadder({}).maxOpenEntries).toBe(6)
   })
 
   it('still refuses nonsense rather than taking it', () => {
@@ -257,7 +267,7 @@ describe('production ladder — a position reserves its WHOLE ladder', () => {
   // drown the providers in candle requests. So a slot reserves every step it
   // can buy, and the capital bounds the book: capital / $100.
   it('reserves every step by default', () => {
-    expect(productionLadder({}).reservedEntries).toBe(20)
+    expect(productionLadder({}).reservedEntries).toBe(6)
   })
 
   it('takes an override', () => {
@@ -266,14 +276,14 @@ describe('production ladder — a position reserves its WHOLE ladder', () => {
   })
 
   it('never reserves more entries than the venue will hold', () => {
-    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '90' }).reservedEntries).toBe(20)
+    expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '90' }).reservedEntries).toBe(6)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '5' }).reservedEntries).toBe(6)
     expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: '9', OPERADOR_MAX_DCA: '1' }).reservedEntries).toBe(2)
   })
 
   it('refuses nonsense: the whole ladder, the decision', () => {
     for (const raw of ['0', '-1', 'uno', '1.5']) {
-      expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: raw }).reservedEntries).toBe(20)
+      expect(productionLadder({ OPERADOR_RESERVED_ENTRIES: raw }).reservedEntries).toBe(6)
     }
   })
 })

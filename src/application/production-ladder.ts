@@ -29,19 +29,31 @@ import { DEFAULT_DIP_BOUNCE_POLICY } from '../domain/strategy/dip-bounce.js'
 export const DEFAULT_STEP_USD = 5
 
 /**
- * Buys per holding, the first included: $20 a token at a dollar a step. It was
- * fifty — *disminuí los escalones a 20.*
+ * Buys per holding, the first included: the first buy and FIVE DCAs, $30 a
+ * token at $5 a step, so $5,000 holds 166 tokens. It was twenty, and fifty
+ * before that — *usemos sólo 5 DCA por token.* Fifty tokens at $100 put a
+ * whole day's result in the hands of two or three that sank; the $1 experiment
+ * had been stable because the same capital was spread over 250.
+ * `DEFAULT_DIP_BOUNCE_POLICY` keeps twenty, so the rule's own tests stand.
  */
-export const DEFAULT_MAX_STEPS = DEFAULT_DIP_BOUNCE_POLICY.maxSteps
+export const DEFAULT_MAX_STEPS = 6
 
 /**
- * The dip that arms the watch and the bounce off its low that buys, in
- * percent — the first buy's and DCA 1's. *Ante una caída del 3% del precio y
- * una subida del 2%.* Every later DCA asks more: see `DEFAULT_DIP_STEP_PCT`, and
+ * The dip that arms DCA 1's watch and the bounce off its low that buys, in
+ * percent. Every later DCA asks more: see `DEFAULT_DIP_STEP_PCT`, and
  * `domain/strategy/dip-bounce.ts` for the rule.
+ *
+ * *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8, y así.* The operator. It was 3%
+ * and 2% — *ante una caída del 3% y una subida del 2%* — which the growing
+ * steps took to 15% and 8% only at DCA 7; the ladder now starts there. The
+ * five DCAs reach at least 8%, 17%, 26%, 35% and 44% under the first buy, and
+ * on 2026-09-30 the reversals the book caught sat near −50%. Replayed on that
+ * day's 126 positions, it held half the capital under water (−$81 on $475
+ * against −$165 on $920) for three fewer take-profits. The domain policy keeps
+ * 3 and 2.
  */
-export const DEFAULT_DIP_PCT = DEFAULT_DIP_BOUNCE_POLICY.dipPct
-export const DEFAULT_BOUNCE_PCT = DEFAULT_DIP_BOUNCE_POLICY.bouncePct
+export const DEFAULT_DIP_PCT = 15
+export const DEFAULT_BOUNCE_PCT = 8
 
 /**
  * How many points each DCA adds to the dip it asks — and to its collapse

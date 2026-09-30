@@ -51,6 +51,15 @@ const runtime = (env: Record<string, string> = {}) =>
   })
 
 /**
+ * The ladder the dip-bounce scenarios below were argued with: 3% and 2%,
+ * twenty steps. Production now starts DCA 1 at 15% and 8% with six steps
+ * (`production-ladder.ts`); the falls replayed here are about the MECHANISM —
+ * the sweep, the pool check, the TP, the funding — so they pin the numbers
+ * they were written against, and `runtime()` alone speaks for production.
+ */
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20' }
+
+/**
  * Ladder A, brought back from the environment: five chained rungs with their
  * volatility spacing and the liquidity brake, and one entry reserved. OFF in
  * production — every buy is a dip-bounce step — and these are the variables
@@ -160,16 +169,17 @@ describe('the strategy exit waits for +12.5%, through the path the engine runs',
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: $5 on a 3% dip and a 2% bounce, each DCA asking 2 more points of dip and 1 of bounce, twenty steps, fees from the free capital', () => {
+  it('wires the dip-bounce as the ONE buyer: $5 steps, DCA 1 on a 15% dip and an 8% bounce, each DCA asking 2 more points of dip and 1 of bounce, six steps, fees from the free capital', () => {
+    // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8* — *usemos sólo 5 DCA por token.*
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a
     // 20* — *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que
     // aumente de 1%.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 3, bouncePct: 2, maxSteps: 20, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 15, bouncePct: 8, maxSteps: 6, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
     expect(deps.dipBounce?.stepUsd).toBe(5)
     expect(deps.dipBounce?.fund).toBeDefined()
-    expect(cycleConfig.maxOpenEntries).toBe(20)
+    expect(cycleConfig.maxOpenEntries).toBe(6)
   })
 
   it('never buys past a 20% fall unless the environment turns the ceiling off', () => {
@@ -215,12 +225,12 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the whole ladder: a slot is exactly steps × step, $100, with nothing grossed up', () => {
+  it('reserves the whole ladder: a slot is exactly steps × step, $30, with nothing grossed up', () => {
     const { cycleConfig } = runtime()
-    expect(cycleConfig.reservedEntries).toBe(20)
+    expect(cycleConfig.reservedEntries).toBe(6)
     expect(cycleConfig.params.maxUsdPerLevel).toBe(5)
-    expect(cycleConfig.slotUsd).toBe(100)
-    expect(cycleConfig.usdPerToken).toBe(100)
+    expect(cycleConfig.slotUsd).toBe(30)
+    expect(cycleConfig.usdPerToken).toBe(30)
     // No haircut on the count, and a $5 fill is never refused by a floor.
     expect(cycleConfig.portfolio.reservePct).toBe(0)
     expect(cycleConfig.sizing?.minFillUsd).toBe(5)
@@ -254,7 +264,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('funds the deep rung at its own size when it is brought back: both entries cost $35 grossed up', async () => {
     // At a $1 step the slot is $20, under what the two entries cost, so the
     // funder has to raise it — a $100 slot of $5 steps already covers both.
-    const { deps, cycleConfig } = runtime({ ...DEEP_RUNG, OPERADOR_STEP_USD: '1' })
+    const { deps, cycleConfig } = runtime({ ...DEEP_RUNG, ...LEGACY_LADDER, OPERADOR_STEP_USD: '1' })
     expect(cycleConfig.usdPerToken).toBe(20)
     const funded = await deps.deepRung!.fund!({ ...held, capitalUsd: cycleConfig.usdPerToken! }, 2)
     expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([15, 20], 0.05), 9)
@@ -266,11 +276,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
   })
 
-  it('builds a broker that holds twenty entries — every step — and refuses a twenty-first', async () => {
+  it('builds a broker that holds six entries — every step — and refuses a seventh', async () => {
     const { deps } = runtime()
     const broker = await deps.brokerFor({ ...held, capitalUsd: 200 })
-    const entries = Array.from({ length: 21 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
-    expect(broker.execute(entries, 1, 0)).toHaveLength(20)
+    const entries = Array.from({ length: 7 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
+    expect(broker.execute(entries, 1, 0)).toHaveLength(6)
   })
 
   it('blacklists a frozen token on release unless told not to', () => {
@@ -571,7 +581,7 @@ describe('the deep rung, brought back, through the path the engine runs', () => 
  * test's store, because the runtime's own read the (empty) database.
  */
 const onMemory = (env: Record<string, string> = {}) => {
-  const { deps: built, cycleConfig } = runtime(env)
+  const { deps: built, cycleConfig } = runtime({ ...LEGACY_LADDER, ...env })
   const store = new MemoryStore()
   const brokers = new Map<string, PaperBroker>()
   const brokerFor = async (p: PersistedPosition) => {
@@ -893,7 +903,7 @@ describe('the pool is asked live before every step, through the path the engine 
   })
 })
 
-describe('the ONE entry door is rising in the last hour, through the shelf the engine allocates from', () => {
+describe('the rising door, brought back (OPERADOR_ENTRY_RISING=1), through the shelf the engine allocates from', () => {
   // *Hacé que la barrera de entrada sea solamente que los tokens suban, como
   // marca la barra de estudio de los 49 tokens.* The operator. `deps.recall` is
   // what a watch pass allocates from: the stored scan, re-ranked with the
@@ -928,7 +938,7 @@ describe('the ONE entry door is rising in the last hour, through the shelf the e
           ? { rows: [{ scanned_at: String(Date.now() - 60_000), chain: 'solana', snapshots: shelf }] as T[] }
           : { rows: [] as T[] },
     }
-    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', ...env }), {
+    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_ENTRY_RISING: '1', ...env }), {
       sql,
       postJson: async () => { throw new Error('no network in this test') },
     })
@@ -1094,8 +1104,8 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over steps × step: $5,000 is 50, $1,500 is 15', () => {
-    for (const [capital, slots] of [['5000', 50], ['1500', 15]] as const) {
+  it('counts the free slots as capital over steps × step: $5,000 is 166, $1,500 is 50', () => {
+    for (const [capital, slots] of [['5000', 166], ['1500', 50]] as const) {
       const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: capital })
       expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(slots)
     }
@@ -1206,7 +1216,7 @@ describe('the fill tape is read ONCE per process, through the path the engine ru
       },
     }
     const { deps, cycleConfig } = buildRuntime(
-      loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_CAPITAL_USD: '5000' }),
+      loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', ...LEGACY_LADDER, OPERADOR_CAPITAL_USD: '5000' }),
       { sql, postJson: async () => { throw new Error('no network in this test') } },
     )
     const sweep = (price: number, at: number) =>

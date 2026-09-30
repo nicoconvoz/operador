@@ -194,20 +194,20 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token twenty $5 steps on a 3% dip and a 2% bounce, and a slot of exactly $100', () => {
-    // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD* —
-    // *disminuí los escalones a 20.* The slot reserves the whole ladder, steps
-    // × step, with nothing grossed up: *el tope son 5000 dividido 50.*
+  it('gives every token six $5 steps, DCA 1 on a 15% dip and an 8% bounce, and a slot of exactly $30', () => {
+    // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8* — *usemos sólo 5 DCA por
+    // token.* The slot reserves the whole ladder, steps × step, with nothing
+    // grossed up: $5,000 holds 166 tokens.
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 20, dipPct: 3, bouncePct: 2, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 100 })
+    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 6, dipPct: 15, bouncePct: 8, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 30 })
     // Each DCA asks 2 more points of dip and ceiling and 1 more of bounce; zero is the flat rule.
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
     // Nothing is bought on a fall of more than 20%; zero turns the ceiling off.
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
-    expect(config.maxDcaPerToken + 1).toBe(20)
-    expect(config.reservedEntries).toBe(20)
-    expect(config.usdPerToken).toBe(100)
+    expect(config.maxDcaPerToken + 1).toBe(6)
+    expect(config.reservedEntries).toBe(6)
+    expect(config.usdPerToken).toBe(30)
     // Nothing else buys: the deep rung, the chained ladder, its spacing, the
     // brake, the pressure ladder and the cascade's own doors.
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
@@ -411,18 +411,19 @@ describe('two rules stand, and the doors they need are separate switches', () =>
   })
 })
 
-describe('loadConfig — ONE entry door: the token is rising in the last hour', () => {
+describe('loadConfig — the rising door is off; it comes back with OPERADOR_ENTRY_RISING=1', () => {
   // *Hacé que la barrera de entrada sea solamente que los tokens suban.* From
   // the module the dashboard reads too, so the screen and the engine cannot
   // disagree about which tokens the book may buy.
-  it('asks one thing of the components: rising in the hour', () => {
-    expect(loadConfig(valid).minComponents).toEqual({ risingHour: 1 })
-    expect(loadConfig({ ...valid, OPERADOR_ENTRY_RISING: '0' }).minComponents).toEqual({})
+  it('asks nothing of the components: the volatility door is the only one', () => {
+    // *Nada de dos puertas de entrada: sólo medí volatilidad.*
+    expect(loadConfig(valid).minComponents).toEqual({})
+    expect(loadConfig({ ...valid, OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ risingHour: 1 })
   })
 
   it('brings the cost-efficiency floor back beside it with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
-    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 }, risingHour: 1 })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '0' }).minComponents).toEqual({ costEfficiency: { above: 0 } })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({ risingHour: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ costEfficiency: { above: 0 }, risingHour: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({})
   })
 })
