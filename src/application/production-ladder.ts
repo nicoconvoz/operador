@@ -18,15 +18,23 @@
  */
 
 import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
-import { DEFAULT_DIP_BOUNCE_POLICY } from '../domain/strategy/dip-bounce.js'
+import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domain/strategy/dip-bounce.js'
 
 /**
- * What every buy of a holding is, in dollars, the first included. *Comprá 1
- * USD, y armá escalones de 1 USD con la misma regla.* The operator — then
- * *en vez de 1 USD que sean 5 por escalón, todo lo demás igual.* A slot is
- * therefore twenty steps of $5, $100, and the book holds capital / $100.
+ * What the FIRST buy of a holding is, in dollars; every later one is this times
+ * `DEFAULT_STEP_GROWTH` once per buy before it. *Comprá 1 USD* — then *5 por
+ * escalón* — and on 2026-10-02 *hacé que cada escalón sea 1, 2, 4, 8, 16, 32.*
+ * A slot is therefore $63 and the book holds capital / $63: 79 tokens at
+ * $5,000.
  */
-export const DEFAULT_STEP_USD = 5
+export const DEFAULT_STEP_USD = 1
+
+/**
+ * How much each step grows over the one before: two, so the steps double. The
+ * deepest buys carry most of the money and pull the average down hardest. One
+ * is the flat ladder. OPERADOR_STEP_GROWTH.
+ */
+export const DEFAULT_STEP_GROWTH = 2
 
 /**
  * Buys per holding, the first included: the first buy and FIVE DCAs, $30 a
@@ -546,8 +554,10 @@ export interface ProductionLadder {
   readonly deepRungUsd: number
   /** Whether the deep rung buys at all. See `DEFAULT_DEEP_RUNG`. */
   readonly deepRung: boolean
-  /** What every dip-bounce buy is, in dollars. */
+  /** What the first dip-bounce buy is, in dollars; later ones grow by `stepGrowth`. */
   readonly stepUsd: number
+  /** How much each step grows over the one before. See `DEFAULT_STEP_GROWTH`. */
+  readonly stepGrowth: number
   /** Buys per holding, the first included. */
   readonly maxSteps: number
   /** The dip, in percent under the reference, that arms the watch — the first buy's and DCA 1's. */
@@ -652,15 +662,20 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
 
   const stepUsd = positive(env.OPERADOR_STEP_USD, DEFAULT_STEP_USD)
   const maxSteps = entries(env.OPERADOR_MAX_STEPS, DEFAULT_MAX_STEPS)
+  // A growth under one would SHRINK the deep buys, the opposite of a ladder;
+  // nonsense keeps the operator's doubling.
+  const growthRaw = env.OPERADOR_STEP_GROWTH?.trim()
+  const growth = Number(growthRaw)
+  const stepGrowth = growthRaw && Number.isFinite(growth) && growth >= 1 ? growth : DEFAULT_STEP_GROWTH
   // The venue holds every step unless someone asked for another depth: the
   // steps are what the sweep buys, so they are what the broker must hold.
   const maxOpenEntries = env.OPERADOR_MAX_DCA?.trim() ? rungs(env.OPERADOR_MAX_DCA, maxSteps - 1) + 1 : maxSteps
   const dcaDropsPct = drops(env.OPERADOR_DCA_DROPS_PCT, DEFAULT_DCA_DROPS_PCT)
 
   return {
-    // One step unless someone asks otherwise: the ladder the slot is priced
-    // with is the ladder the sweep buys.
-    maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, stepUsd),
+    // The LARGEST step unless someone asks otherwise: the ladder the slot is
+    // priced with is the ladder the sweep buys, and its deepest buy is its biggest.
+    maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, stepSizeUsd(maxSteps - 1, stepUsd, stepGrowth)),
     // ZERO is a real value: one entry and no ladder at all, which is the
     // operator's structural change. Read through `positive` it would fall back
     // to the default and silently run a five-rung ladder — his decision
@@ -705,6 +720,7 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // OFF: every buy is a dip-bounce step. Only 1, true and yes bring it back.
     deepRung: onlyIf(env.OPERADOR_DEEP_RUNG) || DEFAULT_DEEP_RUNG,
     stepUsd,
+    stepGrowth,
     maxSteps,
     dipPct: share(env.OPERADOR_DIP_PCT, DEFAULT_DIP_PCT),
     bouncePct: share(env.OPERADOR_BOUNCE_PCT, DEFAULT_BOUNCE_PCT),
@@ -716,9 +732,9 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // `percent`, never `positive`; nonsense keeps the operator's steps.
     dipStepPct: percent(env.OPERADOR_DIP_STEP_PCT, DEFAULT_DIP_STEP_PCT),
     bounceStepPct: percent(env.OPERADOR_BOUNCE_STEP_PCT, DEFAULT_BOUNCE_STEP_PCT),
-    // Derived from the two variables, never written down on its own: a slot of
-    // twenty steps of a dollar is twenty dollars, and nothing is grossed up.
-    slotUsd: maxSteps * stepUsd,
+    // Derived from the variables, never written down on its own: every step
+    // added up — $1 + $2 + $4 + $8 + $16 + $32 is $63 — and nothing grossed up.
+    slotUsd: ladderTotalUsd(stepUsd, stepGrowth, maxSteps),
     cascadeEntries: onlyIf(env.OPERADOR_CASCADE_ENTRIES) || DEFAULT_CASCADE_ENTRIES,
   }
 }

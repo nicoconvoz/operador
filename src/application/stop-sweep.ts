@@ -8,6 +8,7 @@ import {
   watchAfterBuy,
   dipWatchWorthWriting,
   dipBounceThresholds,
+  stepSizeUsd,
   crashLine,
   type DipBouncePolicy,
   type DipBounceStep,
@@ -397,8 +398,13 @@ export interface DeepRung {
  */
 export interface DipBounce {
   readonly policy: DipBouncePolicy
-  /** What each step buys, in dollars. *Comprá 1 USD.* */
+  /** What the FIRST step buys, in dollars. *Comprá 1 USD.* */
   readonly stepUsd: number
+  /**
+   * How much each step grows over the one before — *1, 2, 4, 8, 16, 32* is a
+   * growth of two. Absent or one: every step is `stepUsd`.
+   */
+  readonly stepGrowth?: number
   /** Gas per swap, for what a step costs beyond its dollar. */
   readonly gasUsdPerSwap: number
   /**
@@ -1633,7 +1639,8 @@ async function buyStep(
 ): Promise<'bought' | 'unfunded' | null> {
   const n = buys.length
   const max = ladder.policy.maxSteps
-  const step = ladder.stepUsd
+  // This buy's own size: the first step times the growth once per buy before it.
+  const step = stepSizeUsd(n, ladder.stepUsd, ladder.stepGrowth ?? 1)
   // The buy AFTER this one — its own lines, grown with every DCA.
   const following = dipBounceThresholds(n + 2, ladder.policy)
   const next = `La próxima compra espera una caída de ${asked(following.dipPct)}% bajo este precio y un rebote de ${asked(following.bouncePct)}%.`

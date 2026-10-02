@@ -213,8 +213,10 @@ export interface RuntimeConfig {
    * `application/production-ladder.ts`.
    */
   readonly maxDcaPerToken: number
-  /** What every dip-bounce buy is, in dollars. */
+  /** What the first dip-bounce buy is, in dollars; later ones grow by `stepGrowth`. */
   readonly stepUsd: number
+  /** How much each step grows over the one before: two doubles them. */
+  readonly stepGrowth: number
   /** Dip-bounce buys per holding, the first included. */
   readonly maxSteps: number
   /** The dip under the reference that arms the watch, in percent. */
@@ -613,6 +615,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       number(env, 'OPERADOR_MAX_DCA', productionLadder(env).maxOpenEntries - 1) + 1,
     ),
     stepUsd: productionLadder(env).stepUsd,
+    stepGrowth: productionLadder(env).stepGrowth,
     maxSteps: productionLadder(env).maxSteps,
     dipPct: productionLadder(env).dipPct,
     bouncePct: productionLadder(env).bouncePct,

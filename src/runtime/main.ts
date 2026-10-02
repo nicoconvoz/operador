@@ -553,6 +553,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         bounceStepPct: config.bounceStepPct,
       },
       stepUsd: config.stepUsd,
+      // *1, 2, 4, 8, 16, 32* — each step doubles the one before.
+      stepGrowth: config.stepGrowth,
       gasUsdPerSwap: config.gasUsdPerSwap,
       fund: fundStep,
       pool: { liquidity: liquidityChange, deathPolicy, refusing: new Set<string>() },

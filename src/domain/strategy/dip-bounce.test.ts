@@ -11,6 +11,8 @@ import {
   DEFAULT_DIP_BOUNCE_POLICY,
   type DipBouncePolicy,
   type DipWatch,
+  stepSizeUsd,
+  ladderTotalUsd,
 } from './dip-bounce.js'
 
 /**
@@ -622,5 +624,21 @@ describe('the dip-bounce ladder — what the store keeps', () => {
     expect(keepDipWatch(newer, undefined)).toBe(newer)
     expect(keepDipWatch(null, null)).toBeNull()
     expect(keepDipWatch(undefined, older)).toBe(older)
+  })
+})
+
+describe('stepSizeUsd — each step doubles the one before', () => {
+  // *Hacé que cada escalón sea 1, 2, 4, 8, 16, 32.* The operator.
+  it('buys the base first and doubles it on every later buy', () => {
+    expect([0, 1, 2, 3, 4, 5].map((i) => stepSizeUsd(i, 1, 2))).toEqual([1, 2, 4, 8, 16, 32])
+  })
+
+  it('stays flat with a growth of one — the ladder as it was', () => {
+    expect([0, 1, 5].map((i) => stepSizeUsd(i, 5, 1))).toEqual([5, 5, 5])
+  })
+
+  it('adds a slot up exactly: $63 for six doubling steps from a dollar, $30 for six flat fives', () => {
+    expect(ladderTotalUsd(1, 2, 6)).toBe(63)
+    expect(ladderTotalUsd(5, 1, 6)).toBe(30)
   })
 })

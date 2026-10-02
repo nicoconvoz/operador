@@ -145,6 +145,23 @@ export const DEFAULT_DIP_BOUNCE_POLICY: DipBouncePolicy = {
 }
 
 /** What one buy asks, in percent: the dip that arms it, the bounce that buys it, and its collapse ceiling. */
+/**
+ * What the buy at `index` spends — 0 is the first buy, 1 is DCA 1 — in
+ * dollars: the base, multiplied by `growth` once per buy before it.
+ *
+ * *Hacé que cada escalón sea 1, 2, 4, 8, 16, 32.* The operator. With a growth
+ * of two each DCA doubles the last, so the deepest buys carry most of the
+ * money and pull the average down hardest; a growth of one is the flat ladder.
+ */
+export const stepSizeUsd = (index: number, base: number, growth: number): number => base * growth ** index
+
+/** What a whole ladder of `steps` buys costs: the sum of every step. */
+export function ladderTotalUsd(base: number, growth: number, steps: number): number {
+  let total = 0
+  for (let i = 0; i < steps; i++) total += stepSizeUsd(i, base, growth)
+  return total
+}
+
 export interface DipBounceThresholds {
   readonly dipPct: number
   readonly bouncePct: number

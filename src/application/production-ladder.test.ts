@@ -27,7 +27,7 @@ import {
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the numbers that differ', () => {
-  it('defaults to SIX buys of $5, the DCAs from a 15% dip and an 8% bounce', () => {
+  it('defaults to SIX buys doubling from $1, the DCAs from a 15% dip and an 8% bounce', () => {
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — then *disminuí los
     // escalones a 20.* The slot reserves the whole ladder, exactly steps ×
@@ -36,13 +36,13 @@ describe('productionLadder — one place for the numbers that differ', () => {
     // liquidity brake and the cascade's own doors. The TP is FIXED at +12.5%,
     // and the strategy exit never sells under it.
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: 5, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 12.5, fixedTpPct: 12.5, impatientProfitPct: 10, urgentProfitPct: 25,
+      maxUsdPerLevel: 32, maxOpenEntries: 6, dropInitPct: 0, minProfitPct: 12.5, fixedTpPct: 12.5, impatientProfitPct: 10, urgentProfitPct: 25,
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 6,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 5, maxSteps: 6, dipPct: 15, bouncePct: 8, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 30, cascadeEntries: false,
+      stepUsd: 1, stepGrowth: 2, maxSteps: 6, dipPct: 15, bouncePct: 8, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 63, cascadeEntries: false,
     })
-    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([5, 6, 15, 8, 0])
+    expect([DEFAULT_STEP_USD, DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([1, 6, 15, 8, 0])
   })
 
   it('sells everything at a FIXED +12.5% over the average, and the strategy exit never sells under it', () => {
@@ -84,13 +84,21 @@ describe('productionLadder — one place for the numbers that differ', () => {
     for (const bad of ['veinte', '-1', '100', '250', ' ']) expect(productionLadder({ OPERADOR_MAX_DIP_PCT: bad }).maxDipPct, bad).toBe(0)
   })
 
-  it('puts at most $30 into one token — and the slot reserves exactly that, with nothing grossed up', () => {
-    // *Usemos sólo 5 DCA por token.* The first buy and five DCAs: $30, so
-    // $5,000 holds 166 tokens instead of 50.
+  it('puts at most $63 into one token — $1, $2, $4, $8, $16 and $32 — and the slot reserves exactly that', () => {
+    // *Hacé que cada escalón sea 1, 2, 4, 8, 16, 32.* The first buy and five
+    // DCAs, each double the last: $63, so $5,000 holds 79 tokens.
     const ladder = productionLadder({})
-    expect(ladder.maxSteps * ladder.stepUsd).toBe(30)
-    expect(ladder.slotUsd).toBe(30)
+    expect([ladder.stepUsd, ladder.stepGrowth]).toEqual([1, 2])
+    expect(ladder.slotUsd).toBe(63)
     expect(ladder.maxOpenEntries).toBe(6)
+    // The largest step is what a level may cost.
+    expect(ladder.maxUsdPerLevel).toBe(32)
+  })
+
+  it('keeps the ladder flat with OPERADOR_STEP_GROWTH=1, and refuses a growth under one', () => {
+    expect(productionLadder({ OPERADOR_STEP_GROWTH: '1', OPERADOR_STEP_USD: '5' })).toMatchObject({ stepGrowth: 1, slotUsd: 30, maxUsdPerLevel: 5 })
+    expect(productionLadder({ OPERADOR_STEP_GROWTH: '1.5' }).stepGrowth).toBe(1.5)
+    for (const bad of ['dos', '0', '0.5', '-2', ' ']) expect(productionLadder({ OPERADOR_STEP_GROWTH: bad }).stepGrowth, bad).toBe(2)
   })
 
   it('starts the DCAs where the old seventh one was — 15% down, 8% back — and keeps growing 2 and 1', () => {
@@ -102,20 +110,20 @@ describe('productionLadder — one place for the numbers that differ', () => {
   })
 
   it('derives the slot from the two variables, never from a constant', () => {
-    expect(productionLadder({ OPERADOR_MAX_STEPS: '50' }).slotUsd).toBe(250)
-    expect(productionLadder({ OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '2' }))
+    expect(productionLadder({ OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' }).slotUsd).toBe(250)
+    expect(productionLadder({ OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }))
       .toMatchObject({ slotUsd: 100, maxOpenEntries: 50, reservedEntries: 50, maxUsdPerLevel: 2 })
   })
 
   it('reads the dip, the bounce, the step and the steps from the environment', () => {
-    expect(productionLadder({ OPERADOR_DIP_PCT: '5', OPERADOR_BOUNCE_PCT: '1.5', OPERADOR_STEP_USD: '0.5', OPERADOR_MAX_STEPS: '10' }))
+    expect(productionLadder({ OPERADOR_DIP_PCT: '5', OPERADOR_BOUNCE_PCT: '1.5', OPERADOR_STEP_USD: '0.5', OPERADOR_MAX_STEPS: '10', OPERADOR_STEP_GROWTH: '1' }))
       .toMatchObject({ dipPct: 5, bouncePct: 1.5, stepUsd: 0.5, maxSteps: 10, slotUsd: 5 })
   })
 
   it('keeps the operator’s numbers on nonsense rather than trading on it', () => {
     for (const bad of ['tres', '0', '-3', '100', ' ']) expect(productionLadder({ OPERADOR_DIP_PCT: bad }).dipPct, bad).toBe(15)
     for (const bad of ['dos', '0', '-2', ' ']) expect(productionLadder({ OPERADOR_BOUNCE_PCT: bad }).bouncePct, bad).toBe(8)
-    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(5)
+    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(1)
     for (const bad of ['veinte', '0', '-1', '2.5', ' ']) expect(productionLadder({ OPERADOR_MAX_STEPS: bad }).maxSteps, bad).toBe(6)
   })
 
@@ -141,7 +149,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 5, maxOpenEntries: 6 })
+      .toMatchObject({ maxUsdPerLevel: 32, maxOpenEntries: 6 })
   })
 
   it('never expresses itself by editing the evidence', () => {

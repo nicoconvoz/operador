@@ -57,7 +57,7 @@ const runtime = (env: Record<string, string> = {}) =>
  * the sweep, the pool check, the TP, the funding — so they pin the numbers
  * they were written against, and `runtime()` alone speaks for production.
  */
-const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20' }
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' }
 
 /**
  * And the order they were argued with: the cheapest to trade first. Production
@@ -176,7 +176,7 @@ describe('the strategy exit waits for +12.5%, through the path the engine runs',
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: $5 steps, DCA 1 on a 15% dip and an 8% bounce, each DCA asking 2 more points of dip and 1 of bounce, six steps, fees from the free capital', () => {
+  it('wires the dip-bounce as the ONE buyer: steps doubling from $1, DCA 1 on a 15% dip and an 8% bounce, each DCA asking 2 more points of dip and 1 of bounce, six steps, fees from the free capital', () => {
     // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8* — *usemos sólo 5 DCA por token.*
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a
@@ -184,7 +184,9 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     // aumente de 1%.*
     const { deps, cycleConfig } = runtime()
     expect(deps.dipBounce?.policy).toEqual({ dipPct: 15, bouncePct: 8, maxSteps: 6, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
-    expect(deps.dipBounce?.stepUsd).toBe(5)
+    // *Hacé que cada escalón sea 1, 2, 4, 8, 16, 32.*
+    expect(deps.dipBounce?.stepUsd).toBe(1)
+    expect(deps.dipBounce?.stepGrowth).toBe(2)
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(6)
   })
@@ -232,15 +234,15 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the whole ladder: a slot is exactly steps × step, $30, with nothing grossed up', () => {
+  it('reserves the whole ladder: a slot is every step added up, $63, with nothing grossed up', () => {
     const { cycleConfig } = runtime()
     expect(cycleConfig.reservedEntries).toBe(6)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(5)
-    expect(cycleConfig.slotUsd).toBe(30)
-    expect(cycleConfig.usdPerToken).toBe(30)
-    // No haircut on the count, and a $5 fill is never refused by a floor.
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(32)
+    expect(cycleConfig.slotUsd).toBe(63)
+    expect(cycleConfig.usdPerToken).toBe(63)
+    // No haircut on the count, and a $1 fill is never refused by a floor.
     expect(cycleConfig.portfolio.reservePct).toBe(0)
-    expect(cycleConfig.sizing?.minFillUsd).toBe(5)
+    expect(cycleConfig.sizing?.minFillUsd).toBe(1)
   })
 
   it('buys NOTHING through the cascade on the first tick of a slot — its doors stay shut; the first step is the dip-bounce’s', async () => {
@@ -1064,6 +1066,30 @@ describe('the FIRST step is bought on selection, through the cycle the engine ru
     expect((await setup.store.fillsFor(reserved.id)).map((f) => f.orderId)).toEqual(['Entry'])
   })
 
+  it('doubles each step: $1 on the first buy, $2 on the first DCA', async () => {
+    // *Hacé que cada escalón sea 1, 2, 4, 8, 16, 32.* The operator.
+    const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_STEP_USD: '1', OPERADOR_STEP_GROWTH: '2' })
+    const reserved = { ...held, id: 'solana:NEW:1', tokenAddress: 'NEW', pairAddress: 'pair-NEW', symbol: 'NEW', capitalUsd: 63, lastBarTime: T0 - 15 * 60_000, lastPriceUsd: 1 }
+    await setup.store.savePosition(reserved)
+    let clock = T0
+    const sweep = async (price: number) =>
+      sweepStops(
+        setup.deps,
+        (p) => exitLevelsFor(p, exitSizingFrom(setup.cycleConfig)),
+        new AlertThrottle(0),
+        (await setup.store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })),
+        new Map([['solana:NEW', price]]),
+        (clock += 30_000),
+      )
+    await sweep(1)
+    // A 4% dip and a bounce past 2%: DCA 1, under the legacy 3%/2% lines.
+    for (const price of [0.96, 0.985]) await sweep(price)
+    const spent = (await setup.store.fillsFor(reserved.id)).filter((f) => f.side === 'buy').map((f) => f.qty * f.price)
+    expect(spent).toHaveLength(2)
+    expect(spent[0]! / 1).toBeCloseTo(1, 2)
+    expect(spent[1]! / 2).toBeCloseTo(1, 2)
+  })
+
   it('never buys a second first step on the next pass — and the next buy needs a 3% dip under it and a 2% bounce', async () => {
     const setup = onMemory({ OPERADOR_CAPITAL_USD: '5000' })
     await pass(setup, T0)
@@ -1142,13 +1168,13 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over steps × step: $5,000 is 166, $1,500 is 50', () => {
-    for (const [capital, slots] of [['5000', 166], ['1500', 50]] as const) {
+  it('counts the free slots as capital over the slot: $5,000 is 79, $1,500 is 23', () => {
+    for (const [capital, slots] of [['5000', 79], ['1500', 23]] as const) {
       const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: capital })
       expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(slots)
     }
     // Fifty steps of $5: a $250 slot, twenty of them in $5,000.
-    const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_MAX_STEPS: '50' })
+    const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })
     expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(20)
   })
 
