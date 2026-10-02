@@ -29,9 +29,9 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
-| **The book** | a slot is **6 × $5 = $30**; the book holds **capital / $30** tokens (166 at $5,000), the cheapest to trade first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
-| **First buy** | **$5, automatic**, in the pass that opens the slot | `buyOnSelection`, `stop-sweep.ts` |
-| **Every later buy** | **five DCAs of $5**, from a **15% dip and an 8% bounce**, growing 2 and 1 with each, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
+| **The book** | a slot is **$1 + $2 + $4 + $8 + $16 + $32 = $63**; the book holds **capital / $63** tokens (79 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
+| **First buy** | **$1, automatic**, in the pass that opens the slot — retried by the sweep if that pass could not | `buyOnSelection`, `stop-sweep.ts` |
+| **Every later buy** | **five DCAs, each double the last** ($2 → $32), from a **15% dip and an 8% bounce**, growing 2 and 1 with each, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
 | **Exits** | a **fixed TP at +12.5%** over the average, the **freeze** exit, the **death** exit | `fixed-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
@@ -76,6 +76,14 @@ market-wide turn:
   requests, the tick's candles failed behind it, and 54 reservations bought
   nothing. The sweep now buys a reservation's FIRST step whenever the opening
   pass could not.
+
+- **Each step doubles the last** (2026-10-02). *Hacé que cada escalón sea 1, 2,
+  4, 8, 16, 32.* `OPERADOR_STEP_USD` (1) is the first buy and
+  `OPERADOR_STEP_GROWTH` (2) multiplies every later one (`stepSizeUsd`); the slot
+  is every step added up (`ladderTotalUsd`), $63, so $5,000 holds 79 tokens. The
+  deepest buys carry most of the money and pull the average down hardest.
+  Stated: gas is $0.05 a swap, 5% of the first $1 and 0.5% of the whole ladder.
+  `OPERADOR_STEP_GROWTH=1` is the flat ladder.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.
