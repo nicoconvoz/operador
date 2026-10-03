@@ -29,9 +29,9 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
-| **The book** | a slot is **$1 + $2 + $4 + $8 + $16 + $32 = $63**; the book holds **capital / $63** tokens (79 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
-| **First buy** | **$1, automatic**, in the pass that opens the slot — retried by the sweep if that pass could not | `buyOnSelection`, `stop-sweep.ts` |
-| **Every later buy** | **five DCAs, each double the last** ($2 → $32), from a **15% dip and an 8% bounce**, growing 2 and 1 with each, under a **live pool check** | `dip-bounce.ts`, the stop sweep |
+| **The book** | a slot is **$3 + $9 = $12**; the book holds **capital / $12** tokens (416 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
+| **First buy** | **$3, automatic**, in the pass that opens the slot — retried by the sweep if that pass could not | `buyOnSelection`, `stop-sweep.ts` |
+| **Every later buy** | **ONE DCA of $9**, on a **23% dip and a 12% bounce** — what DCA 5 asked — under a **live pool check** | `dip-bounce.ts`, the stop sweep |
 | **Exits** | a **fixed TP at +12.5%** over the average, the **freeze** exit, the **death** exit | `fixed-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
@@ -84,6 +84,13 @@ market-wide turn:
   deepest buys carry most of the money and pull the average down hardest.
   Stated: gas is $0.05 a swap, 5% of the first $1 and 0.5% of the whole ladder.
   `OPERADOR_STEP_GROWTH=1` is the flat ladder.
+
+- **Two buys: $3, then $9** (2026-10-03). *Hacé algo, sólo dos compras: la
+  primera de 3, y la caída y el rebote como si fuera el DCA 5 para la segunda
+  compra de 9.* `OPERADOR_STEP_USD` 3, `OPERADOR_STEP_GROWTH` 3,
+  `OPERADOR_MAX_STEPS` 2, `OPERADOR_DIP_PCT` 23 and `OPERADOR_BOUNCE_PCT` 12 — DCA 5 of
+  the 15%/8% ladder. A slot is $12, so $5,000 holds 416 tokens: more than the
+  scan is likely to find, and every one held costs a sell probe per tick.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.
