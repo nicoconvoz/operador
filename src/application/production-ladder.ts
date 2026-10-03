@@ -23,18 +23,18 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
 /**
  * What the FIRST buy of a holding is, in dollars; every later one is this times
  * `DEFAULT_STEP_GROWTH` once per buy before it. *Comprá 1 USD* — then *5 por
- * escalón* — and on 2026-10-02 *hacé que cada escalón sea 1, 2, 4, 8, 16, 32.*
- * A slot is therefore $63 and the book holds capital / $63: 79 tokens at
- * $5,000.
+ * escalón* — *hacé que cada escalón sea 1, 2, 4, 8, 16, 32* — and on
+ * 2026-10-03 *sólo dos compras: la primera de 3 y la segunda de 9.* A slot is
+ * therefore $12 and the book holds capital / $12: 416 tokens at $5,000.
  */
-export const DEFAULT_STEP_USD = 1
+export const DEFAULT_STEP_USD = 3
 
 /**
- * How much each step grows over the one before: two, so the steps double. The
- * deepest buys carry most of the money and pull the average down hardest. One
- * is the flat ladder. OPERADOR_STEP_GROWTH.
+ * How much each step grows over the one before: three, so $3 becomes $9. It
+ * was two — *1, 2, 4, 8, 16, 32*. The deeper buy carries most of the money and
+ * pulls the average down hardest. One is the flat ladder. OPERADOR_STEP_GROWTH.
  */
-export const DEFAULT_STEP_GROWTH = 2
+export const DEFAULT_STEP_GROWTH = 3
 
 /**
  * Buys per holding, the first included: the first buy and FIVE DCAs, $30 a
@@ -43,8 +43,10 @@ export const DEFAULT_STEP_GROWTH = 2
  * whole day's result in the hands of two or three that sank; the $1 experiment
  * had been stable because the same capital was spread over 250.
  * `DEFAULT_DIP_BOUNCE_POLICY` keeps twenty, so the rule's own tests stand.
+ *
+ * TWO since 2026-10-03: *sólo dos compras* — the first and one DCA.
  */
-export const DEFAULT_MAX_STEPS = 6
+export const DEFAULT_MAX_STEPS = 2
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -59,9 +61,13 @@ export const DEFAULT_MAX_STEPS = 6
  * day's 126 positions, it held half the capital under water (−$81 on $475
  * against −$165 on $920) for three fewer take-profits. The domain policy keeps
  * 3 and 2.
+ *
+ * 23% and 12% since 2026-10-03: *la caída y el rebote como si fuera el DCA 5
+ * para la segunda compra* — what DCA 5 of that ladder asked, now asked by the
+ * one DCA there is.
  */
-export const DEFAULT_DIP_PCT = 15
-export const DEFAULT_BOUNCE_PCT = 8
+export const DEFAULT_DIP_PCT = 23
+export const DEFAULT_BOUNCE_PCT = 12
 
 /**
  * How many points each DCA adds to the dip it asks — and to its collapse

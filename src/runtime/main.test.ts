@@ -176,19 +176,19 @@ describe('the strategy exit waits for +12.5%, through the path the engine runs',
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: steps doubling from $1, DCA 1 on a 15% dip and an 8% bounce, each DCA asking 2 more points of dip and 1 of bounce, six steps, fees from the free capital', () => {
+  it('wires the dip-bounce as the ONE buyer: two buys, $3 and $9, the second on a 23% dip and a 12% bounce, fees from the free capital', () => {
     // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8* — *usemos sólo 5 DCA por token.*
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a
     // 20* — *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que
     // aumente de 1%.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 15, bouncePct: 8, maxSteps: 6, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
-    // *Hacé que cada escalón sea 1, 2, 4, 8, 16, 32.*
-    expect(deps.dipBounce?.stepUsd).toBe(1)
-    expect(deps.dipBounce?.stepGrowth).toBe(2)
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 23, bouncePct: 12, maxSteps: 2, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
+    // *Sólo dos compras: la primera de 3 y la segunda de 9.*
+    expect(deps.dipBounce?.stepUsd).toBe(3)
+    expect(deps.dipBounce?.stepGrowth).toBe(3)
     expect(deps.dipBounce?.fund).toBeDefined()
-    expect(cycleConfig.maxOpenEntries).toBe(6)
+    expect(cycleConfig.maxOpenEntries).toBe(2)
   })
 
   it('never buys past a 20% fall unless the environment turns the ceiling off', () => {
@@ -234,15 +234,15 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the whole ladder: a slot is every step added up, $63, with nothing grossed up', () => {
+  it('reserves the whole ladder: a slot is both buys added up, $12, with nothing grossed up', () => {
     const { cycleConfig } = runtime()
-    expect(cycleConfig.reservedEntries).toBe(6)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(32)
-    expect(cycleConfig.slotUsd).toBe(63)
-    expect(cycleConfig.usdPerToken).toBe(63)
-    // No haircut on the count, and a $1 fill is never refused by a floor.
+    expect(cycleConfig.reservedEntries).toBe(2)
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(9)
+    expect(cycleConfig.slotUsd).toBe(12)
+    expect(cycleConfig.usdPerToken).toBe(12)
+    // No haircut on the count, and a $3 fill is never refused by a floor.
     expect(cycleConfig.portfolio.reservePct).toBe(0)
-    expect(cycleConfig.sizing?.minFillUsd).toBe(1)
+    expect(cycleConfig.sizing?.minFillUsd).toBe(3)
   })
 
   it('buys NOTHING through the cascade on the first tick of a slot — its doors stay shut; the first step is the dip-bounce’s', async () => {
@@ -285,11 +285,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
   })
 
-  it('builds a broker that holds six entries — every step — and refuses a seventh', async () => {
+  it('builds a broker that holds two entries — every step — and refuses a third', async () => {
     const { deps } = runtime()
     const broker = await deps.brokerFor({ ...held, capitalUsd: 200 })
-    const entries = Array.from({ length: 7 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
-    expect(broker.execute(entries, 1, 0)).toHaveLength(6)
+    const entries = Array.from({ length: 3 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
+    expect(broker.execute(entries, 1, 0)).toHaveLength(2)
   })
 
   it('ticks on the live price by default, and reads candles only for a position idle six hours', () => {
@@ -1168,8 +1168,8 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over the slot: $5,000 is 79, $1,500 is 23', () => {
-    for (const [capital, slots] of [['5000', 79], ['1500', 23]] as const) {
+  it('counts the free slots as capital over the slot: $5,000 is 416, $1,500 is 125', () => {
+    for (const [capital, slots] of [['5000', 416], ['1500', 125]] as const) {
       const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: capital })
       expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(slots)
     }

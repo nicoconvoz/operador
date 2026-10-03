@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — the $32 the last DCA buys', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(32)
+  it('caps each level at the LARGEST step by default — the $9 the DCA buys', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(9)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,20 +194,20 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token six steps doubling from $1, DCA 1 on a 15% dip and an 8% bounce, and a slot of exactly $63', () => {
+  it('gives every token two buys, $3 and $9, the second on a 23% dip and a 12% bounce, and a slot of exactly $12', () => {
     // *El DCA 1 = el DCA 7* — *sólo 5 DCA por token* — *cada escalón 1, 2, 4,
     // 8, 16, 32.* The slot reserves every step added up, with nothing grossed
     // up: $5,000 holds 79 tokens.
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 1, stepGrowth: 2, maxSteps: 6, dipPct: 15, bouncePct: 8, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 63 })
+    expect(config).toMatchObject({ stepUsd: 3, stepGrowth: 3, maxSteps: 2, dipPct: 23, bouncePct: 12, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 12 })
     // Each DCA asks 2 more points of dip and ceiling and 1 more of bounce; zero is the flat rule.
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
     // Nothing is bought on a fall of more than 20%; zero turns the ceiling off.
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
-    expect(config.maxDcaPerToken + 1).toBe(6)
-    expect(config.reservedEntries).toBe(6)
-    expect(config.usdPerToken).toBe(63)
+    expect(config.maxDcaPerToken + 1).toBe(2)
+    expect(config.reservedEntries).toBe(2)
+    expect(config.usdPerToken).toBe(12)
     // Nothing else buys: the deep rung, the chained ladder, its spacing, the
     // brake, the pressure ladder and the cascade's own doors.
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
