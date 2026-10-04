@@ -122,6 +122,34 @@ describe('a stop in DOLLARS, and only dollars', () => {
     entryPriceUsd: 1, marketPriceUsd: price, openQty: qty, runAtEntryPct: null,
   })
 
+  // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
+  // The dollar stop arms only once the holding has its second buy.
+  describe('armed only after the second buy', () => {
+    const afterTwo = { ...FLAT_ONE_PCT_STOP, maxLossUsd: 1.2, minBuys: 2 }
+    // 12 × (1 − 0.89) = $1.32 under water
+    const losing = (buys: number): StopLossInput => ({
+      entryPriceUsd: 1, marketPriceUsd: 0.89, openQty: 12, runAtEntryPct: null, buys,
+    })
+
+    it('holds a loser that has bought only once', () => {
+      expect(shouldStopOut(losing(1), afterTwo)).toBe(false)
+    })
+
+    it('cuts it once the second buy is in', () => {
+      expect(shouldStopOut(losing(2), afterTwo)).toBe(true)
+    })
+
+    it('holds after the second buy while the loss is $1.20 or less', () => {
+      // 12 × (1 − 0.9) = $1.20
+      expect(shouldStopOut({ ...losing(2), marketPriceUsd: 0.9 }, afterTwo)).toBe(false)
+    })
+
+    it('an unknown buy count never arms it', () => {
+      const { buys: _, ...unknown } = losing(2)
+      expect(shouldStopOut(unknown, afterTwo)).toBe(false)
+    })
+  })
+
   it('cuts once the position has lost ten cents', () => {
     // 15 × (1 − 0.993) = $0.105
     expect(shouldStopOut(at(0.993), tenCents)).toBe(true)

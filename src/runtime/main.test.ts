@@ -57,7 +57,7 @@ const runtime = (env: Record<string, string> = {}) =>
  * the sweep, the pool check, the TP, the funding — so they pin the numbers
  * they were written against, and `runtime()` alone speaks for production.
  */
-const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' }
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0' }
 
 /**
  * And the order they were argued with: the cheapest to trade first. Production
@@ -765,6 +765,35 @@ describe('only the dip-bounce buys, through the path the engine runs', () => {
     expect(ticked.minProfitPct).toBe(12.5)
     expect(sells.length).toBe(3)
     for (const f of sells) expect(f.price).toBeGreaterThanOrEqual(avg * 1.125)
+  })
+})
+
+describe('the $1.20 stop after the second buy, through the path the engine runs', () => {
+  // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
+  // The production ladder and stop, every one of them unset: $3, then $9 on a
+  // 23% dip and a 12% bounce, and the cut armed from the second buy.
+  const DEFAULTS = Object.fromEntries(Object.keys(LEGACY_LADDER).map((k) => [k, '']))
+
+  it('holds the first buy through the dip, then cuts the moment the two buys are more than $1.20 down', async () => {
+    const { deps, cycleConfig, store } = onMemory(DEFAULTS)
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
+    await store.savePosition(slot)
+    let clock = 1_000
+    const levels = (position: PersistedPosition) => exitLevelsFor(position, exitSizingFrom(cycleConfig))
+    const sweep = async (price: number) =>
+      sweepStops(deps, levels, new AlertThrottle(0), (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000))
+    // $3 at 1.00, then 30% down: $0.90 lost on one buy, and the stop waits.
+    for (const price of [1, 0.7]) expect(await sweep(price)).toEqual([])
+    // A 12% bounce off the low buys the $9 — now two buys, about $1 down.
+    expect(await sweep(0.79)).toEqual([])
+    const fills = async () => store.fillsFor(slot.id)
+    expect((await fills()).filter((f) => f.side === 'buy').map((f) => Math.round(f.price * f.qty))).toEqual([3, 9])
+    const { avgCostUsd, qty } = positionLedger(await fills())
+    // Just under the line holds; just past it sells everything.
+    expect(await sweep(avgCostUsd! - 1.19 / qty)).toEqual([])
+    expect(await sweep(avgCostUsd! - 1.21 / qty)).toEqual([slot.id])
+    expect((await fills()).filter((f) => f.side === 'sell').map((f) => f.comment)).toEqual(['🛑 Stop', '🛑 Stop'])
+    expect(await store.loadPositions()).toEqual([])
   })
 })
 

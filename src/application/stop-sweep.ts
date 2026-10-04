@@ -524,6 +524,7 @@ export async function sweepStops(
       marketPriceUsd: price,
       openQty: ledger?.qty ?? 0,
       runAtEntryPct: position.runAtEntryPct ?? null,
+      buys: holdingBuys(fills).length,
     }
     /**
      * A SECOND SOURCE, or no sale.

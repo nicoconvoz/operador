@@ -273,25 +273,26 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
   })
 
-  it('sells at a loss only what the token has already paid for', () => {
-    // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
-    // salir en pérdida.*
-    expect(loadConfig(valid).stopLoss.onlyWhenHistoryCovers).toBe(true)
-    expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '0' }).stopLoss.onlyWhenHistoryCovers).toBe(false)
+  it('the history rule is off, one variable away', () => {
+    // *Si la ganancia es mayor a la pérdida también SL y rotar.* OFF since the
+    // $1.20 stop: *entonces SL*, whatever the token made before.
+    expect(loadConfig(valid).stopLoss.onlyWhenHistoryCovers).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '1' }).stopLoss.onlyWhenHistoryCovers).toBe(true)
   })
 
-  it('has NO stop by price — only the death and freeze exits may sell at a loss', () => {
-    // *No, el SL no lo quiero; quiero el que habíamos acordado antes, el death
-    // o congelamiento.* The operator. A position that falls is held and the
-    // ladder averages it down; what may sell at a loss is an asset that
-    // stopped being one, never a price.
-    const config = loadConfig(valid)
-    const fell = { entryPriceUsd: 1, marketPriceUsd: 0.1, openQty: 15, runAtEntryPct: null }
-    expect(shouldStopOut(fell, config.stopLoss)).toBe(false)
-    expect(config.exitOnFreeze).toBe(true)
-    // Still one variable away, and still tested where it lives.
-    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.1' }).stopLoss.maxLossUsd).toBe(0.1)
+  it('stops a position losing more than $1.20 — only after its second buy', () => {
+    // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
+    const { stopLoss } = loadConfig(valid)
+    expect(stopLoss).toMatchObject({ maxLossUsd: 1.2, minBuys: 2 })
+    // $12 held at a 15% fall is $1.80 under water.
+    const fell = (buys: number) => ({ entryPriceUsd: 1, marketPriceUsd: 0.85, openQty: 12, runAtEntryPct: null, buys })
+    expect(shouldStopOut(fell(1), stopLoss)).toBe(false)
+    expect(shouldStopOut(fell(2), stopLoss)).toBe(true)
+    // One variable away each.
+    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0' }).stopLoss.maxLossUsd).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_AFTER_BUYS: '1' }).stopLoss.minBuys).toBe(1)
     expect(loadConfig({ ...valid, OPERADOR_STOP_MIN_PCT: '0' }).stopLoss.minStopPct).toBe(0)
+    expect(loadConfig(valid).exitOnFreeze).toBe(true)
   })
 
   it('cuts NOTHING on a fall through the path the sweep actually runs — the 1:4 included', () => {

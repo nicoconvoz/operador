@@ -234,6 +234,31 @@ describe('the stop, when the token has paid for the loss — and only then', () 
   })
 })
 
+describe('$1.20 under water after the second buy — SL', () => {
+  // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
+  const AFTER_TWO = { shareOfRun: 0, minStopPct: 0, maxStopPct: 0, maxLossUsd: 1.2, minBuys: 2 }
+
+  it('HOLDS a position with one buy, however far it has fallen', async () => {
+    // $15 at 1.00, now 0.85: $2.25 down, but the second buy never came.
+    const { store, run } = await rig({ ladder: false, stop: AFTER_TWO })
+    expect(await run(0.85)).toEqual([])
+    expect((await store.loadPositions()).map((p) => p.id)).toEqual([ID])
+  })
+
+  it('SELLS everything once the second buy is in and it is more than $1.20 down', async () => {
+    const { store, sent, run } = await rig({ ladder: false, stop: AFTER_TWO, history: [buy(ID, 0.95, 5 * MIN, 9)] })
+    expect(await run(0.85)).toEqual([ID])
+    expect((await store.fillsFor(ID)).find((f) => f.side === 'sell')?.comment).toBe('🛑 Stop')
+    expect(sent.some((x) => x.body.includes('$1.20'))).toBe(true)
+  })
+
+  it('HOLDS after the second buy while the loss is $1.20 or less', async () => {
+    const { run } = await rig({ ladder: false, stop: AFTER_TWO, history: [buy(ID, 0.95, 5 * MIN, 9)] })
+    // About 24.5 tokens at an average near 0.979: 0.94 is under a dollar down.
+    expect(await run(0.94)).toEqual([])
+  })
+})
+
 describe('the ladder, bought when buyers push through 1%', () => {
   // *Aplicalo para el DCA también — nada de escalones, esa regla.* A $15 rung
   // each time buy pressure CROSSES 1% upward: an even hour, then buyers.

@@ -119,6 +119,15 @@ export interface StopLossPolicy {
    */
   readonly maxLossUsd?: number
   /**
+   * The stop is armed only once the holding has this many buys.
+   *
+   * *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
+   * Before its second buy a position is still the ladder's to average down;
+   * after it there is nothing left to buy, and a loss past the limit is cut.
+   * An unknown count never arms it. Absent or zero: armed from the first buy.
+   */
+  readonly minBuys?: number
+  /**
    * Sell at a loss only when the TOKEN has already paid for it.
    *
    * *Tener en cuenta la ganancia total del token a lo largo del tiempo, y si la
@@ -222,6 +231,8 @@ export interface StopLossInput {
    * window the entry rule reads. It sizes the stop and nothing else.
    */
   readonly runAtEntryPct: number | null
+  /** Buys in the holding, for `minBuys`. Absent: unknown. */
+  readonly buys?: number
 }
 
 /**
@@ -237,10 +248,12 @@ export function shouldStopOut(input: StopLossInput, policy: StopLossPolicy): boo
   if (input.openQty <= 0) return false
   if (input.marketPriceUsd === null || !(input.marketPriceUsd > 0)) return false
   if (!(input.entryPriceUsd > 0)) return false
+  if (policy.minBuys !== undefined && policy.minBuys > 0 && !((input.buys ?? 0) >= policy.minBuys)) return false
   // Dollars decide ALONE when they are set. Returning here, before any
   // percentage is computed, is the operator's instruction made structural.
   if (policy.maxLossUsd !== undefined && policy.maxLossUsd > 0) {
-    return lossUsd(input) >= policy.maxLossUsd
+    // *Más de* — strictly over the limit.
+    return lossUsd(input) > policy.maxLossUsd
   }
   const stopPct = stopLossPctFor(input.runAtEntryPct, policy)
   if (stopPct <= 0) return false

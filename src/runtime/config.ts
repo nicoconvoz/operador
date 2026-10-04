@@ -720,11 +720,16 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       // salte, inmediatamente.* In DOLLARS, and when set it is the whole rule —
       // *no quiero que mires el porcentaje.* The percent fields above are then
       // not consulted at all. Zero hands the decision back to them.
-      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0),
+      //
+      // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces
+      // SL.* $1.20 by default, armed from the second buy on.
+      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 1.2),
+      minBuys: numberOrZero(env, 'OPERADOR_STOP_AFTER_BUYS', 2),
       // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
       // salir en pérdida.* ON: the stop sells at a loss only what the token
-      // has already paid for across its whole history.
-      onlyWhenHistoryCovers: onUnless(env, 'OPERADOR_STOP_NEEDS_HISTORY'),
+      // has already paid for across its whole history. OFF since the $1.20
+      // stop — *entonces SL* — and OPERADOR_STOP_NEEDS_HISTORY=1 restores it.
+      onlyWhenHistoryCovers: onlyIf(env, 'OPERADOR_STOP_NEEDS_HISTORY'),
     },
     minScoreEdge: number(env, 'OPERADOR_MIN_SCORE_EDGE', 10),
     minScore: productionDoors(env).minScore,

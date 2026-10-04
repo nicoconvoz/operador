@@ -32,7 +32,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **The book** | a slot is **$3 + $9 = $12**; the book holds **capital / $12** tokens (416 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **First buy** | **$3, automatic**, in the pass that opens the slot — retried by the sweep if that pass could not | `buyOnSelection`, `stop-sweep.ts` |
 | **Every later buy** | **ONE DCA of $9**, on a **23% dip and a 12% bounce** — what DCA 5 asked — under a **live pool check** | `dip-bounce.ts`, the stop sweep |
-| **Exits** | a **fixed TP at +12.5%** over the average, the **freeze** exit, the **death** exit | `fixed-tp.ts`, the stop sweep, `death-exit.ts` |
+| **Exits** | a **fixed TP at +12.5%** over the average, a **$1.20 stop once both buys are in**, the **freeze** exit, the **death** exit | `fixed-tp.ts`, `stop-loss.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 
@@ -91,6 +91,17 @@ market-wide turn:
   `OPERADOR_MAX_STEPS` 2, `OPERADOR_DIP_PCT` 23 and `OPERADOR_BOUNCE_PCT` 12 — DCA 5 of
   the 15%/8% ladder. A slot is $12, so $5,000 holds 416 tokens: more than the
   scan is likely to find, and every one held costs a sell probe per tick.
+
+- **A $1.20 stop after the second buy** (2026-10-03). *Si alguno luego del 2
+  DCA lleva perdiendo más de 1.2 USD, entonces SL.* Once a holding has both
+  its buys, the sweep sells everything the moment it is more than
+  `OPERADOR_STOP_MAX_LOSS_USD` (1.2) down on price against its average —
+  never on one buy, where the ladder still has its $9 to spend
+  (`OPERADOR_STOP_AFTER_BUYS`, 2). The first price stop production has run:
+  the guardrail against selling on price is lifted for this one rule, on the
+  operator's word. `onlyWhenHistoryCovers` is off with it
+  (`OPERADOR_STOP_NEEDS_HISTORY=1` restores it); `OPERADOR_STOP_MAX_LOSS_USD=0`
+  turns the stop off.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.
