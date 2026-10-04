@@ -29,10 +29,9 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
-| **The book** | a slot is **$3 + $9 = $12**; the book holds **capital / $12** tokens (416 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
-| **First buy** | **$3, automatic**, in the pass that opens the slot — retried by the sweep if that pass could not | `buyOnSelection`, `stop-sweep.ts` |
-| **Every later buy** | **ONE DCA of $9**, on a **23% dip and a 12% bounce** — what DCA 5 asked — under a **live pool check** | `dip-bounce.ts`, the stop sweep |
-| **Exits** | a **fixed TP at +12.5%** over the average, a **$1.20 stop once both buys are in**, the **freeze** exit, the **death** exit | `fixed-tp.ts`, `stop-loss.ts`, the stop sweep, `death-exit.ts` |
+| **The book** | a slot is **one $15 buy**; the book holds **capital / $15** tokens (333 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
+| **The buy** | **$15, automatic, and the only one**, in the pass that opens the slot — retried by the sweep if that pass could not. No DCA | `buyOnSelection`, `stop-sweep.ts` |
+| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**; the **freeze** exit, the **death** exit. No fixed TP, no stop | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 
@@ -102,6 +101,22 @@ market-wide turn:
   operator's word. `onlyWhenHistoryCovers` is off with it
   (`OPERADOR_STOP_NEEDS_HISTORY=1` restores it); `OPERADOR_STOP_MAX_LOSS_USD=0`
   turns the stop off.
+
+- **One $15 buy, and the TP on buy pressure** (2026-10-04). *Sin escalones,
+  una sola compra de 15* — *sin TP fijo; sólo cuando haya más ganancia que 12%
+  empieza a correr el TP de la presión compradora* — sold on a 10% fall
+  *desde el pico* — and *sacá la regla del SL*. `OPERADOR_STEP_USD` 15,
+  `OPERADOR_MAX_STEPS` 1: a $15 slot, 333 tokens at $5,000.
+  `OPERADOR_FIXED_TP_PCT` 0, and `OPERADOR_STOP_MAX_LOSS_USD` 0.
+  The TP (`pressure-tp.ts`) ARMS once the gain passes
+  `OPERADOR_PRESSURE_TP_ARM_PCT` (12) and DISARMS once the holding is no
+  longer up by more than its round trip. While armed it keeps the hour's peak
+  buy share — buys over all trades, from Jupiter's per-mint counts — and sells
+  everything when the share falls `OPERADOR_PRESSURE_TP_DROP_PCT` (10) percent
+  of the peak, e.g. 70% → 63%. Only an armed position asks for the counts. The
+  arming and the peak live in memory, so a restart starts them again; the
+  no-loss guard still refuses a fill under cost. The strategy's own exit keeps
+  its 12.5% floor and the gain lock stays on.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.

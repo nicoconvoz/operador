@@ -509,6 +509,21 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // priced at this ladder's one size.
         fund: fundPressureRung,
       } } : {}),
+    // *Sin TP fijo; sólo cuando haya más ganancia que 12% empieza a correr el
+    // TP de la presión compradora.* The hour's counts per mint, out of the same
+    // cached Jupiter response the pressure ladder reads.
+    ...(config.pressureTp.dropPct > 0 ? { pressureTp: {
+        armPct: config.pressureTp.armPct,
+        dropPct: config.pressureTp.dropPct,
+        hourCounts: async (position: PersistedPosition) => {
+          if (position.chain !== 'solana') return null
+          const [market] = await jupiterTokens.markets('solana', [position.tokenAddress])
+          return market ? { buys: market.txns.h1.buys, sells: market.txns.h1.sells } : null
+        },
+        peaks: new Map<string, number>(),
+        armed: new Set<string>(),
+        gasUsdPerSwap: config.gasUsdPerSwap,
+      } } : {}),
     // *Dos escalones solamente: uno con $15; si el precio cae más de 80% y hay
     // un rebote de 10%, nueva compra DCA de $20.* The ONE rung after the entry,
     // bought by the sweep every thirty seconds at the live price, off the low

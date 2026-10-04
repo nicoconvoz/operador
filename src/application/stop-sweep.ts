@@ -27,6 +27,7 @@ import {
 } from '../domain/strategy/liquidity-brake.js'
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { buyShare, stepPressureTp, PRESSURE_TP_COMMENT } from '../domain/strategy/pressure-tp.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct, buyCostUsd } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import {
@@ -467,6 +468,26 @@ interface LiquidityVerdict {
   readonly fellPct: number | null
 }
 
+/**
+ * The take-profit on buy pressure: *sólo cuando haya más ganancia que 12%
+ * empieza a correr el TP de la presión compradora*, and it sells on a 10% fall
+ * of buyers' share from its peak. See `pressure-tp.ts`.
+ */
+export interface PressureTp {
+  /** The gain, in percent over the average, past which it runs. */
+  readonly armPct: number
+  /** The fall from the peak, in percent of it, that sells. */
+  readonly dropPct: number
+  /** The last hour's buys and sells for the token; null when nobody could answer. */
+  readonly hourCounts: (position: PersistedPosition) => Promise<{ readonly buys: number; readonly sells: number } | null>
+  /** Each running position's peak buy share. Owned by the caller: the cycle's sweeps and the loop's share it. */
+  readonly peaks: Map<string, number>
+  /** Positions past the arm line and still in profit. Owned by the caller, like `peaks`. */
+  readonly armed: Set<string>
+  /** Gas per swap, for what leaving would cost. */
+  readonly gasUsdPerSwap: number
+}
+
 export interface StopSweepDeps {
   readonly store: StatePort
   readonly alerts: AlertPort
@@ -474,6 +495,8 @@ export interface StopSweepDeps {
   readonly now: () => number
   /** Absent: no ladder, which is every caller that predates it. */
   readonly pressureLadder?: PressureLadder
+  /** Absent: no take-profit on buy pressure. */
+  readonly pressureTp?: PressureTp
   /** Absent: no price ladder. */
   readonly dropLadder?: DropLadder
   /** Absent: no deep rung, and no low followed. */
@@ -604,6 +627,16 @@ export async function sweepStops(
       // In the same list as the stops: the caller keeps the token out of this
       // cycle's allocation, and buying straight back what was just sold is a
       // round trip, not a rotation.
+      stopped.push(position.id)
+      continue
+    }
+
+    // THE TP ON BUY PRESSURE, beside the fixed one and under the same terms:
+    // a healthy holding only, after the price guard, held on a refused sale.
+    if (
+      held && deps.pressureTp && position.deathWatch.stage === 'healthy' &&
+      (await takePressureProfit(deps, deps.pressureTp, position, fills, price!, at, throttle)) === 'sold'
+    ) {
       stopped.push(position.id)
       continue
     }
@@ -838,6 +871,77 @@ async function takeFixedProfit(
     { position: position.id, token: position.tokenAddress },
   )
   if (throttle.shouldSend(sold, `fixed-tp:${position.id}`)) await deps.alerts.send(sold)
+  return 'sold'
+}
+
+/**
+ * The take-profit on buy pressure on one held position. It ARMS once the gain
+ * is past `armPct` and DISARMS — the peak forgotten — once the holding is no
+ * longer up by more than its whole round trip; only an armed position asks the
+ * hour's counts, so the rest of the book costs nothing.
+ *
+ * Returns 'sold' when the position was closed; null when it holds.
+ */
+async function takePressureProfit(
+  deps: StopSweepDeps,
+  tp: PressureTp,
+  position: PersistedPosition,
+  fills: readonly PersistedFill[],
+  price: number,
+  at: number,
+  throttle: AlertThrottle,
+): Promise<'sold' | null> {
+  const ledger = positionLedger(fills)
+  if (ledger.avgCostUsd === null || !(ledger.qty > 0)) return null
+  const gain = (price / ledger.avgCostUsd - 1) * 100
+  const toll = positionTollPct(openLotCostsUsd(fills), ledger.deployedUsd, ledger.qty * price, position.quality, tp.gasUsdPerSwap)
+  if (gain > tp.armPct) tp.armed.add(position.id)
+  if (!(gain > toll)) tp.armed.delete(position.id)
+  if (!tp.armed.has(position.id)) {
+    tp.peaks.delete(position.id)
+    return null
+  }
+
+  let counts: Awaited<ReturnType<PressureTp['hourCounts']>>
+  try {
+    counts = await tp.hourCounts(position)
+  } catch {
+    return null
+  }
+  const share = counts === null ? null : buyShare(counts.buys, counts.sells)
+  const peak = tp.peaks.get(position.id) ?? null
+  const step = stepPressureTp(peak, share, true, tp.dropPct)
+  if (step.peak === null) tp.peaks.delete(position.id)
+  else tp.peaks.set(position.id, step.peak)
+  if (!step.sell) return null
+
+  const broker = await deps.brokerFor(position)
+  // Not exempt from the no-loss guard: a fill under cost is refused and held.
+  const refused = await settle(
+    [{ kind: 'closeAll', comment: PRESSURE_TP_COMMENT }],
+    position.lastBarTime,
+    price,
+    at,
+    position,
+    broker,
+    deps.store,
+  )
+  if (refused) return null
+  const after = await deps.store.fillsFor(position.id)
+  if (after.length === fills.length) return null
+  const made = positionLedger(after).realisedUsd - ledger.realisedUsd
+  await deps.store.closePosition(position.id)
+  tp.armed.delete(position.id)
+  tp.peaks.delete(position.id)
+
+  const sold = alert(
+    'position-closed',
+    `📉 ${position.symbol} vendida por TP por presión — ganó ${made.toFixed(2)}`,
+    `Iba +${gain.toFixed(2)}% sobre el costo promedio y la presión compradora cayó de ${((peak ?? 0) * 100).toFixed(1)}% a ${((share ?? 0) * 100).toFixed(1)}% de las operaciones de la última hora, ${tp.dropPct}% bajo su pico. Se vendió todo a ${price}.`,
+    at,
+    { position: position.id, token: position.tokenAddress },
+  )
+  if (throttle.shouldSend(sold, `pressure-tp:${position.id}`)) await deps.alerts.send(sold)
   return 'sold'
 }
 

@@ -26,8 +26,11 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  * escalón* — *hacé que cada escalón sea 1, 2, 4, 8, 16, 32* — and on
  * 2026-10-03 *sólo dos compras: la primera de 3 y la segunda de 9.* A slot is
  * therefore $12 and the book holds capital / $12: 416 tokens at $5,000.
+ *
+ * FIFTEEN since 2026-10-04, and ONE buy: *sin escalones, una sola compra.* A
+ * slot is $15, so $5,000 holds 333 tokens.
  */
-export const DEFAULT_STEP_USD = 3
+export const DEFAULT_STEP_USD = 15
 
 /**
  * How much each step grows over the one before: three, so $3 becomes $9. It
@@ -44,9 +47,10 @@ export const DEFAULT_STEP_GROWTH = 3
  * had been stable because the same capital was spread over 250.
  * `DEFAULT_DIP_BOUNCE_POLICY` keeps twenty, so the rule's own tests stand.
  *
- * TWO since 2026-10-03: *sólo dos compras* — the first and one DCA.
+ * TWO since 2026-10-03: *sólo dos compras* — the first and one DCA. ONE
+ * since 2026-10-04: *sin escalones, una sola compra.*
  */
-export const DEFAULT_MAX_STEPS = 2
+export const DEFAULT_MAX_STEPS = 1
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -477,9 +481,13 @@ export const DEFAULT_URGENT_PROFIT_PCT = 25
  * `domain/strategy/fixed-tp.ts`.
  *
  * Zero is a REAL value — the TP off, and the sweep back to what it did before
- * — so it reads through `nonNegative`, never `positive`; nonsense keeps 12.5.
+ * — so it reads through `nonNegative`, never `positive`; nonsense keeps the
+ * default.
+ *
+ * OFF since 2026-10-04: *sin TP fijo* — the take-profit on buy pressure,
+ * past +12%, replaces it. `OPERADOR_FIXED_TP_PCT=12.5` brings it back.
  */
-export const DEFAULT_FIXED_TP_PCT = 12.5
+export const DEFAULT_FIXED_TP_PCT = 0
 
 /**
  * The least the strategy's own exit may sell for, in percent over the average
@@ -511,7 +519,7 @@ export const DEFAULT_FIXED_TP_PCT = 12.5
  * eat what the runners make. The reference's 2 stays in `DEFAULT_PARAMS`,
  * which is evidence.
  */
-export const DEFAULT_MIN_PROFIT_PCT = DEFAULT_FIXED_TP_PCT
+export const DEFAULT_MIN_PROFIT_PCT = 12.5
 
 
 export interface ProductionLadder {

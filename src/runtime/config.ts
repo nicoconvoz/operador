@@ -319,6 +319,11 @@ export interface RuntimeConfig {
   readonly rotateOnFilter: boolean
   /** Whether the buy-pressure ladder and its sale run at all. */
   readonly pressure: boolean
+  /**
+   * The take-profit on buy pressure: runs past `armPct` of gain and sells on
+   * a `dropPct` fall of buyers' share from its peak. Zero `dropPct` is off.
+   */
+  readonly pressureTp: { readonly armPct: number; readonly dropPct: number }
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -722,8 +727,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       // not consulted at all. Zero hands the decision back to them.
       //
       // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces
-      // SL.* $1.20 by default, armed from the second buy on.
-      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 1.2),
+      // SL* — armed from the second buy on. OFF since 2026-10-04, *sacá la
+      // regla del SL*: OPERADOR_STOP_MAX_LOSS_USD=1.2 brings it back.
+      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0),
       minBuys: numberOrZero(env, 'OPERADOR_STOP_AFTER_BUYS', 2),
       // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
       // salir en pérdida.* ON: the stop sells at a loss only what the token
@@ -745,6 +751,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // variable away each.
     rotateOnFilter: onlyIf(env, 'OPERADOR_ROTATE_ON_FILTER'),
     pressure: onlyIf(env, 'OPERADOR_PRESSURE'),
+    // *Sin TP fijo; sólo cuando haya más ganancia que 12% empieza a correr el
+    // TP de la presión compradora* — sold on a 10% fall from its peak.
+    pressureTp: {
+      armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
+      dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),
+    },
     // The rungs' triggers and sizes, from the module the dashboard reads too.
     dcaDropsPct: productionLadder(env).dcaDropsPct,
     dcaRungsUsd: productionLadder(env).dcaRungsUsd,

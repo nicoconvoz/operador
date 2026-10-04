@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — the $9 the DCA buys', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(9)
+  it('caps each level at the LARGEST step by default — the one $15 buy', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(15)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,20 +194,21 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token two buys, $3 and $9, the second on a 23% dip and a 12% bounce, and a slot of exactly $12', () => {
+  it('gives every token ONE buy of $15, and a slot of exactly $15', () => {
     // *El DCA 1 = el DCA 7* — *sólo 5 DCA por token* — *cada escalón 1, 2, 4,
     // 8, 16, 32.* The slot reserves every step added up, with nothing grossed
     // up: $5,000 holds 79 tokens.
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 3, stepGrowth: 3, maxSteps: 2, dipPct: 23, bouncePct: 12, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 12 })
+    // *Sin escalones, una sola compra* — of 15. $5,000 holds 333 tokens.
+    expect(config).toMatchObject({ stepUsd: 15, maxSteps: 1, slotUsd: 15 })
     // Each DCA asks 2 more points of dip and ceiling and 1 more of bounce; zero is the flat rule.
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
     // Nothing is bought on a fall of more than 20%; zero turns the ceiling off.
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
-    expect(config.maxDcaPerToken + 1).toBe(2)
-    expect(config.reservedEntries).toBe(2)
-    expect(config.usdPerToken).toBe(12)
+    expect(config.maxDcaPerToken + 1).toBe(1)
+    expect(config.reservedEntries).toBe(1)
+    expect(config.usdPerToken).toBe(15)
     // Nothing else buys: the deep rung, the chained ladder, its spacing, the
     // brake, the pressure ladder and the cascade's own doors.
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
@@ -244,7 +245,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
   })
 
   it('still reserves fewer entries when asked — one variable away', () => {
-    const config = loadConfig({ ...valid, OPERADOR_RESERVED_ENTRIES: '2' })
+    const config = loadConfig({ ...valid, OPERADOR_RESERVED_ENTRIES: '2', OPERADOR_MAX_STEPS: '3' })
     expect(config.reservedEntries).toBe(2)
     const deployable = deployableCapital({
       initialCapital: 20,
@@ -273,6 +274,17 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
   })
 
+  it('one $15 buy, no fixed TP, and the TP on buy pressure past +12%', () => {
+    // *Sólo una compra de 15* — *sin TP fijo; sólo cuando haya más ganancia
+    // que 12% empieza a correr el TP de la presión compradora*, on a 10% fall
+    // of buyers' share from its peak.
+    const config = loadConfig(valid)
+    expect(config.fixedTpPct).toBe(0)
+    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 10 })
+    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).pressureTp.dropPct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '8' }).pressureTp.armPct).toBe(8)
+  })
+
   it('the history rule is off, one variable away', () => {
     // *Si la ganancia es mayor a la pérdida también SL y rotar.* OFF since the
     // $1.20 stop: *entonces SL*, whatever the token made before.
@@ -280,16 +292,17 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '1' }).stopLoss.onlyWhenHistoryCovers).toBe(true)
   })
 
-  it('stops a position losing more than $1.20 — only after its second buy', () => {
+  it('has the $1.20 stop after the second buy OFF — *sacá la regla del SL* — one variable away', () => {
     // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
-    const { stopLoss } = loadConfig(valid)
+    expect(loadConfig(valid).stopLoss).toMatchObject({ maxLossUsd: 0, minBuys: 2 })
+    expect(shouldStopOut({ entryPriceUsd: 1, marketPriceUsd: 0.5, openQty: 15, runAtEntryPct: null, buys: 2 }, loadConfig(valid).stopLoss)).toBe(false)
+    const { stopLoss } = loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '1.2' })
     expect(stopLoss).toMatchObject({ maxLossUsd: 1.2, minBuys: 2 })
     // $12 held at a 15% fall is $1.80 under water.
     const fell = (buys: number) => ({ entryPriceUsd: 1, marketPriceUsd: 0.85, openQty: 12, runAtEntryPct: null, buys })
     expect(shouldStopOut(fell(1), stopLoss)).toBe(false)
     expect(shouldStopOut(fell(2), stopLoss)).toBe(true)
     // One variable away each.
-    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0' }).stopLoss.maxLossUsd).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_STOP_AFTER_BUYS: '1' }).stopLoss.minBuys).toBe(1)
     expect(loadConfig({ ...valid, OPERADOR_STOP_MIN_PCT: '0' }).stopLoss.minStopPct).toBe(0)
     expect(loadConfig(valid).exitOnFreeze).toBe(true)
@@ -382,13 +395,13 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'diez' }).minProfitPct).toBe(12.5)
   })
 
-  it('sells everything at a FIXED +12.5% by default; zero turns it off and nonsense keeps 12.5', () => {
-    // *Poné un TP fijo al 12.5% del promedio.*
-    expect(loadConfig(valid).fixedTpPct).toBe(12.5)
+  it('has the fixed TP OFF by default — *sin TP fijo* — and a number brings it back', () => {
+    // *Poné un TP fijo al 12.5% del promedio* — until the TP on buy pressure.
+    expect(loadConfig(valid).fixedTpPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '0' }).fixedTpPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '15' }).fixedTpPct).toBe(15)
-    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: 'doce' }).fixedTpPct).toBe(12.5)
-    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '-1' }).fixedTpPct).toBe(12.5)
+    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: 'doce' }).fixedTpPct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_FIXED_TP_PCT: '-1' }).fixedTpPct).toBe(0)
   })
 
   it('takes both lines from the environment, and never floors above the arm', () => {

@@ -981,7 +981,9 @@ describe('buildOperations — the fixed TP line of each held position', () => {
   // sells, from the module the engine reads, over the same average the sweep
   // measures from.
   const L = productionLadder({})
-  const tp = { ...options, fixedTpPct: L.fixedTpPct }
+  // OFF in production now — *sin TP fijo* — so the line is drawn at the
+  // number the environment brings back.
+  const tp = { ...options, fixedTpPct: 12.5 }
 
   it('draws "TP fijo en $P (+12.5% del promedio)" over the holding’s average cost', async () => {
     // $1 at 1.00 and $1 at 0.80: the average is 0.8889, the line 1.000.
