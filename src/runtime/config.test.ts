@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — the one $15 buy', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(15)
+  it('caps each level at the LARGEST step by default — the $5 slot the scan counts by', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(5)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,13 +194,13 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token ONE buy of $15, and a slot of exactly $15', () => {
+  it('gives every token ONE buy, and counts slots of $5', () => {
     // *El DCA 1 = el DCA 7* — *sólo 5 DCA por token* — *cada escalón 1, 2, 4,
     // 8, 16, 32.* The slot reserves every step added up, with nothing grossed
     // up: $5,000 holds 79 tokens.
     const config = loadConfig(valid)
     // *Sin escalones, una sola compra* — of 15. $5,000 holds 333 tokens.
-    expect(config).toMatchObject({ stepUsd: 15, maxSteps: 1, slotUsd: 15 })
+    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 1, slotUsd: 5 })
     // Each DCA asks 2 more points of dip and ceiling and 1 more of bounce; zero is the flat rule.
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
     // Nothing is bought on a fall of more than 20%; zero turns the ceiling off.
@@ -208,7 +208,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
     expect(config.maxDcaPerToken + 1).toBe(1)
     expect(config.reservedEntries).toBe(1)
-    expect(config.usdPerToken).toBe(15)
+    expect(config.usdPerToken).toBe(5)
     // Nothing else buys: the deep rung, the chained ladder, its spacing, the
     // brake, the pressure ladder and the cascade's own doors.
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
@@ -274,9 +274,22 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
   })
 
-  it('cuts a fall of more than 5% in under a minute, both numbers one variable away', () => {
+  it('sizes each buy by the token’s class, with no death watch and no crash stop — each one a variable away', () => {
+    // *Sin SL, sin congelamiento, sin caída de la muerte — peligroso 5, normal
+    // 10, muy bueno 15, seguro seguro 25, una sola compra.*
+    const config = loadConfig(valid)
+    expect(config.tiers).toBe(true)
+    expect(config.deathWatch).toBe(false)
+    expect(config.crashStop.dropPct).toBe(0)
+    // The slot the scan counts by is the cheapest class.
+    expect(config.slotUsd).toBe(5)
+    expect(loadConfig({ ...valid, OPERADOR_TIERS: '0' }).tiers).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_DEATH_WATCH: '1' }).deathWatch).toBe(true)
+  })
+
+  it('cuts a fall of more than 5% in under a minute when asked, both numbers one variable away', () => {
     // *Si una moneda baja más de 5% del precio en menos de un minuto, SL.*
-    expect(loadConfig(valid).crashStop).toEqual({ dropPct: 5, windowMs: 60_000 })
+    expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_PCT: '5' }).crashStop).toEqual({ dropPct: 5, windowMs: 60_000 })
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_PCT: '0' }).crashStop.dropPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_SECONDS: '90' }).crashStop.windowMs).toBe(90_000)
   })

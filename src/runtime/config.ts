@@ -326,6 +326,10 @@ export interface RuntimeConfig {
   readonly pressureTp: { readonly armPct: number; readonly dropPct: number }
   /** The crash stop: more than `dropPct` down inside `windowMs` sells. Zero `dropPct` is off. */
   readonly crashStop: { readonly dropPct: number; readonly windowMs: number }
+  /** Each buy sized by the token's class (`token-tier.ts`). ON; OPERADOR_TIERS=0 is the flat step. */
+  readonly tiers: boolean
+  /** Whether the death watch observes held tokens at all. OFF; OPERADOR_DEATH_WATCH=1 brings it back. */
+  readonly deathWatch: boolean
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -757,9 +761,16 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // TP de la presión compradora* — sold on a 10% fall from its peak.
     // *Si una moneda baja más de 5% del precio en menos de un minuto, SL.*
     crashStop: {
-      dropPct: numberOrZero(env, 'OPERADOR_CRASH_STOP_PCT', 5),
+      // OFF since 2026-10-05: *sin SL.* OPERADOR_CRASH_STOP_PCT=5 brings it back.
+      dropPct: numberOrZero(env, 'OPERADOR_CRASH_STOP_PCT', 0),
       windowMs: numberOrZero(env, 'OPERADOR_CRASH_STOP_SECONDS', 60) * 1_000,
     },
+    // *Si el token es más peligroso le asignamos 5 USD, si es normal 10, si es
+    // muy bueno 15 y si es seguro seguro 25.*
+    tiers: onUnless(env, 'OPERADOR_TIERS'),
+    // *Sin congelamiento, sin caída de la muerte.* Nothing observes a held
+    // token's health, so nothing freezes and nothing dies.
+    deathWatch: onlyIf(env, 'OPERADOR_DEATH_WATCH'),
     pressureTp: {
       armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
       dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),

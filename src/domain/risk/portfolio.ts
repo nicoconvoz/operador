@@ -94,6 +94,13 @@ export interface PortfolioPolicy {
    * mejor eficiencia de costos.* Absent: the highest score, as always.
    */
   readonly order?: 'score' | 'costEfficiency' | 'volatility'
+  /**
+   * Each candidate's OWN size, when set: *si el token es más peligroso le
+   * asignamos 5 USD, si es normal 10, si es muy bueno 15 y si es seguro
+   * seguro 25.* The target, the floor and the even split are then not read:
+   * candidates are served in order, each given its size, while it fits.
+   */
+  readonly sizeFor?: (snapshot: TokenSnapshot) => number
 }
 
 export const DEFAULT_PORTFOLIO_POLICY: PortfolioPolicy = {
@@ -199,6 +206,8 @@ export function planPortfolio(
     return { allocations: [], skipped, deployableUsd, allocatedUsd: 0, reserveUsd, idleUsd: deployableUsd, floorOverrodeCap: false }
   }
 
+  if (policy.sizeFor) return planBySize(candidates, params, policy, policy.sizeFor, sizingPolicy, reserveUsd, deployableUsd)
+
   const efficiency = (c: AllocationCandidate) => (policy.order === 'costEfficiency' ? c.costEfficiency ?? 0 : 0)
   // Under the volatility order, the ranking's own measure: the token that moves
   // most first, the unmeasured last — see `volatilityRank`.
@@ -250,4 +259,51 @@ export function planPortfolio(
   const withWeights = allocations.map((a) => ({ ...a, weightPct: (a.capitalUsd / deployableUsd) * 100 }))
 
   return { allocations: withWeights, skipped, deployableUsd, allocatedUsd, reserveUsd, idleUsd: deployableUsd - allocatedUsd, floorOverrodeCap }
+}
+
+/**
+ * The allocation when every candidate has its own size: in the ranking's
+ * order, each given its size while it fits — a size that does not fit is
+ * skipped and a smaller one behind it may still be served.
+ */
+function planBySize(
+  candidates: readonly AllocationCandidate[],
+  params: CascadeParams,
+  policy: PortfolioPolicy,
+  sizeFor: (snapshot: TokenSnapshot) => number,
+  sizingPolicy: SizingPolicy | undefined,
+  reserveUsd: number,
+  deployableUsd: number,
+): PortfolioPlan {
+  const efficiency = (c: AllocationCandidate) => (policy.order === 'costEfficiency' ? c.costEfficiency ?? 0 : 0)
+  const moves = (c: AllocationCandidate) => (policy.order === 'volatility' ? volatilityRank(c.snapshot) : 0)
+  const ranked = [...candidates].sort((a, b) => {
+    const ma = moves(a)
+    const mb = moves(b)
+    return (mb === ma ? 0 : mb > ma ? 1 : -1) ||
+      efficiency(b) - efficiency(a) || b.score - a.score || a.snapshot.address.localeCompare(b.snapshot.address)
+  })
+  const ceiling = policy.maxPositions > 0 ? policy.maxPositions : Number.POSITIVE_INFINITY
+  const allocations: Allocation[] = []
+  const skipped: Skipped[] = []
+  let allocatedUsd = 0
+  for (const candidate of ranked) {
+    const size = sizeFor(candidate.snapshot)
+    if (allocations.length >= ceiling) {
+      skipped.push({ snapshot: candidate.snapshot, reason: 'no-slots', detail: `${allocations.length} slots filled` })
+      continue
+    }
+    if (allocatedUsd + size > deployableUsd + 1e-9) {
+      skipped.push({ snapshot: candidate.snapshot, reason: 'no-capital', detail: `$${(deployableUsd - allocatedUsd).toFixed(2)} left, its buy is $${size}` })
+      continue
+    }
+    const sizing = sizeLadder(params, candidate.quality, sizingPolicy, size)
+    if (!sizing.tradeable) {
+      skipped.push({ snapshot: candidate.snapshot, reason: 'pool-refused', detail: sizing.reason ?? 'pool cannot carry a ladder' })
+      continue
+    }
+    allocations.push({ snapshot: candidate.snapshot, quality: candidate.quality, score: candidate.score, capitalUsd: size, sizing, weightPct: (size / deployableUsd) * 100 })
+    allocatedUsd += size
+  }
+  return { allocations, skipped, deployableUsd, allocatedUsd, reserveUsd, idleUsd: deployableUsd - allocatedUsd, floorOverrodeCap: false }
 }

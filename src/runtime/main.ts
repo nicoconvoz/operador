@@ -8,6 +8,7 @@ import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
+import { tierUsd } from '../domain/risk/token-tier.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { fundRungsFromFreeCapital, fundStepFromFreeCapital } from '../application/free-capital.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
@@ -584,6 +585,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // is bought in the pass that opens the slot, at the live price; every
       // later one waits for its dip and bounce. OPERADOR_BUY_ON_SELECTION=0.
       onSelection: config.buyOnSelection,
+      // The first and only buy is what the slot was given — its class.
+      ...(config.tiers ? { firstStepFromCapital: true } : {}),
     },
     // *Arriesguémonos, activá la A.* Five rungs of $15, $20, $25, $30 and $35
     // at −10, −15, −20, −25 and −30% of a $10 FIRST buy, bought by the sweep
@@ -674,6 +677,9 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       return prices
     },
     healthFor: async (position, candles) => {
+      // *Sin congelamiento, sin caída de la muerte.* No observation: the watch
+      // stays healthy, and no sell probe is asked.
+      if (!config.deathWatch) return null
       try {
         // ── The scanner's verdict, folded in ONCE ──────────────────────────
         //
@@ -1192,6 +1198,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // Exactly steps × step: what the allocator hands out and the trim keeps,
       // and what the free slots are counted in.
       slotUsd: config.slotUsd,
+      ...(config.tiers ? { sizeFor: tierUsd } : {}),
       heartbeatMs: 60 * 60 * 1000,
       // So a pass can tell whether a position has a new bar to look at before
       // paying a throttled request to find out.

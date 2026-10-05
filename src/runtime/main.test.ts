@@ -57,7 +57,7 @@ const runtime = (env: Record<string, string> = {}) =>
  * the sweep, the pool check, the TP, the funding — so they pin the numbers
  * they were written against, and `runtime()` alone speaks for production.
  */
-const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0' }
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1' }
 
 /**
  * And the order they were argued with: the cheapest to trade first. Production
@@ -176,7 +176,7 @@ describe('the strategy exit waits for +12.5%, through the path the engine runs',
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: ONE buy of $15 and nothing after it, fees from the free capital', () => {
+  it('wires the dip-bounce as the ONE buyer: ONE buy, its class, and nothing after it, fees from the free capital', () => {
     // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8* — *usemos sólo 5 DCA por token.*
     // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
     // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a
@@ -184,15 +184,28 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     // aumente de 1%.*
     const { deps, cycleConfig } = runtime()
     expect(deps.dipBounce?.policy).toEqual({ dipPct: 23, bouncePct: 12, maxSteps: 1, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
-    // *Sin escalones, una sola compra* — of 15.
-    expect(deps.dipBounce?.stepUsd).toBe(15)
+    // *Sin escalones, una sola compra* — the slot the scan counts by is $5.
+    expect(deps.dipBounce?.stepUsd).toBe(5)
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(1)
   })
 
-  it('wires the crash stop: more than 5% down in under a minute', () => {
-    expect(runtime().deps.crashStop).toMatchObject({ dropPct: 5, windowMs: 60_000 })
-    expect(runtime({ OPERADOR_CRASH_STOP_PCT: '0' }).deps.crashStop).toBeUndefined()
+  it('wires the crash stop only when asked: more than 5% down in under a minute', () => {
+    expect(runtime().deps.crashStop).toBeUndefined()
+    expect(runtime({ OPERADOR_CRASH_STOP_PCT: '5' }).deps.crashStop).toMatchObject({ dropPct: 5, windowMs: 60_000 })
+  })
+
+  it('sizes each slot by its class, buys exactly that once, and watches no token’s health', async () => {
+    // *Peligroso 5, normal 10, muy bueno 15, seguro seguro 25 — una sola compra
+    // — sin congelamiento, sin caída de la muerte.*
+    const { deps, cycleConfig } = runtime()
+    const DAY = 86_400_000
+    const snap = (liquidityUsd: number, top: number) =>
+      ({ liquidityUsd, observedAt: 100 * DAY, pairCreatedAt: 0, security: { topHoldersPct: top } }) as unknown as TokenSnapshot
+    expect([snap(100_000, 10), snap(500_000, 10), snap(2_000_000, 10), snap(9_000_000, 10)].map((s) => cycleConfig.sizeFor!(s))).toEqual([5, 10, 15, 25])
+    expect(deps.dipBounce?.firstStepFromCapital).toBe(true)
+    expect(await deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
+    expect(runtime({ OPERADOR_TIERS: '0' }).cycleConfig.sizeFor).toBeUndefined()
   })
 
   it('wires the TP on buy pressure — running past +12%, selling on a 10% fall from its peak — and no fixed TP', () => {
@@ -248,13 +261,13 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the one buy: a slot is $15, with nothing grossed up', () => {
+  it('reserves the one buy, and counts slots at the cheapest class, $5', () => {
     const { cycleConfig } = runtime()
     expect(cycleConfig.reservedEntries).toBe(1)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(15)
-    expect(cycleConfig.slotUsd).toBe(15)
-    expect(cycleConfig.usdPerToken).toBe(15)
-    // No haircut on the count, and the gas floor ($5) is under the $15 fill.
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(5)
+    expect(cycleConfig.slotUsd).toBe(5)
+    expect(cycleConfig.usdPerToken).toBe(5)
+    // No haircut on the count, and the gas floor ($5) is at the smallest fill.
     expect(cycleConfig.portfolio.reservePct).toBe(0)
     expect(cycleConfig.sizing?.minFillUsd).toBe(5)
   })
@@ -790,7 +803,7 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
 
   it('holds the first buy through the dip, then cuts the moment the two buys are more than $1.20 down', async () => {
     // The two-buy ladder and the stop as they ran, both a variable away now.
-    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2', OPERADOR_STOP_MAX_LOSS_USD: '1.2', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0' })
+    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2', OPERADOR_STOP_MAX_LOSS_USD: '1.2', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1' })
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000
@@ -1211,8 +1224,8 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over the slot: $5,000 is 333, $1,500 is 100', () => {
-    for (const [capital, slots] of [['5000', 333], ['1500', 100]] as const) {
+  it('counts the free slots as capital over the cheapest class: $5,000 is 1,000, $1,500 is 300', () => {
+    for (const [capital, slots] of [['5000', 1000], ['1500', 300]] as const) {
       const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: capital })
       expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(slots)
     }

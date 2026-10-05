@@ -345,3 +345,36 @@ describe('planPortfolio — the cheapest to trade are served first', () => {
     expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['scored', 'tie-hi', 'middle', 'cheap'])
   })
 })
+
+describe('planPortfolio — each token is given what its class buys', () => {
+  // *Si el token es más peligroso le asignamos 5 USD, si es normal 10, si es
+  // muy bueno 15 y si es seguro seguro 25.* The allocator gives each candidate
+  // its own size, in the ranking's order, until the capital runs out.
+  const sizes: Record<string, number> = { a: 25, b: 5, c: 15, d: 10, e: 25 }
+  const policy = (totalCapitalUsd: number): PortfolioPolicy => ({
+    ...DEFAULT_PORTFOLIO_POLICY,
+    totalCapitalUsd,
+    reservePct: 0,
+    maxPositions: 0,
+    maxPositionPct: 100,
+    minPositionUsd: 5,
+    sizeFor: (s) => sizes[s.address]!,
+  })
+
+  it('allocates each its own size', () => {
+    const plan = planPortfolio(five, DEFAULT_PARAMS, policy(1_000))
+    expect(plan.allocations.map((a) => [a.snapshot.address, a.capitalUsd])).toEqual([['a', 25], ['b', 5], ['c', 15], ['d', 10], ['e', 25]])
+    expect(plan.allocatedUsd).toBe(80)
+  })
+
+  it('stops a size that no longer fits, and still fits a smaller one behind it', () => {
+    // $42: a (25) and b (5) fit, c (15) does not, d (10) does, e (25) does not.
+    const plan = planPortfolio(five, DEFAULT_PARAMS, policy(42))
+    expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['a', 'b', 'd'])
+    expect(plan.skipped.map((s) => s.snapshot.address)).toEqual(['c', 'e'])
+  })
+
+  it('still honours a ceiling on the count', () => {
+    expect(planPortfolio(five, DEFAULT_PARAMS, { ...policy(1_000), maxPositions: 2 }).allocations).toHaveLength(2)
+  })
+})

@@ -29,9 +29,9 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
-| **The book** | a slot is **one $15 buy**; the book holds **capital / $15** tokens (333 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
-| **The buy** | **$15, automatic, and the only one**, in the pass that opens the slot — retried by the sweep if that pass could not. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**; the **crash stop** — more than **5% down in under a minute**, sold at a loss; the **freeze** exit, the **death** exit. No fixed TP | `pressure-tp.ts`, `crash-stop.ts`, the stop sweep, `death-exit.ts` |
+| **The book** | each token is given **its class**: dangerous **$5**, normal **$10**, very good **$15**, safe **$25**; the most volatile first, until the capital runs out | `token-tier.ts`, `portfolio.ts` (`sizeFor`) |
+| **The buy** | **its class, automatic, and the only one**, in the pass that opens the slot — retried by the sweep if that pass could not. No DCA | `buyOnSelection`, `stop-sweep.ts` |
+| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**. Nothing else sells at a loss: no stop, no crash stop, no death watch | `pressure-tp.ts`, the stop sweep |
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 
@@ -127,6 +127,22 @@ market-wide turn:
   too, never a condemned one. The readings live in memory, so a restart starts
   the minute again; a single bad tick from the price feed can fire it. Zero
   turns it off.
+
+- **A buy sized by the token's class, and nothing that sells at a loss**
+  (2026-10-05). *Sin SL, sin congelamiento, sin caída de la muerte. Si el token
+  es más peligroso le asignamos 5 USD, si es normal 10, si es muy bueno 15 y si
+  es seguro seguro 25 — una sola compra.* `tierOf` (`token-tier.ts`):
+  dangerous under $250k of liquidity or with the top ten over 50% (unmeasured
+  counts as dangerous); normal to $1M; very good to $5M; safe over $5M with the
+  top ten under 30% and more than 30 days old. The allocator gives each its
+  size in the volatility order while the capital lasts (`sizeFor`), the first
+  buy is what the slot was given (`firstStepFromCapital`), and the trim never
+  cuts it. `OPERADOR_STEP_USD` is 5, the slot the scan counts by.
+  `OPERADOR_TIERS=0` is the flat buy. The death watch observes nothing
+  (`OPERADOR_DEATH_WATCH=1` brings it back), so nothing freezes or dies, and
+  no sell probe is asked; the crash stop is off (`OPERADOR_CRASH_STOP_PCT=5`).
+  **Stated: a rugged or abandoned token now holds its capital for good.** The
+  strategy exit's 12.5% floor and the gain lock are still on.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.

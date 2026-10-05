@@ -49,6 +49,8 @@ const rig = async (options: {
   readonly pool?: (positions: readonly PersistedPosition[]) => Promise<ReadonlyMap<string, LiquidityReading>>
   /** Whether the cycle buys the first step the moment it opens the slot. */
   readonly onSelection?: boolean
+  /** Whether the first step is what the slot was given — its class — rather than the ladder's step. */
+  readonly fromCapital?: boolean
 } = {}) => {
   const store = new MemoryStore()
   await store.savePosition(options.held ?? reservation())
@@ -86,6 +88,7 @@ const rig = async (options: {
     }),
     ...(options.pool ? { pool: { liquidity: options.pool, deathPolicy: DEFAULT_DEATH_EXIT_POLICY, refusing: new Set<string>() } } : {}),
     ...(options.onSelection === true ? { onSelection: true } : {}),
+    ...(options.fromCapital === true ? { firstStepFromCapital: true } : {}),
   }
   const deps: StopSweepDeps = {
     store: counting,
@@ -474,6 +477,14 @@ describe('the FIRST step on selection — bought the moment a slot is opened', (
     const said = sent.find((a) => a.kind === 'position-opened')!
     expect(said.title).toBe('🟢 T compró $1 al entrar como candidata (compra 1 de 20)')
     expect(said.level).toBe('info')
+  })
+
+  it('buys what the slot was given — its class — when the first step comes from the capital', async () => {
+    // *Peligroso 5, normal 10, muy bueno 15, seguro seguro 25 — una sola compra.*
+    const { first, buys } = await onSelection({ held: { ...reservation(), capitalUsd: 25 }, fromCapital: true })
+    expect(await first(2)).toBe('bought')
+    const [bought] = await buys()
+    expect(bought!.price * bought!.qty).toBeCloseTo(25, 1)
   })
 
   it('buys it ONCE: a second call, the same pass or the next, finds the step already bought', async () => {

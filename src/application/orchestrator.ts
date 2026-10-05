@@ -1,3 +1,4 @@
+import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
 import { sweepStops, exitLevelsFor, buyFirstStepOnSelection, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type PressureTp, type CrashStop, type DropLadder, type DeepRung, type DipBounce } from './stop-sweep.js'
 
@@ -310,6 +311,13 @@ export interface CycleConfig {
    * Absent: the slot is priced from the ladder, as before.
    */
   readonly slotUsd?: number
+  /**
+   * Each candidate's OWN slot, by its class — *peligroso 5, normal 10, muy
+   * bueno 15, seguro seguro 25.* When set the allocator gives each token this,
+   * the trim never cuts a slot below what it was given, and `slotUsd` only
+   * counts how far the scan looks.
+   */
+  readonly sizeFor?: (snapshot: TokenSnapshot) => number
 }
 
 /**
@@ -1164,7 +1172,9 @@ export async function runCycle(
       // cheaper side — the alternative is reserving capital for hours against a
       // rung that may never fire, on a book whose whole thesis is that scale
       // comes from more tokens rather than more size per token.
-      const needs = position.deathWatch.stage === 'frozen' ? deployed : Math.max(ladderNeeds, deployed)
+      // A slot sized by its class keeps what it was given: the class, not the
+      // count's `slotUsd`, is what it needs.
+      const needs = position.deathWatch.stage === 'frozen' ? deployed : Math.max(config.sizeFor ? position.capitalUsd : ladderNeeds, deployed)
       if (position.capitalUsd <= needs + 0.01) {
         kept.push(position)
         continue
@@ -1260,6 +1270,7 @@ export async function runCycle(
           concentrationBasisUsd: book.totalUsd,
           // Back into planPortfolio's own convention on the way out.
           maxPositions: uncapped ? 0 : slotsLeft,
+          ...(config.sizeFor ? { sizeFor: config.sizeFor } : {}),
           // The floor is DERIVED, never remembered. `minPositionUsd` was 200
           // from a real measurement — the first capital-floor run placed no
           // orders below it — taken BEFORE sizing began reserving gas and 5%

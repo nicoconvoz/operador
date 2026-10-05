@@ -27,10 +27,12 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  * 2026-10-03 *sólo dos compras: la primera de 3 y la segunda de 9.* A slot is
  * therefore $12 and the book holds capital / $12: 416 tokens at $5,000.
  *
- * FIFTEEN since 2026-10-04, and ONE buy: *sin escalones, una sola compra.* A
- * slot is $15, so $5,000 holds 333 tokens.
+ * FIFTEEN since 2026-10-04, and ONE buy: *sin escalones, una sola compra.*
+ * FIVE since 2026-10-05, the cheapest class: each buy is now its token's class
+ * — $5, $10, $15 or $25, see `token-tier.ts` — and this is only the slot the
+ * scan counts by. With OPERADOR_TIERS=0 it is the one flat buy.
  */
-export const DEFAULT_STEP_USD = 15
+export const DEFAULT_STEP_USD = 5
 
 /**
  * How much each step grows over the one before: three, so $3 becomes $9. It

@@ -435,6 +435,11 @@ export interface DipBounce {
    * `buyFirstStepOnSelection`. Absent: off — every caller that predates it.
    */
   readonly onSelection?: boolean
+  /**
+   * The FIRST step is what the slot was given — its class: *peligroso 5,
+   * normal 10, muy bueno 15, seguro seguro 25.* Absent: the ladder's step.
+   */
+  readonly firstStepFromCapital?: boolean
 }
 
 export interface DipBouncePool {
@@ -1788,7 +1793,7 @@ async function buyStep(
   const n = buys.length
   const max = ladder.policy.maxSteps
   // This buy's own size: the first step times the growth once per buy before it.
-  const step = stepSizeUsd(n, ladder.stepUsd, ladder.stepGrowth ?? 1)
+  const step = n === 0 && ladder.firstStepFromCapital === true ? position.capitalUsd : stepSizeUsd(n, ladder.stepUsd, ladder.stepGrowth ?? 1)
   // The buy AFTER this one — its own lines, grown with every DCA.
   const following = dipBounceThresholds(n + 2, ladder.policy)
   const next = `La próxima compra espera una caída de ${asked(following.dipPct)}% bajo este precio y un rebote de ${asked(following.bouncePct)}%.`
