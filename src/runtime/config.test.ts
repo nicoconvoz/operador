@@ -274,6 +274,13 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
   })
 
+  it('cuts a fall of more than 5% in under a minute, both numbers one variable away', () => {
+    // *Si una moneda baja más de 5% del precio en menos de un minuto, SL.*
+    expect(loadConfig(valid).crashStop).toEqual({ dropPct: 5, windowMs: 60_000 })
+    expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_PCT: '0' }).crashStop.dropPct).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_SECONDS: '90' }).crashStop.windowMs).toBe(90_000)
+  })
+
   it('one $15 buy, no fixed TP, and the TP on buy pressure past +12%', () => {
     // *Sólo una compra de 15* — *sin TP fijo; sólo cuando haya más ganancia
     // que 12% empieza a correr el TP de la presión compradora*, on a 10% fall

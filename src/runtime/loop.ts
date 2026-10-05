@@ -116,7 +116,7 @@ export async function runLoop(
     // The dip-bounce steps above all: they are every buy the book makes, the
     // first included, and a bounce arrives while the loop sleeps as often as
     // while it runs.
-    const laddersOn = deps.pressureLadder !== undefined || deps.dropLadder !== undefined || deps.deepRung !== undefined || deps.dipBounce !== undefined || deps.pressureTp !== undefined
+    const laddersOn = deps.pressureLadder !== undefined || deps.dropLadder !== undefined || deps.deepRung !== undefined || deps.dipBounce !== undefined || deps.pressureTp !== undefined || deps.crashStop !== undefined
     if (!stopOn && config.breakEven !== true && !lockOn && !tpOn && !laddersOn) return
     if (deps.marketPrices === undefined) return
     // The kill switch as the last pass found it. Its documented asymmetry is

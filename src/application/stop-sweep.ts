@@ -28,6 +28,7 @@ import {
 import { pricesDisagree } from '../domain/market/price-agreement.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { buyShare, stepPressureTp, PRESSURE_TP_COMMENT } from '../domain/strategy/pressure-tp.js'
+import { stepCrashStop, CRASH_STOP_COMMENT, type PriceMark } from '../domain/risk/crash-stop.js'
 import { minProfitPctFor, roundTripCostForFill, stopForRatio, positionTollPct, buyCostUsd } from '../domain/economics/sizing.js'
 import { settle } from './engine.js'
 import {
@@ -488,6 +489,17 @@ export interface PressureTp {
   readonly gasUsdPerSwap: number
 }
 
+/**
+ * The crash stop: *si una moneda baja más de 5% del precio en menos de un
+ * minuto, SL.* See `crash-stop.ts`.
+ */
+export interface CrashStop {
+  readonly windowMs: number
+  readonly dropPct: number
+  /** Each held position's readings of the last window. Owned by the caller: the cycle's sweeps and the loop's share it. */
+  readonly marks: Map<string, readonly PriceMark[]>
+}
+
 export interface StopSweepDeps {
   readonly store: StatePort
   readonly alerts: AlertPort
@@ -497,6 +509,8 @@ export interface StopSweepDeps {
   readonly pressureLadder?: PressureLadder
   /** Absent: no take-profit on buy pressure. */
   readonly pressureTp?: PressureTp
+  /** Absent: no crash stop. */
+  readonly crashStop?: CrashStop
   /** Absent: no price ladder. */
   readonly dropLadder?: DropLadder
   /** Absent: no deep rung, and no low followed. */
@@ -599,6 +613,35 @@ export async function sweepStops(
     const policy = levels.stop
     const avg = input.entryPriceUsd
     const held = input.openQty > 0 && avg > 0 && price !== null && price > 0
+
+    // THE CRASH STOP, before anything that could wait: more than 5% down in
+    // under a minute sells at whatever the market pays. Frozen or not — a
+    // crash is not something to wait out — and never a condemned position,
+    // which the death exit sells under its own name.
+    if (held && deps.crashStop && position.deathWatch.stage !== 'dead') {
+      const step = stepCrashStop(deps.crashStop.marks.get(position.id) ?? [], at, price!, deps.crashStop)
+      deps.crashStop.marks.set(position.id, step.marks)
+      if (step.crashed) {
+        const broker = await deps.brokerFor(position)
+        await settle([{ kind: 'closeAll', comment: CRASH_STOP_COMMENT }], position.lastBarTime, price!, at, position, broker, deps.store)
+        const after = await deps.store.fillsFor(position.id)
+        if (after.length > fills.length) {
+          await deps.store.closePosition(position.id)
+          deps.crashStop.marks.delete(position.id)
+          stopped.push(position.id)
+          const fell = ((1 - price! / step.peak!) * 100).toFixed(1)
+          const cut = alert(
+            'token-stopped',
+            `⚡ ${position.symbol} cortada por caída rápida`,
+            `Cayó ${fell}% en menos de un minuto (de ${step.peak} a ${price}). Se vendió todo. El token NO queda vetado.`,
+            at,
+            { position: position.id, token: position.tokenAddress },
+          )
+          if (throttle.shouldSend(cut, `crash:${position.id}`)) await deps.alerts.send(cut)
+          continue
+        }
+      }
+    }
 
     /**
      * THE FIXED TP. *Poné un TP fijo al 12.5% del promedio* — the whole

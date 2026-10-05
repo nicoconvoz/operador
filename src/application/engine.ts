@@ -15,6 +15,7 @@ import { deployableCapital, scaledParams } from './paper-run.js'
 import { minProfitPctFor, roundTripCostForFill } from '../domain/economics/sizing.js'
 import { PYRAMIDING } from '../domain/strategy/params.js'
 import { BREAK_EVEN_COMMENT, STOP_LOSS_COMMENT } from '../domain/risk/stop-loss.js'
+import { CRASH_STOP_COMMENT } from '../domain/risk/crash-stop.js'
 import { SWAP_EXIT_COMMENT } from '../domain/risk/rotation.js'
 import { type Candles } from './replay.js'
 import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
@@ -791,6 +792,8 @@ export function refusesToSellAtALoss(
     order.comment === DEATH_EXIT_COMMENT ||
     order.comment === FROZEN_EXIT_COMMENT ||
     order.comment === STOP_LOSS_COMMENT ||
+    // *Si una moneda baja más de 5% en menos de un minuto, SL.*
+    order.comment === CRASH_STOP_COMMENT ||
     // *Cuando el puntaje cae 5 puntos, SL.* A stop, the operator's: it leaves
     // at whatever the market pays.
     order.comment === SCORE_STOP_COMMENT

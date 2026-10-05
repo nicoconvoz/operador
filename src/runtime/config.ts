@@ -324,6 +324,8 @@ export interface RuntimeConfig {
    * a `dropPct` fall of buyers' share from its peak. Zero `dropPct` is off.
    */
   readonly pressureTp: { readonly armPct: number; readonly dropPct: number }
+  /** The crash stop: more than `dropPct` down inside `windowMs` sells. Zero `dropPct` is off. */
+  readonly crashStop: { readonly dropPct: number; readonly windowMs: number }
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -753,6 +755,11 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     pressure: onlyIf(env, 'OPERADOR_PRESSURE'),
     // *Sin TP fijo; sólo cuando haya más ganancia que 12% empieza a correr el
     // TP de la presión compradora* — sold on a 10% fall from its peak.
+    // *Si una moneda baja más de 5% del precio en menos de un minuto, SL.*
+    crashStop: {
+      dropPct: numberOrZero(env, 'OPERADOR_CRASH_STOP_PCT', 5),
+      windowMs: numberOrZero(env, 'OPERADOR_CRASH_STOP_SECONDS', 60) * 1_000,
+    },
     pressureTp: {
       armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
       dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),

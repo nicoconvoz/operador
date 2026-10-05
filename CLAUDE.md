@@ -31,7 +31,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
 | **The book** | a slot is **one $15 buy**; the book holds **capital / $15** tokens (333 at $5,000), the most volatile first | `production-ladder.ts`, `free-capital.ts` (`freeSlots`) |
 | **The buy** | **$15, automatic, and the only one**, in the pass that opens the slot — retried by the sweep if that pass could not. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**; the **freeze** exit, the **death** exit. No fixed TP, no stop | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
+| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**; the **crash stop** — more than **5% down in under a minute**, sold at a loss; the **freeze** exit, the **death** exit. No fixed TP | `pressure-tp.ts`, `crash-stop.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 
@@ -117,6 +117,16 @@ market-wide turn:
   arming and the peak live in memory, so a restart starts them again; the
   no-loss guard still refuses a fill under cost. The strategy's own exit keeps
   its 12.5% floor and the gain lock stays on.
+
+- **The crash stop** (2026-10-05). *Si una moneda baja más de 5% del precio en
+  menos de un minuto, SL.* Every sweep (about every thirty seconds) remembers
+  each held token's live prices for `OPERADOR_CRASH_STOP_SECONDS` (60), and
+  sells everything, at a loss if it must, when the price is more than
+  `OPERADOR_CRASH_STOP_PCT` (5) under the highest of them. `⚡ Caída rápida`
+  on the tape; exempt from the no-loss guard like every stop. Frozen holdings
+  too, never a condemned one. The readings live in memory, so a restart starts
+  the minute again; a single bad tick from the price feed can fire it. Zero
+  turns it off.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.

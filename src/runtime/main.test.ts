@@ -57,7 +57,7 @@ const runtime = (env: Record<string, string> = {}) =>
  * the sweep, the pool check, the TP, the funding — so they pin the numbers
  * they were written against, and `runtime()` alone speaks for production.
  */
-const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0' }
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0' }
 
 /**
  * And the order they were argued with: the cheapest to trade first. Production
@@ -188,6 +188,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dipBounce?.stepUsd).toBe(15)
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(1)
+  })
+
+  it('wires the crash stop: more than 5% down in under a minute', () => {
+    expect(runtime().deps.crashStop).toMatchObject({ dropPct: 5, windowMs: 60_000 })
+    expect(runtime({ OPERADOR_CRASH_STOP_PCT: '0' }).deps.crashStop).toBeUndefined()
   })
 
   it('wires the TP on buy pressure — running past +12%, selling on a 10% fall from its peak — and no fixed TP', () => {
@@ -785,7 +790,7 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
 
   it('holds the first buy through the dip, then cuts the moment the two buys are more than $1.20 down', async () => {
     // The two-buy ladder and the stop as they ran, both a variable away now.
-    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2', OPERADOR_STOP_MAX_LOSS_USD: '1.2', OPERADOR_PRESSURE_TP_DROP_PCT: '0' })
+    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2', OPERADOR_STOP_MAX_LOSS_USD: '1.2', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0' })
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000

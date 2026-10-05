@@ -85,6 +85,7 @@ const SPANISH: Record<CloseAllOrder['comment'], string> = {
   // over the average, reached on a live price.
   '🎯 TP fijo': '🎯 TP fijo',
   '📉 TP por presión': '📉 TP por presión',
+  '⚡ Caída rápida': '⚡ Caída rápida',
 }
 // A DCA rung arrives as "➕ DCA-2" and an entry as "🟢 Entry" — neither is a
 // `closeAll` comment, so neither is in the union above. Anything unknown is

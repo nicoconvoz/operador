@@ -512,6 +512,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     // *Sin TP fijo; sólo cuando haya más ganancia que 12% empieza a correr el
     // TP de la presión compradora.* The hour's counts per mint, out of the same
     // cached Jupiter response the pressure ladder reads.
+    // *Si una moneda baja más de 5% del precio en menos de un minuto, SL.*
+    // Read on the sweep's own live prices, every thirty seconds.
+    ...(config.crashStop.dropPct > 0 ? { crashStop: {
+        dropPct: config.crashStop.dropPct,
+        windowMs: config.crashStop.windowMs,
+        marks: new Map(),
+      } } : {}),
     ...(config.pressureTp.dropPct > 0 ? { pressureTp: {
         armPct: config.pressureTp.armPct,
         dropPct: config.pressureTp.dropPct,

@@ -1,5 +1,5 @@
 import { alert, AlertThrottle, type AlertPort } from '../domain/notifications/alerts.js'
-import { sweepStops, exitLevelsFor, buyFirstStepOnSelection, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type PressureTp, type DropLadder, type DeepRung, type DipBounce } from './stop-sweep.js'
+import { sweepStops, exitLevelsFor, buyFirstStepOnSelection, STOP_SWEEP_MS, type ExitSizing, type PressureLadder, type PressureTp, type CrashStop, type DropLadder, type DeepRung, type DipBounce } from './stop-sweep.js'
 
 import { type BrokerPort } from '../domain/execution/broker.js'
 import { type AssetHealthObservation, type DeathExitPolicy, startDeathWatch } from '../domain/risk/death-exit.js'
@@ -73,6 +73,8 @@ export interface CycleDeps {
   readonly pressureLadder?: PressureLadder
   /** The take-profit on buy pressure, run by the stop sweep. Absent: off. */
   readonly pressureTp?: PressureTp
+  /** The crash stop, run by the stop sweep. Absent: off. */
+  readonly crashStop?: CrashStop
   /** The chained ladder on price, off in production. Absent: no ladder. */
   readonly dropLadder?: DropLadder
   /**
