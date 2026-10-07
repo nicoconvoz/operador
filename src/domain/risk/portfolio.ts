@@ -289,6 +289,10 @@ function planBySize(
   let allocatedUsd = 0
   for (const candidate of ranked) {
     const size = sizeFor(candidate.snapshot)
+    if (!(size > 0)) {
+      skipped.push({ snapshot: candidate.snapshot, reason: 'below-floor', detail: 'its class is not bought' })
+      continue
+    }
     if (allocations.length >= ceiling) {
       skipped.push({ snapshot: candidate.snapshot, reason: 'no-slots', detail: `${allocations.length} slots filled` })
       continue

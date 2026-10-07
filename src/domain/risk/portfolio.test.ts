@@ -374,6 +374,13 @@ describe('planPortfolio — each token is given what its class buys', () => {
     expect(plan.skipped.map((s) => s.snapshot.address)).toEqual(['c', 'e'])
   })
 
+  it('buys nothing for a candidate whose size is zero — a class not admitted', () => {
+    // *Dejame las que califiquen como 15 y 25.*
+    const plan = planPortfolio(five, DEFAULT_PARAMS, { ...policy(1_000), sizeFor: (s) => (s.address === 'b' || s.address === 'd' ? 0 : sizes[s.address]!) })
+    expect(plan.allocations.map((a) => a.snapshot.address)).toEqual(['a', 'c', 'e'])
+    expect(plan.skipped.map((s) => [s.snapshot.address, s.reason])).toEqual([['b', 'below-floor'], ['d', 'below-floor']])
+  })
+
   it('still honours a ceiling on the count', () => {
     expect(planPortfolio(five, DEFAULT_PARAMS, { ...policy(1_000), maxPositions: 2 }).allocations).toHaveLength(2)
   })

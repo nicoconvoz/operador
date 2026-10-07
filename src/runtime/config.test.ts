@@ -287,6 +287,12 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_DEATH_WATCH: '1' }).deathWatch).toBe(true)
   })
 
+  it('admits only the very good and the safe — *las que califiquen como 15 y 25* — the lowest class one variable away', () => {
+    expect(loadConfig(valid).minTier).toBe('good')
+    expect(loadConfig({ ...valid, OPERADOR_MIN_TIER: 'dangerous' }).minTier).toBe('dangerous')
+    expect(loadConfig({ ...valid, OPERADOR_MIN_TIER: 'nonsense' }).minTier).toBe('good')
+  })
+
   it('cuts a fall of more than 5% in under a minute when asked, both numbers one variable away', () => {
     // *Si una moneda baja más de 5% del precio en menos de un minuto, SL.*
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_PCT: '5' }).crashStop).toEqual({ dropPct: 5, windowMs: 60_000 })

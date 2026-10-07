@@ -1,3 +1,4 @@
+import { isTokenTier, type TokenTier } from '../domain/risk/token-tier.js'
 import { type Chain } from '../domain/scanner/snapshot.js'
 import { productionDoors } from '../application/production-doors.js'
 import { productionLadder } from '../application/production-ladder.js'
@@ -328,6 +329,8 @@ export interface RuntimeConfig {
   readonly crashStop: { readonly dropPct: number; readonly windowMs: number }
   /** Each buy sized by the token's class (`token-tier.ts`). ON; OPERADOR_TIERS=0 is the flat step. */
   readonly tiers: boolean
+  /** The lowest class bought. `good`: *dejame las que califiquen como 15 y 25.* OPERADOR_MIN_TIER. */
+  readonly minTier: TokenTier
   /** Whether the death watch observes held tokens at all. OFF; OPERADOR_DEATH_WATCH=1 brings it back. */
   readonly deathWatch: boolean
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
@@ -768,6 +771,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // *Si el token es más peligroso le asignamos 5 USD, si es normal 10, si es
     // muy bueno 15 y si es seguro seguro 25.*
     tiers: onUnless(env, 'OPERADOR_TIERS'),
+    // *De todas las monedas dejame las que califiquen como 15 y 25.* Nonsense
+    // keeps the decision.
+    minTier: ((raw) => (raw !== undefined && isTokenTier(raw) ? raw : 'good'))(env.OPERADOR_MIN_TIER?.trim().toLowerCase()),
     // *Sin congelamiento, sin caída de la muerte.* Nothing observes a held
     // token's health, so nothing freezes and nothing dies.
     deathWatch: onlyIf(env, 'OPERADOR_DEATH_WATCH'),

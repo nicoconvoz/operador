@@ -29,7 +29,7 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
-| **The book** | each token is given **its class**: dangerous **$5**, normal **$10**, very good **$15**, safe **$25**; the most volatile first, until the capital runs out | `token-tier.ts`, `portfolio.ts` (`sizeFor`) |
+| **The book** | only **very good** tokens (**$25**) and **safe** ones (**$50**) are bought — dangerous and normal never; the most volatile first, until the capital runs out | `token-tier.ts` (`admittedUsd`), `portfolio.ts` (`sizeFor`) |
 | **The buy** | **its class, automatic, and the only one**, in the pass that opens the slot — retried by the sweep if that pass could not. No DCA | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**. Nothing else sells at a loss: no stop, no crash stop, no death watch | `pressure-tp.ts`, the stop sweep |
 
@@ -143,6 +143,14 @@ market-wide turn:
   no sell probe is asked; the crash stop is off (`OPERADOR_CRASH_STOP_PCT=5`).
   **Stated: a rugged or abandoned token now holds its capital for good.** The
   strategy exit's 12.5% floor and the gain lock are still on.
+
+- **Only the very good and the safe, at $25 and $50** (2026-10-07). *De todas
+  las monedas dejame las que califiquen como 15 y 25* — and then *a las que
+  valen 25 ponele 50 y a las que valen 15 ponele 25.* `TIER_USD` is $5, $10,
+  $25 and $50, and `OPERADOR_MIN_TIER` (`good`) is the lowest class bought:
+  a dangerous or normal candidate is given nothing (`admittedUsd`) and the
+  allocator skips it. `OPERADOR_MIN_TIER=dangerous` buys every class again.
+  Positions already open in those classes are kept; they leave by the TP.
 
 The sections below that speak of twenty $5 steps, 3%/2% and the rising door
 describe the configuration this replaced.

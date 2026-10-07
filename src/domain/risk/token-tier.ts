@@ -11,8 +11,11 @@ import { type TokenSnapshot } from '../scanner/snapshot.js'
  * |---|---|---|
  * | dangerous | liquidity under $250k, or the top ten holding more than 50% | $5 |
  * | normal | liquidity $250k – $1M | $10 |
- * | good | liquidity $1M – $5M | $15 |
- * | safe | liquidity over $5M, top ten under 30%, more than 30 days old | $25 |
+ * | good | liquidity $1M – $5M | $25 |
+ * | safe | liquidity over $5M, top ten under 30%, more than 30 days old | $50 |
+ *
+ * Then *a las que valen 25 ponele 50 y a las que valen 15 ponele 25*: very
+ * good went from $15 to $25 and safe from $25 to $50.
  *
  * Concentration nobody measured is dangerous: silence takes the smaller bet. A
  * pool over $5M that misses the holders or the age is `good`, never `safe`.
@@ -22,7 +25,7 @@ import { type TokenSnapshot } from '../scanner/snapshot.js'
 
 export type TokenTier = 'dangerous' | 'normal' | 'good' | 'safe'
 
-export const TIER_USD: Readonly<Record<TokenTier, number>> = { dangerous: 5, normal: 10, good: 15, safe: 25 }
+export const TIER_USD: Readonly<Record<TokenTier, number>> = { dangerous: 5, normal: 10, good: 25, safe: 50 }
 
 const DAY_MS = 86_400_000
 
@@ -38,3 +41,18 @@ export function tierOf(snapshot: TokenSnapshot): TokenTier {
 
 /** What one buy puts into this token. */
 export const tierUsd = (snapshot: TokenSnapshot): number => TIER_USD[tierOf(snapshot)]
+
+const RANK: Readonly<Record<TokenTier, number>> = { dangerous: 0, normal: 1, good: 2, safe: 3 }
+
+/** Whether a word names a class. */
+export const isTokenTier = (value: string): value is TokenTier => value in RANK
+
+/**
+ * What one buy puts into this token if its class is `lowest` or better, and
+ * zero otherwise. *De todas las monedas dejame las que califiquen como 15 y
+ * 25* — from `good` up.
+ */
+export const admittedUsd = (snapshot: TokenSnapshot, lowest: TokenTier): number => {
+  const tier = tierOf(snapshot)
+  return RANK[tier] >= RANK[lowest] ? TIER_USD[tier] : 0
+}

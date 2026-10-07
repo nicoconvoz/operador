@@ -8,7 +8,7 @@ import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
 import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
-import { tierUsd } from '../domain/risk/token-tier.js'
+import { admittedUsd } from '../domain/risk/token-tier.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { fundRungsFromFreeCapital, fundStepFromFreeCapital } from '../application/free-capital.js'
 import { type PersistedPosition } from '../domain/persistence/store.js'
@@ -1198,7 +1198,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       // Exactly steps × step: what the allocator hands out and the trim keeps,
       // and what the free slots are counted in.
       slotUsd: config.slotUsd,
-      ...(config.tiers ? { sizeFor: tierUsd } : {}),
+      ...(config.tiers ? { sizeFor: (snapshot: TokenSnapshot) => admittedUsd(snapshot, config.minTier) } : {}),
       heartbeatMs: 60 * 60 * 1000,
       // So a pass can tell whether a position has a new bar to look at before
       // paying a throttled request to find out.
