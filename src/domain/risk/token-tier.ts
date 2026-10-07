@@ -11,11 +11,12 @@ import { type TokenSnapshot } from '../scanner/snapshot.js'
  * |---|---|---|
  * | dangerous | liquidity under $250k, or the top ten holding more than 50% | $5 |
  * | normal | liquidity $250k – $1M | $10 |
- * | good | liquidity $1M – $5M | $25 |
- * | safe | liquidity over $5M, top ten under 30%, more than 30 days old | $50 |
+ * | good | liquidity $1M – $5M | $125 |
+ * | safe | liquidity over $5M, top ten under 30%, more than 30 days old | $250 |
  *
  * Then *a las que valen 25 ponele 50 y a las que valen 15 ponele 25*: very
- * good went from $15 to $25 and safe from $25 to $50.
+ * good went from $15 to $25 and safe from $25 to $50 — and then *las de 50
+ * pasan a valer 250 y las de 25 a 125.*
  *
  * Concentration nobody measured is dangerous: silence takes the smaller bet. A
  * pool over $5M that misses the holders or the age is `good`, never `safe`.
@@ -25,7 +26,7 @@ import { type TokenSnapshot } from '../scanner/snapshot.js'
 
 export type TokenTier = 'dangerous' | 'normal' | 'good' | 'safe'
 
-export const TIER_USD: Readonly<Record<TokenTier, number>> = { dangerous: 5, normal: 10, good: 25, safe: 50 }
+export const TIER_USD: Readonly<Record<TokenTier, number>> = { dangerous: 5, normal: 10, good: 125, safe: 250 }
 
 const DAY_MS = 86_400_000
 

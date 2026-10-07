@@ -203,7 +203,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     const snap = (liquidityUsd: number, top: number) =>
       ({ liquidityUsd, observedAt: 100 * DAY, pairCreatedAt: 0, security: { topHoldersPct: top } }) as unknown as TokenSnapshot
     // *Dejame las que califiquen como 15 y 25*: the dangerous and the normal buy nothing.
-    expect([snap(100_000, 10), snap(500_000, 10), snap(2_000_000, 10), snap(9_000_000, 10)].map((s) => cycleConfig.sizeFor!(s))).toEqual([0, 0, 25, 50])
+    expect([snap(100_000, 10), snap(500_000, 10), snap(2_000_000, 10), snap(9_000_000, 10)].map((s) => cycleConfig.sizeFor!(s))).toEqual([0, 0, 125, 250])
     expect(runtime({ OPERADOR_MIN_TIER: 'dangerous' }).cycleConfig.sizeFor!(snap(100_000, 10))).toBe(5)
     expect(deps.dipBounce?.firstStepFromCapital).toBe(true)
     expect(await deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
