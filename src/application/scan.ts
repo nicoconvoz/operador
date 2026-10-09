@@ -410,6 +410,9 @@ const UNKNOWN_SECURITY: SecurityReport = {
  * token costs the LONGEST of them rather than their sum. Measured at 16.8
  * seconds per token before that, against a 15-minute bar.
  */
+/** How many tokens the paid stage examines at once. */
+const EXAMINE_CONCURRENCY = 4
+
 export async function examineToken(
   deps: ScanDeps,
   config: Pick<ScanConfig, 'chain' | 'referenceUsd'> & {
@@ -911,14 +914,7 @@ export async function scanOnce(
         errors.push({ address: 'prefetch', stage: 'security', error: String(error) })
       }
     }
-    for (const market of batch) {
-      examined.add(market.address)
-      spent += 1
-      done += 1
-      // Before the token, not after, so the FIRST one does not get a free pass.
-      await deps.betweenSteps?.()
-      // Every tenth, not every one: a log that scrolls is a log nobody reads.
-      if (done % 10 === 0) deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: done + pending().length })
+    const one = async (market: MarketSnapshot): Promise<void> => {
       const record = (stage: ScanError['stage'], error: unknown) =>
         errors.push({ address: market.address, stage, error: String(error) })
       // A token we HOLD waits for its sale quote; a stranger gets one try.
@@ -936,6 +932,23 @@ export async function scanOnce(
         referenceUsd: config.referenceUsd,
         observedAt: scannedAt,
       })
+    }
+    // A few at a time, not one behind the other: with every gate open a scan
+    // examines hundreds, and each waits on its own sale quote — 379 took ten
+    // minutes in a row. *¿Por qué va lento?* The quote client still backs off
+    // on a 429, so the provider sets the pace, not this number.
+    for (let i = 0; i < batch.length; i += EXAMINE_CONCURRENCY) {
+      const group = batch.slice(i, i + EXAMINE_CONCURRENCY)
+      // Before the group, not after, so the FIRST one does not get a free pass.
+      await deps.betweenSteps?.()
+      for (const market of group) {
+        examined.add(market.address)
+        spent += 1
+        done += 1
+        // Every tenth, not every one: a log that scrolls is a log nobody reads.
+        if (done % 10 === 0) deps.onProgress?.({ stage: 'checked', chain: config.chain, done, of: done + pending().length })
+      }
+      await Promise.all(group.map(one))
     }
   }
 

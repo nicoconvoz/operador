@@ -1114,6 +1114,28 @@ describe('scanOnce — Jupiter and the chain, no GoPlus', () => {
     expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
   })
 
+  it('quotes several tokens at once instead of one behind the other', async () => {
+    // *¿Por qué va lento?* — 379 tokens examined one at a time, each waiting
+    // for its own sale quote: ten minutes a scan with every gate open.
+    const { scanDeps } = rig()
+    let inFlight = 0
+    let most = 0
+    const outcome = await scanOnce({
+      ...scanDeps,
+      sellProbe: {
+        assessSell: async () => {
+          inFlight += 1
+          most = Math.max(most, inFlight)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          inFlight -= 1
+          return { sellQuote: 'ok', priceImpactPct: 0.1 }
+        },
+      },
+    }, config)
+    expect(most).toBe(2)
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
+  })
+
   it('asks for everything it will examine ONCE, before the loop', async () => {
     const { scanDeps, prefetched } = rig()
     await scanOnce(scanDeps, config)

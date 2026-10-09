@@ -107,6 +107,14 @@ positions. A healthy watch that stays healthy with no new evidence is no longer
 written, except to refresh a stamp older than fifteen minutes; a watch that
 moves — or a frozen one counting its way out — is written at once.
 
+*¿Por qué va lento y por qué se tildó?* With every gate open the paid stage
+examines hundreds of tokens, and it did so one behind the other, each waiting
+on its own Jupiter sale quote: 379 took about ten minutes, and the log, printed
+every tenth token, sat still while a held token waited out its sixty-second
+quote or the stop sweep re-priced the book. It examines `EXAMINE_CONCURRENCY`
+(4) at a time now; the quote client still backs off on a 429. On Solana the
+scan downloads no candles — `poolCandles` is BSC only.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 
