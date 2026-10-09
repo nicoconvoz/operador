@@ -76,10 +76,11 @@ const LEGACY_ORDER = { OPERADOR_RANK_BY: 'cost' }
 const LADDER_A: Record<string, string> = {
   OPERADOR_DROP_LADDER: '1', OPERADOR_MAX_DCA: '5', OPERADOR_MAX_USD_PER_LEVEL: '10', OPERADOR_RESERVED_ENTRIES: '1',
   OPERADOR_DCA_ADAPTIVE: '1', OPERADOR_DCA_REALTIME: '1', OPERADOR_LIQUIDITY_BRAKE_PCT: '5',
+  OPERADOR_STOP_MAX_LOSS_USD: '0',
 }
 
 /** The deep rung, brought back from the environment beside its own $15 entry. */
-const DEEP_RUNG: Record<string, string> = { OPERADOR_DEEP_RUNG: '1', OPERADOR_MAX_USD_PER_LEVEL: '15', OPERADOR_MAX_DCA: '1', OPERADOR_RESERVED_ENTRIES: '1' }
+const DEEP_RUNG: Record<string, string> = { OPERADOR_DEEP_RUNG: '1', OPERADOR_MAX_USD_PER_LEVEL: '15', OPERADOR_MAX_DCA: '1', OPERADOR_RESERVED_ENTRIES: '1', OPERADOR_STOP_MAX_LOSS_USD: '0' }
 
 const held: PersistedPosition = {
   id: 'solana:T:1', chain: 'solana', tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
@@ -820,6 +821,22 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     expect(await sweep(avgCostUsd! - 1.21 / qty)).toEqual([slot.id])
     expect((await fills()).filter((f) => f.side === 'sell').map((f) => f.comment)).toEqual(['🛑 Stop', '🛑 Stop'])
     expect(await store.loadPositions()).toEqual([])
+  })
+
+  it('cuts the one $3 buy the moment it is more than $0.60 down — *ponele un SL a 0.60* — with production’s own defaults', async () => {
+    const { deps, cycleConfig, store } = onMemory(DEFAULTS)
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
+    await store.savePosition(slot)
+    let clock = 1_000
+    const levels = (position: PersistedPosition) => exitLevelsFor(position, exitSizingFrom(cycleConfig))
+    const sweep = async (price: number) =>
+      sweepStops(deps, levels, new AlertThrottle(0), (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000))
+    expect(await sweep(1)).toEqual([])
+    const fills = async () => store.fillsFor(slot.id)
+    const { avgCostUsd, qty } = positionLedger(await fills())
+    expect(await sweep(avgCostUsd! - 0.59 / qty)).toEqual([])
+    expect(await sweep(avgCostUsd! - 0.61 / qty)).toEqual([slot.id])
+    expect((await fills()).filter((f) => f.side === 'sell').map((f) => f.comment)).toEqual(['🛑 Stop'])
   })
 })
 

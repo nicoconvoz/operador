@@ -284,7 +284,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.gainLock).toBeNull()
     expect(config.fixedTpPct).toBe(0)
     expect(config.crashStop.dropPct).toBe(0)
-    expect(config.stopLoss.maxLossUsd).toBe(0)
+    expect(config.stopLoss.maxLossUsd).toBe(0.6)
     expect(config.tiers).toBe(false)
     expect(config.buyOnSelection).toBe(true)
   })
@@ -322,18 +322,16 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '1' }).stopLoss.onlyWhenHistoryCovers).toBe(true)
   })
 
-  it('has the $1.20 stop after the second buy OFF — *sacá la regla del SL* — one variable away', () => {
-    // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces SL.*
-    expect(loadConfig(valid).stopLoss).toMatchObject({ maxLossUsd: 0, minBuys: 2 })
-    expect(shouldStopOut({ entryPriceUsd: 1, marketPriceUsd: 0.5, openQty: 15, runAtEntryPct: null, buys: 2 }, loadConfig(valid).stopLoss)).toBe(false)
-    const { stopLoss } = loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '1.2' })
-    expect(stopLoss).toMatchObject({ maxLossUsd: 1.2, minBuys: 2 })
-    // $12 held at a 15% fall is $1.80 under water.
-    const fell = (buys: number) => ({ entryPriceUsd: 1, marketPriceUsd: 0.85, openQty: 12, runAtEntryPct: null, buys })
-    expect(shouldStopOut(fell(1), stopLoss)).toBe(false)
-    expect(shouldStopOut(fell(2), stopLoss)).toBe(true)
+  it('stops a holding more than $0.60 under water from its one buy — *ponele un SL a 0.60* — one variable away', () => {
+    const { stopLoss } = loadConfig(valid)
+    expect(stopLoss).toMatchObject({ maxLossUsd: 0.6, minBuys: 1 })
+    // $3 held: a 15% fall is $0.45 under water, a 25% fall $0.75.
+    const fell = (to: number) => ({ entryPriceUsd: 1, marketPriceUsd: to, openQty: 3, runAtEntryPct: null, buys: 1 })
+    expect(shouldStopOut(fell(0.85), stopLoss)).toBe(false)
+    expect(shouldStopOut(fell(0.75), stopLoss)).toBe(true)
     // One variable away each.
-    expect(loadConfig({ ...valid, OPERADOR_STOP_AFTER_BUYS: '1' }).stopLoss.minBuys).toBe(1)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0' }).stopLoss.maxLossUsd).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_STOP_AFTER_BUYS: '2' }).stopLoss.minBuys).toBe(2)
     expect(loadConfig({ ...valid, OPERADOR_STOP_MIN_PCT: '0' }).stopLoss.minStopPct).toBe(0)
     expect(loadConfig(valid).exitOnFreeze).toBe(true)
   })
