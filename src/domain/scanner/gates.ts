@@ -46,6 +46,15 @@ export interface GatePolicy {
    */
   readonly maxDailyFallPct: number
   /**
+   * A day's rise past which a fall in the hour is a pump turning over.
+   * *Mirá el pump y la caída de la última hora y no entres en caso
+   * peligroso* (2026-10-09). JEANPHIL: +153% on the day, −8.7% in the hour,
+   * −14% in its first minute held. Infinity: off.
+   */
+  readonly maxPumpPct: number
+  /** A fall in the hour past which nothing enters, pumped or not. Infinity: off. */
+  readonly maxHourFallPct: number
+  /**
    * 24h volume over liquidity: how many times the pool trades itself in a day.
    *
    * `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell
@@ -189,6 +198,8 @@ export const SOLANA_CANONICAL_SYMBOLS: Readonly<Record<string, string>> = {
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = {
+  maxPumpPct: 100,
+  maxHourFallPct: 5,
   // THE TASTE GATES STEP ASIDE.
   //
   // The operator narrowed what a gate is allowed to be: *tendencia reciente
@@ -429,6 +440,9 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
  */
 export const STRICT_GATE_POLICY: GatePolicy = {
   ...DEFAULT_GATE_POLICY,
+  // The pump-and-dump gate is newer than the original values this keeps.
+  maxPumpPct: Infinity,
+  maxHourFallPct: Infinity,
   // Kept ON, so the gate's logic stays tested after production stopped asking.
   requireLpLock: true,
   minLiquidityUsd: 20_000,
@@ -506,6 +520,7 @@ export type GateName =
   | 'staleBars'
   | 'priceMismatch'
   | 'volatility'
+  | 'pumpDump'
 
 export interface GateFailure {
   readonly gate: GateName
@@ -600,6 +615,8 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
 
   const fall = freefall(snapshot, policy)
   if (fall) failures.push(fall)
+  const dump = pumpDump(snapshot, policy)
+  if (dump) failures.push(dump)
 
   // Activity measured against the pool, not in dollars. Zero liquidity is
   // already a liquidity failure; dividing by it here would only add noise.
@@ -686,7 +703,7 @@ export function forgivableFailures(gates: GateResult): readonly GateFailure[] | 
 }
 
 export function evaluateSafetyGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
-  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history', 'volatility'])
+  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history', 'volatility', 'pumpDump'])
   const { failures } = evaluateGates(snapshot, policy)
   const kept = failures.filter((failure) => !opportunityOnly.has(failure.gate))
   return { passed: kept.length === 0, failures: kept }
@@ -826,6 +843,8 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
 
   const fall = freefall(snapshot, policy)
   if (fall) failures.push(fall)
+  const dump = pumpDump(snapshot, policy)
+  if (dump) failures.push(dump)
 
   // Activity measured against the pool, not in dollars. Zero liquidity is
   // already a liquidity failure; dividing by it here would only add noise.
@@ -866,6 +885,20 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
  * which is the opposite of how the SAFETY gates fail, and rightly so: those
  * guard against a rug, this one against a bad entry.
  */
+function pumpDump(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {
+  const hour = snapshot.priceChangePct.h1
+  // Silence is not a fall.
+  if (hour === null) return null
+  if (hour < -policy.maxHourFallPct) {
+    return fail('pumpDump', 'failed', `cae ${Math.abs(hour).toFixed(1)}% en la última hora — más de ${policy.maxHourFallPct}%`)
+  }
+  const day = snapshot.priceChangePct.h24
+  if (hour < 0 && day !== null && day > policy.maxPumpPct) {
+    return fail('pumpDump', 'failed', `subió ${day.toFixed(0)}% en el día y cae ${Math.abs(hour).toFixed(1)}% en la hora — un pump que se da vuelta`)
+  }
+  return null
+}
+
 function freefall(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {
   const windows: readonly (readonly [string, number | null, number])[] = [
     ['1h', snapshot.priceChangePct.h1, policy.maxFallPct],

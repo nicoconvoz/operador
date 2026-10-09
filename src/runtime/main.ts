@@ -207,6 +207,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // Never lowers the standing 24h floor — that answers a different question.
   const gates: GatePolicy = {
     ...DEFAULT_GATE_POLICY,
+    maxPumpPct: config.pumpDump.maxPumpPct,
+    maxHourFallPct: config.pumpDump.maxHourFallPct,
     // The operator's volatility door: only tokens that MOVE may enter.
     minVolatility5mPct: config.minVolatilityPct,
     minAgeHours: Math.max(

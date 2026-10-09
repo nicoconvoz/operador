@@ -335,6 +335,8 @@ export interface RuntimeConfig {
   readonly deathWatch: boolean
   /** Whether the strategy's own TP sells. OFF: *no uses el TP antiguo.* OPERADOR_STRATEGY_EXIT=1. */
   readonly strategyExit: boolean
+  /** The pump-and-dump door at entry (`gates.ts`). Infinity is off. */
+  readonly pumpDump: { readonly maxPumpPct: number; readonly maxHourFallPct: number }
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -790,6 +792,12 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // OFF since 2026-10-09: *no uses el TP antiguo, usá este que te dije* —
     // the TP on buy pressure is the one take-profit.
     strategyExit: onlyIf(env, 'OPERADOR_STRATEGY_EXIT'),
+    // *Mirá el pump y la caída de la última hora y no entres en caso
+    // peligroso* (2026-10-09). Zero turns either half off.
+    pumpDump: {
+      maxPumpPct: numberOrZero(env, 'OPERADOR_MAX_PUMP_PCT', 100) || Infinity,
+      maxHourFallPct: numberOrZero(env, 'OPERADOR_MAX_HOUR_FALL_PCT', 5) || Infinity,
+    },
     pressureTp: {
       armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
       // ON again since 2026-10-09: *la salida de la última configuración, más

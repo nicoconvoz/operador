@@ -980,3 +980,40 @@ describe('volatility — a door that asks the token to MOVE', () => {
     expect(evaluateSafetyGates(clean(), door).passed).toBe(true)
   })
 })
+
+describe('pumpDump — a pump turning over, or a fall in the hour', () => {
+  // *Mirá el pump y la caída de la última hora y no entres en caso peligroso.*
+  // JEANPHIL was bought at +153% on the day and −8.7% in the hour, and lost
+  // 14% in its first minute.
+  const gatesOf = (h1: number | null, h24: number | null) =>
+    evaluateMarketGates(clean({ priceChangePct: { h1, h6: 0, h24 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)
+
+  it('refuses JEANPHIL: up 153% on the day and falling in the hour', () => {
+    expect(gatesOf(-8.7, 153)).toContain('pumpDump')
+  })
+
+  it('refuses a pumped token that has only just started to fall', () => {
+    expect(gatesOf(-0.5, 120)).toContain('pumpDump')
+  })
+
+  it('lets a pumped token through while it is still climbing in the hour', () => {
+    expect(gatesOf(3, 300)).not.toContain('pumpDump')
+  })
+
+  it('refuses any token falling more than 5% in the hour, pumped or not', () => {
+    expect(gatesOf(-5.1, 0)).toContain('pumpDump')
+    expect(gatesOf(-5, 0)).not.toContain('pumpDump')
+  })
+
+  it('lets a small hourly dip on an ordinary day through', () => {
+    expect(gatesOf(-2, 40)).not.toContain('pumpDump')
+  })
+
+  it('says nothing on an unreported hour — silence is not a fall', () => {
+    expect(gatesOf(null, 200)).not.toContain('pumpDump')
+  })
+
+  it('is an opportunity gate, never a safety one: it never reaches a token we hold', () => {
+    expect(evaluateSafetyGates(clean({ priceChangePct: { h1: -20, h6: 0, h24: 300 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('pumpDump')
+  })
+})

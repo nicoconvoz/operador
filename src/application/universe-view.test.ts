@@ -90,7 +90,7 @@ describe('buildUniverse — tiers tell the story', () => {
       txns: { h1: { buys: 2, sells: 2 }, h24: { buys: 100, sells: 100 } },
       // Sliding in the hour: momentum reads zero and so does the hour's own
       // door, which between them are 80% of the score.
-      priceChangePct: { h1: -10, h6: 0, h24: 0 },
+      priceChangePct: { h1: -4, h6: 0, h24: 0 },
     })
     const [t] = (await buildUniverse(await seed([quiet]), options)).tokens
     expect(t!.tier).toBe('eligible')

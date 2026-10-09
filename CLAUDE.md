@@ -55,6 +55,14 @@ caída de la presión compradora 10%* — and *no uses el TP antiguo, usá este*
 off (`useStrategyExit`; `OPERADOR_STRATEGY_EXIT=1` brings it back). The data
 still comes from Jupiter alone; nothing else changed.
 
+And the same day, after JEANPHIL was bought at +153% on the day and −8.7% in
+the hour and lost 14% in its first minute: *mirá el pump y la caída de la
+última hora y no entres en caso peligroso.* The `pumpDump` gate refuses a
+token falling more than `OPERADOR_MAX_HOUR_FALL_PCT` (5) in the hour, and one
+up more than `OPERADOR_MAX_PUMP_PCT` (100) on the day that is falling in the
+hour at all. An opportunity gate: it decides what enters and never touches
+what is held; an unreported hour says nothing; zero turns either half off.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

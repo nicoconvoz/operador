@@ -202,6 +202,14 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(await tiered.deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
   })
 
+  it('refuses a pump turning over and a fall in the hour at the door — both numbers one variable away, zero off', async () => {
+    // *Mirá el pump y la caída de la última hora y no entres en caso peligroso.*
+    const gatesOf = (env: Record<string, string>) => runtime(env).cycleConfig
+    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d' }).pumpDump).toEqual({ maxPumpPct: 100, maxHourFallPct: 5 })
+    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d', OPERADOR_MAX_PUMP_PCT: '200', OPERADOR_MAX_HOUR_FALL_PCT: '0' }).pumpDump).toEqual({ maxPumpPct: 200, maxHourFallPct: Infinity })
+    expect(gatesOf({})).toBeDefined()
+  })
+
   it('wires the TP on buy pressure — past +12%, on a 10% fall from its peak — and no fixed TP', () => {
     // *Agregá la salida que teníamos: más del 12% y caída de la presión compradora 10%.*
     const { deps, cycleConfig } = runtime()
