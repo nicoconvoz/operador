@@ -607,8 +607,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // ON: *y además que no pasen a la lista negra.* A frozen token is banned
     // once its slot is released and holds nothing. OPERADOR_BLACKLIST_ON_FREEZE=0
     // turns it off.
-    blacklistOnFreeze: onUnless(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
-    abandonFreezeHours: number(env, 'OPERADOR_ABANDON_FREEZE_HOURS', Infinity),
+    // 24/09 (2026-10-08): a frozen token is not banned, and three hours
+    // without a trade freezes.
+    blacklistOnFreeze: onlyIf(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
+    abandonFreezeHours: number(env, 'OPERADOR_ABANDON_FREEZE_HOURS', 3),
     // One step, from the module the dashboard reads: the ladder a slot is
     // priced with is the ladder the sweep buys.
     maxUsdPerLevel: number(env, 'OPERADOR_MAX_USD_PER_LEVEL', productionLadder(env).maxUsdPerLevel),
@@ -656,13 +658,16 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // cuando una moneda pasa a candidata* — and only an explicit 0 or false
     // puts it back off.
     buyOnSelection: onUnless(env, 'OPERADOR_BUY_ON_SELECTION'),
-    livePrice: onUnless(env, 'OPERADOR_LIVE_PRICE'),
+    // OFF since 2026-10-08: the strategy's TP reads real candles.
+    // OPERADOR_LIVE_PRICE=1 brings the one-bar live tick back.
+    livePrice: onlyIf(env, 'OPERADOR_LIVE_PRICE'),
     staleCheckHours: number(env, 'OPERADOR_STALE_CHECK_HOURS', 6),
     // Unset: exactly one slot, steps × step, set below — nothing grossed up.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,
     // ZERO — off — by default: the target a $1 step's round trip derives would
     // lift the operator's +10% to about +35%. See `DEFAULT_MAX_COST_SHARE_PCT`.
-    maxCostSharePct: numberOrZero(env, 'OPERADOR_MAX_COST_SHARE_PCT', 0),
+    // 24/09 again: the TP target is what keeps costs under a third of the gain.
+    maxCostSharePct: numberOrZero(env, 'OPERADOR_MAX_COST_SHARE_PCT', 33),
     // *Hacé la relación 1:4, quiero ver si aguanta mejor.* Four times the
     // stop, NET of the round trip — which on a $15 fill is 1.38% and lands on
     // both sides of the trade, so the advertised 1:3.9 was really 1:1.06.
@@ -690,7 +695,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // Beside the strategy exit, not in place of it. OPERADOR_GAIN_LOCK=0 turns
     // it off; a typo leaves it on, the safe side for a rule that only ever
     // sells above cost.
-    gainLock: onUnless(env, 'OPERADOR_GAIN_LOCK') ? DEFAULT_GAIN_LOCK_POLICY : null,
+    // OFF since 2026-10-08, as on 24/09. OPERADOR_GAIN_LOCK=1 brings it back.
+    gainLock: onlyIf(env, 'OPERADOR_GAIN_LOCK') ? DEFAULT_GAIN_LOCK_POLICY : null,
     // *El operador pierde de a mucho, no funciona el SL.* The 1:4 multiplies
     // the toll by about seven with no ceiling of its own: fomopay was cut with
     // a 24% stop, a thin pool derives 51% on the old toll and 14.7% on the
@@ -770,16 +776,19 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     },
     // *Si el token es más peligroso le asignamos 5 USD, si es normal 10, si es
     // muy bueno 15 y si es seguro seguro 25.*
-    tiers: onUnless(env, 'OPERADOR_TIERS'),
+    // OFF since 2026-10-08: one buy of capital / 70. OPERADOR_TIERS=1.
+    tiers: onlyIf(env, 'OPERADOR_TIERS'),
     // *De todas las monedas dejame las que califiquen como 15 y 25.* Nonsense
     // keeps the decision.
     minTier: ((raw) => (raw !== undefined && isTokenTier(raw) ? raw : 'good'))(env.OPERADOR_MIN_TIER?.trim().toLowerCase()),
     // *Sin congelamiento, sin caída de la muerte.* Nothing observes a held
     // token's health, so nothing freezes and nothing dies.
-    deathWatch: onlyIf(env, 'OPERADOR_DEATH_WATCH'),
+    // ON again since 2026-10-08, as on 24/09.
+    deathWatch: onUnless(env, 'OPERADOR_DEATH_WATCH'),
     pressureTp: {
       armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
-      dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),
+      // OFF since 2026-10-08: the strategy's TP sells, as on 24/09.
+      dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 0),
     },
     // The rungs' triggers and sizes, from the module the dashboard reads too.
     dcaDropsPct: productionLadder(env).dcaDropsPct,

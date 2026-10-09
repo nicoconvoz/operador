@@ -99,7 +99,7 @@ const costEfficiencyDoor = (pct: number): ComponentFloors => ({ costEfficiency: 
  * the only opportunity condition. The rising door is off — see
  * `DEFAULT_ENTRY_RISING`.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {}
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = { activity: 0.5, liquidityGrowth: 1 }
 
 /** The rising door as a floor: `risingHour` is 1 or 0, so at least 1 means rising. */
 const risingDoor: ComponentFloors = { risingHour: 1 }
@@ -151,7 +151,7 @@ export const DEFAULT_ENTRY_RISING = false
  * examine in this order and stop at the free slots. `OPERADOR_RANK_BY=cost`
  * brings the cost order back.
  */
-export const DEFAULT_CANDIDATE_ORDER: CandidateOrder = 'volatility'
+export const DEFAULT_CANDIDATE_ORDER: CandidateOrder = 'size'
 
 /**
  * How much better, in points of cost efficiency, a waiting candidate must be
@@ -281,11 +281,14 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const risingOn = ['0', 'false', 'no'].includes(risingRaw)
     ? false
     : ['1', 'true', 'yes'].includes(risingRaw) || DEFAULT_ENTRY_RISING
-  const minComponents: ComponentFloors = { ...costDoor, ...(risingOn ? risingDoor : {}) }
+  // The 24/09 door, back on 2026-10-08: activity over half and liquidity grown
+  // in the hour. OPERADOR_ENTRY_FLOORS=0 turns it off.
+  const floorsOff = ['0', 'false', 'no'].includes(env.OPERADOR_ENTRY_FLOORS?.trim().toLowerCase() ?? '')
+  const minComponents: ComponentFloors = { ...(floorsOff ? {} : DEFAULT_COMPONENT_FLOORS), ...costDoor, ...(risingOn ? risingDoor : {}) }
 
   // `size` and `cost` bring the old orders back; anything else keeps the operator's.
   const rankBy = env.OPERADOR_RANK_BY?.trim().toLowerCase()
-  const order: CandidateOrder = rankBy === 'size' ? 'size' : rankBy === 'cost' ? 'costEfficiency' : DEFAULT_CANDIDATE_ORDER
+  const order: CandidateOrder = rankBy === 'volatility' ? 'volatility' : rankBy === 'size' ? 'size' : rankBy === 'cost' ? 'costEfficiency' : DEFAULT_CANDIDATE_ORDER
 
   // Zero is a real value: any better token takes an idle reservation's slot.
   const edgeRaw = env.OPERADOR_MIN_COST_EDGE_PCT?.trim()

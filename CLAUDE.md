@@ -28,10 +28,27 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | safe — nothing else; the book fills **most volatile first**, down to the calmest, until the slots are full | `ranking.ts` (`volatility` order), `volatility-probe.ts`, `production-doors.ts` |
-| **The book** | only **very good** tokens (**$125**) and **safe** ones (**$250**) are bought — dangerous and normal never; the most volatile first, until the capital runs out | `token-tier.ts` (`admittedUsd`), `portfolio.ts` (`sizeFor`) |
-| **The buy** | **its class, automatic, and the only one**, in the pass that opens the slot — retried by the sweep if that pass could not. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**. Nothing else sells at a loss: no stop, no crash stop, no death watch | `pressure-tp.ts`, the stop sweep |
+| **Candidate** | safe, **activity ≥ 50%** and **liquidity grown in the last hour**; a day old, at most 30% down on the day, four trades in the hour, a fresh bar; **small caps first** | `production-doors.ts`, `gates.ts` |
+| **The book** | **70 tokens**: each gets capital / 70 — **$71.43 at $5,000** | `production-ladder.ts` (`DEFAULT_BOOK_TOKENS`) |
+| **The buy** | **one, automatic**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
+| **Exits** | the **strategy's TP** on real candles (over +2%, lifted so costs stay under a third of the gain), the **freeze** exit (three hours without a trade among its signals) and the **death** exit | the cascade, `death-exit.ts` |
+
+### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
+
+*¿Cuándo ganó más la estrategia?* — 24 and 25/09, about +$229 realised and 149
+take-profits at +13% on average. *Calculá unas 70, una sola compra por token,
+que con las 70 llegue a 5000; lo demás aplicalo como estaba en ese momento.*
+So every default the later weeks moved is back where 24/09 had it: the
+activity and liquidity-growth door (`OPERADOR_ENTRY_FLOORS=0` removes it),
+the four opportunity gates, small caps first (`OPERADOR_RANK_BY=volatility`
+for the other order), `OPERADOR_MIN_PROFIT_PCT` 2 with
+`OPERADOR_MAX_COST_SHARE_PCT` 33, the death watch and the freeze exit with
+abandonment at three hours, no ban on release, real candles
+(`OPERADOR_LIVE_PRICE=1` for the one-bar tick), and no gain lock, fixed TP,
+TP on buy pressure, classes or crash stop — each one a variable away. The one
+change from 24/09 is the size: one buy of `OPERADOR_CAPITAL_USD` /
+`OPERADOR_BOOK_TOKENS` (70) instead of $15 and a rung at half.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

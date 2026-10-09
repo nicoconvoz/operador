@@ -35,6 +35,13 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
 export const DEFAULT_STEP_USD = 5
 
 /**
+ * How many tokens the book holds, each with ONE buy of capital / this.
+ * *Calculá unas 70 … que con las 70 llegue a 5000* (2026-10-08): $71.43 a
+ * token. OPERADOR_STEP_USD names a step instead.
+ */
+export const DEFAULT_BOOK_TOKENS = 70
+
+/**
  * How much each step grows over the one before: three, so $3 becomes $9. It
  * was two — *1, 2, 4, 8, 16, 32*. The deeper buy carries most of the money and
  * pulls the average down hardest. One is the flat ladder. OPERADOR_STEP_GROWTH.
@@ -521,7 +528,7 @@ export const DEFAULT_FIXED_TP_PCT = 0
  * eat what the runners make. The reference's 2 stays in `DEFAULT_PARAMS`,
  * which is evidence.
  */
-export const DEFAULT_MIN_PROFIT_PCT = 12.5
+export const DEFAULT_MIN_PROFIT_PCT = 2
 
 
 export interface ProductionLadder {
@@ -676,7 +683,11 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     return raw?.trim() && Number.isFinite(value) && value > 0 && value < 100 ? value : fallback
   }
 
-  const stepUsd = positive(env.OPERADOR_STEP_USD, DEFAULT_STEP_USD)
+  // *Calculá unas 70, una sola compra por token, que con las 70 llegue a
+  // 5000.* The step is the capital over the book's tokens unless a step is
+  // named; the capital's own default is the config's.
+  const bookTokens = positive(env.OPERADOR_BOOK_TOKENS, DEFAULT_BOOK_TOKENS)
+  const stepUsd = positive(env.OPERADOR_STEP_USD, positive(env.OPERADOR_CAPITAL_USD, 1_000) / bookTokens)
   const maxSteps = entries(env.OPERADOR_MAX_STEPS, DEFAULT_MAX_STEPS)
   // A growth under one would SHRINK the deep buys, the opposite of a ladder;
   // nonsense keeps the operator's doubling.

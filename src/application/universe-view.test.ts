@@ -490,7 +490,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     // The engine asks no door now, so the screen asks none: a 2.2% round trip
     // is welcome, and it only sorts behind the cheaper ones.
     const store = await seed([token('DEAR', { measuredImpactPct: 0.8 })])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_FLOORS: '0' }).minComponents })
     expect(view.tokens[0]!.tier).not.toBe('filtered')
     expect(view.tokens[0]!.holdBack).toEqual([])
   })
@@ -501,7 +501,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     // spread and 0.8% of measured impact is a 2.2% round trip: 1 - 2.2 / 4 =
     // 45% — under the door.
     const store = await seed([token('DEAR', { measuredImpactPct: 0.8 })])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60', OPERADOR_ENTRY_FLOORS: '0' }).minComponents })
     const dear = view.tokens[0]!
     expect(dear.tier).toBe('filtered')
     expect(dear.holdBack).toHaveLength(1)
@@ -514,14 +514,14 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     // 0.3% of spread and 0.5% of impact is a 1.6% round trip: 60% to the
     // rounding of the screen, and never above it.
     const store = await seed([token('EVEN', { measuredImpactPct: 0.5 })])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60', OPERADOR_ENTRY_FLOORS: '0' }).minComponents })
     expect(view.tokens[0]!.tier).toBe('filtered')
     expect(describeHoldBack(view.tokens[0]!.holdBack[0]!, LABELS)).toBe('eficiencia de costo 60.0% (pide > 60%)')
   })
 
   it('lets a token whose round trip is cheap enough through the door', async () => {
     const store = await seed([token('HOT')])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({}).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_FLOORS: '0' }).minComponents })
     expect(view.tokens[0]!.tier).not.toBe('filtered')
     expect(view.tokens[0]!.holdBack).toEqual([])
   })
@@ -535,7 +535,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
       token('FLAT', { priceChangePct: { h1: 0, h6: 0, h24: 0 } }),
       token('QUIET', { priceChangePct: { h1: null, h6: 0, h24: 0 } }),
     ])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_RISING: '1' }).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_RISING: '1', OPERADOR_ENTRY_FLOORS: '0' }).minComponents })
     const by = (symbol: string) => view.tokens.find((t) => t.symbol === symbol)!
     expect(by('UP').tier).not.toBe('filtered')
     expect(by('UP').holdBack).toEqual([])
@@ -548,7 +548,7 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
 
   it('draws the same token as buyable with the door off — OPERADOR_ENTRY_RISING=0', async () => {
     const store = await seed([token('DOWN', { priceChangePct: { h1: -1.2, h6: 0, h24: 0 } })])
-    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_RISING: '0' }).minComponents })
+    const view = await buildUniverse(store, { now: () => NOW, minComponents: productionDoors({ OPERADOR_ENTRY_RISING: '0', OPERADOR_ENTRY_FLOORS: '0' }).minComponents })
     expect(view.tokens[0]!.tier).not.toBe('filtered')
   })
 
@@ -590,13 +590,13 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.blockers.join(' ')).toMatch(/liquidez/)
   })
 
-  it('leaves a token the strategy cannot run on in filtered, under the policy that still asks', async () => {
-    // Under four trades an hour a 15m bar comes back empty. Production stopped
-    // asking — *todo es bienvenido* — and STRICT keeps the gate tested.
+  it('leaves a token the strategy cannot run on in filtered — production asks for four trades an hour again', async () => {
+    // Under four trades an hour a 15m bar comes back empty. Production asks
+    // again since 2026-10-08, as on 24/09.
     const dead = token('DEAD', { txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } })
     const store = await seed([dead])
     expect((await buildUniverse(store, strictOptions)).tokens[0]?.tier).toBe('filtered')
-    expect((await buildUniverse(store, options)).tokens[0]?.tier).not.toBe('filtered')
+    expect((await buildUniverse(store, options)).tokens[0]?.tier).toBe('filtered')
   })
 })
 

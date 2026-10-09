@@ -594,25 +594,16 @@ describe('history is ZERO, because door 3 asks for no indicator', () => {
     expect(DEFAULT_GATE_POLICY.minHistoryBars).toBe(0)
   })
 
-  it('and the AGE gate is off too: *puerta de entrada ninguna, todo es bienvenido*', () => {
-    // It survived *anulá todos los filtros* on the argument that a pool younger
-    // than a day has no daily change to read — the rule it served asked for a
-    // rise over the DAY. No rule reads that window now: every buy waits for a
-    // 3% dip and a 2% bounce on the live price, so a pool born this morning is
-    // as welcome as one a month old. The SAFETY gates still stand in front of
-    // it, `priceMismatch` among them — the shape of USDF's 14,426x.
-    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(0)
-    expect(evaluateGates(clean({ pairCreatedAt: NOW - 3 * HOUR }), DEFAULT_GATE_POLICY).passed).toBe(true)
-    // STRICT keeps the day, so the gate's logic stays tested.
+  it('asks for a day of age again, as on 24/09', () => {
+    // *Lo demás aplicalo como estaba en ese momento* (2026-10-08).
+    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(24)
+    expect(evaluateGates(clean({ pairCreatedAt: NOW - 3 * HOUR }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
     expect(STRICT_GATE_POLICY.minAgeHours).toBe(24)
     expect(failedGates(clean({ pairCreatedAt: NOW - 3 * HOUR }))).toEqual(['age:failed'])
   })
 
-  it('an unknown age is not refused by a gate that asks for none', () => {
-    // At zero the gate asks nothing, so an unreported creation time has
-    // nothing to fail. Under a real floor, unknown still fails — closed.
-    expect(evaluateGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
-    expect(evaluateMarketGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  it('refuses an unknown age under the day it asks for — closed', () => {
+    expect(evaluateMarketGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)).toContain('age:unknown')
     expect(failedGates(clean({ pairCreatedAt: null }))).toEqual(['age:unknown'])
   })
 
@@ -716,15 +707,10 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(quiet, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('volume')
   })
 
-  it('no longer refuses a token that already collapsed TODAY — *todo es bienvenido*', () => {
-    // It refused past a 30% fall on the day, measured on PERK: the day sees a
-    // collapse that happened before we arrived. The operator took the door out
-    // with every other one — *puerta de entrada ninguna* — and a token down 40%
-    // now waits, like any other, for a 3% dip and a 2% bounce. STRICT keeps the
-    // gate's logic tested.
+  it('refuses a token that already collapsed TODAY again — past 30%, as on 24/09', () => {
     const collapsed = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
-    expect(DEFAULT_GATE_POLICY.maxDailyFallPct).toBe(100)
-    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
+    expect(DEFAULT_GATE_POLICY.maxDailyFallPct).toBe(30)
+    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
     expect(evaluateMarketGates(collapsed, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
   })
 
@@ -753,16 +739,16 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(dip, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
   })
 
-  it('no longer refuses a newborn pool — the dip-bounce buy reads no indicator', () => {
+  it('refuses a newborn pool again, as on 24/09', () => {
     const newborn = gentle({ pairCreatedAt: NOW - 60 * 60 * 1000 })
-    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('age')
+    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
     expect(evaluateMarketGates(newborn, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
   })
 
-  it('no longer refuses a quiet hour — the buy waits for the live price to move anyway', () => {
+  it('refuses a quiet hour again — under four trades, as on 24/09', () => {
     const still = gentle({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 40, sells: 30 } } })
-    expect(DEFAULT_GATE_POLICY.minHourlyTxns).toBe(0)
-    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('idle')
+    expect(DEFAULT_GATE_POLICY.minHourlyTxns).toBe(4)
+    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
     expect(evaluateMarketGates(still, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
     expect(STRICT_GATE_POLICY.minHourlyTxns).toBe(4)
   })
@@ -854,10 +840,10 @@ describe('the day-long collapse, measured on the book that paid for it', () => {
   const production = (over: Partial<TokenSnapshot>) =>
     evaluateGates(clean(over), { ...DEFAULT_GATE_POLICY, maxDailyFallPct: MEASURED_MAX_DAILY_FALL_PCT }).failures.map((f) => f.gate)
 
-  it('is OFF in production: PERK at −92.6% is welcome, and waits for its dip and bounce like any other', () => {
+  it('is ON in production again: PERK at −92.6% is refused, as on 24/09', () => {
     expect(MEASURED_MAX_DAILY_FALL_PCT).toBe(30)
     expect(evaluateGates(clean({ priceChangePct: { h1: -21.7, h6: -60, h24: -92.6 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate))
-      .not.toContain('freefall')
+      .toContain('freefall')
   })
 
   it('refuses a token that already collapsed before we arrived — PERK, −92.6%', () => {
@@ -943,11 +929,10 @@ describe('staleBars — off in production, the operator’s call', () => {
   // newest candle 1.2 hours old while it traded fourteen times that hour, in
   // bursts. The rule was "do not buy what you cannot watch"; the operator took
   // it out. STRICT keeps the hour, so the gate's LOGIC stays tested.
-  it('does not refuse a token for an old last candle', () => {
-    expect(DEFAULT_GATE_POLICY.maxBarAgeHours).toBe(Infinity)
-    expect(evaluateGates(clean({ lastTradeAgoHours: 1.2 }), DEFAULT_GATE_POLICY).passed).toBe(true)
-    expect(evaluateGates(clean({ lastTradeAgoHours: 30 }), DEFAULT_GATE_POLICY).passed).toBe(true)
-    expect(evaluateSafetyGates(clean({ lastTradeAgoHours: 30 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  it('refuses a token whose last candle is more than an hour old again, as on 24/09', () => {
+    expect(DEFAULT_GATE_POLICY.maxBarAgeHours).toBe(1)
+    expect(evaluateGates(clean({ lastTradeAgoHours: 0.5 }), DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateGates(clean({ lastTradeAgoHours: 1.2 }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('staleBars')
   })
 
   it('still refuses a token the candle feed says NOBODY ever traded — there is nothing to price it against', () => {

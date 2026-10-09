@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — the $5 slot the scan counts by', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(5)
+  it('caps each level at the LARGEST step by default — the one buy of capital / 70', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(1000 / 70)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,35 +194,23 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token ONE buy, and counts slots of $5', () => {
-    // *El DCA 1 = el DCA 7* — *sólo 5 DCA por token* — *cada escalón 1, 2, 4,
-    // 8, 16, 32.* The slot reserves every step added up, with nothing grossed
-    // up: $5,000 holds 79 tokens.
+  it('gives every token ONE buy of capital / 70, and counts slots of that', () => {
     const config = loadConfig(valid)
-    // *Sin escalones, una sola compra* — of 15. $5,000 holds 333 tokens.
-    expect(config).toMatchObject({ stepUsd: 5, maxSteps: 1, slotUsd: 5 })
-    // Each DCA asks 2 more points of dip and ceiling and 1 more of bounce; zero is the flat rule.
+    expect(config).toMatchObject({ stepUsd: 1000 / 70, maxSteps: 1, slotUsd: 1000 / 70 })
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
-    // Nothing is bought on a fall of more than 20%; zero turns the ceiling off.
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
     expect(config.maxDcaPerToken + 1).toBe(1)
     expect(config.reservedEntries).toBe(1)
-    expect(config.usdPerToken).toBe(5)
-    // Nothing else buys: the deep rung, the chained ladder, its spacing, the
-    // brake, the pressure ladder and the cascade's own doors.
+    expect(config.usdPerToken).toBe(1000 / 70)
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
     expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
     expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })).toMatchObject({ slotUsd: 250, usdPerToken: 250, reservedEntries: 50 })
   })
 
-  it('keeps the take-profit at +10% over the average: no toll-derived target lifts it', () => {
-    // *Vendé si el promedio + 10% de ese promedio de ganancia.* A $1 step pays
-    // $0.05 of gas, so the old derivation — the target at three times the round
-    // trip — would ask the exit for about +35% on this ladder. It is off, and
-    // one variable brings it back.
-    expect(loadConfig(valid).maxCostSharePct).toBe(0)
-    expect(loadConfig({ ...valid, OPERADOR_MAX_COST_SHARE_PCT: '33' }).maxCostSharePct).toBe(33)
+  it('derives the take-profit from the toll again — costs under a third of the gain — as on 24/09', () => {
+    expect(loadConfig(valid).maxCostSharePct).toBe(33)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_COST_SHARE_PCT: '0' }).maxCostSharePct).toBe(0)
   })
 
   it('reads the registry as far as the free slots need, with an optional bound', () => {
@@ -231,10 +219,10 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(() => loadConfig({ ...valid, OPERADOR_REGISTRY_TOKENS: 'todos' })).toThrow(ConfigError)
   })
 
-  it('serves the token that moves most first, with no floor; the cost order and the 1% door are one variable away', () => {
-    expect(loadConfig(valid)).toMatchObject({ order: 'volatility', minCostEdgePct: 10, minVolatilityPct: 0 })
+  it('serves small caps first again, as on 24/09; volatility, cost and the 1% door are one variable away', () => {
+    expect(loadConfig(valid)).toMatchObject({ order: 'size', minCostEdgePct: 10, minVolatilityPct: 0 })
     expect(loadConfig({ ...valid, OPERADOR_RANK_BY: 'cost' }).order).toBe('costEfficiency')
-    expect(loadConfig({ ...valid, OPERADOR_RANK_BY: 'size' }).order).toBe('size')
+    expect(loadConfig({ ...valid, OPERADOR_RANK_BY: 'volatility' }).order).toBe('volatility')
     expect(loadConfig({ ...valid, OPERADOR_MIN_VOLATILITY_PCT: '1' }).minVolatilityPct).toBe(1)
   })
 
@@ -268,23 +256,39 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     })
   })
 
-  it('blacklists a frozen token when its slot is released, unless told not to', () => {
-    // *No me gustó que las congeladas ... no pasen a la lista negra.*
-    expect(loadConfig(valid).blacklistOnFreeze).toBe(true)
-    expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
+  it('does not blacklist a frozen token on release, as on 24/09 — one variable away', () => {
+    expect(loadConfig(valid).blacklistOnFreeze).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '1' }).blacklistOnFreeze).toBe(true)
   })
 
-  it('sizes each buy by the token’s class, with no death watch and no crash stop — each one a variable away', () => {
-    // *Sin SL, sin congelamiento, sin caída de la muerte — peligroso 5, normal
-    // 10, muy bueno 15, seguro seguro 25, una sola compra.*
-    const config = loadConfig(valid)
-    expect(config.tiers).toBe(true)
-    expect(config.deathWatch).toBe(false)
+  it('runs the 24/09 configuration: 70 tokens of one buy each, the activity and liquidity door, the strategy TP, freeze and death', () => {
+    // *Calculá unas 70, una sola compra por token, que con las 70 llegue a
+    // 5000; lo demás aplicalo como estaba en ese momento.*
+    const config = loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000' })
+    expect(config.stepUsd).toBeCloseTo(5000 / 70, 9)
+    expect(config.slotUsd).toBeCloseTo(5000 / 70, 9)
+    expect(config.maxSteps).toBe(1)
+    expect(config.tiers).toBe(false)
+    expect(config.minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
+    expect(config.minProfitPct).toBe(2)
+    expect(config.maxCostSharePct).toBe(33)
+    expect(config.deathWatch).toBe(true)
+    expect(config.exitOnFreeze).toBe(true)
+    expect(config.abandonFreezeHours).toBe(3)
+    expect(config.blacklistOnFreeze).toBe(false)
+    expect(config.livePrice).toBe(false)
+    expect(config.gainLock).toBeNull()
+    expect(config.fixedTpPct).toBe(0)
+    expect(config.pressureTp.dropPct).toBe(0)
     expect(config.crashStop.dropPct).toBe(0)
-    // The slot the scan counts by is the cheapest class.
-    expect(config.slotUsd).toBe(5)
-    expect(loadConfig({ ...valid, OPERADOR_TIERS: '0' }).tiers).toBe(false)
-    expect(loadConfig({ ...valid, OPERADOR_DEATH_WATCH: '1' }).deathWatch).toBe(true)
+    expect(config.stopLoss.maxLossUsd).toBe(0)
+    expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '50' }).stepUsd).toBe(100)
+  })
+
+  it('sizes by class, without the death watch, only when asked — each one a variable away', () => {
+    expect(loadConfig({ ...valid, OPERADOR_TIERS: '1' }).tiers).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_DEATH_WATCH: '0' }).deathWatch).toBe(false)
+    expect(loadConfig(valid).crashStop.dropPct).toBe(0)
   })
 
   it('admits only the very good and the safe — *las que califiquen como 15 y 25* — the lowest class one variable away', () => {
@@ -300,14 +304,11 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_SECONDS: '90' }).crashStop.windowMs).toBe(90_000)
   })
 
-  it('one $15 buy, no fixed TP, and the TP on buy pressure past +12%', () => {
-    // *Sólo una compra de 15* — *sin TP fijo; sólo cuando haya más ganancia
-    // que 12% empieza a correr el TP de la presión compradora*, on a 10% fall
-    // of buyers' share from its peak.
+  it('no fixed TP and no TP on buy pressure by default — the strategy TP sells, as on 24/09', () => {
     const config = loadConfig(valid)
     expect(config.fixedTpPct).toBe(0)
-    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 10 })
-    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).pressureTp.dropPct).toBe(0)
+    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 0 })
+    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '10' }).pressureTp.dropPct).toBe(10)
     expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '8' }).pressureTp.armPct).toBe(8)
   })
 
@@ -404,21 +405,18 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     }
   })
 
-  it('keeps the gain lock ON by default — from +20%, a floor of +10% — and one variable turns it off', () => {
-    // *Si pasás el 20% de ganancia, break-even en el 10%; con cada aumento de
-    // 20%, aumentar el break-even 10%.*
-    expect(loadConfig(valid).gainLock).toEqual({ startPct: 20, stepPct: 20, firstFloorPct: 10, floorStepPct: 10 })
-    for (const off of ['0', 'false', 'no']) {
-      expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: off }).gainLock).toBeNull()
+  it('keeps the gain lock OFF by default, as on 24/09 — one variable brings it back', () => {
+    expect(loadConfig(valid).gainLock).toBeNull()
+    for (const on of ['1', 'true', 'yes']) {
+      expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: on }).gainLock).toEqual({ startPct: 20, stepPct: 20, firstFloorPct: 10, floorStepPct: 10 })
     }
-    // A typo leaves it on: the safe direction for a rule that only ever sells a winner.
-    expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: 'nope' }).gainLock).not.toBeNull()
+    expect(loadConfig({ ...valid, OPERADOR_GAIN_LOCK: 'nope' }).gainLock).toBeNull()
   })
 
-  it('asks the strategy exit for +12.5% by default — never under the fixed TP — and reads another floor', () => {
-    expect(loadConfig(valid).minProfitPct).toBe(12.5)
+  it('asks the strategy exit for +2% by default, as on 24/09, and reads another floor', () => {
+    expect(loadConfig(valid).minProfitPct).toBe(2)
     expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: '20' }).minProfitPct).toBe(20)
-    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'diez' }).minProfitPct).toBe(12.5)
+    expect(loadConfig({ ...valid, OPERADOR_MIN_PROFIT_PCT: 'diez' }).minProfitPct).toBe(2)
   })
 
   it('has the fixed TP OFF by default — *sin TP fijo* — and a number brings it back', () => {
@@ -457,15 +455,15 @@ describe('loadConfig — the rising door is off; it comes back with OPERADOR_ENT
   // *Hacé que la barrera de entrada sea solamente que los tokens suban.* From
   // the module the dashboard reads too, so the screen and the engine cannot
   // disagree about which tokens the book may buy.
-  it('asks nothing of the components: the volatility door is the only one', () => {
-    // *Nada de dos puertas de entrada: sólo medí volatilidad.*
-    expect(loadConfig(valid).minComponents).toEqual({})
-    expect(loadConfig({ ...valid, OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ risingHour: 1 })
+  it('asks for activity over half and liquidity grown in the hour, as on 24/09', () => {
+    expect(loadConfig(valid).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_ENTRY_FLOORS: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ risingHour: 1 })
   })
 
   it('brings the cost-efficiency floor back beside it with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
-    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ costEfficiency: { above: 0 }, risingHour: 1 })
-    expect(loadConfig({ ...valid, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({})
+    const off = { ...valid, OPERADOR_ENTRY_FLOORS: '0' }
+    expect(loadConfig({ ...off, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
+    expect(loadConfig({ ...off, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ costEfficiency: { above: 0 }, risingHour: 1 })
+    expect(loadConfig({ ...off, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({})
   })
 })

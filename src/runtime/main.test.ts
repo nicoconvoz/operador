@@ -57,7 +57,7 @@ const runtime = (env: Record<string, string> = {}) =>
  * the sweep, the pool check, the TP, the funding — so they pin the numbers
  * they were written against, and `runtime()` alone speaks for production.
  */
-const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1' }
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1', OPERADOR_MIN_PROFIT_PCT: '12.5', OPERADOR_MAX_COST_SHARE_PCT: '0', OPERADOR_GAIN_LOCK: '1', OPERADOR_ENTRY_FLOORS: '0', OPERADOR_LIVE_PRICE: '1' }
 
 /**
  * And the order they were argued with: the cheapest to trade first. Production
@@ -88,7 +88,7 @@ const held: PersistedPosition = {
   capitalUsd: 15.89, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
 }
 
-describe('the abandonment freeze is OFF, through the path the engine runs', () => {
+describe('the abandonment freeze at three hours, through the path the engine runs', () => {
   // *Las que no tengan barras en 2h, congelarlas y recuperar el dinero.* A
   // freeze with `exitOnFreeze` on sells the position and the release bans it.
   const quiet = (hoursSinceLastTrade: number) => ({
@@ -97,16 +97,14 @@ describe('the abandonment freeze is OFF, through the path the engine runs', () =
     topHolderMovedPct: null, hoursSinceLastTrade,
   })
 
-  it('never freezes a position for hours without a trade — the operator took it out', () => {
-    // *Ya no quiero que vendan por dos horas sin operaciones, sacalo.* With
-    // `exitOnFreeze` a freeze IS a sale, so the abandonment freeze is off on
-    // the path the engine runs, at any number of quiet hours short of the
-    // death exit's twelve.
+  it('freezes a position three hours without a trade again, as on 24/09', () => {
+    // *Lo demás aplicalo como estaba en ese momento* (2026-10-08). With
+    // `exitOnFreeze` a freeze is a sale.
     const policy = tickConfigFrom(runtime().cycleConfig).deathPolicy!
-    expect(policy.abandonmentFreezeHours).toBe(Infinity)
-    for (const hours of [2, 3, 6, 11.9]) {
-      expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(hours)).state.stage, `${hours}h`).toBe('healthy')
-    }
+    expect(policy.abandonmentFreezeHours).toBe(3)
+    expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(2)).state.stage).toBe('healthy')
+    expect(assessAssetHealth(startDeathWatch(1_000_000, 0), policy, quiet(3.5)).state.stage).toBe('frozen')
+    expect(tickConfigFrom(runtime({ OPERADOR_ABANDON_FREEZE_HOURS: '1000' }).cycleConfig).deathPolicy!.abandonmentFreezeHours).toBe(1000)
   })
 
   it('takes another threshold from the environment', () => {
@@ -135,9 +133,9 @@ describe('the gain lock, through the path the engine runs', () => {
   // *Si pasás el 20% de ganancia, break-even en el 10%.* On unless switched
   // off — and a switched-off rule must stay off through every path: the
   // cycle's sweeps and the loop's both read `exitLevelsFor(position, exitSizingFrom(cycleConfig))`.
-  it('is ON when nothing is set, with the operator’s staircase', () => {
-    const { cycleConfig } = runtime()
-    expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).gainLock).toEqual({ startPct: 20, stepPct: 20, firstFloorPct: 10, floorStepPct: 10 })
+  it('is OFF when nothing is set, as on 24/09 — OPERADOR_GAIN_LOCK=1 brings the staircase back', () => {
+    expect(exitLevelsFor(held, exitSizingFrom(runtime().cycleConfig)).gainLock).toBeNull()
+    expect(exitLevelsFor(held, exitSizingFrom(runtime({ OPERADOR_GAIN_LOCK: '1' }).cycleConfig)).gainLock).toEqual({ startPct: 20, stepPct: 20, firstFloorPct: 10, floorStepPct: 10 })
   })
 
   it('is OFF through every path when the environment switches it off', () => {
@@ -146,7 +144,7 @@ describe('the gain lock, through the path the engine runs', () => {
   })
 })
 
-describe('the strategy exit waits for +12.5%, through the path the engine runs', () => {
+describe('the strategy exit target, through the path the engine runs', () => {
   // *Bajalas a 10* — then *poné un TP fijo al 12.5% del promedio.* The
   // strategy's own exit still sells when the impulse dies — only never under
   // the fixed TP, which the sweep takes first.
@@ -166,8 +164,10 @@ describe('the strategy exit waits for +12.5%, through the path the engine runs',
     )
   }
 
-  it('asks the exit for at least +12.5% when nothing is set', async () => {
-    expect((await tick()).minProfitPct).toBe(12.5)
+  it('asks the exit for the toll-derived target, never under +2%, when nothing is set, as on 24/09', async () => {
+    // The pool's round trip, kept under a third of the gain, lifts it past the floor.
+    expect((await tick()).minProfitPct).toBeGreaterThan(2)
+    expect((await tick({ OPERADOR_MAX_COST_SHARE_PCT: '0' })).minProfitPct).toBe(2)
   })
 
   it('takes another floor from the environment', async () => {
@@ -176,16 +176,12 @@ describe('the strategy exit waits for +12.5%, through the path the engine runs',
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: ONE buy, its class, and nothing after it, fees from the free capital', () => {
-    // *El DCA 1 = el DCA 7, el DCA 2 = el DCA 8* — *usemos sólo 5 DCA por token.*
-    // *Ante una caída del 3% del precio y una subida del 2%, comprá 1 USD, y
-    // armá escalones de 1 USD con la misma regla* — *disminuí los escalones a
-    // 20* — *3% suma 2%, el 2% suma 2% por cada DCA* — *el rebote dejalo que
-    // aumente de 1%.*
-    const { deps, cycleConfig } = runtime()
+  it('wires the dip-bounce as the ONE buyer: ONE buy of capital / 70, and nothing after it, fees from the free capital', () => {
+    // *Calculá unas 70, una sola compra por token, que con las 70 llegue a 5000.*
+    const { deps, cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
     expect(deps.dipBounce?.policy).toEqual({ dipPct: 23, bouncePct: 12, maxSteps: 1, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
-    // *Sin escalones, una sola compra* — the slot the scan counts by is $5.
-    expect(deps.dipBounce?.stepUsd).toBe(5)
+    expect(deps.dipBounce?.stepUsd).toBeCloseTo(5000 / 70, 9)
+    expect(deps.dipBounce?.firstStepFromCapital).toBeUndefined()
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(1)
   })
@@ -195,29 +191,22 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(runtime({ OPERADOR_CRASH_STOP_PCT: '5' }).deps.crashStop).toMatchObject({ dropPct: 5, windowMs: 60_000 })
   })
 
-  it('sizes each slot by its class, buys exactly that once, and watches no token’s health', async () => {
-    // *Peligroso 5, normal 10, muy bueno 15, seguro seguro 25 — una sola compra
-    // — sin congelamiento, sin caída de la muerte.*
-    const { deps, cycleConfig } = runtime()
+  it('sizes by class and stops watching health only when asked', async () => {
     const DAY = 86_400_000
     const snap = (liquidityUsd: number, top: number) =>
       ({ liquidityUsd, observedAt: 100 * DAY, pairCreatedAt: 0, security: { topHoldersPct: top } }) as unknown as TokenSnapshot
-    // *Dejame las que califiquen como 15 y 25*: the dangerous and the normal buy nothing.
-    expect([snap(100_000, 10), snap(500_000, 10), snap(2_000_000, 10), snap(9_000_000, 10)].map((s) => cycleConfig.sizeFor!(s))).toEqual([0, 0, 125, 250])
-    expect(runtime({ OPERADOR_MIN_TIER: 'dangerous' }).cycleConfig.sizeFor!(snap(100_000, 10))).toBe(5)
-    expect(deps.dipBounce?.firstStepFromCapital).toBe(true)
-    expect(await deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
-    expect(runtime({ OPERADOR_TIERS: '0' }).cycleConfig.sizeFor).toBeUndefined()
+    expect(runtime().cycleConfig.sizeFor).toBeUndefined()
+    const tiered = runtime({ OPERADOR_TIERS: '1', OPERADOR_DEATH_WATCH: '0' })
+    expect([snap(100_000, 10), snap(500_000, 10), snap(2_000_000, 10), snap(9_000_000, 10)].map((s) => tiered.cycleConfig.sizeFor!(s))).toEqual([0, 0, 125, 250])
+    expect(tiered.deps.dipBounce?.firstStepFromCapital).toBe(true)
+    expect(await tiered.deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
   })
 
-  it('wires the TP on buy pressure — running past +12%, selling on a 10% fall from its peak — and no fixed TP', () => {
-    // *Sin TP fijo; sólo cuando haya más ganancia que 12% empieza a correr el
-    // TP de la presión compradora.*
+  it('wires no TP on buy pressure and no fixed TP by default — the strategy TP sells, as on 24/09', () => {
     const { deps, cycleConfig } = runtime()
-    expect(deps.pressureTp).toMatchObject({ armPct: 12, dropPct: 10 })
-    expect(deps.pressureTp?.hourCounts).toBeDefined()
+    expect(deps.pressureTp).toBeUndefined()
     expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).fixedTpPct).toBeNull()
-    expect(runtime({ OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).deps.pressureTp).toBeUndefined()
+    expect(runtime({ OPERADOR_PRESSURE_TP_DROP_PCT: '10' }).deps.pressureTp).toMatchObject({ armPct: 12, dropPct: 10 })
   })
 
   it('never buys past a 20% fall unless the environment turns the ceiling off', () => {
@@ -263,15 +252,13 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the one buy, and counts slots at the cheapest class, $5', () => {
-    const { cycleConfig } = runtime()
+  it('reserves the one buy of capital / 70, with nothing grossed up', () => {
+    const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
     expect(cycleConfig.reservedEntries).toBe(1)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(5)
-    expect(cycleConfig.slotUsd).toBe(5)
-    expect(cycleConfig.usdPerToken).toBe(5)
-    // No haircut on the count, and the gas floor ($5) is at the smallest fill.
+    expect(cycleConfig.params.maxUsdPerLevel).toBeCloseTo(5000 / 70, 9)
+    expect(cycleConfig.slotUsd).toBeCloseTo(5000 / 70, 9)
+    expect(cycleConfig.usdPerToken).toBeCloseTo(5000 / 70, 9)
     expect(cycleConfig.portfolio.reservePct).toBe(0)
-    expect(cycleConfig.sizing?.minFillUsd).toBe(5)
   })
 
   it('buys NOTHING through the cascade on the first tick of a slot — its doors stay shut; the first step is the dip-bounce’s', async () => {
@@ -321,16 +308,15 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(broker.execute(entries, 1, 0)).toHaveLength(1)
   })
 
-  it('ticks on the live price by default, and reads candles only for a position idle six hours', () => {
-    // *Quiero el precio directamente* — *si ha pasado mucho tiempo sin actuar, ahí sí consultamos sólo la última vela.*
-    expect(runtime().deps.liveBars?.staleAfterMs).toBe(6 * 3_600_000)
-    expect(runtime({ OPERADOR_STALE_CHECK_HOURS: '3' }).deps.liveBars?.staleAfterMs).toBe(3 * 3_600_000)
-    expect(runtime({ OPERADOR_LIVE_PRICE: '0' }).deps.liveBars).toBeUndefined()
+  it('ticks on real candles by default, as on 24/09 — the live one-bar tick is one variable away', () => {
+    expect(runtime().deps.liveBars).toBeUndefined()
+    expect(runtime({ OPERADOR_LIVE_PRICE: '1' }).deps.liveBars?.staleAfterMs).toBe(6 * 3_600_000)
+    expect(runtime({ OPERADOR_LIVE_PRICE: '1', OPERADOR_STALE_CHECK_HOURS: '3' }).deps.liveBars?.staleAfterMs).toBe(3 * 3_600_000)
   })
 
-  it('blacklists a frozen token on release unless told not to', () => {
-    expect(runtime().cycleConfig.blacklistOnFreeze).toBe(true)
-    expect(runtime({ OPERADOR_BLACKLIST_ON_FREEZE: '0' }).cycleConfig.blacklistOnFreeze).toBe(false)
+  it('does not blacklist a frozen token on release, as on 24/09, unless told to', () => {
+    expect(runtime().cycleConfig.blacklistOnFreeze).toBe(false)
+    expect(runtime({ OPERADOR_BLACKLIST_ON_FREEZE: '1' }).cycleConfig.blacklistOnFreeze).toBe(true)
   })
 
   it('rebuilds a position’s broker once a rung has raised its capital', async () => {
@@ -1015,7 +1001,7 @@ describe('the rising door, brought back (OPERADOR_ENTRY_RISING=1), through the s
           ? { rows: [{ scanned_at: String(Date.now() - 60_000), chain: 'solana', snapshots: shelf }] as T[] }
           : { rows: [] as T[] },
     }
-    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_ENTRY_RISING: '1', OPERADOR_MIN_VOLATILITY_PCT: '1', ...LEGACY_ORDER, ...env }), {
+    const { deps } = buildRuntime(loadConfig({ DATABASE_URL: 'postgres://user:secret@host:5432/db', OPERADOR_ENTRY_RISING: '1', OPERADOR_MIN_VOLATILITY_PCT: '1', OPERADOR_ENTRY_FLOORS: '0', ...LEGACY_ORDER, ...env }), {
       sql,
       postJson: async () => { throw new Error('no network in this test') },
     })
@@ -1226,10 +1212,10 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over the cheapest class: $5,000 is 1,000, $1,500 is 300', () => {
-    for (const [capital, slots] of [['5000', 1000], ['1500', 300]] as const) {
+  it('counts the free slots as capital over its seventieth: 70 at any capital', () => {
+    for (const capital of ['5000', '1500']) {
       const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: capital })
-      expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(slots)
+      expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(70)
     }
     // Fifty steps of $5: a $250 slot, twenty of them in $5,000.
     const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })
