@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { recallCandidates } from './recall.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
-import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { DEFAULT_GATE_POLICY as PRODUCTION_GATE_POLICY } from '../domain/scanner/gates.js'
+/** Every gate asked — production ignores most of them since *quiero todas*; the logic under test is the gates' own. */
+const DEFAULT_GATE_POLICY = { ...PRODUCTION_GATE_POLICY, ignoredGates: [] }
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 

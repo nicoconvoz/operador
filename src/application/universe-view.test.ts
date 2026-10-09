@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { buildUniverse } from './universe-view.js'
 import { describeHoldBack } from './hold-back.js'
 import { productionDoors } from './production-doors.js'
-import { STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { STRICT_GATE_POLICY, DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
 import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { initialState } from '../domain/strategy/state.js'
 import { startDeathWatch, type DeathWatchState } from '../domain/risk/death-exit.js'
@@ -45,7 +45,8 @@ const seed = async (snapshots: TokenSnapshot[]) => {
   return store
 }
 
-const options = { now: () => NOW }
+/** Production with every gate asked — production ignores most of them since *quiero todas*. */
+const options = { now: () => NOW, gates: { ...DEFAULT_GATE_POLICY, ignoredGates: [] } }
 
 /** The screen's own labels for the components these tests name. */
 const LABELS: Readonly<Record<string, string>> = {

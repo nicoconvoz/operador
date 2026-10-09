@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { healthForCycle, healthFromSnapshot, UNMEASURED } from './health-from-scan.js'
 import { type LiveMarket } from '../domain/scanner/live-market.js'
 import { type SecurityReport, type TokenSnapshot } from '../domain/scanner/snapshot.js'
-import { DEFAULT_GATE_POLICY, evaluateGates, evaluateSafetyGates, type GatePolicy } from '../domain/scanner/gates.js'
+import { DEFAULT_GATE_POLICY as PRODUCTION_GATE_POLICY, evaluateGates, evaluateSafetyGates, type GatePolicy } from '../domain/scanner/gates.js'
+/** Every gate asked — production ignores most of them since *quiero todas*; the logic under test is the gates' own. */
+const DEFAULT_GATE_POLICY = { ...PRODUCTION_GATE_POLICY, ignoredGates: [] }
 
 const NOW = 1_800_000_000_000
 

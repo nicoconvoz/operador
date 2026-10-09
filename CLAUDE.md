@@ -28,7 +28,7 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | **every safe token** — no door: no component floor, no age, daily-fall, hourly-trade, stale-bar or pump-and-dump gate; small caps first | `production-doors.ts`, `gates.ts` |
+| **Candidate** | **every token discovered** that can be sold and priced — no door and almost no gate: liquidity, holders, authorities, tax, LP, impact, impersonation and the denylist refuse nothing (`ignoredGates`); small caps first | `production-doors.ts`, `gates.ts` |
 | **The book** | **$3 a token**: $5,000 holds 1,666, more than the scan finds | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
 | **The buy** | **one, automatic, the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
@@ -72,6 +72,16 @@ TP's arm is 0 (`OPERADOR_PRESSURE_TP_ARM_PCT`), the 24/09 door is off
 (`OPERADOR_ENTRY_FLOORS=1`), the four opportunity gates are off again, and so
 is `pumpDump` (`OPERADOR_MAX_PUMP_PCT=100`, `OPERADOR_MAX_HOUR_FALL_PCT=5`). The
 SAFETY gates stand. Stated: gas is $0.05, 1.7% of each $3 buy.
+
+Then they went too: *todo lo descubierto, no importa nada, quiero todas.* 377
+tokens discovered had become 69 candidates, cut by the $100k liquidity floor
+(195) and holder concentration (57). `DEFAULT_GATE_POLICY.ignoredGates` now
+lists every gate except the sell route (`honeypot`), the price agreement
+(`priceMismatch`), the trades the candles need (`staleBars`) and `history`:
+a token that cannot be sold or priced cannot be traded, even on paper.
+`STRICT_GATE_POLICY` asks every gate, and the death watch still reads
+authorities and liquidity on what is held. Stated: **thin, mintable and
+concentrated pools are where rugs and honeypots live**; each costs $3.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

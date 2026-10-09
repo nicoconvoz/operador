@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { confirmEntry } from './confirm-entry.js'
-import { DEFAULT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { DEFAULT_GATE_POLICY as PRODUCTION_GATE_POLICY } from '../domain/scanner/gates.js'
+/** Every gate asked — production ignores most of them since *quiero todas*; the logic under test is the gates' own. */
+const DEFAULT_GATE_POLICY = { ...PRODUCTION_GATE_POLICY, ignoredGates: [] }
 import { type TokenSnapshot } from '../domain/scanner/snapshot.js'
 
 const NOW = 1_800_000_000_000

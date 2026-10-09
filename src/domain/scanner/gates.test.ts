@@ -54,6 +54,9 @@ const clean = (over: Partial<TokenSnapshot> = {}, security: Partial<SecurityRepo
  * The structural thresholds — age, history, idle, staleBars, priceMismatch —
  * are identical in both, so nothing about them changes meaning here.
  */
+/** Production with every gate asked — production ignores most of them since *quiero todas*. */
+const ASKED = { ...DEFAULT_GATE_POLICY, ignoredGates: [] }
+
 const failedGates = (snapshot: TokenSnapshot) =>
   evaluateGates(snapshot, STRICT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)
 
@@ -292,7 +295,7 @@ describe('evaluateGates — what it costs to get out', () => {
     // price 98%. It passed every other gate and became a position. Reported
     // depth is a claim; a quote is a measurement.
     const shallow = clean({ measuredImpactPct: 98 })
-    const result = evaluateGates(shallow, P)
+    const result = evaluateGates(shallow, { ...P, ignoredGates: [] })
     expect(result.passed).toBe(false)
     expect(result.failures.map((f) => f.gate)).toContain('impact')
   })
@@ -533,7 +536,7 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
     // that unlocked, a pool that drained, a sell path that closed — these are
     // the answers that turn between the scan and the buy, and every one of them
     // costs real money.
-    const verdict = evaluateSafetyGates(clean({}, { mintAuthorityActive: true }), DEFAULT_GATE_POLICY)
+    const verdict = evaluateSafetyGates(clean({}, { mintAuthorityActive: true }), ASKED)
     expect(verdict.passed).toBe(false)
     expect(verdict.failures.map((f) => f.gate)).toContain('mintAuthority')
   })
@@ -567,15 +570,15 @@ describe('evaluateSafetyGates — what must still hold at the moment capital mov
     // A denylisted or impersonating token is not an opportunity judgement, and
     // it does not stop being true because we already decided to buy.
     const fake = clean({ symbol: 'BTC', address: 'NotTheRealOne' })
-    expect(evaluateSafetyGates(fake, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('impersonation')
+    expect(evaluateSafetyGates(fake, ASKED).failures.map((f) => f.gate)).toContain('impersonation')
   })
 
   it('still refuses a pool nobody can get out of', () => {
     // Liquidity and impact are not about attractiveness. They answer "can this
     // position be left", which is the one question a ladder cannot survive
     // getting wrong.
-    expect(evaluateSafetyGates(clean({ liquidityUsd: 400 }), DEFAULT_GATE_POLICY).passed).toBe(false)
-    expect(evaluateSafetyGates(clean({ measuredImpactPct: 40 }), DEFAULT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateSafetyGates(clean({ liquidityUsd: 400 }), ASKED).passed).toBe(false)
+    expect(evaluateSafetyGates(clean({ measuredImpactPct: 40 }), ASKED).passed).toBe(false)
   })
 })
 
@@ -756,7 +759,7 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     // authority, a thin pool, a tax, concentration, a price nobody agrees on:
     // each still refuses under the production policy, and unknown still fails.
     const safetyOf = (over: Partial<TokenSnapshot>, security: Partial<SecurityReport> = {}) =>
-      evaluateGates(clean(over, security), DEFAULT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)
+      evaluateGates(clean(over, security), ASKED).failures.map((f) => `${f.gate}:${f.reason}`)
     expect(safetyOf({}, { honeypot: true })).toEqual(['honeypot:failed'])
     expect(safetyOf({}, { honeypot: null })).toEqual(['honeypot:unknown'])
     expect(safetyOf({}, { mintAuthorityActive: true })).toEqual(['mintAuthority:failed'])
@@ -1019,5 +1022,29 @@ describe('pumpDump — a pump turning over, or a fall in the hour', () => {
 
   it('is an opportunity gate, never a safety one: it never reaches a token we hold', () => {
     expect(evaluateSafetyGates(clean({ priceChangePct: { h1: -20, h6: 0, h24: 300 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('pumpDump')
+  })
+})
+
+describe('every token discovered — *no importa nada, quiero todas*', () => {
+  // The operator, 2026-10-09: liquidity, holders, authorities, tax and the rest
+  // step aside. What stays is what the engine needs to trade a token at all: a
+  // route to sell it and one price both sources agree on.
+  it('lets a thin, concentrated, mintable, taxed token through', () => {
+    const wild = clean({ liquidityUsd: 2_000 }, { topHoldersPct: 95, mintAuthorityActive: true, freezeAuthorityActive: true, transferTaxPct: 30, creatorPct: 60, hasBlacklist: true })
+    expect(evaluateGates(wild, DEFAULT_GATE_POLICY).passed).toBe(true)
+    expect(evaluateSafetyGates(wild, DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('lets unknown holders and authorities through too', () => {
+    expect(evaluateGates(clean({}, { topHoldersPct: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null, hasBlacklist: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('still refuses a token with no route to sell it', () => {
+    expect(evaluateGates(clean({}, { honeypot: true }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toEqual(['honeypot'])
+  })
+
+  it('keeps every gate under STRICT, so their logic stays tested', () => {
+    expect(STRICT_GATE_POLICY.ignoredGates).toEqual([])
+    expect(evaluateGates(clean({ liquidityUsd: 2_000 }), STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('liquidity')
   })
 })

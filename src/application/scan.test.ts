@@ -5,7 +5,9 @@ import { GoPlus, GOPLUS_BASE, type GoPlusSolanaToken } from '../infrastructure/a
 import { Jupiter, JUPITER_LITE_BASE } from '../infrastructure/adapters/jupiter/jupiter.js'
 import { stubHttp } from '../infrastructure/http.js'
 import { type RememberedToken } from '../domain/persistence/store.js'
-import { evaluateGates, DEFAULT_GATE_POLICY, STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
+import { evaluateGates, DEFAULT_GATE_POLICY as PRODUCTION_GATE_POLICY, STRICT_GATE_POLICY } from '../domain/scanner/gates.js'
+/** Every gate asked — production ignores most of them since *quiero todas*; the logic under test is the gates' own. */
+const DEFAULT_GATE_POLICY = { ...PRODUCTION_GATE_POLICY, ignoredGates: [] }
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { type SecurityReport } from '../domain/scanner/snapshot.js'
 

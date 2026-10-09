@@ -52,6 +52,12 @@ export interface GatePolicy {
    * −14% in its first minute held. Infinity: off.
    */
   readonly maxPumpPct: number
+  /**
+   * Gates that refuse nothing. *Todo lo descubierto, no importa nada, quiero
+   * todas* (2026-10-09): production lists every gate except the sell route,
+   * the price agreement and the trades the candles need. Empty: every gate asks.
+   */
+  readonly ignoredGates: readonly GateName[]
   /** A fall in the hour past which nothing enters, pumped or not. Infinity: off. */
   readonly maxHourFallPct: number
   /**
@@ -198,6 +204,7 @@ export const SOLANA_CANONICAL_SYMBOLS: Readonly<Record<string, string>> = {
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = {
+  ignoredGates: ['liquidity', 'topHolders', 'creatorShare', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'impact', 'impersonation', 'denylist', 'marketCap', 'proxy'],
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
   // THE TASTE GATES STEP ASIDE.
@@ -441,6 +448,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
  */
 export const STRICT_GATE_POLICY: GatePolicy = {
   ...DEFAULT_GATE_POLICY,
+  ignoredGates: [],
   // The pump-and-dump gate is newer than the original values this keeps.
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
@@ -635,7 +643,8 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
     failures.push(fail('idle', 'failed', `${lastHour} operaciones en la última hora, menos de ${policy.minHourlyTxns} — con barras de 15m eso deja barras vacías, y una barra vacía no existe para la estrategia`))
   }
 
-  return { passed: failures.length === 0, failures }
+  const asked = failures.filter((f) => !policy.ignoredGates.includes(f.gate))
+  return { passed: asked.length === 0, failures: asked }
 }
 
 /**
@@ -870,7 +879,8 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   // scan began skipping the sell quote for tokens that already fail: an unknown
   // honeypot listed first would present a mintable token as an unsellable one.
   const ordered = [...failures.filter((f) => f.reason === 'failed'), ...failures.filter((f) => f.reason !== 'failed')]
-  return { passed: ordered.length === 0, failures: ordered }
+  const asked = ordered.filter((f) => !policy.ignoredGates.includes(f.gate))
+  return { passed: asked.length === 0, failures: asked }
 }
 
 /**
