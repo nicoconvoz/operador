@@ -83,6 +83,26 @@ const build = (table: Parameters<typeof stubHttp>[0], decimals: Record<string, n
   return { deps, http }
 }
 
+describe('scanOnce — DexScreener discovery is optional', () => {
+  // *Obvio, Jupiter vuela* (2026-10-09): on Solana the universe is Jupiter's
+  // lists alone; DexScreener's profiles and paid boosts are not asked.
+  it('never asks DexScreener for tokens when its discovery is off', async () => {
+    let asked = 0
+    const { deps } = build({
+      [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
+      [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/token-boosts/top/v1`]: { body: [] },
+      [`${DEXSCREENER_BASE}/tokens/v1/solana/good`]: { body: [pair('good')] },
+    })
+    const counting = { ...deps, dex: Object.assign(Object.create(Object.getPrototypeOf(deps.dex)), deps.dex, { discoverTokens: async () => { asked++; return ['good'] } }) }
+    const out = await scanOnce(counting, { ...config, dexScreenerDiscovery: false })
+    expect(asked).toBe(0)
+    expect(out.candidates).toEqual([])
+    await scanOnce(counting, config)
+    expect(asked).toBe(1)
+  })
+})
+
 describe('scanOnce — discover → market → security → probe → rank', () => {
   it('hands the thread back between units of work', async () => {
     // A scan is the longest thing this engine does and `runLoop` is one

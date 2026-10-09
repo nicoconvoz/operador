@@ -83,6 +83,12 @@ a token that cannot be sold or priced cannot be traded, even on paper.
 authorities and liquidity on what is held. Stated: **thin, mintable and
 concentrated pools are where rugs and honeypots live**; each costs $3.
 
+And Solana is Jupiter end to end: *¿por qué dice DexScreener si usamos
+Jupiter?* — *obvio, Jupiter vuela.* DexScreener's profiles and paid boosts no
+longer join the universe (`ScanConfig.dexScreenerDiscovery`, off for Solana),
+and the shelf's re-price asks Jupiter like the live price already did.
+DexScreener remains BSC's source only, and BSC is off.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

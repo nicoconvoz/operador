@@ -233,6 +233,11 @@ export interface SecurityCachePort {
 
 export interface ScanConfig {
   readonly chain: Chain
+  /**
+   * Whether DexScreener's profiles and boosts are added to the universe.
+   * Absent: yes. OFF on Solana since 2026-10-09 — *obvio, Jupiter vuela*.
+   */
+  readonly dexScreenerDiscovery?: boolean
   readonly ranking: RankingPolicy
   /** Size of the reference sell used for the honeypot probe and impact measurement. */
   readonly referenceUsd: number
@@ -553,8 +558,10 @@ export async function scanOnce(
     }
   }
   await deps.betweenSteps?.()
-  for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
-  deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
+  if (config.dexScreenerDiscovery !== false) {
+    for (const address of await deps.dex.discoverTokens(config.chain)) universe.add(address)
+    deps.onProgress?.({ stage: 'discovery', chain: config.chain, source: 'dexscreener', found: universe.size })
+  }
   }
   // The cap bounds DISCOVERY, never what we hold. A book wider than the cap
   // would otherwise start dropping its own positions out of the scan, which is

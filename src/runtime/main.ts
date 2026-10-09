@@ -892,6 +892,18 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
           const byChain = new Map<Chain, string[]>()
           for (const s of snapshots) byChain.set(s.chain, [...(byChain.get(s.chain) ?? []), s.address])
           for (const [chain, addresses] of byChain) {
+            // *Obvio, Jupiter vuela*: Solana's shelf is re-priced by Jupiter, the
+            // source the scan priced it with.
+            if (chain === 'solana') {
+              try {
+                for (const m of await jupiterTokens.markets(chain, addresses, { refresh: true })) {
+                  if (m.priceUsd > 0) markets.set(`${chain}:${m.address}`, m)
+                }
+              } catch {
+                // Never fatal: a slightly old universe beats no universe.
+              }
+              continue
+            }
             for (let i = 0; i < addresses.length; i += 30) {
               try {
                 const pairs = await dex.tokens(chain, addresses.slice(i, i + 30))
@@ -1036,6 +1048,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
               // y búsqueda al pedo.* Nothing is discovered, the registry is not
               // read and no stranger is quoted — only the book's own checks.
               discover: kind === 'full' && fundedSlots > 0,
+              // *Obvio, Jupiter vuela*: Solana's universe is Jupiter's lists.
+              dexScreenerDiscovery: chain !== 'solana',
               ranking: {
                 gates,
                 opportunity: DEFAULT_OPPORTUNITY_POLICY,
