@@ -123,6 +123,12 @@ export interface CascadeParams {
   readonly impatientProfitPct: number | null
   readonly urgentProfitPct: number | null
   readonly useSupertrendExit: boolean
+  /**
+   * Whether the strategy's own take-profit (`🏁 Exit`) may sell at all.
+   * Absent: on, the reference. Off in production since 2026-10-09: *no uses
+   * el TP antiguo* — the TP on buy pressure sells instead.
+   */
+  readonly useStrategyExit?: boolean
   readonly supertrendAtrLength: number
   readonly supertrendFactor: number
 

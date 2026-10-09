@@ -57,7 +57,7 @@ const runtime = (env: Record<string, string> = {}) =>
  * the sweep, the pool check, the TP, the funding — so they pin the numbers
  * they were written against, and `runtime()` alone speaks for production.
  */
-const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1', OPERADOR_MIN_PROFIT_PCT: '12.5', OPERADOR_MAX_COST_SHARE_PCT: '0', OPERADOR_GAIN_LOCK: '1', OPERADOR_ENTRY_FLOORS: '0', OPERADOR_LIVE_PRICE: '1' }
+const LEGACY_LADDER = { OPERADOR_DIP_PCT: '3', OPERADOR_BOUNCE_PCT: '2', OPERADOR_MAX_STEPS: '20', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1', OPERADOR_STOP_MAX_LOSS_USD: '0', OPERADOR_FIXED_TP_PCT: '12.5', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1', OPERADOR_MIN_PROFIT_PCT: '12.5', OPERADOR_MAX_COST_SHARE_PCT: '0', OPERADOR_GAIN_LOCK: '1', OPERADOR_ENTRY_FLOORS: '0', OPERADOR_LIVE_PRICE: '1', OPERADOR_STRATEGY_EXIT: '1' }
 
 /**
  * And the order they were argued with: the cheapest to trade first. Production
@@ -202,11 +202,16 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(await tiered.deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
   })
 
-  it('wires no TP on buy pressure and no fixed TP by default — the strategy TP sells, as on 24/09', () => {
+  it('wires the TP on buy pressure — past +12%, on a 10% fall from its peak — and no fixed TP', () => {
+    // *Agregá la salida que teníamos: más del 12% y caída de la presión compradora 10%.*
     const { deps, cycleConfig } = runtime()
-    expect(deps.pressureTp).toBeUndefined()
+    expect(deps.pressureTp).toMatchObject({ armPct: 12, dropPct: 10 })
+    expect(deps.pressureTp?.hourCounts).toBeDefined()
     expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).fixedTpPct).toBeNull()
-    expect(runtime({ OPERADOR_PRESSURE_TP_DROP_PCT: '10' }).deps.pressureTp).toMatchObject({ armPct: 12, dropPct: 10 })
+    expect(runtime({ OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).deps.pressureTp).toBeUndefined()
+    // *No uses el TP antiguo*: the strategy's own exit is off on the path the tick runs.
+    expect(cycleConfig.params.useStrategyExit).toBe(false)
+    expect(runtime({ OPERADOR_STRATEGY_EXIT: '1' }).cycleConfig.params.useStrategyExit).toBe(true)
   })
 
   it('never buys past a 20% fall unless the environment turns the ceiling off', () => {

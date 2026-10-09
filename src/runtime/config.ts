@@ -333,6 +333,8 @@ export interface RuntimeConfig {
   readonly minTier: TokenTier
   /** Whether the death watch observes held tokens at all. OFF; OPERADOR_DEATH_WATCH=1 brings it back. */
   readonly deathWatch: boolean
+  /** Whether the strategy's own TP sells. OFF: *no uses el TP antiguo.* OPERADOR_STRATEGY_EXIT=1. */
+  readonly strategyExit: boolean
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -785,10 +787,14 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // token's health, so nothing freezes and nothing dies.
     // ON again since 2026-10-08, as on 24/09.
     deathWatch: onUnless(env, 'OPERADOR_DEATH_WATCH'),
+    // OFF since 2026-10-09: *no uses el TP antiguo, usá este que te dije* —
+    // the TP on buy pressure is the one take-profit.
+    strategyExit: onlyIf(env, 'OPERADOR_STRATEGY_EXIT'),
     pressureTp: {
       armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
-      // OFF since 2026-10-08: the strategy's TP sells, as on 24/09.
-      dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 0),
+      // ON again since 2026-10-09: *la salida de la última configuración, más
+      // del 12% y caída de la presión compradora 10%.*
+      dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),
     },
     // The rungs' triggers and sizes, from the module the dashboard reads too.
     dcaDropsPct: productionLadder(env).dcaDropsPct,

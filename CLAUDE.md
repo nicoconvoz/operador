@@ -31,7 +31,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **Candidate** | safe, **activity ≥ 50%** and **liquidity grown in the last hour**; a day old, at most 30% down on the day, four trades in the hour, a fresh bar; **small caps first** | `production-doors.ts`, `gates.ts` |
 | **The book** | **70 tokens**: each gets capital / 70 — **$71.43 at $5,000** | `production-ladder.ts` (`DEFAULT_BOOK_TOKENS`) |
 | **The buy** | **one, automatic**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **strategy's TP** on real candles (over +2%, lifted so costs stay under a third of the gain), the **freeze** exit (three hours without a trade among its signals) and the **death** exit | the cascade, `death-exit.ts` |
+| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**; the **freeze** exit (three hours without a trade among its signals) and the **death** exit. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
 
@@ -48,6 +48,12 @@ abandonment at three hours, no ban on release, real candles
 TP on buy pressure, classes or crash stop — each one a variable away. The one
 change from 24/09 is the size: one buy of `OPERADOR_CAPITAL_USD` /
 `OPERADOR_BOOK_TOKENS` (70) instead of $15 and a rung at half.
+
+Then, 2026-10-09: *agregá la salida de la última configuración, más del 12% y
+caída de la presión compradora 10%* — and *no uses el TP antiguo, usá este*.
+`OPERADOR_PRESSURE_TP_DROP_PCT` is 10 again, and the cascade's own `🏁 Exit` is
+off (`useStrategyExit`; `OPERADOR_STRATEGY_EXIT=1` brings it back). The data
+still comes from Jupiter alone; nothing else changed.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

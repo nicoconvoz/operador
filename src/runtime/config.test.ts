@@ -279,7 +279,12 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.livePrice).toBe(false)
     expect(config.gainLock).toBeNull()
     expect(config.fixedTpPct).toBe(0)
-    expect(config.pressureTp.dropPct).toBe(0)
+    // *Agregá la salida de la última configuración: más del 12% y caída de
+    // la presión compradora 10%* (2026-10-09), beside the strategy TP.
+    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 10 })
+    // *No uses el TP antiguo* — the strategy's own TP is off.
+    expect(config.strategyExit).toBe(false)
+    expect(loadConfig({ ...valid, OPERADOR_STRATEGY_EXIT: '1' }).strategyExit).toBe(true)
     expect(config.crashStop.dropPct).toBe(0)
     expect(config.stopLoss.maxLossUsd).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '50' }).stepUsd).toBe(100)
@@ -304,11 +309,11 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_SECONDS: '90' }).crashStop.windowMs).toBe(90_000)
   })
 
-  it('no fixed TP and no TP on buy pressure by default — the strategy TP sells, as on 24/09', () => {
+  it('no fixed TP, and the TP on buy pressure past +12% beside the strategy TP', () => {
     const config = loadConfig(valid)
     expect(config.fixedTpPct).toBe(0)
-    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 0 })
-    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '10' }).pressureTp.dropPct).toBe(10)
+    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 10 })
+    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).pressureTp.dropPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '8' }).pressureTp.armPct).toBe(8)
   })
 

@@ -283,6 +283,15 @@ describe('cascade — normal exit (VWM impulse death / Supertrend flip)', () => 
     expect(s.decayCount).toBe(0)
   })
 
+  it('never exits on its own TP when the strategy exit is off', () => {
+    // *No uses el TP antiguo, usá este que te dije* — the TP on buy pressure.
+    const s = inTrade(2, 100, { decayCount: 1 })
+    const { orders } = stepCascade(
+      s, { ...P, useStrategyExit: false }, bar(103, 103, 103, 103), ctx({ vwm: 1, vwmPrev: 1.5, vwmLagged: 0.5 }), profitable,
+    )
+    expect(orders).toEqual([])
+  })
+
   it('exits when in profit and the impulse has died', () => {
     const s = inTrade(2, 100, { decayCount: 1 })
     const { orders } = stepCascade(

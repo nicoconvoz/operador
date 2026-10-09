@@ -205,7 +205,7 @@ export function stepCascade(
   const avgCost = position.avgPrice
   const inProfit =
     inPosition && avgCost !== null && bar.close > avgCost * (1 + params.minProfitPct / 100)
-  const exitSignal = inProfit && (impulseDead || (params.useSupertrendExit && ctx.stBearFlip))
+  const exitSignal = params.useStrategyExit !== false && inProfit && (impulseDead || (params.useSupertrendExit && ctx.stBearFlip))
 
   const filledDcas = s.level > 0 ? s.level - 1 : 0
   const rescueMode = inPosition && filledDcas >= params.rescueLevels
