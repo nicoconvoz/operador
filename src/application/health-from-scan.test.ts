@@ -146,6 +146,28 @@ describe('healthFromSnapshot — a venue with no LP token', () => {
   })
 })
 
+describe('the death watch does not judge what the door chose to ignore', () => {
+  // *Todo lo descubierto, quiero todas* — and WBTC, ZEC, MRNA and forty more
+  // froze the minute they were bought, on "mint=true freeze=true": the very
+  // facts the door had been told to ignore. A token bought WITH its authority
+  // active has not had it reinstated.
+  it('reports no authority and no LP reading for gates the policy ignores', () => {
+    const minted = snapshot({}, { mintAuthorityActive: true, freezeAuthorityActive: true })
+    const health = healthFromSnapshot(minted, PRODUCTION_GATE_POLICY, undefined)
+    expect(health.mintAuthorityActive).toBeNull()
+    expect(health.freezeAuthorityActive).toBeNull()
+    expect(health.lpStatus).toBe('unknown')
+    expect(health.safetyFailed).toEqual([])
+  })
+
+  it('still reads them when the policy asks', () => {
+    const minted = snapshot({}, { mintAuthorityActive: true, freezeAuthorityActive: true })
+    const health = healthFromSnapshot(minted, DEFAULT_GATE_POLICY, undefined)
+    expect(health.mintAuthorityActive).toBe(true)
+    expect(health.freezeAuthorityActive).toBe(true)
+  })
+})
+
 describe('a safety gate that turns on a token we already hold', () => {
   // The operator's rule, and he named what it cost him: *si falla una compuerta
   // de seguridad, filtrar y no dejar operar, restricción total, porque esas me

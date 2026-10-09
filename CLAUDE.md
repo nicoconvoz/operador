@@ -89,6 +89,16 @@ longer join the universe (`ScanConfig.dexScreenerDiscovery`, off for Solana),
 and the shelf's re-price asks Jupiter like the live price already did.
 DexScreener remains BSC's source only, and BSC is off.
 
+The first launch of all that bought NOTHING: 305 reservations at $0, 41 of them
+frozen. Three causes, three fixes. The death watch froze tokens bought WITH an
+authority active on that very reading — `healthFromSnapshot` now reports no
+authority or LP reading for a gate the policy ignores, and no absolute
+liquidity floor while the liquidity gate is ignored. A pool at $0 crashed the
+cycle at `startDeathWatch` — an empty pool refuses even when its gate is
+ignored, and the allocator skips one. And 305 candle downloads a pass left 165
+never ticked — *no quiero almacenar velas, nos movemos por precio*:
+`OPERADOR_LIVE_PRICE` is on again.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

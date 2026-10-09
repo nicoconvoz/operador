@@ -1039,6 +1039,12 @@ describe('every token discovered — *no importa nada, quiero todas*', () => {
     expect(evaluateGates(clean({}, { topHoldersPct: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null, hasBlacklist: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
   })
 
+  it('still refuses an EMPTY pool — nothing can be traded against no liquidity', () => {
+    // A pool at $0 crashed the whole cycle at the death watch's first reading.
+    expect(evaluateGates(clean({ liquidityUsd: 0 }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toEqual(['liquidity'])
+    expect(evaluateMarketGates(clean({ liquidityUsd: 0 }), DEFAULT_GATE_POLICY).passed).toBe(false)
+  })
+
   it('still refuses a token with no route to sell it', () => {
     expect(evaluateGates(clean({}, { honeypot: true }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toEqual(['honeypot'])
   })

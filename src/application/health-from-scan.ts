@@ -200,9 +200,12 @@ export function healthFromSnapshot(
     // 'burned' is not distinguishable from 'locked' in what the providers
     // report, and 'removed' would need a withdrawal event nobody watches for.
     // Claiming either would be claiming a measurement we do not have.
-    lpStatus: !hasLpTokens || locked === null ? 'unknown' : locked >= minLpLockedPct ? 'locked' : 'unlocked',
-    mintAuthorityActive: snapshot.security.mintAuthorityActive,
-    freezeAuthorityActive: snapshot.security.freezeAuthorityActive,
+    // A gate the door ignores is not a reading the watch may act on: a token
+    // bought WITH its authority active has not had it reinstated (*quiero
+    // todas*, 2026-10-09 — forty-one froze on exactly that).
+    lpStatus: !hasLpTokens || locked === null || policy.ignoredGates.includes('lpLocked') ? 'unknown' : locked >= minLpLockedPct ? 'locked' : 'unlocked',
+    mintAuthorityActive: policy.ignoredGates.includes('mintAuthority') ? null : snapshot.security.mintAuthorityActive,
+    freezeAuthorityActive: policy.ignoredGates.includes('freezeAuthority') ? null : snapshot.security.freezeAuthorityActive,
     safetyFailed,
   }
 }

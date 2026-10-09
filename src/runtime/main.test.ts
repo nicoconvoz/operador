@@ -317,10 +317,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(broker.execute(entries, 1, 0)).toHaveLength(1)
   })
 
-  it('ticks on real candles by default, as on 24/09 — the live one-bar tick is one variable away', () => {
-    expect(runtime().deps.liveBars).toBeUndefined()
-    expect(runtime({ OPERADOR_LIVE_PRICE: '1' }).deps.liveBars?.staleAfterMs).toBe(6 * 3_600_000)
-    expect(runtime({ OPERADOR_LIVE_PRICE: '1', OPERADOR_STALE_CHECK_HOURS: '3' }).deps.liveBars?.staleAfterMs).toBe(3 * 3_600_000)
+  it('ticks on the live price by default, and reads candles only for a position idle six hours', () => {
+    // *No quiero almacenar velas, nos movemos como lo habíamos diseñado antes, por precio.*
+    expect(runtime().deps.liveBars?.staleAfterMs).toBe(6 * 3_600_000)
+    expect(runtime({ OPERADOR_STALE_CHECK_HOURS: '3' }).deps.liveBars?.staleAfterMs).toBe(3 * 3_600_000)
+    expect(runtime({ OPERADOR_LIVE_PRICE: '0' }).deps.liveBars).toBeUndefined()
   })
 
   it('does not blacklist a frozen token on release, as on 24/09, unless told to', () => {
@@ -1117,6 +1118,26 @@ describe('the FIRST step is bought on selection, through the cycle the engine ru
       T0 + 60_000,
     )
     expect((await setup.store.fillsFor(reserved.id)).map((f) => f.orderId)).toEqual(['Entry'])
+  })
+
+  it('buys the first $3 of a reservation on the next sweep with PRODUCTION’s own defaults', async () => {
+    // Every legacy pin unset: what the engine runs today. 305 reservations sat
+    // at $0 on 2026-10-09 — this is the path that must buy them.
+    const production = Object.fromEntries([...Object.keys(LEGACY_LADDER), ...Object.keys(LEGACY_ORDER)].map((k) => [k, '']))
+    const setup = onMemory({ ...production, OPERADOR_CAPITAL_USD: '5000' })
+    const reserved = { ...held, id: 'solana:NEW:1', tokenAddress: 'NEW', pairAddress: 'pair-NEW', symbol: 'NEW', capitalUsd: 3, lastBarTime: T0 - 15 * 60_000, lastPriceUsd: 1 }
+    await setup.store.savePosition(reserved)
+    await sweepStops(
+      setup.deps,
+      (p) => exitLevelsFor(p, exitSizingFrom(setup.cycleConfig)),
+      new AlertThrottle(0),
+      await setup.store.loadPositions(),
+      new Map([['solana:NEW', 1]]),
+      T0 + 60_000,
+    )
+    const buys = (await setup.store.fillsFor(reserved.id)).filter((f) => f.side === 'buy')
+    expect(buys.map((f) => f.orderId)).toEqual(['Entry'])
+    expect(buys[0]!.qty * buys[0]!.price).toBeCloseTo(3, 1)
   })
 
   it('doubles each step: $1 on the first buy, $2 on the first DCA', async () => {

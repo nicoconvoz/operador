@@ -662,9 +662,10 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // cuando una moneda pasa a candidata* — and only an explicit 0 or false
     // puts it back off.
     buyOnSelection: onUnless(env, 'OPERADOR_BUY_ON_SELECTION'),
-    // OFF since 2026-10-08: the strategy's TP reads real candles.
-    // OPERADOR_LIVE_PRICE=1 brings the one-bar live tick back.
-    livePrice: onlyIf(env, 'OPERADOR_LIVE_PRICE'),
+    // ON again since 2026-10-09: *no quiero almacenar velas, nos movemos como
+    // lo habíamos diseñado antes, por precio.* The strategy's TP that read the
+    // candles is off. OPERADOR_LIVE_PRICE=0 downloads them again.
+    livePrice: onUnless(env, 'OPERADOR_LIVE_PRICE'),
     staleCheckHours: number(env, 'OPERADOR_STALE_CHECK_HOURS', 6),
     // Unset: exactly one slot, steps × step, set below — nothing grossed up.
     usdPerToken: env.OPERADOR_USD_PER_TOKEN?.trim() ? number(env, 'OPERADOR_USD_PER_TOKEN', DEFAULT_USD_PER_TOKEN) : null,

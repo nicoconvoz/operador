@@ -273,13 +273,14 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '70' }).stepUsd).toBeCloseTo(5000 / 70, 9)
   })
 
-  it('keeps the 24/09 protections: the freeze and death exits, abandonment at three hours, no ban on release, real candles', () => {
+  it('keeps the 24/09 protections — the freeze and death exits, abandonment at three hours, no ban on release — on the live price', () => {
     const config = loadConfig(valid)
     expect(config.deathWatch).toBe(true)
     expect(config.exitOnFreeze).toBe(true)
     expect(config.abandonFreezeHours).toBe(3)
     expect(config.blacklistOnFreeze).toBe(false)
-    expect(config.livePrice).toBe(false)
+    // *No quiero almacenar velas, nos movemos por precio* (2026-10-09).
+    expect(config.livePrice).toBe(true)
     expect(config.gainLock).toBeNull()
     expect(config.fixedTpPct).toBe(0)
     expect(config.crashStop.dropPct).toBe(0)

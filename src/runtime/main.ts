@@ -450,7 +450,13 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
    * the sweep refuses exactly the pool the next tick would freeze, and a
    * change to either is a change to both.
    */
-  const deathPolicy = { ...DEFAULT_DEATH_EXIT_POLICY, abandonmentFreezeHours: config.abandonFreezeHours }
+  const deathPolicy = {
+    ...DEFAULT_DEATH_EXIT_POLICY,
+    abandonmentFreezeHours: config.abandonFreezeHours,
+    // No absolute liquidity floor while the door asks for none (*quiero todas*):
+    // a thin pool bought thin has not collapsed. The ratio to entry still holds.
+    ...(gates.ignoredGates.includes('liquidity') ? { liquidityFloorUsd: 0 } : {}),
+  }
 
   const deps: CycleDeps = {
     store,

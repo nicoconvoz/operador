@@ -1336,6 +1336,10 @@ export async function runCycle(
       }
 
       for (const allocation of plan.allocations) {
+        // An empty pool cannot be watched — the death watch measures every
+        // collapse against the liquidity at entry — and one at $0 once threw
+        // and cost the whole cycle. Skipped, never fatal.
+        if (!(allocation.quality.liquidityUsd > 0)) continue
         if (deps.confirmEntry) {
           const confirmation = await deps.confirmEntry(allocation.snapshot)
           if (!confirmation.ok) {

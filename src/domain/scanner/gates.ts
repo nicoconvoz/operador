@@ -643,7 +643,7 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
     failures.push(fail('idle', 'failed', `${lastHour} operaciones en la última hora, menos de ${policy.minHourlyTxns} — con barras de 15m eso deja barras vacías, y una barra vacía no existe para la estrategia`))
   }
 
-  const asked = failures.filter((f) => !policy.ignoredGates.includes(f.gate))
+  const asked = failures.filter((f) => isAsked(f, snapshot, policy))
   return { passed: asked.length === 0, failures: asked }
 }
 
@@ -879,7 +879,7 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   // scan began skipping the sell quote for tokens that already fail: an unknown
   // honeypot listed first would present a mintable token as an unsellable one.
   const ordered = [...failures.filter((f) => f.reason === 'failed'), ...failures.filter((f) => f.reason !== 'failed')]
-  const asked = ordered.filter((f) => !policy.ignoredGates.includes(f.gate))
+  const asked = ordered.filter((f) => isAsked(f, snapshot, policy))
   return { passed: asked.length === 0, failures: asked }
 }
 
@@ -896,6 +896,16 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
  * which is the opposite of how the SAFETY gates fail, and rightly so: those
  * guard against a rug, this one against a bad entry.
  */
+/**
+ * Whether a failure still refuses under the policy. An EMPTY pool always does,
+ * ignored or not: nothing can be traded against no liquidity, and one at $0
+ * crashed the whole cycle at the death watch's first reading.
+ */
+function isAsked(failure: GateFailure, snapshot: TokenSnapshot, policy: GatePolicy): boolean {
+  if (failure.gate === 'liquidity' && !(snapshot.liquidityUsd > 0)) return true
+  return !policy.ignoredGates.includes(failure.gate)
+}
+
 function pumpDump(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {
   const hour = snapshot.priceChangePct.h1
   // Silence is not a fall.
