@@ -357,9 +357,12 @@ the death exit at twelve hours stays. No price stop exists.
 
 ### The screen
 
-- **Universo is one bar**: the share of the tokens that rose in the last hour,
-  red to green, with its counts. The orbit canvas, its dots and its detail sheet
-  are gone — 250 glowing bodies would have stalled a phone.
+- **Universo is the radar and the bar** (2026-10-08): *volvé a poner el radar
+  con los puntos y las ondas de cada token y el nombre de cada token en el
+  canvas, armalo como lo teníamos antes, ponelo arriba de la barra de colores.*
+  The orbit canvas of 28/09 (`universe-sky.tsx`, unchanged) sits above the
+  last-hour breadth bar. It caps its bodies by screen size, so a 70-token book
+  is far under what stalled a phone at 250.
 - **Operaciones** lists the book alphabetically, fifty to a page, one
   `DCA n / 20` box per token and the watch in one line.
 - **One search box** filters every tab; the Log says it is the whole book's.

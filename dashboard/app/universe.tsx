@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import type { UniverseView } from '../../src/application/universe-view.js'
 import { matchesToken } from '../../src/application/token-search.js'
 import { marketBreadth, type MarketBreadth } from '../../src/application/market-breadth.js'
+import { UniverseSky } from './universe-sky.js'
 
 /**
  * The universe, as one study instead of a sky.
@@ -59,6 +60,12 @@ export function Universe({ view, query = '' }: { view: UniverseView; query?: str
 
   return (
     <section style={{ minWidth: 0 }}>
+      {/* *Volvé a poner el radar con los puntos y las ondas de cada token y el
+          nombre de cada token en el canvas, armalo como lo teníamos antes,
+          ponelo arriba de la barra de colores.* (2026-10-08) */}
+      <div style={{ marginBottom: 18 }}>
+        <UniverseSky view={view} query={query} />
+      </div>
       <div style={{ color: '#e6edf3', fontSize: 14, fontWeight: 600, marginBottom: 14, overflowWrap: 'anywhere' }}>{title}</div>
       <BreadthBar breadth={breadth} />
       <div style={{ color: DIM, fontSize: 12, marginTop: 12, lineHeight: 1.6 }}>

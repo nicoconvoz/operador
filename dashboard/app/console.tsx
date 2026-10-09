@@ -380,7 +380,7 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
 
       <footer style={{ marginTop: 18, color: '#8b949e', fontSize: 12 }}>
         {universe.scannedAt ? `Escaneado ${ago(universe.scannedAt)}` : 'Todavía no se registró ningún escaneo'}
-        {' · solo lectura'}
+        {' · tamaño = liquidez · anillos = oportunidad · brillo = en posición · solo lectura'}
       </footer>
     </>
   )
