@@ -99,7 +99,14 @@ const costEfficiencyDoor = (pct: number): ComponentFloors => ({ costEfficiency: 
  * the only opportunity condition. The rising door is off — see
  * `DEFAULT_ENTRY_RISING`.
  */
-export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = { activity: 0.5, liquidityGrowth: 1 }
+export const DEFAULT_COMPONENT_FLOORS: ComponentFloors = {}
+
+/**
+ * The 24/09 door — activity over half and liquidity grown in the hour. OFF
+ * since 2026-10-09: *no pongas puerta de entrada, hacé que entren todos los
+ * tokens que existan.* OPERADOR_ENTRY_FLOORS=1 brings it back.
+ */
+export const SEPT_24_FLOORS: ComponentFloors = { activity: 0.5, liquidityGrowth: 1 }
 
 /** The rising door as a floor: `risingHour` is 1 or 0, so at least 1 means rising. */
 const risingDoor: ComponentFloors = { risingHour: 1 }
@@ -281,10 +288,9 @@ export function productionDoors(env: Readonly<Record<string, string | undefined>
   const risingOn = ['0', 'false', 'no'].includes(risingRaw)
     ? false
     : ['1', 'true', 'yes'].includes(risingRaw) || DEFAULT_ENTRY_RISING
-  // The 24/09 door, back on 2026-10-08: activity over half and liquidity grown
-  // in the hour. OPERADOR_ENTRY_FLOORS=0 turns it off.
-  const floorsOff = ['0', 'false', 'no'].includes(env.OPERADOR_ENTRY_FLOORS?.trim().toLowerCase() ?? '')
-  const minComponents: ComponentFloors = { ...(floorsOff ? {} : DEFAULT_COMPONENT_FLOORS), ...costDoor, ...(risingOn ? risingDoor : {}) }
+  // The 24/09 door, only when asked: OPERADOR_ENTRY_FLOORS=1.
+  const floorsOn = ['1', 'true', 'yes'].includes(env.OPERADOR_ENTRY_FLOORS?.trim().toLowerCase() ?? '')
+  const minComponents: ComponentFloors = { ...(floorsOn ? SEPT_24_FLOORS : DEFAULT_COMPONENT_FLOORS), ...costDoor, ...(risingOn ? risingDoor : {}) }
 
   // `size` and `cost` bring the old orders back; anything else keeps the operator's.
   const rankBy = env.OPERADOR_RANK_BY?.trim().toLowerCase()

@@ -198,8 +198,8 @@ export const SOLANA_CANONICAL_SYMBOLS: Readonly<Record<string, string>> = {
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = {
-  maxPumpPct: 100,
-  maxHourFallPct: 5,
+  maxPumpPct: Infinity,
+  maxHourFallPct: Infinity,
   // THE TASTE GATES STEP ASIDE.
   //
   // The operator narrowed what a gate is allowed to be: *tendencia reciente
@@ -265,9 +265,10 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // born this morning is as welcome as one a month old. What still stands in
   // front of it is the SAFETY half, `priceMismatch` among it: the shape of
   // USDF's 14,426x. STRICT keeps the day, so the gate stays tested.
-  // 24/09 again (2026-10-08): a day old, at most 30% down on the day, four
-  // trades in the hour and a fresh bar.
-  minAgeHours: 24,
+  // *No pongas puerta de entrada, hacé que entren todos los tokens que
+  // existan* (2026-10-09): the opportunity gates are off again; the SAFETY
+  // gates below never were doors.
+  minAgeHours: 0,
   minVolume24hUsd: 0,
   // The hour decides a collapse now, through the `headroom` floor at -3%. A
   // daily threshold on top was belt and braces against the same accident.
@@ -298,12 +299,12 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // todo es bienvenido.* A token down 40% on the day waits, like any other, for
   // a 3% dip and a 2% bounce before a dollar goes in. The measured thirty is
   // kept in `MEASURED_MAX_DAILY_FALL_PCT`, pinned by its tests.
-  maxDailyFallPct: 30,
+  maxDailyFallPct: 100,
   minTurnoverRatio: 0,
   // OFF, with the rest of the door: a quiet hour is not refused. The buy waits
   // for the live price to dip and bounce, which a pool nobody trades never
   // does. STRICT keeps the four.
-  minHourlyTxns: 4,
+  minHourlyTxns: 0,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
   // Not asked: see `requireLpLock`. The threshold stays because the death
@@ -416,7 +417,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // unknown`): there is nothing to price the token against. The candles are
   // still downloaded, because `priceMismatch` and `history` read them.
   // STRICT keeps the hour; a number here brings it back.
-  maxBarAgeHours: 1,
+  maxBarAgeHours: Infinity,
   // Off here: production composes the operator's threshold
   // (OPERADOR_MIN_VOLATILITY_PCT, 1 by default) where the scan can measure it.
   minVolatility5mPct: 0,

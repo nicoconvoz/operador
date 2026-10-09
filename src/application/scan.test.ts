@@ -427,7 +427,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
   // keep the mechanism tested under a policy that still asks it.
   const HOUR: ScanConfig = { ...config, maxBarAgeHours: 1, ranking: { ...config.ranking, gates: { ...DEFAULT_GATE_POLICY, maxBarAgeHours: 1 } } }
 
-  it('refuses a token with an old last candle under the production policy again, as on 24/09', async () => {
+  it('keeps a token with an old last candle a candidate under the production policy — no door', async () => {
     const { deps } = build({
       [`${DEXSCREENER_BASE}/token-profiles/latest/v1`]: { body: [{ chainId: 'solana', tokenAddress: 'good' }] },
       [`${DEXSCREENER_BASE}/token-boosts/latest/v1`]: { body: [] },
@@ -437,7 +437,7 @@ describe('scanOnce — a token the engine cannot watch is not a candidate', () =
       [`${JUPITER_LITE_BASE}/swap/v1/quote?inputMint=good`]: { body: goodQuote },
     })
     const out = await scanOnce({ ...deps, poolCandles: async () => seriesAged(5) }, { ...config, maxBarAgeHours: DEFAULT_GATE_POLICY.maxBarAgeHours })
-    expect(out.candidates).toEqual([])
+    expect(out.candidates.map((c) => c.snapshot.address)).toEqual(['good'])
     expect(out.snapshots[0]!.lastTradeAgoHours).toBe(5)
   })
 

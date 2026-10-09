@@ -795,11 +795,15 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // *Mirá el pump y la caída de la última hora y no entres en caso
     // peligroso* (2026-10-09). Zero turns either half off.
     pumpDump: {
-      maxPumpPct: numberOrZero(env, 'OPERADOR_MAX_PUMP_PCT', 100) || Infinity,
-      maxHourFallPct: numberOrZero(env, 'OPERADOR_MAX_HOUR_FALL_PCT', 5) || Infinity,
+      // OFF since the same afternoon: *no pongas puerta de entrada.* 100 and 5
+      // bring it back.
+      maxPumpPct: numberOrZero(env, 'OPERADOR_MAX_PUMP_PCT', 0) || Infinity,
+      maxHourFallPct: numberOrZero(env, 'OPERADOR_MAX_HOUR_FALL_PCT', 0) || Infinity,
     },
     pressureTp: {
-      armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 12),
+      // *Después de entrar en ganancia* (2026-10-09): it runs the moment the
+      // holding is up by more than its round trip. It was 12.
+      armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 0),
       // ON again since 2026-10-09: *la salida de la última configuración, más
       // del 12% y caída de la presión compradora 10%.*
       dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),

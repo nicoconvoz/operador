@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — the one buy of capital / 70', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(1000 / 70)
+  it('caps each level at the LARGEST step by default — the one $3 buy', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(3)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,17 +194,14 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token ONE buy of capital / 70, and counts slots of that', () => {
+  it('gives every token ONE buy of $3, and counts slots of that', () => {
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 1000 / 70, maxSteps: 1, slotUsd: 1000 / 70 })
+    expect(config).toMatchObject({ stepUsd: 3, maxSteps: 1, slotUsd: 3 })
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
-    expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '0' }).maxDipPct).toBe(0)
-    expect(loadConfig({ ...valid, OPERADOR_MAX_DIP_PCT: '15' }).maxDipPct).toBe(15)
     expect(config.maxDcaPerToken + 1).toBe(1)
     expect(config.reservedEntries).toBe(1)
-    expect(config.usdPerToken).toBe(1000 / 70)
+    expect(config.usdPerToken).toBe(3)
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
-    expect(loadConfig({ ...valid, OPERADOR_USD_PER_TOKEN: '30' }).usdPerToken).toBe(30)
     expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })).toMatchObject({ slotUsd: 250, usdPerToken: 250, reservedEntries: 50 })
   })
 
@@ -261,17 +258,23 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '1' }).blacklistOnFreeze).toBe(true)
   })
 
-  it('runs the 24/09 configuration: 70 tokens of one buy each, the activity and liquidity door, the strategy TP, freeze and death', () => {
-    // *Calculá unas 70, una sola compra por token, que con las 70 llegue a
-    // 5000; lo demás aplicalo como estaba en ese momento.*
+  it('buys every safe token for $3, once, and sells on a 10% fall of buy pressure once in profit', () => {
+    // *Armalo con 3 USD por token y calculale después de entrar en ganancia una
+    // caída de la presión compradora de 10%, y no pongas puerta de entrada:
+    // hacé que entren todos los tokens que existan* (2026-10-09).
     const config = loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000' })
-    expect(config.stepUsd).toBeCloseTo(5000 / 70, 9)
-    expect(config.slotUsd).toBeCloseTo(5000 / 70, 9)
+    expect(config.stepUsd).toBe(3)
+    expect(config.slotUsd).toBe(3)
     expect(config.maxSteps).toBe(1)
-    expect(config.tiers).toBe(false)
-    expect(config.minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
-    expect(config.minProfitPct).toBe(2)
-    expect(config.maxCostSharePct).toBe(33)
+    expect(config.minComponents).toEqual({})
+    expect(config.pressureTp).toEqual({ armPct: 0, dropPct: 10 })
+    expect(config.strategyExit).toBe(false)
+    expect(config.pumpDump).toEqual({ maxPumpPct: Infinity, maxHourFallPct: Infinity })
+    expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '70' }).stepUsd).toBeCloseTo(5000 / 70, 9)
+  })
+
+  it('keeps the 24/09 protections: the freeze and death exits, abandonment at three hours, no ban on release, real candles', () => {
+    const config = loadConfig(valid)
     expect(config.deathWatch).toBe(true)
     expect(config.exitOnFreeze).toBe(true)
     expect(config.abandonFreezeHours).toBe(3)
@@ -279,15 +282,10 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.livePrice).toBe(false)
     expect(config.gainLock).toBeNull()
     expect(config.fixedTpPct).toBe(0)
-    // *Agregá la salida de la última configuración: más del 12% y caída de
-    // la presión compradora 10%* (2026-10-09), beside the strategy TP.
-    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 10 })
-    // *No uses el TP antiguo* — the strategy's own TP is off.
-    expect(config.strategyExit).toBe(false)
-    expect(loadConfig({ ...valid, OPERADOR_STRATEGY_EXIT: '1' }).strategyExit).toBe(true)
     expect(config.crashStop.dropPct).toBe(0)
     expect(config.stopLoss.maxLossUsd).toBe(0)
-    expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '50' }).stepUsd).toBe(100)
+    expect(config.tiers).toBe(false)
+    expect(config.buyOnSelection).toBe(true)
   })
 
   it('sizes by class, without the death watch, only when asked — each one a variable away', () => {
@@ -309,12 +307,11 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_SECONDS: '90' }).crashStop.windowMs).toBe(90_000)
   })
 
-  it('no fixed TP, and the TP on buy pressure past +12% beside the strategy TP', () => {
+  it('sells on buy pressure the moment the holding is in profit; 12 brings the old arm back', () => {
     const config = loadConfig(valid)
-    expect(config.fixedTpPct).toBe(0)
-    expect(config.pressureTp).toEqual({ armPct: 12, dropPct: 10 })
+    expect(config.pressureTp).toEqual({ armPct: 0, dropPct: 10 })
     expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).pressureTp.dropPct).toBe(0)
-    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '8' }).pressureTp.armPct).toBe(8)
+    expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '12' }).pressureTp.armPct).toBe(12)
   })
 
   it('the history rule is off, one variable away', () => {
@@ -460,9 +457,10 @@ describe('loadConfig — the rising door is off; it comes back with OPERADOR_ENT
   // *Hacé que la barrera de entrada sea solamente que los tokens suban.* From
   // the module the dashboard reads too, so the screen and the engine cannot
   // disagree about which tokens the book may buy.
-  it('asks for activity over half and liquidity grown in the hour, as on 24/09', () => {
-    expect(loadConfig(valid).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
-    expect(loadConfig({ ...valid, OPERADOR_ENTRY_FLOORS: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ risingHour: 1 })
+  it('asks nothing of the components — every token enters; the 24/09 door one variable away', () => {
+    expect(loadConfig(valid).minComponents).toEqual({})
+    expect(loadConfig({ ...valid, OPERADOR_ENTRY_FLOORS: '1' }).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ risingHour: 1 })
   })
 
   it('brings the cost-efficiency floor back beside it with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {

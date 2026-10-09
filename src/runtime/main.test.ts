@@ -176,11 +176,12 @@ describe('the strategy exit target, through the path the engine runs', () => {
 })
 
 describe('the ladder, the reservation and the ban, as wired', () => {
-  it('wires the dip-bounce as the ONE buyer: ONE buy of capital / 70, and nothing after it, fees from the free capital', () => {
-    // *Calculá unas 70, una sola compra por token, que con las 70 llegue a 5000.*
+  it('wires the dip-bounce as the ONE buyer: ONE $3 buy the moment a slot opens, and nothing after it', () => {
+    // *Que compre inmediatamente que ingrese.*
     const { deps, cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
     expect(deps.dipBounce?.policy).toEqual({ dipPct: 23, bouncePct: 12, maxSteps: 1, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
-    expect(deps.dipBounce?.stepUsd).toBeCloseTo(5000 / 70, 9)
+    expect(deps.dipBounce?.stepUsd).toBe(3)
+    expect(deps.dipBounce?.onSelection).toBe(true)
     expect(deps.dipBounce?.firstStepFromCapital).toBeUndefined()
     expect(deps.dipBounce?.fund).toBeDefined()
     expect(cycleConfig.maxOpenEntries).toBe(1)
@@ -202,22 +203,17 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(await tiered.deps.healthFor(held, { time: [], open: [], high: [], low: [], close: [], volume: [] })).toBeNull()
   })
 
-  it('refuses a pump turning over and a fall in the hour at the door — both numbers one variable away, zero off', async () => {
-    // *Mirá el pump y la caída de la última hora y no entres en caso peligroso.*
-    const gatesOf = (env: Record<string, string>) => runtime(env).cycleConfig
-    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d' }).pumpDump).toEqual({ maxPumpPct: 100, maxHourFallPct: 5 })
-    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d', OPERADOR_MAX_PUMP_PCT: '200', OPERADOR_MAX_HOUR_FALL_PCT: '0' }).pumpDump).toEqual({ maxPumpPct: 200, maxHourFallPct: Infinity })
-    expect(gatesOf({})).toBeDefined()
+  it('lets a pump turning over in — no door — and the pump-and-dump gate is one variable away', () => {
+    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d' }).pumpDump).toEqual({ maxPumpPct: Infinity, maxHourFallPct: Infinity })
+    expect(loadConfig({ DATABASE_URL: 'postgres://u:p@h:5432/d', OPERADOR_MAX_PUMP_PCT: '100', OPERADOR_MAX_HOUR_FALL_PCT: '5' }).pumpDump).toEqual({ maxPumpPct: 100, maxHourFallPct: 5 })
   })
 
-  it('wires the TP on buy pressure — past +12%, on a 10% fall from its peak — and no fixed TP', () => {
-    // *Agregá la salida que teníamos: más del 12% y caída de la presión compradora 10%.*
+  it('wires the TP on buy pressure — in profit, on a 10% fall from its peak — and no other TP', () => {
     const { deps, cycleConfig } = runtime()
-    expect(deps.pressureTp).toMatchObject({ armPct: 12, dropPct: 10 })
+    expect(deps.pressureTp).toMatchObject({ armPct: 0, dropPct: 10 })
     expect(deps.pressureTp?.hourCounts).toBeDefined()
     expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).fixedTpPct).toBeNull()
     expect(runtime({ OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).deps.pressureTp).toBeUndefined()
-    // *No uses el TP antiguo*: the strategy's own exit is off on the path the tick runs.
     expect(cycleConfig.params.useStrategyExit).toBe(false)
     expect(runtime({ OPERADOR_STRATEGY_EXIT: '1' }).cycleConfig.params.useStrategyExit).toBe(true)
   })
@@ -265,12 +261,12 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the one buy of capital / 70, with nothing grossed up', () => {
+  it('reserves the one $3 buy, with nothing grossed up', () => {
     const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
     expect(cycleConfig.reservedEntries).toBe(1)
-    expect(cycleConfig.params.maxUsdPerLevel).toBeCloseTo(5000 / 70, 9)
-    expect(cycleConfig.slotUsd).toBeCloseTo(5000 / 70, 9)
-    expect(cycleConfig.usdPerToken).toBeCloseTo(5000 / 70, 9)
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(3)
+    expect(cycleConfig.slotUsd).toBe(3)
+    expect(cycleConfig.usdPerToken).toBe(3)
     expect(cycleConfig.portfolio.reservePct).toBe(0)
   })
 
@@ -1225,12 +1221,9 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over its seventieth: 70 at any capital', () => {
-    for (const capital of ['5000', '1500']) {
-      const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: capital })
-      expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(70)
-    }
-    // Fifty steps of $5: a $250 slot, twenty of them in $5,000.
+  it('counts the free slots as capital over $3: $5,000 is 1,666', () => {
+    const { cycleConfig: c } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
+    expect(freeSlots(bookCapital(c.portfolio.totalCapitalUsd, [], []), c.slotUsd!)).toBe(1666)
     const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })
     expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(20)
   })

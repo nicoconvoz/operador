@@ -26,17 +26,14 @@ import {
 import { DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 
 describe('productionLadder — one place for the numbers that differ', () => {
-  it('defaults to ONE buy of capital / 70, no fixed TP, and the strategy exit over 2%, as on 24/09', () => {
-    // *Calculá unas 70, una sola compra por token, que con las 70 llegue a
-    // 5000; lo demás aplicalo como estaba en ese momento.* With no capital
-    // named, the config's own $1,000.
-    const step = 1000 / 70
+  it('defaults to ONE buy of $3, no fixed TP, and the strategy exit over 2%', () => {
+    // *Armalo con 3 USD por token* (2026-10-09).
     expect(productionLadder({})).toEqual({
-      maxUsdPerLevel: step, maxOpenEntries: 1, dropInitPct: 0, minProfitPct: 2, fixedTpPct: 0, impatientProfitPct: 10, urgentProfitPct: 25,
+      maxUsdPerLevel: 3, maxOpenEntries: 1, dropInitPct: 0, minProfitPct: 2, fixedTpPct: 0, impatientProfitPct: 10, urgentProfitPct: 25,
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 1,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: step, stepGrowth: 3, maxSteps: 1, dipPct: 23, bouncePct: 12, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: step, cascadeEntries: false,
+      stepUsd: 3, stepGrowth: 3, maxSteps: 1, dipPct: 23, bouncePct: 12, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1, slotUsd: 3, cascadeEntries: false,
     })
     expect([DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([1, 23, 12, 0])
   })
@@ -78,15 +75,13 @@ describe('productionLadder — one place for the numbers that differ', () => {
     for (const bad of ['veinte', '-1', '100', '250', ' ']) expect(productionLadder({ OPERADOR_MAX_DIP_PCT: bad }).maxDipPct, bad).toBe(0)
   })
 
-  it('puts capital / 70 into one token, in ONE buy — $5,000 makes $71.43', () => {
+  it('puts $3 into one token, in ONE buy — and a named book divides the capital instead', () => {
     const ladder = productionLadder({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(ladder.stepUsd).toBeCloseTo(71.428571, 5)
-    expect(ladder.slotUsd).toBeCloseTo(71.428571, 5)
+    expect(ladder.stepUsd).toBe(3)
+    expect(ladder.slotUsd).toBe(3)
     expect(ladder.maxOpenEntries).toBe(1)
-    expect(productionLadder({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '50' }).stepUsd).toBe(100)
-    // A named step wins over the division.
+    expect(productionLadder({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '70' }).stepUsd).toBeCloseTo(5000 / 70, 9)
     expect(productionLadder({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_STEP_USD: '15' }).stepUsd).toBe(15)
-    // The two-buy ladder, one variable set away.
     expect(productionLadder({ OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2' })).toMatchObject({ slotUsd: 12, maxOpenEntries: 2, maxUsdPerLevel: 9 })
   })
 
@@ -118,7 +113,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
   it('keeps the operator’s numbers on nonsense rather than trading on it', () => {
     for (const bad of ['tres', '0', '-3', '100', ' ']) expect(productionLadder({ OPERADOR_DIP_PCT: bad }).dipPct, bad).toBe(23)
     for (const bad of ['dos', '0', '-2', ' ']) expect(productionLadder({ OPERADOR_BOUNCE_PCT: bad }).bouncePct, bad).toBe(12)
-    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(1000 / 70)
+    for (const bad of ['uno', '0', '-1', ' ']) expect(productionLadder({ OPERADOR_STEP_USD: bad }).stepUsd, bad).toBe(3)
     for (const bad of ['veinte', '0', '-1', '2.5', ' ']) expect(productionLadder({ OPERADOR_MAX_STEPS: bad }).maxSteps, bad).toBe(1)
   })
 
@@ -144,7 +139,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
 
   it('ignores a value that is not a positive number rather than trading on NaN', () => {
     expect(productionLadder({ OPERADOR_MAX_USD_PER_LEVEL: 'lots', OPERADOR_MAX_DCA: '-1' }))
-      .toMatchObject({ maxUsdPerLevel: 1000 / 70, maxOpenEntries: 1 })
+      .toMatchObject({ maxUsdPerLevel: 3, maxOpenEntries: 1 })
   })
 
   it('never expresses itself by editing the evidence', () => {

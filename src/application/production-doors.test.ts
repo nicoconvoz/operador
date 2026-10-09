@@ -12,20 +12,17 @@ import {
 import { meetsMinimums } from '../domain/scanner/opportunity.js'
 
 describe('productionDoors — one definition of what the book may buy', () => {
-  it('asks a candidate for activity over half and liquidity grown in the hour, as on 24/09', () => {
-    // *Lo demás aplicalo como estaba en ese momento* (2026-10-08).
+  it('asks a candidate NO component floor — *que entren todos los tokens que existan*', () => {
     expect(DEFAULT_ENTRY_RISING).toBe(false)
-    expect(DEFAULT_COMPONENT_FLOORS).toEqual({ activity: 0.5, liquidityGrowth: 1 })
-    expect(productionDoors({}).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
-    expect(productionDoors({ OPERADOR_ENTRY_FLOORS: '0' }).minComponents).toEqual({})
+    expect(DEFAULT_COMPONENT_FLOORS).toEqual({})
+    expect(productionDoors({}).minComponents).toEqual({})
+    expect(productionDoors({ OPERADOR_ENTRY_FLOORS: '1' }).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
     expect(DEFAULT_MIN_SCORE).toBe(0)
     expect(productionDoors({}).minScore).toBe(DEFAULT_MIN_SCORE)
   })
 
-  it('lets a falling token through when it is active and its liquidity grew', () => {
-    expect(meetsMinimums({ risingHour: 0, activity: 0.6, liquidityGrowth: 1 }, productionDoors({}).minComponents)).toBe(true)
-    expect(meetsMinimums({ activity: 0.4, liquidityGrowth: 1 }, productionDoors({}).minComponents)).toBe(false)
-    expect(meetsMinimums({ activity: 0.6, liquidityGrowth: 0 }, productionDoors({}).minComponents)).toBe(false)
+  it('lets any token through by default — quiet, falling, its liquidity shrinking', () => {
+    expect(meetsMinimums({ risingHour: 0, activity: 0, liquidityGrowth: 0 }, productionDoors({}).minComponents)).toBe(true)
   })
 
   it('with the rising door on and the 24/09 floors off, lets a RISING token through whatever else it reads', () => {
@@ -42,15 +39,14 @@ describe('productionDoors — one definition of what the book may buy', () => {
   })
 
   it('brings a cost-efficiency floor back with OPERADOR_MIN_COST_EFFICIENCY_PCT, read as ABOVE', () => {
-    const back = productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60', OPERADOR_ENTRY_RISING: '0', OPERADOR_ENTRY_FLOORS: '0' }).minComponents
+    const back = productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60', OPERADOR_ENTRY_RISING: '0' }).minComponents
     expect(back).toEqual({ costEfficiency: { above: 0.6 } })
     expect(meetsMinimums({ costEfficiency: 0.6 }, back)).toBe(false)
     expect(meetsMinimums({ costEfficiency: 0.61 }, back)).toBe(true)
-    const zero = productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '0', OPERADOR_ENTRY_FLOORS: '0' }).minComponents
+    const zero = productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '0' }).minComponents
     expect(zero).toEqual({ costEfficiency: { above: 0 } })
     expect(meetsMinimums({ costEfficiency: 0 }, zero)).toBe(false)
-    // Beside the 24/09 floors, never instead of them.
-    expect(productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60' }).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1, costEfficiency: { above: 0.6 } })
+    expect(productionDoors({ OPERADOR_MIN_COST_EFFICIENCY_PCT: '60', OPERADOR_ENTRY_FLOORS: '1' }).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1, costEfficiency: { above: 0.6 } })
   })
 
   it('keeps NO door on nonsense rather than inventing one', () => {

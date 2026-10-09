@@ -32,7 +32,7 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  * — $5, $10, $15 or $25, see `token-tier.ts` — and this is only the slot the
  * scan counts by. With OPERADOR_TIERS=0 it is the one flat buy.
  */
-export const DEFAULT_STEP_USD = 5
+export const DEFAULT_STEP_USD = 3
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -686,8 +686,12 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
   // *Calculá unas 70, una sola compra por token, que con las 70 llegue a
   // 5000.* The step is the capital over the book's tokens unless a step is
   // named; the capital's own default is the config's.
-  const bookTokens = positive(env.OPERADOR_BOOK_TOKENS, DEFAULT_BOOK_TOKENS)
-  const stepUsd = positive(env.OPERADOR_STEP_USD, positive(env.OPERADOR_CAPITAL_USD, 1_000) / bookTokens)
+  //
+  // Then *armalo con 3 USD por token* (2026-10-09): $3 unless a book of N
+  // tokens is named, which divides the capital again.
+  const bookRaw = env.OPERADOR_BOOK_TOKENS?.trim()
+  const fromBook = bookRaw ? positive(env.OPERADOR_CAPITAL_USD, 1_000) / positive(bookRaw, DEFAULT_BOOK_TOKENS) : DEFAULT_STEP_USD
+  const stepUsd = positive(env.OPERADOR_STEP_USD, fromBook)
   const maxSteps = entries(env.OPERADOR_MAX_STEPS, DEFAULT_MAX_STEPS)
   // A growth under one would SHRINK the deep buys, the opposite of a ladder;
   // nonsense keeps the operator's doubling.

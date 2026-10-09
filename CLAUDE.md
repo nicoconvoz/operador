@@ -28,10 +28,10 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | safe, **activity ≥ 50%** and **liquidity grown in the last hour**; a day old, at most 30% down on the day, four trades in the hour, a fresh bar; **small caps first** | `production-doors.ts`, `gates.ts` |
-| **The book** | **70 tokens**: each gets capital / 70 — **$71.43 at $5,000** | `production-ladder.ts` (`DEFAULT_BOOK_TOKENS`) |
-| **The buy** | **one, automatic**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**: past **+12%** it runs, and sells on a **10% fall of buyers' share from its peak**; the **freeze** exit (three hours without a trade among its signals) and the **death** exit. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
+| **Candidate** | **every safe token** — no door: no component floor, no age, daily-fall, hourly-trade, stale-bar or pump-and-dump gate; small caps first | `production-doors.ts`, `gates.ts` |
+| **The book** | **$3 a token**: $5,000 holds 1,666, more than the scan finds | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **one, automatic, the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
+| **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
 
@@ -62,6 +62,16 @@ token falling more than `OPERADOR_MAX_HOUR_FALL_PCT` (5) in the hour, and one
 up more than `OPERADOR_MAX_PUMP_PCT` (100) on the day that is falling in the
 hour at all. An opportunity gate: it decides what enters and never touches
 what is held; an unreported hour says nothing; zero turns either half off.
+
+The same afternoon it changed again: *armalo con 3 USD por token, y calculale
+después de entrar en ganancia una caída de la presión compradora de 10%, y no
+pongas puerta de entrada: hacé que entren todos los tokens que existan* — *vamos
+a apostar a los pump futuros escondidos; si se muere alguna, perdemos poco.*
+`DEFAULT_STEP_USD` is 3 (`OPERADOR_BOOK_TOKENS` divides the capital again), the
+TP's arm is 0 (`OPERADOR_PRESSURE_TP_ARM_PCT`), the 24/09 door is off
+(`OPERADOR_ENTRY_FLOORS=1`), the four opportunity gates are off again, and so
+is `pumpDump` (`OPERADOR_MAX_PUMP_PCT=100`, `OPERADOR_MAX_HOUR_FALL_PCT=5`). The
+SAFETY gates stand. Stated: gas is $0.05, 1.7% of each $3 buy.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

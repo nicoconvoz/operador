@@ -590,13 +590,11 @@ describe('universe — the reserve is its own tier, not a rejection', () => {
     expect(view.tokens[0]?.blockers.join(' ')).toMatch(/liquidez/)
   })
 
-  it('leaves a token the strategy cannot run on in filtered — production asks for four trades an hour again', async () => {
-    // Under four trades an hour a 15m bar comes back empty. Production asks
-    // again since 2026-10-08, as on 24/09.
+  it('leaves a quiet token in filtered only under the policy that still asks — production lets it in', async () => {
     const dead = token('DEAD', { txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 900, sells: 850 } } })
     const store = await seed([dead])
     expect((await buildUniverse(store, strictOptions)).tokens[0]?.tier).toBe('filtered')
-    expect((await buildUniverse(store, options)).tokens[0]?.tier).toBe('filtered')
+    expect((await buildUniverse(store, options)).tokens[0]?.tier).not.toBe('filtered')
   })
 })
 
