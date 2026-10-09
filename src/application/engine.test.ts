@@ -103,6 +103,26 @@ describe('tickPosition — never decides the same bar twice', () => {
     expect(result.position.updatedAt).toBe(observedAt)
   })
 
+  it('writes NOTHING for a healthy watch with nothing new, until the stamp is fifteen minutes old', async () => {
+    // *Fijate cómo habíamos resuelto no almacenar datos al pedo.* A healthy
+    // reading advances only `cleanStreak`, which nothing reads until a freeze
+    // has to clear — and writing it cost every position a row every pass.
+    const candles = decline(300)
+    const last = candles.time.at(-1)!
+    const r = rig()
+    let saves = 0
+    const save = r.store.savePosition.bind(r.store)
+    r.store.savePosition = async (p) => { saves++; return save(p) }
+    const fresh = position({ lastBarTime: last, updatedAt: last, dcaScale: 1 })
+    await tick({ candles, position: fresh, health: healthy({ observedAt: last + 5 * 60_000 }) }, r)
+    expect(saves).toBe(0)
+    await tick({ candles, position: fresh, health: healthy({ observedAt: last + 16 * 60_000 }) }, r)
+    expect(saves).toBe(1)
+    // Anything that MOVES the watch is written at once.
+    await tick({ candles, position: fresh, health: healthy({ observedAt: last + 5 * 60_000, liquidityUsd: 100_000 }) }, r)
+    expect(saves).toBe(2)
+  })
+
   it('skips an empty candle set instead of crashing', async () => {
     const empty: Candles = { time: [], open: [], high: [], low: [], close: [], volume: [] }
     const { result } = await tick({ candles: empty })
@@ -722,13 +742,16 @@ describe('tickPosition — health is assessed even with no new bar', () => {
     expect(cleared.position.deathWatch.stage).toBe('healthy')
   })
 
-  it('persists what it learned, or the next pass starts from nothing', async () => {
+  it('persists what it learned on a FROZEN watch, or the next pass starts from nothing', async () => {
+    // The clean streak is what lifts a freeze, so a frozen watch writes it every
+    // pass. A healthy one does not — nothing reads its streak.
     const { store, alerts, throttle, broker } = rig()
     const candles = flat(300)
-    await store.savePosition(upToDate(candles))
+    const frozen = { ...upToDate(candles), deathWatch: { ...startDeathWatch(1_000_000, 0), stage: 'frozen' as const } }
+    await store.savePosition(frozen)
 
     await tickPosition(
-      { position: upToDate(candles), candles, health: healthy(), broker },
+      { position: frozen, candles, health: healthy(), broker },
       config, store, alerts, throttle,
     )
 
@@ -836,8 +859,8 @@ describe('tickPosition — a token it cannot price is a token it does not trade'
     // must not stop is the observation. A position nobody is watching is the
     // failure this engine has paid for more than once.
     const r = rig()
-    const { result } = await tick({ ...mismatched, health: healthy({ observedAt: 5_000 }), position: position({ updatedAt: 0 }) }, r)
-    expect(result.position.updatedAt).toBe(5_000)
+    const { result } = await tick({ ...mismatched, health: healthy({ observedAt: 16 * 60_000 }), position: position({ updatedAt: 0 }) }, r)
+    expect(result.position.updatedAt).toBe(16 * 60_000)
   })
 
   it('says so, and loudly, because only a person can tell a rug from a bad feed', async () => {

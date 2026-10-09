@@ -99,6 +99,14 @@ ignored, and the allocator skips one. And 305 candle downloads a pass left 165
 never ticked — *no quiero almacenar velas, nos movemos por precio*:
 `OPERADOR_LIVE_PRICE` is on again.
 
+*Fijate cómo habíamos resuelto no almacenar datos al pedo.* The tick writes a
+position once per 15-minute bar (the live bar is stamped at the bar close),
+but the death watch, back on, wrote every position every pass to advance a
+`cleanStreak` nothing reads unless a freeze must clear: ~300 rows a pass at 300
+positions. A healthy watch that stays healthy with no new evidence is no longer
+written, except to refresh a stamp older than fifteen minutes; a watch that
+moves — or a frozen one counting its way out — is written at once.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

@@ -868,6 +868,9 @@ export function entryAlertLabel(order: Order & { kind: 'entry' }): { opening: bo
  * and is exactly why CLAUDE.md says a death exit may fail and why detection
  * runs continuously rather than waiting for one.
  */
+/** How old the stamp of an unmoved watch may get before it is written again. */
+const WATCH_STAMP_MS = 15 * 60_000
+
 async function assessHealth(
   input: TickInput,
   config: EngineConfig,
@@ -888,6 +891,17 @@ async function assessHealth(
     const frozen = alert('ladder-frozen', `❄️ ${position.symbol} congelada`, assessment.signals.map((s) => s.detail).join('\n'), at, { position: position.id })
     if (throttle.shouldSend(frozen, `${frozen.kind}:${position.id}`)) await alerts.send(frozen)
   }
+
+  // Nothing new to keep: a healthy watch that stays healthy with no evidence
+  // advances only `cleanStreak`, which nothing reads until a freeze must
+  // clear. *No almacenar datos al pedo* — the row is written when the watch
+  // MOVES, and otherwise only to refresh a stamp older than fifteen minutes.
+  const unmoved =
+    position.deathWatch.stage === 'healthy' &&
+    assessment.state.stage === 'healthy' &&
+    assessment.state.exitEvidence === position.deathWatch.exitEvidence &&
+    assessment.state.evidence.length === position.deathWatch.evidence.length
+  if (unmoved && at - position.updatedAt < WATCH_STAMP_MS) return position
 
   // Persisted, or the streak restarts from zero on every pass and a freeze
   // clears exactly never — which is the shape of the bug this replaces.
