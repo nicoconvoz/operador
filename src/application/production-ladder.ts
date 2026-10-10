@@ -34,8 +34,11 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  *
  * $1.50 since 2026-10-10, twice: *dos compras de 1.5, la primera apenas
  * ingresa el token, la segunda cuando cae 90% de su valor.* A slot is $3.
+ *
+ * $2 the same day, up to ten times: *armá lo mismo [que el 29/09] ahora hasta
+ * 10 de 2 USD por token.* A slot is $20, so $5,000 holds 250 tokens.
  */
-export const DEFAULT_STEP_USD = 1.5
+export const DEFAULT_STEP_USD = 2
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -62,9 +65,10 @@ export const DEFAULT_STEP_GROWTH = 1
  *
  * TWO since 2026-10-03: *sólo dos compras* — the first and one DCA. ONE
  * since 2026-10-04: *sin escalones, una sola compra.* TWO again since
- * 2026-10-10: the entry and one buy 90% under it.
+ * 2026-10-10: the entry and one buy 90% under it. TEN the same day: the
+ * entry and nine DCAs.
  */
-export const DEFAULT_MAX_STEPS = 2
+export const DEFAULT_MAX_STEPS = 10
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -87,9 +91,12 @@ export const DEFAULT_MAX_STEPS = 2
  * 90% and NO bounce since 2026-10-10: *la segunda cuando cae 90% de su valor*
  * — the sweep arms the moment the price is at a tenth of the first buy and
  * buys on its next look, about thirty seconds later.
+ *
+ * 3% and 2% again the same day, as on 29/09: *para las demás cae 3%, rebote
+ * del 2%* — every DCA the same, see `DEFAULT_DIP_STEP_PCT`.
  */
-export const DEFAULT_DIP_PCT = 90
-export const DEFAULT_BOUNCE_PCT = 0
+export const DEFAULT_DIP_PCT = 3
+export const DEFAULT_BOUNCE_PCT = 2
 
 /**
  * How many points each DCA adds to the dip it asks — and to its collapse
@@ -113,8 +120,11 @@ export const DEFAULT_BOUNCE_PCT = 0
  * variable of its own: it grows with the dip, so the seventeen points between
  * the dip that arms and the fall that collapses hold at every step.
  */
-export const DEFAULT_DIP_STEP_PCT = DEFAULT_DIP_BOUNCE_POLICY.dipStepPct
-export const DEFAULT_BOUNCE_STEP_PCT = DEFAULT_DIP_BOUNCE_POLICY.bounceStepPct
+//
+// ZERO since 2026-10-10: every DCA asks the same 3% and 2%, the flat rule of
+// 29/09. The domain policy keeps the growing steps.
+export const DEFAULT_DIP_STEP_PCT = 0
+export const DEFAULT_BOUNCE_STEP_PCT = 0
 
 /**
  * The deepest fall a step still buys on, in percent under the reference. "If

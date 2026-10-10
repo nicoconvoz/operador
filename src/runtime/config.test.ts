@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — $1.50', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(1.5)
+  it('caps each level at the LARGEST step by default — $2', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(2)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,13 +194,13 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token TWO buys of $1.50, and counts slots of their $3', () => {
+  it('gives every token up to TEN buys of $2, and counts slots of their $20', () => {
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 1.5, maxSteps: 2, slotUsd: 3 })
+    expect(config).toMatchObject({ stepUsd: 2, maxSteps: 10, slotUsd: 20 })
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
-    expect(config.maxDcaPerToken + 1).toBe(2)
-    expect(config.reservedEntries).toBe(2)
-    expect(config.usdPerToken).toBe(3)
+    expect(config.maxDcaPerToken + 1).toBe(10)
+    expect(config.reservedEntries).toBe(10)
+    expect(config.usdPerToken).toBe(20)
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
     expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })).toMatchObject({ slotUsd: 250, usdPerToken: 250, reservedEntries: 50 })
   })
@@ -263,9 +263,9 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // caída de la presión compradora de 10%, y no pongas puerta de entrada:
     // hacé que entren todos los tokens que existan* (2026-10-09).
     const config = loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000' })
-    expect(config.stepUsd).toBe(1.5)
-    expect(config.slotUsd).toBe(3)
-    expect(config.maxSteps).toBe(2)
+    expect(config.stepUsd).toBe(2)
+    expect(config.slotUsd).toBe(20)
+    expect(config.maxSteps).toBe(10)
     expect(config.minComponents).toEqual({})
     expect(config.pressureTp).toEqual({ armPct: 0, dropPct: 10 })
     expect(config.strategyExit).toBe(false)

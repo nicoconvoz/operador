@@ -29,8 +29,8 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | **every token discovered** that can be sold and priced — no door and almost no gate: liquidity, holders, authorities, tax, LP, impact, impersonation and the denylist refuse nothing (`ignoredGates`); small caps first | `production-doors.ts`, `gates.ts` |
-| **The book** | **$3 a token** in two buys of $1.50: $5,000 holds 1,666, more than the scan finds | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$1.50 the moment the token enters**, in the pass that opens the slot, and **$1.50 more once the price is 90% under it** (`OPERADOR_DIP_PCT` 90, no bounce) | `buyOnSelection`, `stop-sweep.ts` |
+| **The book** | **$20 a token**, up to ten buys of $2: $5,000 holds 250 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$2 the moment the token enters**, in the pass that opens the slot, then **$2 on every 3% dip and 2% bounce** from the buy before it, the same for every DCA, nine at most | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -128,6 +128,14 @@ stop back), `DEFAULT_STEP_USD` 1.5, `DEFAULT_STEP_GROWTH` 1, `DEFAULT_MAX_STEPS`
 price is a tenth of the first buy and buys on its next look. Stated: gas is
 $0.05 a swap, so a $1.50 buy and its sale pay $0.10 — 6.7% of the buy against
 3.3% on $3.
+
+And the same day, back to the 29/09 ladder: *armá lo mismo ahora, hasta 10 de
+2 USD por token; usá la configuración que tenemos para la primera compra
+automática, pero para las demás cae 3%, rebote del 2%.* `DEFAULT_STEP_USD` 2,
+`DEFAULT_MAX_STEPS` 10, `DEFAULT_DIP_PCT` 3, `DEFAULT_BOUNCE_PCT` 2 and the
+growing steps at zero (`OPERADOR_DIP_STEP_PCT=2`, `OPERADOR_BOUNCE_STEP_PCT=1`
+bring them back). Still no stop; the exits are unchanged. On 29/09 the same
+ladder at $1 made +$16.95 realised against $9.71 of costs in seven hours.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
