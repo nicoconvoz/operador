@@ -29,9 +29,9 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | **every token discovered** that can be sold and priced — no door and almost no gate: liquidity, holders, authorities, tax, LP, impact, impersonation and the denylist refuse nothing (`ignoredGates`); small caps first | `production-doors.ts`, `gates.ts` |
-| **The book** | **$3 a token**: $5,000 holds 1,666, more than the scan finds | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **one, automatic, the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. A **$0.60 stop** on the one buy (`OPERADOR_STOP_MAX_LOSS_USD`, zero turns it off). The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
+| **The book** | **$3 a token** in two buys of $1.50: $5,000 holds 1,666, more than the scan finds | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$1.50 the moment the token enters**, in the pass that opens the slot, and **$1.50 more once the price is 90% under it** (`OPERADOR_DIP_PCT` 90, no bounce) | `buyOnSelection`, `stop-sweep.ts` |
+| **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
 
@@ -119,6 +119,15 @@ scan downloads no candles — `poolCandles` is BSC only.
 buy (`OPERADOR_STOP_AFTER_BUYS` 1): the sweep sells everything the moment the
 $3 holding is more than $0.60 under water on price — a 20% fall. `🛑 Stop` on
 the tape, exempt from the no-loss guard like every stop.
+
+The next day it went again: *que no haya SL, perdemos mucho con comisiones;
+que sean dos compras de 1.5, la primera apenas ingresa el token, la segunda
+cuando cae 90% de su valor.* `OPERADOR_STOP_MAX_LOSS_USD` is 0 (0.6 brings the
+stop back), `DEFAULT_STEP_USD` 1.5, `DEFAULT_STEP_GROWTH` 1, `DEFAULT_MAX_STEPS`
+2, `DEFAULT_DIP_PCT` 90 and `DEFAULT_BOUNCE_PCT` 0: the sweep arms when the
+price is a tenth of the first buy and buys on its next look. Stated: gas is
+$0.05 a swap, so a $1.50 buy and its sale pay $0.10 — 6.7% of the buy against
+3.3% on $3.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

@@ -172,7 +172,7 @@ describe('the strategy exit target, through the path the engine runs', () => {
   })
 
   it('takes another floor from the environment', async () => {
-    expect((await tick({ OPERADOR_MIN_PROFIT_PCT: '20' })).minProfitPct).toBe(20)
+    expect((await tick({ OPERADOR_MIN_PROFIT_PCT: '20', OPERADOR_MAX_COST_SHARE_PCT: '0' })).minProfitPct).toBe(20)
   })
 })
 
@@ -180,12 +180,12 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('wires the dip-bounce as the ONE buyer: ONE $3 buy the moment a slot opens, and nothing after it', () => {
     // *Que compre inmediatamente que ingrese.*
     const { deps, cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 23, bouncePct: 12, maxSteps: 1, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
-    expect(deps.dipBounce?.stepUsd).toBe(3)
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 90, bouncePct: 0, maxSteps: 2, maxDipPct: 0, dipStepPct: 2, bounceStepPct: 1 })
+    expect(deps.dipBounce?.stepUsd).toBe(1.5)
     expect(deps.dipBounce?.onSelection).toBe(true)
     expect(deps.dipBounce?.firstStepFromCapital).toBeUndefined()
     expect(deps.dipBounce?.fund).toBeDefined()
-    expect(cycleConfig.maxOpenEntries).toBe(1)
+    expect(cycleConfig.maxOpenEntries).toBe(2)
   })
 
   it('wires the crash stop only when asked: more than 5% down in under a minute', () => {
@@ -262,10 +262,10 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves the one $3 buy, with nothing grossed up', () => {
+  it('reserves both $1.50 buys, with nothing grossed up', () => {
     const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(cycleConfig.reservedEntries).toBe(1)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(3)
+    expect(cycleConfig.reservedEntries).toBe(2)
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(1.5)
     expect(cycleConfig.slotUsd).toBe(3)
     expect(cycleConfig.usdPerToken).toBe(3)
     expect(cycleConfig.portfolio.reservePct).toBe(0)
@@ -311,11 +311,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
   })
 
-  it('builds a broker that holds the one entry and refuses a second', async () => {
+  it('builds a broker that holds the two entries and refuses a third', async () => {
     const { deps } = runtime()
     const broker = await deps.brokerFor({ ...held, capitalUsd: 200 })
-    const entries = Array.from({ length: 2 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
-    expect(broker.execute(entries, 1, 0)).toHaveLength(1)
+    const entries = Array.from({ length: 3 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
+    expect(broker.execute(entries, 1, 0)).toHaveLength(2)
   })
 
   it('ticks on the live price by default, and reads candles only for a position idle six hours', () => {
@@ -802,7 +802,7 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
 
   it('holds the first buy through the dip, then cuts the moment the two buys are more than $1.20 down', async () => {
     // The two-buy ladder and the stop as they ran, both a variable away now.
-    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2', OPERADOR_STOP_MAX_LOSS_USD: '1.2', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1' })
+    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STEP_USD: '3', OPERADOR_MAX_STEPS: '2', OPERADOR_STEP_GROWTH: '3', OPERADOR_DIP_PCT: '23', OPERADOR_BOUNCE_PCT: '12', OPERADOR_STOP_MAX_LOSS_USD: '1.2', OPERADOR_PRESSURE_TP_DROP_PCT: '0', OPERADOR_CRASH_STOP_PCT: '0', OPERADOR_TIERS: '0', OPERADOR_DEATH_WATCH: '1' })
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000
@@ -823,7 +823,9 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     expect(await store.loadPositions()).toEqual([])
   })
 
-  it('cuts the one $3 buy the moment it is more than $0.60 down — *ponele un SL a 0.60* — with production’s own defaults', async () => {
+  it('buys $1.50, then $1.50 more once the price is 90% under the first, and never stops out — with production’s own defaults', async () => {
+    // *Que no haya SL, perdemos mucho con comisiones: dos compras de 1.5, la
+    // primera apenas ingresa el token, la segunda cuando cae 90% de su valor.*
     const { deps, cycleConfig, store } = onMemory(DEFAULTS)
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
@@ -831,12 +833,16 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     const levels = (position: PersistedPosition) => exitLevelsFor(position, exitSizingFrom(cycleConfig))
     const sweep = async (price: number) =>
       sweepStops(deps, levels, new AlertThrottle(0), (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000))
+    const buys = async () => (await store.fillsFor(slot.id)).filter((f) => f.side === 'buy')
     expect(await sweep(1)).toEqual([])
-    const fills = async () => store.fillsFor(slot.id)
-    const { avgCostUsd, qty } = positionLedger(await fills())
-    expect(await sweep(avgCostUsd! - 0.59 / qty)).toEqual([])
-    expect(await sweep(avgCostUsd! - 0.61 / qty)).toEqual([slot.id])
-    expect((await fills()).filter((f) => f.side === 'sell').map((f) => f.comment)).toEqual(['🛑 Stop'])
+    expect((await buys()).map((f) => Math.round(f.price * f.qty * 100) / 100)).toEqual([1.5])
+    // 89% down holds; 90% down buys the second, and nothing more after it.
+    for (const price of [0.5, 0.11]) expect(await sweep(price)).toEqual([])
+    expect(await buys()).toHaveLength(1)
+    for (const price of [0.1, 0.1, 0.05, 0.01]) expect(await sweep(price)).toEqual([])
+    expect((await buys()).map((f) => Math.round(f.price * f.qty * 100) / 100)).toEqual([1.5, 1.5])
+    // No stop, however far it falls.
+    expect((await store.fillsFor(slot.id)).filter((f) => f.side === 'sell')).toEqual([])
   })
 })
 
@@ -1137,7 +1143,7 @@ describe('the FIRST step is bought on selection, through the cycle the engine ru
     expect((await setup.store.fillsFor(reserved.id)).map((f) => f.orderId)).toEqual(['Entry'])
   })
 
-  it('buys the first $3 of a reservation on the next sweep with PRODUCTION’s own defaults', async () => {
+  it('buys the first $1.50 of a reservation on the next sweep with PRODUCTION’s own defaults', async () => {
     // Every legacy pin unset: what the engine runs today. 305 reservations sat
     // at $0 on 2026-10-09 — this is the path that must buy them.
     const production = Object.fromEntries([...Object.keys(LEGACY_LADDER), ...Object.keys(LEGACY_ORDER)].map((k) => [k, '']))
@@ -1154,7 +1160,7 @@ describe('the FIRST step is bought on selection, through the cycle the engine ru
     )
     const buys = (await setup.store.fillsFor(reserved.id)).filter((f) => f.side === 'buy')
     expect(buys.map((f) => f.orderId)).toEqual(['Entry'])
-    expect(buys[0]!.qty * buys[0]!.price).toBeCloseTo(3, 1)
+    expect(buys[0]!.qty * buys[0]!.price).toBeCloseTo(1.5, 1)
   })
 
   it('doubles each step: $1 on the first buy, $2 on the first DCA', async () => {

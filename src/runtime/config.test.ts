@@ -109,8 +109,8 @@ describe('loadConfig — bar size', () => {
 })
 
 describe('loadConfig — the production ladder is not the reference ladder', () => {
-  it('caps each level at the LARGEST step by default — the one $3 buy', () => {
-    expect(loadConfig(valid).maxUsdPerLevel).toBe(3)
+  it('caps each level at the LARGEST step by default — $1.50', () => {
+    expect(loadConfig(valid).maxUsdPerLevel).toBe(1.5)
     expect(loadConfig({ ...valid, OPERADOR_STEP_USD: '2', OPERADOR_STEP_GROWTH: '1' }).maxUsdPerLevel).toBe(2)
   })
 
@@ -194,12 +194,12 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token ONE buy of $3, and counts slots of that', () => {
+  it('gives every token TWO buys of $1.50, and counts slots of their $3', () => {
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 3, maxSteps: 1, slotUsd: 3 })
+    expect(config).toMatchObject({ stepUsd: 1.5, maxSteps: 2, slotUsd: 3 })
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
-    expect(config.maxDcaPerToken + 1).toBe(1)
-    expect(config.reservedEntries).toBe(1)
+    expect(config.maxDcaPerToken + 1).toBe(2)
+    expect(config.reservedEntries).toBe(2)
     expect(config.usdPerToken).toBe(3)
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
     expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })).toMatchObject({ slotUsd: 250, usdPerToken: 250, reservedEntries: 50 })
@@ -263,9 +263,9 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // caída de la presión compradora de 10%, y no pongas puerta de entrada:
     // hacé que entren todos los tokens que existan* (2026-10-09).
     const config = loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000' })
-    expect(config.stepUsd).toBe(3)
+    expect(config.stepUsd).toBe(1.5)
     expect(config.slotUsd).toBe(3)
-    expect(config.maxSteps).toBe(1)
+    expect(config.maxSteps).toBe(2)
     expect(config.minComponents).toEqual({})
     expect(config.pressureTp).toEqual({ armPct: 0, dropPct: 10 })
     expect(config.strategyExit).toBe(false)
@@ -284,7 +284,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.gainLock).toBeNull()
     expect(config.fixedTpPct).toBe(0)
     expect(config.crashStop.dropPct).toBe(0)
-    expect(config.stopLoss.maxLossUsd).toBe(0.6)
+    expect(config.stopLoss.maxLossUsd).toBe(0)
     expect(config.tiers).toBe(false)
     expect(config.buyOnSelection).toBe(true)
   })
@@ -322,8 +322,10 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '1' }).stopLoss.onlyWhenHistoryCovers).toBe(true)
   })
 
-  it('stops a holding more than $0.60 under water from its one buy — *ponele un SL a 0.60* — one variable away', () => {
-    const { stopLoss } = loadConfig(valid)
+  it('has no stop — *que no haya SL, perdemos mucho con comisiones* — and $0.60 is one variable away', () => {
+    expect(loadConfig(valid).stopLoss.maxLossUsd).toBe(0)
+    expect(shouldStopOut({ entryPriceUsd: 1, marketPriceUsd: 0.1, openQty: 3, runAtEntryPct: null, buys: 1 }, loadConfig(valid).stopLoss)).toBe(false)
+    const { stopLoss } = loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.6' })
     expect(stopLoss).toMatchObject({ maxLossUsd: 0.6, minBuys: 1 })
     // $3 held: a 15% fall is $0.45 under water, a 25% fall $0.75.
     const fell = (to: number) => ({ entryPriceUsd: 1, marketPriceUsd: to, openQty: 3, runAtEntryPct: null, buys: 1 })

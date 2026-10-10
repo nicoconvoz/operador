@@ -749,8 +749,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       // *Si alguno luego del 2 DCA lleva perdiendo más de 1.2 USD, entonces
       // SL* — armed from the second buy on. OFF since 2026-10-04, *sacá la
       // regla del SL*. Back on 2026-10-09 on the one $3 buy: *ponele un SL a
-      // 0.60 centavos* — armed from the first buy. Zero turns it off.
-      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0.6),
+      // 0.60 centavos* — armed from the first buy. OFF again on 2026-10-10:
+      // *que no haya SL, perdemos mucho con comisiones.* 0.6 brings it back.
+      maxLossUsd: numberOrZero(env, 'OPERADOR_STOP_MAX_LOSS_USD', 0),
       minBuys: numberOrZero(env, 'OPERADOR_STOP_AFTER_BUYS', 1),
       // *Si la ganancia es mayor a la pérdida también SL y rotar; si no, no
       // salir en pérdida.* ON: the stop sells at a loss only what the token

@@ -31,8 +31,11 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  * FIVE since 2026-10-05, the cheapest class: each buy is now its token's class
  * — $5, $10, $15 or $25, see `token-tier.ts` — and this is only the slot the
  * scan counts by. With OPERADOR_TIERS=0 it is the one flat buy.
+ *
+ * $1.50 since 2026-10-10, twice: *dos compras de 1.5, la primera apenas
+ * ingresa el token, la segunda cuando cae 90% de su valor.* A slot is $3.
  */
-export const DEFAULT_STEP_USD = 3
+export const DEFAULT_STEP_USD = 1.5
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -45,8 +48,9 @@ export const DEFAULT_BOOK_TOKENS = 70
  * How much each step grows over the one before: three, so $3 becomes $9. It
  * was two — *1, 2, 4, 8, 16, 32*. The deeper buy carries most of the money and
  * pulls the average down hardest. One is the flat ladder. OPERADOR_STEP_GROWTH.
+ * One since 2026-10-10: two equal buys of $1.50.
  */
-export const DEFAULT_STEP_GROWTH = 3
+export const DEFAULT_STEP_GROWTH = 1
 
 /**
  * Buys per holding, the first included: the first buy and FIVE DCAs, $30 a
@@ -57,9 +61,10 @@ export const DEFAULT_STEP_GROWTH = 3
  * `DEFAULT_DIP_BOUNCE_POLICY` keeps twenty, so the rule's own tests stand.
  *
  * TWO since 2026-10-03: *sólo dos compras* — the first and one DCA. ONE
- * since 2026-10-04: *sin escalones, una sola compra.*
+ * since 2026-10-04: *sin escalones, una sola compra.* TWO again since
+ * 2026-10-10: the entry and one buy 90% under it.
  */
-export const DEFAULT_MAX_STEPS = 1
+export const DEFAULT_MAX_STEPS = 2
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -78,9 +83,13 @@ export const DEFAULT_MAX_STEPS = 1
  * 23% and 12% since 2026-10-03: *la caída y el rebote como si fuera el DCA 5
  * para la segunda compra* — what DCA 5 of that ladder asked, now asked by the
  * one DCA there is.
+ *
+ * 90% and NO bounce since 2026-10-10: *la segunda cuando cae 90% de su valor*
+ * — the sweep arms the moment the price is at a tenth of the first buy and
+ * buys on its next look, about thirty seconds later.
  */
-export const DEFAULT_DIP_PCT = 23
-export const DEFAULT_BOUNCE_PCT = 12
+export const DEFAULT_DIP_PCT = 90
+export const DEFAULT_BOUNCE_PCT = 0
 
 /**
  * How many points each DCA adds to the dip it asks — and to its collapse
