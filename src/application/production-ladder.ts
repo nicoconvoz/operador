@@ -37,8 +37,11 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  *
  * $2 the same day, up to ten times: *armá lo mismo [que el 29/09] ahora hasta
  * 10 de 2 USD por token.* A slot is $20, so $5,000 holds 250 tokens.
+ *
+ * $15, ONE buy, the same evening — the 26/09 configuration that stood at
+ * +$92.59: *poné esa config con 15 USD por token, una sola compra.*
  */
-export const DEFAULT_STEP_USD = 2
+export const DEFAULT_STEP_USD = 15
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -66,9 +69,9 @@ export const DEFAULT_STEP_GROWTH = 1
  * TWO since 2026-10-03: *sólo dos compras* — the first and one DCA. ONE
  * since 2026-10-04: *sin escalones, una sola compra.* TWO again since
  * 2026-10-10: the entry and one buy 90% under it. TEN the same day: the
- * entry and nine DCAs.
+ * entry and nine DCAs. ONE again that evening: *una sola compra.*
  */
-export const DEFAULT_MAX_STEPS = 10
+export const DEFAULT_MAX_STEPS = 1
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in

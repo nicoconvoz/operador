@@ -28,9 +28,9 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | **every token discovered** that can be sold and priced — no door and almost no gate: liquidity, holders, authorities, tax, LP, impact, impersonation and the denylist refuse nothing (`ignoredGates`); small caps first | `production-doors.ts`, `gates.ts` |
-| **The book** | **$20 a token**, up to ten buys of $2: $5,000 holds 250 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$2 the moment the token enters**, in the pass that opens the slot, then **$2 on every 3% dip and 2% bounce** from the buy before it, the same for every DCA, nine at most | `buyOnSelection`, `stop-sweep.ts` |
+| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
+| **The book** | **$15 a token**, one buy: $5,000 holds 333 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **one $15 buy the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -136,6 +136,21 @@ automática, pero para las demás cae 3%, rebote del 2%.* `DEFAULT_STEP_USD` 2,
 growing steps at zero (`OPERADOR_DIP_STEP_PCT=2`, `OPERADOR_BOUNCE_STEP_PCT=1`
 bring them back). Still no stop; the exits are unchanged. On 29/09 the same
 ladder at $1 made +$16.95 realised against $9.71 of costs in seven hours.
+
+That evening, the configuration that stood at **+$92.59** on 26/09 at 11:52
+(the operator's screenshot; nothing was committed between 24/09 22:28 and
+27/09 02:29, so it was exactly `498aa00`), with his own edits: *actividad 50%
+o más, liquidez que haya crecido en la última hora, liquidez mínima todas,
+antigüedad todas, 4 operaciones por hora, caída en el día no más de 30%,
+concentración todo, el creador 30%, impuesto 5%, que se pueda vender
+obligatorio, autoridad de mint o freeze no permitida — con 15 USD por token,
+una sola compra.* `DEFAULT_COMPONENT_FLOORS` is the 24/09 pair again
+(`OPERADOR_ENTRY_FLOORS=0` removes it), `maxDailyFallPct` 30, `minHourlyTxns`
+4, `maxCreatorPct` 30, and `ignoredGates` no longer lists the creator, the
+tax or the two authorities — so the death watch reads the authorities on what
+is held again. Step $15, one buy. The exits stay as they were: the TP on buy
+pressure, the freeze and death exits, no stop. On 26/09 the exit was the
+strategy's own TP, and almost no position ever bought its second $15.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

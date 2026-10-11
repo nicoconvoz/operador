@@ -204,7 +204,10 @@ export const SOLANA_CANONICAL_SYMBOLS: Readonly<Record<string, string>> = {
 }
 
 export const DEFAULT_GATE_POLICY: GatePolicy = {
-  ignoredGates: ['liquidity', 'topHolders', 'creatorShare', 'mintAuthority', 'freezeAuthority', 'blacklist', 'transferTax', 'lpLocked', 'impact', 'impersonation', 'denylist', 'marketCap', 'proxy'],
+  // The 26/09 door, redrawn by the operator on 2026-10-10: *liquidez mínima
+  // todas, antigüedad todas, concentración todo* — but the creator, the tax,
+  // the authorities and the sell route are asked again.
+  ignoredGates: ['liquidity', 'topHolders', 'blacklist', 'lpLocked', 'impact', 'impersonation', 'denylist', 'marketCap', 'proxy'],
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
   // THE TASTE GATES STEP ASIDE.
@@ -306,12 +309,18 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // todo es bienvenido.* A token down 40% on the day waits, like any other, for
   // a 3% dip and a 2% bounce before a dollar goes in. The measured thirty is
   // kept in `MEASURED_MAX_DAILY_FALL_PCT`, pinned by its tests.
-  maxDailyFallPct: 100,
+  //
+  // THIRTY again on 2026-10-10, with the 26/09 door: *caída en el día, no más
+  // de 30%.*
+  maxDailyFallPct: 30,
   minTurnoverRatio: 0,
   // OFF, with the rest of the door: a quiet hour is not refused. The buy waits
   // for the live price to dip and bounce, which a pool nobody trades never
   // does. STRICT keeps the four.
-  minHourlyTxns: 0,
+  //
+  // FOUR again on 2026-10-10, with the 26/09 door: *operaciones por hora, 4 o
+  // más.*
+  minHourlyTxns: 4,
   maxTransferTaxPct: 5,
   minLpLockedPct: 80,
   // Not asked: see `requireLpLock`. The threshold stays because the death
@@ -347,7 +356,8 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // Ten wallets holding half the supply can end a token in one transaction,
   // and a deep pool does not protect against it — it is what gets drained.
   maxTopHoldersPct: 50,
-  maxCreatorPct: 10,
+  // THIRTY since 2026-10-10: *concentración, el creador 30%.*
+  maxCreatorPct: 30,
   // The CEILING, not the preference. $50M for months, which excluded every
   // established token outright — and measured on ten days of 15m candles, that
   // was wrong about the thing that matters: SOL/USDC hits the classic entry

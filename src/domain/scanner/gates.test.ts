@@ -104,8 +104,8 @@ describe('gates — the shapes of real rugs', () => {
     expect(failedGates(clean({}, { topHoldersPct: 95 }))).toEqual(['topHolders:failed'])
   })
 
-  it('creator still holds a quarter of supply', () => {
-    expect(failedGates(clean({}, { creatorPct: 25 }))).toEqual(['creatorShare:failed'])
+  it('creator still holds a third of supply', () => {
+    expect(failedGates(clean({}, { creatorPct: 35 }))).toEqual(['creatorShare:failed'])
   })
 
   it('upgradeable proxy on BSC', () => {
@@ -709,10 +709,10 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(quiet, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('volume')
   })
 
-  it('lets a token that already collapsed TODAY through — no door', () => {
+  it('refuses a token that already collapsed TODAY — *no más de 30%* (2026-10-10)', () => {
     const collapsed = gentle({ priceChangePct: { h1: 1, h6: -10, h24: -40 } })
-    expect(DEFAULT_GATE_POLICY.maxDailyFallPct).toBe(100)
-    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
+    expect(DEFAULT_GATE_POLICY.maxDailyFallPct).toBe(30)
+    expect(evaluateMarketGates(collapsed, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
     expect(evaluateMarketGates(collapsed, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('freefall')
   })
 
@@ -747,10 +747,10 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(newborn, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
   })
 
-  it('lets a quiet hour through — no door', () => {
+  it('refuses a quiet hour again — *operaciones por hora, 4 o más* (2026-10-10)', () => {
     const still = gentle({ txns: { h1: { buys: 1, sells: 0 }, h24: { buys: 40, sells: 30 } } })
-    expect(DEFAULT_GATE_POLICY.minHourlyTxns).toBe(0)
-    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('idle')
+    expect(DEFAULT_GATE_POLICY.minHourlyTxns).toBe(4)
+    expect(evaluateMarketGates(still, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
     expect(evaluateMarketGates(still, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('idle')
   })
 
@@ -841,10 +841,11 @@ describe('the day-long collapse, measured on the book that paid for it', () => {
   const production = (over: Partial<TokenSnapshot>) =>
     evaluateGates(clean(over), { ...DEFAULT_GATE_POLICY, maxDailyFallPct: MEASURED_MAX_DAILY_FALL_PCT }).failures.map((f) => f.gate)
 
-  it('is OFF in production: PERK at −92.6% is let through — no door', () => {
+  it('is ON in production at the measured thirty: PERK at −92.6% is refused', () => {
     expect(MEASURED_MAX_DAILY_FALL_PCT).toBe(30)
+    expect(DEFAULT_GATE_POLICY.maxDailyFallPct).toBe(MEASURED_MAX_DAILY_FALL_PCT)
     expect(evaluateGates(clean({ priceChangePct: { h1: -21.7, h6: -60, h24: -92.6 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate))
-      .not.toContain('freefall')
+      .toContain('freefall')
   })
 
   it('refuses a token that already collapsed before we arrived — PERK, −92.6%', () => {
@@ -1025,28 +1026,36 @@ describe('pumpDump — a pump turning over, or a fall in the hour', () => {
   })
 })
 
-describe('every token discovered — *no importa nada, quiero todas*', () => {
-  // The operator, 2026-10-09: liquidity, holders, authorities, tax and the rest
-  // step aside. What stays is what the engine needs to trade a token at all: a
-  // route to sell it and one price both sources agree on.
-  it('lets a thin, concentrated, mintable, taxed token through', () => {
-    const wild = clean({ liquidityUsd: 2_000 }, { topHoldersPct: 95, mintAuthorityActive: true, freezeAuthorityActive: true, transferTaxPct: 30, creatorPct: 60, hasBlacklist: true })
-    expect(evaluateGates(wild, DEFAULT_GATE_POLICY).passed).toBe(true)
-    expect(evaluateSafetyGates(wild, DEFAULT_GATE_POLICY).passed).toBe(true)
+describe('the 26/09 door, as the operator redrew it (2026-10-10)', () => {
+  // *Liquidez mínima: todas. Antigüedad: todas. Operaciones por hora: 4 o más.
+  // Caída en el día: no más de 30%. Concentración: todo. El creador: 30%.
+  // Impuesto: 5%. Que se pueda vender, obligatorio. Autoridad de mint o
+  // freeze: no permitida.*
+  const P = DEFAULT_GATE_POLICY
+  const gates = (snapshot: TokenSnapshot) => evaluateGates(snapshot, P).failures.map((f) => f.gate)
+
+  it('lets a thin, young, concentrated token through', () => {
+    expect(gates(clean({ liquidityUsd: 2_000, pairCreatedAt: NOW - HOUR }, { topHoldersPct: 95, hasBlacklist: true }))).toEqual([])
   })
 
-  it('lets unknown holders and authorities through too', () => {
-    expect(evaluateGates(clean({}, { topHoldersPct: null, mintAuthorityActive: null, freezeAuthorityActive: null, transferTaxPct: null, hasBlacklist: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  it('refuses a creator over 30%, a tax over 5%, and an active mint or freeze authority', () => {
+    expect(gates(clean({}, { creatorPct: 31 }))).toEqual(['creatorShare'])
+    expect(gates(clean({}, { creatorPct: 30 }))).toEqual([])
+    expect(gates(clean({}, { transferTaxPct: 6 }))).toEqual(['transferTax'])
+    expect(gates(clean({}, { mintAuthorityActive: true }))).toEqual(['mintAuthority'])
+    expect(gates(clean({}, { freezeAuthorityActive: true }))).toEqual(['freezeAuthority'])
   })
 
-  it('still refuses an EMPTY pool — nothing can be traded against no liquidity', () => {
-    // A pool at $0 crashed the whole cycle at the death watch's first reading.
-    expect(evaluateGates(clean({ liquidityUsd: 0 }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toEqual(['liquidity'])
-    expect(evaluateMarketGates(clean({ liquidityUsd: 0 }), DEFAULT_GATE_POLICY).passed).toBe(false)
+  it('refuses a day down more than 30% and an hour with fewer than four trades', () => {
+    expect(gates(clean({ priceChangePct: { h1: 0, h6: 0, h24: -31 } }))).toEqual(['freefall'])
+    expect(gates(clean({ priceChangePct: { h1: 0, h6: 0, h24: -30 } }))).toEqual([])
+    expect(gates(clean({ txns: { h1: { buys: 2, sells: 1 }, h24: { buys: 900, sells: 850 } } }))).toEqual(['idle'])
   })
 
-  it('still refuses a token with no route to sell it', () => {
-    expect(evaluateGates(clean({}, { honeypot: true }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toEqual(['honeypot'])
+  it('still refuses an EMPTY pool and a token with no route to sell it', () => {
+    expect(gates(clean({ liquidityUsd: 0 }))).toEqual(['liquidity'])
+    expect(evaluateMarketGates(clean({ liquidityUsd: 0 }), P).passed).toBe(false)
+    expect(gates(clean({}, { honeypot: true }))).toEqual(['honeypot'])
   })
 
   it('keeps every gate under STRICT, so their logic stays tested', () => {

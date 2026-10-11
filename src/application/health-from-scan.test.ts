@@ -153,11 +153,20 @@ describe('the death watch does not judge what the door chose to ignore', () => {
   // active has not had it reinstated.
   it('reports no authority and no LP reading for gates the policy ignores', () => {
     const minted = snapshot({}, { mintAuthorityActive: true, freezeAuthorityActive: true })
-    const health = healthFromSnapshot(minted, PRODUCTION_GATE_POLICY, undefined)
+    const blind = { ...PRODUCTION_GATE_POLICY, ignoredGates: ['mintAuthority', 'freezeAuthority', 'lpLocked'] as const }
+    const health = healthFromSnapshot(minted, blind, undefined)
     expect(health.mintAuthorityActive).toBeNull()
     expect(health.freezeAuthorityActive).toBeNull()
     expect(health.lpStatus).toBe('unknown')
     expect(health.safetyFailed).toEqual([])
+  })
+
+  it('reads the authorities in production again — the 26/09 door asks them (2026-10-10) — and still not the LP', () => {
+    const minted = snapshot({}, { mintAuthorityActive: true, freezeAuthorityActive: true })
+    const health = healthFromSnapshot(minted, PRODUCTION_GATE_POLICY, undefined)
+    expect(health.mintAuthorityActive).toBe(true)
+    expect(health.freezeAuthorityActive).toBe(true)
+    expect(health.lpStatus).toBe('unknown')
   })
 
   it('still reads them when the policy asks', () => {
