@@ -1,8 +1,8 @@
 /**
  * Writes one file onto a branch of its own, replacing it whole every time.
  *
- * The engine publishes the view the dashboard reads (`view-snapshot.ts`) this
- * way, so Vercel reads GitHub instead of Postgres. Four calls to the git data
+ * The engine keeps its state this way (`state-sync.ts`), so neither it nor the
+ * screen needs a database. Four calls to the git data
  * API: the blob, a tree holding only that file, a commit with NO parent, and
  * the branch force-moved onto it. The branch therefore never grows a history —
  * a snapshot every two minutes for a month would otherwise be twenty thousand
@@ -60,10 +60,28 @@ export class GitHubPublisher {
     throw new Error(`GitHub ${moved.status} moving ${this.options.branch}: ${(await moved.text()).slice(0, 200)}`)
   }
 
-  private request(method: string, path: string, body: unknown): Promise<FetchResponse> {
+  /**
+   * One file as the branch holds it NOW, through the API — never the raw CDN,
+   * which may serve a copy minutes old. Null when the branch or the file does
+   * not exist yet.
+   */
+  async read(path: string): Promise<string | null> {
+    const ref = await this.request('GET', `/git/ref/heads/${this.options.branch}`)
+    if (ref.status === 404) return null
+    if (!ref.ok) throw new Error(`GitHub ${ref.status} reading ${this.options.branch}: ${(await ref.text()).slice(0, 200)}`)
+    const commitSha = ((await ref.json()) as { object: { sha: string } }).object.sha
+    const commit = await this.call<{ tree: { sha: string } }>('GET', `/git/commits/${commitSha}`)
+    const tree = await this.call<{ tree: { path: string; sha: string; type: string }[] }>('GET', `/git/trees/${commit.tree.sha}`)
+    const entry = tree.tree.find((e) => e.path === path && e.type === 'blob')
+    if (!entry) return null
+    const blob = await this.call<{ content: string; encoding: string }>('GET', `/git/blobs/${entry.sha}`)
+    return Buffer.from(blob.content, blob.encoding === 'base64' ? 'base64' : 'utf8').toString('utf8')
+  }
+
+  private request(method: string, path: string, body?: unknown): Promise<FetchResponse> {
     return this.fetch(`${this.base}${path}`, {
       method,
-      body: JSON.stringify(body),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       headers: {
         authorization: `Bearer ${this.options.token}`,
         accept: 'application/vnd.github+json',
@@ -73,7 +91,7 @@ export class GitHubPublisher {
     })
   }
 
-  private async call<T>(method: string, path: string, body: unknown): Promise<T> {
+  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
     const response = await this.request(method, path, body)
     if (!response.ok) throw new Error(`GitHub ${response.status} on ${path}: ${(await response.text()).slice(0, 200)}`)
     return (await response.json()) as T

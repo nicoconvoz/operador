@@ -61,9 +61,9 @@ jobs:
     # Ten minutes under GitHub's 6-hour ceiling, so the loop's own budget is
     # what ends the run and the cancel is never what ends a cycle mid-write.
     timeout-minutes: 350
-    # The engine publishes the view the dashboard reads onto the `view`
-    # branch (see main.ts, VIEW_BRANCH), so Vercel reads GitHub and not the
-    # database. It needs to write that one branch.
+    # The engine keeps its state on the `state` branch and reads the phone's
+    # orders off `control` (see main.ts, STATE_BRANCH). It needs to write the
+    # state branch.
     permissions:
       contents: write
 
@@ -83,9 +83,11 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPERADOR_CONTROL_TOKEN: ${{ secrets.OPERADOR_CONTROL_TOKEN }}
-          # *Que Vercel sólo sea un visor de lo que hace GitHub.*
+          # *Hacelo sin Supabase, todo desde GitHub.* The state lives in state.json
+          # on the `state` branch; DATABASE_URL above is only read once, to move the
+          # book over the first time, and can be removed after that.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPERADOR_VIEW_REPO: ${{ github.repository }}
+          OPERADOR_STATE_REPO: ${{ github.repository }}
           OPERADOR_MODE: paper
           # SOLANA ONLY, and it is a measurement rather than a preference.
           # One run, both chains, same commit:

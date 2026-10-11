@@ -6,25 +6,24 @@
  */
 import { main } from './main.js'
 
-const databaseUrl = process.env.DATABASE_URL
-if (!databaseUrl) {
-  console.error('[fatal] DATABASE_URL is required')
-  process.exit(1)
-}
+// Optional since the state moved to GitHub: only the legacy store and the
+// one-time move off the database use it.
+const databaseUrl = process.env.DATABASE_URL?.trim()
 
 // Imported dynamically so the whole codebase stays installable and testable
 // without a Postgres driver present.
-const { default: pg } = await import('pg')
-const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 })
+const pool = databaseUrl ? new (await import('pg')).default.Pool({ connectionString: databaseUrl, max: 4 }) : null
 
 // pg types its rows as QueryResultRow; the store knows the shape it asked for,
 // so the cast belongs here, at the boundary, rather than leaking into the port.
-const sql = {
-  query: async <T>(text: string, params?: readonly unknown[]) => {
-    const result = await pool.query(text, params as unknown[])
-    return { rows: result.rows as T[] }
-  },
-}
+const sql = pool
+  ? {
+      query: async <T>(text: string, params?: readonly unknown[]) => {
+        const result = await pool.query(text, params as unknown[])
+        return { rows: result.rows as T[] }
+      },
+    }
+  : undefined
 
 // JSON-RPC needs the parsed body, not just the status.
 const postJson = async (url: string, body: unknown) => {
@@ -37,10 +36,10 @@ const postJson = async (url: string, body: unknown) => {
 }
 
 try {
-  await main({ sql, postJson })
+  await main(sql ? { sql, postJson } : { postJson })
 } catch (error) {
   console.error('[fatal]', error)
   process.exitCode = 1
 } finally {
-  await pool.end()
+  await pool?.end()
 }

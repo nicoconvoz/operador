@@ -5,6 +5,7 @@ import { Universe } from './universe.js'
 import { Operations } from './operations.js'
 import { Registry, REGISTRY_ROWS } from './registry.js'
 import { DailyLog } from './log.js'
+import { ResetButton } from './reset-button.js'
 import { matchesToken, normaliseTokenQuery, searchTape } from '../../src/application/token-search.js'
 import type { DashboardView } from '../../src/application/dashboard.js'
 import type { UniverseView } from '../../src/application/universe-view.js'
@@ -241,8 +242,11 @@ export function Console({ initial, live = true }: { initial: ConsoleData; live?:
     <>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
         <h1 style={{ fontSize: 17, margin: 0 }}>Operador by Open Doors</h1>
-        <span style={{ color: dashboard.killSwitchEngaged ? '#ff6b6b' : '#63e6a5' }}>
-          {dashboard.killSwitchEngaged ? '🛑 DETENIDO' : '▶️ Funcionando'}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <ResetButton />
+          <span style={{ color: dashboard.killSwitchEngaged ? '#ff6b6b' : '#63e6a5' }}>
+            {dashboard.killSwitchEngaged ? '🛑 DETENIDO' : '▶️ Funcionando'}
+          </span>
         </span>
       </header>
 

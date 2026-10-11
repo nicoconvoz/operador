@@ -66,7 +66,8 @@ export interface RuntimeConfig {
    */
   readonly chains: readonly Chain[]
 
-  readonly databaseUrl: string
+  /** Postgres, only for the legacy store and the one-time move off it. Null: none. */
+  readonly databaseUrl: string | null
 
   readonly totalCapitalUsd: number
   readonly maxPositions: number
@@ -566,7 +567,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
   const config: RuntimeConfig = {
     mode,
     chains: chains as readonly Chain[],
-    databaseUrl: required(env, 'DATABASE_URL'),
+    databaseUrl: env.DATABASE_URL?.trim() || null,
     totalCapitalUsd: number(env, 'OPERADOR_CAPITAL_USD', 1_000),
     // ZERO means no ceiling: the capital decides, at one ladder's worth each.
     // That is the honest default once every slot is the same size — what bounds
@@ -862,7 +863,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
 export const describeConfig = (config: RuntimeConfig): Record<string, unknown> => ({
   mode: config.mode,
   chains: config.chains.join(','),
-  database: config.databaseUrl.replace(/:\/\/[^@]*@/, '://***@'),
+  database: config.databaseUrl?.replace(/:\/\/[^@]*@/, '://***@') ?? null,
   capitalUsd: config.totalCapitalUsd,
   maxPositions: config.maxPositions,
   gasUsdPerSwap: config.gasUsdPerSwap,

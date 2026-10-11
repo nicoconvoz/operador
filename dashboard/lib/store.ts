@@ -1,204 +1,58 @@
-import { Pool } from 'pg'
-import { PostgresStore } from '../../src/infrastructure/persistence/postgres-store.js'
-import { cacheFor, type CachedRead } from '../../src/application/read-cache.js'
-import { LOG_READ_DAYS } from '../../src/application/daily-log.js'
-import { incrementalTape } from '../../src/application/incremental-tape.js'
-import { remoteViewReads, type ViewSnapshot } from '../../src/application/view-snapshot.js'
+import { remoteStore } from '../../src/application/state-sync.js'
+import type { StatePort } from '../../src/domain/persistence/store.js'
+import type { StoreState } from '../../src/infrastructure/persistence/memory-store.js'
 
 /**
- * One pool for the whole app. Next.js reuses the module across requests, and
- * a pool created per request is how a free-tier database runs out of
- * connections at the worst possible moment.
+ * The state the screen reads: the engine's own file on GitHub.
+ *
+ * *Hacelo sin Supabase, todo desde GitHub* (2026-10-11). The dashboard alone
+ * had spent Supabase's whole monthly egress re-reading the book, the tape and
+ * the scan. The engine keeps all of it in memory and writes it every minute to
+ * `state.json` on the `state` branch; this reads that file — at most twice a
+ * minute per instance, shared by every viewer — and answers every read from it,
+ * the phone's alerts included. There is no database here at all.
+ *
+ * GitHub's raw files are cached up to five minutes on its side; the stamp in
+ * the URL asks it not to reuse one. Before the engine has written anything the
+ * screen shows an empty book rather than an error.
+ *
+ * Read-only. The kill switch and the reset are orders the phone writes to a
+ * second file (see `api/control`), which the engine applies.
  */
-let pool: Pool | null = null
-let remote: ReturnType<typeof remoteViewReads> | null = null
-let cached: {
-  scans: () => Promise<Awaited<ReturnType<PostgresStore['latestScansByChain']>>>
-  scan: () => Promise<Awaited<ReturnType<PostgresStore['latestScan']>>>
-  blacklist: () => Promise<Awaited<ReturnType<PostgresStore['blacklisted']>>>
-  positions: () => Promise<Awaited<ReturnType<PostgresStore['loadPositions']>>>
-  fills: CachedRead<Awaited<ReturnType<PostgresStore['allFills']>>>
-  checkpoint: () => Promise<Awaited<ReturnType<PostgresStore['loadCheckpoint']>>>
-  days: () => Promise<Awaited<ReturnType<PostgresStore['dailyPnl']>>>
-} | null = null
+export const STATE_REPO = process.env.OPERADOR_STATE_REPO?.trim() || 'nicoconvoz/operador'
+const STATE_URL = process.env.OPERADOR_STATE_URL?.trim() || `https://raw.githubusercontent.com/${STATE_REPO}/state/state.json`
+const READ_MS = 30_000
 
-/**
- * The SEVEN reads the dashboard makes, served from memory while their subject
- * cannot have changed.
- *
- * The page polls every ten seconds because that is how often the profit can
- * move — and the profit moves because of the PRICE feed, which is DexScreener
- * and not this database. Everything being re-read from Postgres in between
- * changes far more slowly: a scan lands once an hour, a position when the
- * engine ticks, and the blacklist almost never.
- *
- * Measured on the live project: each poll pulled the whole universe back as
- * JSONB — the response was 490 KB — 8,640 times a day. About **3.5 GB daily
- * against Neon's 5 GB MONTHLY transfer allowance**, so the free tier was gone
- * in thirty-four hours and took the engine's writes with it. An unattended
- * system whose store stops answering does not degrade, it stops.
- *
- * The windows are set by how fast each answer can actually change, not by
- * taste:
- *
- * | Read | Window | Because |
- * |---|---|---|
- * | `latestScansByChain`, `latestScan`, `blacklisted` | 15 min | a scan happens once an HOUR; this still refreshes four times inside one |
- * | `loadPositions`, `allFills`, `loadCheckpoint`, `dailyPnl` | 2 min | the engine ticks every FIVE minutes |
- *
- * Both are finer than what they watch, and the arithmetic is what set them
- * rather than comfort: at 5 min and 60 s the bill came to 7.3 GB a month, which
- * is still over a 5 GB allowance. **A fix that lands just past the limit is not
- * a fix**, so the windows went to where the number has room to be wrong.
- *
- * **The screen does not get slower.** The figure is `qty × livePrice`: the
- * quantity comes from here and barely moves, the price comes from the feed
- * every ten seconds, so the number goes on ticking exactly as before.
- */
-/**
- * Fifteen minutes, and it became TWO.
- *
- * The long window was sized against a scan payload of ~490 KB, when `scans`
- * held the whole universe as JSONB. `worthStoring` cut that to what the engine
- * may act on — about 1% of it — and the whole view response measures 16.7 KB
- * today. The number it was protecting no longer exists.
- *
- * What the long window COST is what the operator reported: *difieren siempre
- * que lo abrís.* `cacheFor` is a module-level cache and Vercel runs many
- * serverless instances, so there is no single module and no shared answer.
- * With a 15-minute window against a 30-minute scan, two instances could hold
- * DIFFERENT scans for half of every cycle — and the ten-second poll round
- * robins between them. Measured: ten calls to the same URL seconds apart, nine
- * returning three unscored tokens and one returning four scored ones.
- *
- * Two minutes narrows that to a fifteenth of the cycle. It does NOT close it,
- * and nothing in this process can: an in-process cache cannot be shared across
- * instances that do not share a process. Closing it properly means caching
- * outside the lambda, which is a bill and a dependency for a screen that now
- * disagrees with itself for two minutes an hour.
- *
- * Affordable, measured rather than assumed: at 16.7 KB a response and one read
- * per two minutes, a polling viewer costs about 0.36 GB a month against Neon's
- * 5 GB — and the reads are shared by every viewer on that instance.
- */
-const CACHE_SCAN_MS = 120_000
-const CACHE_STATE_MS = 120_000
-
-/**
- * Where the engine publishes the view this screen reads — *que Vercel sólo sea
- * un visor de lo que hace GitHub* (2026-10-11). The dashboard alone had spent
- * 5.1 of Supabase's 5 GB of monthly egress re-reading the book, the tape and
- * the scan; the engine already holds all of it and writes it to the `view`
- * branch every two minutes (`VIEW_BRANCH` in the runtime). GitHub's raw files
- * are cached up to five minutes on its side, which the minute stamp in the URL
- * asks it not to reuse. `OPERADOR_VIEW_SOURCE=db` reads the database again.
- */
-const VIEW_URL = process.env.OPERADOR_VIEW_URL?.trim() || 'https://raw.githubusercontent.com/nicoconvoz/operador/view/view.json'
-const VIEW_READ_MS = 60_000
-const loadView = async (): Promise<ViewSnapshot> => {
-  const response = await fetch(`${VIEW_URL}?t=${Math.floor(Date.now() / VIEW_READ_MS)}`, { cache: 'no-store' })
-  if (!response.ok) throw new Error(`view ${response.status}`)
-  return (await response.json()) as ViewSnapshot
+const loadState = async (): Promise<StoreState> => {
+  const response = await fetch(`${STATE_URL}?t=${Math.floor(Date.now() / READ_MS)}`, { cache: 'no-store' })
+  if (!response.ok) throw new Error(`state ${response.status}`)
+  return (await response.json()) as StoreState
 }
 
-/**
- * When the fills behind the money figures were actually read.
- *
- * Null before the first read, and per INSTANCE — which is the whole reason it
- * exists. `cacheFor` is a module cache and Vercel runs many instances, so two
- * polls seconds apart land on different ones holding answers up to the TTL
- * apart. Nothing inside this process can close that: a cache in memory is not
- * shared by processes that do not share memory.
- *
- * So the figure says how old it is instead. The operator hit this twice and
- * paid for it both times — once reading a cumulative profit as money
- * vanishing, once as two totals that would not agree — and nothing was wrong
- * either time. Stale and labelled beats absent, and beats stale and silent by
- * a great deal more.
- */
-export let lastFillsReadAt: () => number | null = () => null
+let reader: ReturnType<typeof remoteStore> | null = null
 
-export function openStore(): PostgresStore {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set')
-  pool ??= new Pool({ connectionString: process.env.DATABASE_URL, max: 2 })
-  const store = new PostgresStore({
-    query: async <T>(text: string, params?: readonly unknown[]) => {
-      const result = await pool!.query(text, params as unknown[])
-      return { rows: result.rows as T[] }
+/**
+ * When the engine wrote what is on the screen, so it can say how old its
+ * figures are. Null before anything was read.
+ */
+export const lastFillsReadAt = (): number | null => reader?.writtenAt() ?? null
+
+/** The engine's state as a store: every read answered from the published file. */
+export function openStore(): StatePort {
+  reader ??= remoteStore({ load: loadState, everyMs: READ_MS, now: () => Date.now() })
+  const current = reader.current
+  return new Proxy({} as StatePort, {
+    // Not a promise: `then` is absent, so awaiting the store yields the store.
+    get: (_, name) => name === 'then' ? undefined : async (...args: unknown[]) => {
+      const store = (await current()) as unknown as Record<string | symbol, (...a: unknown[]) => unknown>
+      return store[name]!(...args)
     },
   })
-
-  // Wrapped once per module, not per request, so every viewer of every tab
-  // shares the same answer. Cached per METHOD rather than around `buildView`,
-  // because the four builders ask for overlapping things and a cache around
-  // the whole view would still pay for `loadPositions` three times.
-  //
-  // Only the reads. Nothing that WRITES is touched, and the engine does not use
-  // this module at all — it opens its own store, uncached, because a trading
-  // decision on a minute-old position is not a saving, it is a bug.
-  cached ??= {
-    scans: cacheFor(() => store.latestScansByChain(), CACHE_SCAN_MS),
-    scan: cacheFor(() => store.latestScan(), CACHE_SCAN_MS),
-    blacklist: cacheFor(() => store.blacklisted(), CACHE_SCAN_MS),
-    positions: cacheFor(() => store.loadPositions(), CACHE_STATE_MS),
-    // The whole tape once, then the last two hours and a count — see
-    // `incrementalTape`. The tape grows all day; re-reading it whole every two
-    // minutes was the one read here that grew with it.
-    fills: cacheFor(incrementalTape(store), CACHE_STATE_MS),
-    checkpoint: cacheFor(() => store.loadCheckpoint(), CACHE_STATE_MS),
-    // The day log: ninety-one rows of eight numbers, a few kilobytes, written
-    // once a cycle — on the engine's clock, like the positions.
-    days: cacheFor(() => store.dailyPnl(LOG_READ_DAYS), CACHE_STATE_MS),
-  }
-  const memo = cached
-  // Exported so the view can say how old the money figures are. It is the
-  // FILLS that matter: everything on the screen with a dollar sign is built by
-  // walking them, and they are the only cached read whose staleness looks like
-  // money moving rather than like a list being short.
-  lastFillsReadAt = memo.fills.readAt
-
-  const database = {
-    latestScansByChain: memo.scans,
-    latestScan: memo.scan,
-    blacklisted: memo.blacklist,
-    loadPositions: memo.positions,
-    allFills: memo.fills,
-    loadCheckpoint: memo.checkpoint,
-    dailyPnl: (limit: number) => (limit === LOG_READ_DAYS ? memo.days() : store.dailyPnl(limit)),
-  }
-  // The published view first; the database only while it cannot be read.
-  if (process.env.OPERADOR_VIEW_SOURCE?.trim().toLowerCase() !== 'db') {
-    remote ??= remoteViewReads({ load: loadView, fallback: database, everyMs: VIEW_READ_MS, now: () => Date.now() })
-    const view = remote
-    lastFillsReadAt = () => view.writtenAt() ?? memo.fills.readAt()
-    return Object.assign(Object.create(Object.getPrototypeOf(store) as object), store, {
-      latestScansByChain: view.latestScansByChain,
-      latestScan: view.latestScan,
-      blacklisted: view.blacklisted,
-      loadPositions: view.loadPositions,
-      allFills: view.allFills,
-      loadCheckpoint: view.loadCheckpoint,
-      dailyPnl: view.dailyPnl,
-    }) as PostgresStore
-  }
-
-  return Object.assign(Object.create(Object.getPrototypeOf(store) as object), store, {
-    latestScansByChain: memo.scans,
-    latestScan: memo.scan,
-    blacklisted: memo.blacklist,
-    loadPositions: memo.positions,
-    allFills: memo.fills,
-    loadCheckpoint: memo.checkpoint,
-    // Cached for the ONE read the Log makes. Any other limit goes to the
-    // database: answering it from a cache of a different size would hand back
-    // the wrong number of days without a word.
-    dailyPnl: (limit: number) => (limit === LOG_READ_DAYS ? memo.days() : store.dailyPnl(limit)),
-  }) as PostgresStore
 }
 
 /**
- * The message, never the stack: a stack from a database client carries
- * connection details, and these endpoints are one paste away from public.
+ * The message, never the stack: a stack from a client carries connection
+ * details, and these endpoints are one paste away from public.
  */
 export const failed = (error: unknown, status = 500): Response =>
   Response.json({ error: String(error).slice(0, 200) }, { status })

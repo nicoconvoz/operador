@@ -11,7 +11,7 @@ import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
 import { admittedUsd } from '../domain/risk/token-tier.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { fundRungsFromFreeCapital, fundStepFromFreeCapital } from '../application/free-capital.js'
-import { type PersistedPosition } from '../domain/persistence/store.js'
+import { type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 import { type Chain, type TokenSnapshot } from '../domain/scanner/snapshot.js'
 import { type Candidate } from '../domain/scanner/ranking.js'
 
@@ -46,7 +46,8 @@ import { recallCandidates } from '../application/recall.js'
 import { healthForCycle, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
-import { takeViewSnapshot, viewPublisher } from '../application/view-snapshot.js'
+import { applyControl, importState, periodicPublisher, type ControlOrder } from '../application/state-sync.js'
+import { MemoryStore } from '../infrastructure/persistence/memory-store.js'
 import { GitHubPublisher } from '../infrastructure/adapters/github/github-publisher.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { readOnlyRegistry } from '../application/read-only-registry.js'
@@ -70,7 +71,10 @@ export interface Runtime {
 }
 
 export interface RuntimePorts {
-  readonly sql: SqlClient
+  /** Postgres — only for the legacy store and the one-time move off it. */
+  readonly sql?: SqlClient
+  /** The state the engine works on, when it does not live in Postgres. */
+  readonly store?: StatePort
   /** POST returning a parsed body, for JSON-RPC. */
   readonly postJson: (url: string, body: unknown) => Promise<{ status: number; json: () => Promise<unknown> }>
 }
@@ -107,7 +111,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
   // steps they re-read the whole tape about three times a pass and each held
   // position's fills every thirty seconds: gigabytes a day against a 5 GB
   // monthly allowance. The dashboard is read-only and keeps its own cache.
-  const store = cachedTape(new PostgresStore(ports.sql))
+  const store = ports.store ?? cachedTape(new PostgresStore(ports.sql!))
   // Alerts go into the store, not down a wire.
   //
   // Telegram was a pipe: the engine pushed, and whatever was not delivered was
@@ -1322,16 +1326,22 @@ export const schemaSql = (): string =>
  */
 const POOL_CANDLES = 60
 
-/** Where the engine publishes the view the dashboard reads, and how often. */
-export const VIEW_BRANCH = 'view'
-export const VIEW_FILE = 'view.json'
-const VIEW_EVERY_MS = 120_000
 /**
- * Vercel deploys every branch pushed, and this one moves every two minutes.
- * Each publish carries its own `vercel.json` saying not to, at the root and
- * at the dashboard's directory, so the setting travels with the commit.
+ * Where the state lives — *hacelo sin Supabase, todo desde GitHub* — and how
+ * often it is written. The kill switch is a second file on a second branch:
+ * the phone writes it, the engine only reads it.
  */
-const VIEW_NO_DEPLOY = {
+export const STATE_BRANCH = 'state'
+export const STATE_FILE = 'state.json'
+export const CONTROL_BRANCH = 'control'
+export const CONTROL_FILE = 'control.json'
+const STATE_EVERY_MS = 60_000
+/**
+ * Vercel deploys every branch pushed, and the state moves every minute. Each
+ * publish carries its own `vercel.json` saying not to, at the root and at the
+ * dashboard's directory, so the setting travels with the commit.
+ */
+const NO_DEPLOY = {
   'vercel.json': '{ "git": { "deploymentEnabled": false } }\n',
   'dashboard/vercel.json': '{ "git": { "deploymentEnabled": false } }\n',
 }
@@ -1343,30 +1353,61 @@ export async function main(ports: RuntimePorts): Promise<void> {
   const config = loadConfig()
   console.log('[boot]', JSON.stringify(describeConfig(config)))
 
-  const store = new PostgresStore(ports.sql)
-  await store.migrate(schemaSql())
-  // *Sólo guardemos los datos que nos sirvan.* Alerts older than three days are
-  // let go at every start: the phone reads forward from a cursor and never
-  // needs them, and the table only ever grew. Never fatal.
-  await store.pruneAlerts(Date.now() - ALERT_RETENTION_MS).catch((error) => console.error('[alerts:prune]', error))
-
-  const { deps, cycleConfig, throttle } = buildRuntime(config, ports)
-
-  // *Que esto lo maneje GitHub y que Vercel sólo sea un visor* (2026-10-11).
-  // The view the dashboard reads, published onto its own branch from the
-  // engine's memory every two minutes, so the screen never asks Postgres.
-  // Only when the workflow hands a token over; never fatal.
-  const viewRepo = process.env.OPERADOR_VIEW_REPO?.trim()
+  // *Hacelo sin Supabase, todo desde GitHub* (2026-10-11). The state is a
+  // file on the `state` branch: read at start through the API, worked on in
+  // memory, written every minute and at the end of the run. The first run
+  // without it moves the book over from Postgres once, if a database is still
+  // configured; after that the database is never asked anything.
+  const repo = process.env.OPERADOR_STATE_REPO?.trim()
   const githubToken = process.env.GITHUB_TOKEN?.trim()
-  const view = viewRepo && githubToken
-    ? viewPublisher({
-        take: () => takeViewSnapshot(deps.store, Date.now()),
-        publish: (content) => new GitHubPublisher({ repo: viewRepo, branch: VIEW_BRANCH, token: githubToken }).publish({ [VIEW_FILE]: content, ...VIEW_NO_DEPLOY }, `view ${new Date().toISOString()}`),
-        everyMs: VIEW_EVERY_MS,
-        now: () => Date.now(),
-        onError: (error) => console.warn('[view]', String(error).slice(0, 200)),
-      })
-    : null
+  let stateStore: MemoryStore | null = null
+  let state: ReturnType<typeof periodicPublisher> | null = null
+  let control: GitHubPublisher | null = null
+  if (repo && githubToken) {
+    const github = new GitHubPublisher({ repo, branch: STATE_BRANCH, token: githubToken })
+    const saved = await github.read(STATE_FILE)
+    if (saved !== null) {
+      stateStore = MemoryStore.fromState(JSON.parse(saved))
+      console.log('[state]', 'loaded from GitHub', JSON.stringify({ bytes: saved.length }))
+    } else if (ports.sql) {
+      stateStore = await importState(new PostgresStore(ports.sql))
+      console.log('[state]', 'moved over from the database, once')
+    } else {
+      stateStore = new MemoryStore()
+      console.log('[state]', 'starting empty')
+    }
+    const held = stateStore
+    state = periodicPublisher({
+      take: async () => JSON.stringify(held.exportState(Date.now(), ALERT_RETENTION_MS)),
+      publish: (content) => github.publish({ [STATE_FILE]: content, ...NO_DEPLOY }, `state ${new Date().toISOString()}`),
+      everyMs: STATE_EVERY_MS,
+      now: () => Date.now(),
+      onError: (error) => console.warn('[state]', String(error).slice(0, 200)),
+    })
+    control = new GitHubPublisher({ repo, branch: CONTROL_BRANCH, token: githubToken })
+  } else {
+    if (!ports.sql) throw new Error('No state: set OPERADOR_STATE_REPO and GITHUB_TOKEN, or DATABASE_URL')
+    const legacy = new PostgresStore(ports.sql)
+    await legacy.migrate(schemaSql())
+    // *Sólo guardemos los datos que nos sirvan.* Alerts older than three days
+    // are let go at every start. Never fatal.
+    await legacy.pruneAlerts(Date.now() - ALERT_RETENTION_MS).catch((error) => console.error('[alerts:prune]', error))
+  }
+
+  const { deps, cycleConfig, throttle } = buildRuntime(config, stateStore ? { ...ports, store: stateStore } : ports)
+
+  // The phone's kill switch: an order in a file the engine reads after every
+  // pass and applies onto its own checkpoint, once. Never fatal.
+  const readControl = async (): Promise<void> => {
+    if (!control || !stateStore) return
+    try {
+      const raw = await control.read(CONTROL_FILE)
+      await applyControl(stateStore, raw === null ? null : (JSON.parse(raw) as ControlOrder))
+    } catch (error) {
+      console.warn('[control]', String(error).slice(0, 200))
+    }
+  }
+  await readControl()
 
   const stopSignal = shutdownSignal()
 
@@ -1384,7 +1425,7 @@ export async function main(ports: RuntimePorts): Promise<void> {
     // four minutes of empty log, which reads as a hung process rather than an
     // engine quietly advancing bars.
     onPass: (result, elapsedMs) => {
-      void view?.maybePublish()
+      void readControl().then(() => state?.maybePublish())
       const bars = result.ticks.reduce((most, tick) => Math.max(most, tick.barsAdvanced), 0)
       console.log(
         `[${result.kind}]`,
@@ -1401,5 +1442,7 @@ export async function main(ports: RuntimePorts): Promise<void> {
     },
   })
 
+  // The last minute of the run, written before the process goes.
+  await state?.flush()
   console.log('[exit]', JSON.stringify(report.stoppedBy), report.cycles, 'cycles')
 }

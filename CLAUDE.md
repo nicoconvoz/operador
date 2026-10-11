@@ -183,21 +183,26 @@ fresh Jupiter market and a patient sell quote each — so a full book opened a
 few at a time over minutes. `runCycle` now asks them `ENTRY_CONCURRENCY` (8)
 at a time and reads the answers in the plan's own order.
 
-*Que esto lo maneje GitHub y que Vercel sólo sea un visor de lo que hace
-GitHub.* Supabase's egress stood at 5.14 of 5 GB with a week of the cycle
-left, and the dashboard was the one spending it: a ten-second poll re-reading
-the book, the tape and the scan every two minutes on every Vercel instance.
-The engine now writes the view itself — `takeViewSnapshot`, from the store it
-already holds in memory — and publishes it every two minutes as `view.json`
-on the `view` branch (`GitHubPublisher`: one parentless commit force-moved
-each time, so the branch never grows a history; each commit also carries a
-`vercel.json` that turns its deploys off). The workflow grants `contents:
-write` and passes `GITHUB_TOKEN` and `OPERADOR_VIEW_REPO`. The dashboard
-answers its seven reads from that file (`remoteViewReads`, fetched at most
-once a minute), keeps the last good copy when GitHub does not answer, and
-goes to Postgres only while it has none. `OPERADOR_VIEW_SOURCE=db` reads the
-database again. The kill switch and the phone's alerts still use Postgres —
-they are tiny.
+*Que esto lo maneje GitHub y que Vercel sólo sea un visor* — and then *hacelo
+sin Supabase, todo desde GitHub* (2026-10-11). Supabase's egress stood at
+5.14 of 5 GB with a week of the cycle left, the dashboard the one spending it.
+**There is no database now.** The engine already worked from memory; its
+state is `state.json` on the `state` branch (`MemoryStore.exportState` /
+`fromState`, only what is used — the registry stays out, alerts three days).
+It reads it at start through the API, writes it every minute when it changed
+and at the end of a run (`periodicPublisher`, `GitHubPublisher`: one
+parentless commit force-moved each time, so the branch grows no history, each
+commit carrying a `vercel.json` that turns its deploys off). A run killed
+without warning loses at most the last minute; a cancel flushes. The first run
+without the file moves the book over from Postgres once (`importState`) if
+`DATABASE_URL` is still set; after that it can go. The dashboard reads the same
+file for everything, the phone's alerts included (`remoteStore`, twice a
+minute at most). The phone's orders — stop, start, and *un botón que borre y
+empiece de cero, con confirmación* — are `control.json` on the `control`
+branch, written by `/api/control` (control token, and `BORRAR` typed for a
+reset; it needs `GITHUB_TOKEN` in Vercel) and applied once by the engine after
+every pass (`applyControl`, the stamp kept in the state so a restart never
+wipes twice). The repository is public, so the state is too.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

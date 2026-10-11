@@ -393,3 +393,62 @@ describe('MemoryStore — the registry, read in pages', () => {
     expect(await store.knownTokens(Number.POSITIVE_INFINITY, 10)).toHaveLength(2)
   })
 })
+
+describe('MemoryStore — its whole state as JSON, for a store that lives in a file on GitHub', () => {
+  // *Hacelo sin Supabase, todo desde GitHub* (2026-10-11). The engine keeps
+  // its state in memory and writes it out; the next run reads it back.
+  const DAY = 86_400_000
+  const seeded = async () => {
+    const store = new MemoryStore()
+    await store.savePosition({
+      id: 'solana:T:1', chain: 'solana', tokenAddress: 'T', pairAddress: 'P', symbol: 'T',
+      cascade: initialState(), deathWatch: startDeathWatch(100_000, 0),
+      quality: { liquidityUsd: 100_000, spreadPct: 0.3, slippagePct: 0.1, referenceUsd: 100, observedAt: 0 },
+      capitalUsd: 15, lastBarTime: 0, lastPriceUsd: 1, pendingOrders: [], openedAt: 0, updatedAt: 0,
+    })
+    await store.recordFill({ idempotencyKey: 'k1', positionId: 'solana:T:1', orderId: 'Entry', side: 'buy', time: 10, price: 1, qty: 15, costUsd: 0.1, comment: '🟢 Entry' })
+    await store.saveScan({ scannedAt: 20, chain: 'solana', snapshots: [] })
+    await store.saveCheckpoint({ savedAt: 30, lastCompletedBar: 0, killSwitchEngaged: true })
+    await store.blacklist('solana', 'DEAD', 'death', 40)
+    await store.recordDailyPnl({ day: '2026-10-11', at: 50, realisedUsd: 1, costsUsd: 0.1, unrealisedUsd: 0, deployedUsd: 15, openPositions: 1 } as never)
+    await store.recordQuietPool('bsc', 'POOL', 60)
+    await store.rememberTokens([{ contract: 'R', pool: null, volume24h: 1 } as never])
+    return store
+  }
+
+  it('comes back from JSON exactly as it was, reads and writes alike', async () => {
+    const store = await seeded()
+    const back = MemoryStore.fromState(JSON.parse(JSON.stringify(store.exportState(100))))
+    expect(await back.loadPositions()).toEqual(await store.loadPositions())
+    expect(await back.allFills()).toEqual(await store.allFills())
+    expect(await back.hasFill('k1')).toBe(true)
+    expect(await back.latestScansByChain()).toEqual(await store.latestScansByChain())
+    expect(await back.loadCheckpoint()).toEqual(await store.loadCheckpoint())
+    expect([...(await back.blacklisted())]).toEqual(['solana:DEAD'])
+    expect(back.blacklistReason('solana', 'DEAD')).toBe('death')
+    expect(await back.dailyPnl(10)).toEqual(await store.dailyPnl(10))
+    expect(await back.quietPoolSince('bsc', 'POOL')).toBe(60)
+  })
+
+  it('keeps only what is used: the registry stays out', async () => {
+    const state = (await seeded()).exportState(100)
+    expect(JSON.stringify(state)).not.toContain('"contract"')
+    expect(await MemoryStore.fromState(state).knownTokens(10)).toEqual([])
+  })
+
+  it('keeps three days of alerts, and the sequence never goes back', async () => {
+    const store = new MemoryStore()
+    await store.recordAlert({ kind: 'heartbeat', level: 'info', at: 0, title: 'old', body: '' } as never)
+    await store.recordAlert({ kind: 'heartbeat', level: 'info', at: 4 * DAY, title: 'new', body: '' } as never)
+    const back = MemoryStore.fromState(JSON.parse(JSON.stringify(store.exportState(4 * DAY + 1))))
+    expect((await back.alertsSince(0)).map((a) => a.title)).toEqual(['new'])
+    const next = await back.recordAlert({ kind: 'heartbeat', level: 'info', at: 5 * DAY, title: 'next', body: '' } as never)
+    expect(next.seq).toBe(3)
+    expect(await back.latestAlertSeq()).toBe(3)
+  })
+
+  it('starts the alert sequence where another store left it — a migration keeps the phone\'s cursor climbing', async () => {
+    const store = MemoryStore.fromState({ ...new MemoryStore().exportState(0), alertSeq: 41 })
+    expect((await store.recordAlert({ kind: 'heartbeat', level: 'info', at: 1, title: 'x', body: '' } as never)).seq).toBe(42)
+  })
+})

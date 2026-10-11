@@ -20,18 +20,16 @@ describe('loadConfig — fails at boot, never mid-ladder', () => {
     expect(config.cycleIntervalMs).toBe(300_000)
   })
 
-  it('refuses to start without a database, a bot token or a chat id', () => {
-    for (const key of Object.keys(valid)) {
-      const incomplete = { ...valid, [key]: undefined }
-      expect(() => loadConfig(incomplete), key).toThrow(ConfigError)
-    }
+  it('starts without a database — the state lives on GitHub (2026-10-11)', () => {
+    expect(loadConfig({}).databaseUrl).toBeNull()
+    expect(loadConfig(valid).databaseUrl).toBe(valid.DATABASE_URL)
   })
 
   it('treats blank as missing — an empty secret is not a secret', () => {
     // This test had a name and an empty body for weeks: it asserted the
     // behaviour existed by describing it, which is the one thing a test
     // cannot do. Found by reading the documentation against the source.
-    expect(() => loadConfig({ ...valid, DATABASE_URL: '   ' })).toThrow(ConfigError)
+    expect(loadConfig({ ...valid, DATABASE_URL: '   ' }).databaseUrl).toBeNull()
     // A blank OPTIONAL var falls back rather than throwing — a CI expression
     // that evaluated to nothing must not be read as a configured value.
     expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '' }).totalCapitalUsd).toBe(1_000)

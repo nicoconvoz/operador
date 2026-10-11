@@ -52,3 +52,35 @@ describe('GitHubPublisher — one file on its own branch, replaced every time', 
     await expect(new GitHubPublisher({ repo: 'me/repo', branch: 'view', token: 'tok', fetch }).publish({ 'view.json': '{}' }, 'view')).rejects.toThrow(/403/)
   })
 })
+
+describe('GitHubPublisher.read — what the branch holds now, never a cached copy', () => {
+  // The engine reads its state back at start through the API, authenticated:
+  // the raw CDN may serve a copy minutes old, and a run that started from a
+  // stale book would buy what it already holds.
+  const reader = (files: Record<string, string> | null) => {
+    const asked: string[] = []
+    const fetch = async (url: string) => {
+      asked.push(url.replace('https://api.github.com/repos/me/repo', ''))
+      const json = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body, text: async () => JSON.stringify(body) })
+      if (files === null) return json(404, { message: 'Not Found' })
+      if (url.endsWith('/git/ref/heads/state')) return json(200, { object: { sha: 'c1' } })
+      if (url.endsWith('/git/commits/c1')) return json(200, { tree: { sha: 't1' } })
+      if (url.endsWith('/git/trees/t1')) return json(200, { tree: Object.keys(files).map((path) => ({ path, sha: `b-${path}`, type: 'blob' })) })
+      const path = decodeURIComponent(url.split('/git/blobs/b-')[1] ?? '')
+      if (path in files) return json(200, { content: Buffer.from(files[path]!).toString('base64'), encoding: 'base64' })
+      return json(404, {})
+    }
+    return { asked, publisher: new GitHubPublisher({ repo: 'me/repo', branch: 'state', token: 'tok', fetch }) }
+  }
+
+  it('reads one file off the branch', async () => {
+    const { publisher, asked } = reader({ 'state.json': '{"v":1}', 'vercel.json': '{}' })
+    expect(await publisher.read('state.json')).toBe('{"v":1}')
+    expect(asked).toEqual(['/git/ref/heads/state', '/git/commits/c1', '/git/trees/t1', '/git/blobs/b-state.json'])
+  })
+
+  it('answers null when the branch or the file does not exist yet', async () => {
+    expect(await reader(null).publisher.read('state.json')).toBeNull()
+    expect(await reader({ 'other.json': '{}' }).publisher.read('state.json')).toBeNull()
+  })
+})

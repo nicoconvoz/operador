@@ -33,6 +33,10 @@ export class MemoryStore implements StatePort {
    */
   private readonly scans = new Map<string, PersistedScan>()
   private checkpoint: EngineCheckpoint | null = null
+  /** The last sequence handed out. Kept apart from the log so a pruned log never reuses one. */
+  private alertSeq = 0
+  /** The stamp of the last order from the phone this store applied — kept with it, so a restart never applies one twice. */
+  controlAppliedAt = 0
 
   async loadPositions(): Promise<readonly PersistedPosition[]> {
     return [...this.positions.values()].map((p) => structuredClone(p))
@@ -52,7 +56,8 @@ export class MemoryStore implements StatePort {
   async recordAlert(alert: Alert): Promise<StoredAlert> {
     // The sequence comes from the log's own length, never from the clock:
     // ordering must survive two alerts raised in the same millisecond.
-    const stored: StoredAlert = { ...alert, seq: this.alerts.length + 1 }
+    this.alertSeq += 1
+    const stored: StoredAlert = { ...alert, seq: this.alertSeq }
     this.alerts.push(structuredClone(stored))
     return stored
   }
@@ -92,7 +97,7 @@ export class MemoryStore implements StatePort {
   }
 
   async latestAlertSeq(): Promise<number> {
-    return this.alerts.at(-1)?.seq ?? 0
+    return this.alertSeq
   }
 
   async recordFill(fill: PersistedFill): Promise<void> {
@@ -202,8 +207,85 @@ export class MemoryStore implements StatePort {
       .map((day) => ({ ...day }))
   }
 
+  /**
+   * The whole state, JSON-safe, for a store that lives in a file — *hacelo sin
+   * Supabase, todo desde GitHub* (2026-10-11). Only what is used: the registry
+   * stays out, and alerts older than `retainAlertsMs` are let go as the
+   * Postgres store let them go at every start.
+   */
+  exportState(at: number, retainAlertsMs = 3 * 86_400_000): StoreState {
+    return {
+      version: 1,
+      at,
+      positions: [...this.positions.values()],
+      fills: [...this.fills.values()],
+      blacklist: [...this.blacklistEntries.entries()].map(([key, entry]) => ({ key, ...entry })),
+      alerts: this.alerts.filter((a) => a.at >= at - retainAlertsMs),
+      alertSeq: this.alertSeq,
+      scans: [...this.scans.values()],
+      checkpoint: this.checkpoint,
+      days: [...this.days.values()],
+      discovery: [...this.discovery.entries()].map(([chain, found]) => ({ chain, ...found })),
+      poolHistory: [...this.poolHistory.entries()].map(([key, value]) => ({ key, ...value })),
+      quiet: [...this.quiet.entries()].map(([key, at]) => ({ key, at })),
+      security: [...this.security.entries()].map(([key, value]) => ({ key, ...value })),
+      controlAppliedAt: this.controlAppliedAt,
+    }
+  }
+
+  /**
+   * Everything gone — the book, the tape, the scans, the ban, the day log, the
+   * caches and the alerts — except the alert count, so the phone's cursor
+   * keeps climbing. *Un botón que borre y empiece de cero.*
+   */
+  reset(): void {
+    for (const map of [this.positions, this.fills, this.blacklistEntries, this.scans, this.poolHistory, this.security, this.quiet, this.discovery, this.registry, this.days]) map.clear()
+    this.alerts.length = 0
+    this.checkpoint = null
+  }
+
+  /** A store holding exactly what `exportState` wrote. */
+  static fromState(state: StoreState): MemoryStore {
+    const store = new MemoryStore()
+    for (const p of state.positions) store.positions.set(p.id, p)
+    for (const f of state.fills) store.fills.set(f.idempotencyKey, f)
+    for (const { key, reason, at } of state.blacklist) store.blacklistEntries.set(key, { reason, at })
+    store.alerts.push(...state.alerts)
+    store.alertSeq = Math.max(state.alertSeq, state.alerts.at(-1)?.seq ?? 0)
+    for (const scan of state.scans) store.scans.set(scan.chain, scan)
+    store.checkpoint = state.checkpoint
+    for (const day of state.days) store.days.set(day.day, day)
+    for (const { chain, pools, discoveredAt } of state.discovery) store.discovery.set(chain, { pools, discoveredAt })
+    for (const { key, bars, measuredAt } of state.poolHistory) store.poolHistory.set(key, { bars, measuredAt })
+    for (const { key, at } of state.quiet) store.quiet.set(key, at)
+    for (const { key, ...value } of state.security) store.security.set(key, value)
+    store.controlAppliedAt = state.controlAppliedAt ?? 0
+    return store
+  }
+
   /** Test helper: why a token was condemned. */
   blacklistReason(chain: string, tokenAddress: string): string | null {
     return this.blacklistEntries.get(`${chain}:${tokenAddress}`)?.reason ?? null
   }
+}
+
+/** Everything a `MemoryStore` holds that is worth keeping, JSON-safe. */
+export interface StoreState {
+  readonly version: 1
+  /** When it was written. Absent in a state assembled by hand. */
+  readonly at?: number
+  readonly positions: readonly PersistedPosition[]
+  readonly fills: readonly PersistedFill[]
+  readonly blacklist: readonly { readonly key: string; readonly reason: string; readonly at: number }[]
+  readonly alerts: readonly StoredAlert[]
+  readonly alertSeq: number
+  readonly scans: readonly PersistedScan[]
+  readonly checkpoint: EngineCheckpoint | null
+  readonly days: readonly DailyPnl[]
+  readonly discovery: readonly { readonly chain: string; readonly pools: readonly { tokenAddress: string; poolAddress: string }[]; readonly discoveredAt: number }[]
+  readonly poolHistory: readonly { readonly key: string; readonly bars: number; readonly measuredAt: number }[]
+  readonly quiet: readonly { readonly key: string; readonly at: number }[]
+  readonly security: readonly ({ readonly key: string } & CachedSecurity)[]
+  /** The last order from the phone applied. Absent in a state written before it existed. */
+  readonly controlAppliedAt?: number
 }
