@@ -337,6 +337,8 @@ export interface RuntimeConfig {
   readonly strategyExit: boolean
   /** The pump-and-dump door at entry (`gates.ts`). Infinity is off. */
   readonly pumpDump: { readonly maxPumpPct: number; readonly maxHourFallPct: number }
+  /** A rise on the day at or past which nothing enters. *Últimas 24 horas < 100%*. Infinity: off. */
+  readonly maxDayRisePct: number
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -797,6 +799,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     strategyExit: onlyIf(env, 'OPERADOR_STRATEGY_EXIT'),
     // *Mirá el pump y la caída de la última hora y no entres en caso
     // peligroso* (2026-10-09). Zero turns either half off.
+    // *Últimas 24 horas < 100%* (2026-10-10). Zero turns it off.
+    maxDayRisePct: numberOrZero(env, 'OPERADOR_MAX_DAY_RISE_PCT', 100) || Infinity,
     pumpDump: {
       // OFF since the same afternoon: *no pongas puerta de entrada.* 100 and 5
       // bring it back.

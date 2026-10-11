@@ -28,7 +28,7 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
+| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
 | **The book** | **$15 a token**, one buy: $5,000 holds 333 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
 | **The buy** | **one $15 buy the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
@@ -151,6 +151,15 @@ tax or the two authorities — so the death watch reads the authorities on what
 is held again. Step $15, one buy. The exits stay as they were: the TP on buy
 pressure, the freeze and death exits, no stop. On 26/09 the exit was the
 strategy's own TP, and almost no position ever bought its second $15.
+
+The next morning, after the first run's six frozen exits (−$33.17 against
++$35.48 of TPs): every one was a pump.fun pool of $3–21k market cap, most of
+them one to eight hours old, bought after a day of +100% to +480% and dumped
+within minutes. *Última hora > 0%, últimas 24 horas < 100%.* The rising door
+is on again (`DEFAULT_ENTRY_RISING`; `OPERADOR_ENTRY_RISING=0` removes it), and
+the `pumpDump` gate refuses a day up 100% or more (`maxDayRisePct`,
+`OPERADOR_MAX_DAY_RISE_PCT`, zero turns it off). An unreported day passes; an
+unreported hour fails the rising door, as it always did.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

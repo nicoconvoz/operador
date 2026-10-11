@@ -985,7 +985,7 @@ describe('volatility — a door that asks the token to MOVE', () => {
 describe('pumpDump — a pump turning over, or a fall in the hour', () => {
   // OFF in production since the same afternoon — *no pongas puerta de
   // entrada* — and tested where it is asked for.
-  const ON = { ...DEFAULT_GATE_POLICY, maxPumpPct: 100, maxHourFallPct: 5 }
+  const ON = { ...DEFAULT_GATE_POLICY, maxPumpPct: 100, maxHourFallPct: 5, maxDayRisePct: Infinity }
   it('is off in production', () => {
     expect([DEFAULT_GATE_POLICY.maxPumpPct, DEFAULT_GATE_POLICY.maxHourFallPct]).toEqual([Infinity, Infinity])
   })
@@ -1061,5 +1061,29 @@ describe('the 26/09 door, as the operator redrew it (2026-10-10)', () => {
   it('keeps every gate under STRICT, so their logic stays tested', () => {
     expect(STRICT_GATE_POLICY.ignoredGates).toEqual([])
     expect(evaluateGates(clean({ liquidityUsd: 2_000 }), STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('liquidity')
+  })
+})
+
+describe('the day it already ran — *últimas 24 horas < 100%* (2026-10-10)', () => {
+  // Every frozen exit of 2026-10-10 had been bought after a day of +100% to
+  // +480%, and collapsed within minutes. An opportunity gate: it decides what
+  // enters, never what is held.
+  const day = (h24: number | null) =>
+    evaluateGates(clean({ priceChangePct: { h1: 1, h6: 0, h24 } }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)
+
+  it('refuses a token up 100% or more on the day', () => {
+    expect(DEFAULT_GATE_POLICY.maxDayRisePct).toBe(100)
+    expect(day(100)).toEqual(['pumpDump'])
+    expect(day(480)).toEqual(['pumpDump'])
+  })
+
+  it('lets one up less than that through, and a fall or an unreported day', () => {
+    expect(day(99.9)).toEqual([])
+    expect(day(-20)).toEqual([])
+    expect(day(null)).toEqual([])
+  })
+
+  it('is off under STRICT, so the older pump-and-dump logic stays tested alone', () => {
+    expect(STRICT_GATE_POLICY.maxDayRisePct).toBe(Infinity)
   })
 })

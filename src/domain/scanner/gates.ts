@@ -61,6 +61,12 @@ export interface GatePolicy {
   /** A fall in the hour past which nothing enters, pumped or not. Infinity: off. */
   readonly maxHourFallPct: number
   /**
+   * A rise on the day at or past which nothing enters. *Últimas 24 horas
+   * < 100%* (2026-10-10): every frozen exit that day had been bought after a
+   * day of +100% to +480%. Infinity: off.
+   */
+  readonly maxDayRisePct?: number
+  /**
    * 24h volume over liquidity: how many times the pool trades itself in a day.
    *
    * `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell
@@ -210,6 +216,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   ignoredGates: ['liquidity', 'topHolders', 'blacklist', 'lpLocked', 'impact', 'impersonation', 'denylist', 'marketCap', 'proxy'],
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
+  maxDayRisePct: 100,
   // THE TASTE GATES STEP ASIDE.
   //
   // The operator narrowed what a gate is allowed to be: *tendencia reciente
@@ -462,6 +469,7 @@ export const STRICT_GATE_POLICY: GatePolicy = {
   // The pump-and-dump gate is newer than the original values this keeps.
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
+  maxDayRisePct: Infinity,
   // Kept ON, so the gate's logic stays tested after production stopped asking.
   requireLpLock: true,
   minLiquidityUsd: 20_000,
@@ -917,6 +925,12 @@ function isAsked(failure: GateFailure, snapshot: TokenSnapshot, policy: GatePoli
 }
 
 function pumpDump(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {
+  const ran = snapshot.priceChangePct.h24
+  const ceiling = policy.maxDayRisePct ?? Number.POSITIVE_INFINITY
+  // Silence is not a run.
+  if (ran !== null && ran >= ceiling) {
+    return fail('pumpDump', 'failed', `subió ${ran.toFixed(0)}% en el día — ${ceiling}% o más`)
+  }
   const hour = snapshot.priceChangePct.h1
   // Silence is not a fall.
   if (hour === null) return null

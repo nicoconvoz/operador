@@ -266,7 +266,11 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.stepUsd).toBe(15)
     expect(config.slotUsd).toBe(15)
     expect(config.maxSteps).toBe(1)
-    expect(config.minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
+    expect(config.minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1, risingHour: 1 })
+    // *Últimas 24 horas < 100%* (2026-10-10); zero turns it off.
+    expect(config.maxDayRisePct).toBe(100)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_DAY_RISE_PCT: '0' }).maxDayRisePct).toBe(Infinity)
+    expect(loadConfig({ ...valid, OPERADOR_MAX_DAY_RISE_PCT: '200' }).maxDayRisePct).toBe(200)
     expect(config.pressureTp).toEqual({ armPct: 0, dropPct: 10 })
     expect(config.strategyExit).toBe(false)
     expect(config.pumpDump).toEqual({ maxPumpPct: Infinity, maxHourFallPct: Infinity })
@@ -459,13 +463,13 @@ describe('loadConfig — the rising door is off; it comes back with OPERADOR_ENT
   // the module the dashboard reads too, so the screen and the engine cannot
   // disagree about which tokens the book may buy.
   it('asks the 26/09 floors of the components; OPERADOR_ENTRY_FLOORS=0 removes them', () => {
-    expect(loadConfig(valid).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1 })
-    expect(loadConfig({ ...valid, OPERADOR_ENTRY_FLOORS: '0' }).minComponents).toEqual({})
+    expect(loadConfig(valid).minComponents).toEqual({ activity: 0.5, liquidityGrowth: 1, risingHour: 1 })
+    expect(loadConfig({ ...valid, OPERADOR_ENTRY_FLOORS: '0', OPERADOR_ENTRY_RISING: '0' }).minComponents).toEqual({})
     expect(loadConfig({ ...valid, OPERADOR_ENTRY_FLOORS: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ risingHour: 1 })
   })
 
   it('brings the cost-efficiency floor back beside it with OPERADOR_MIN_COST_EFFICIENCY_PCT, and the old buy-pressure variable moves nothing', () => {
-    const off = { ...valid, OPERADOR_ENTRY_FLOORS: '0' }
+    const off = { ...valid, OPERADOR_ENTRY_FLOORS: '0', OPERADOR_ENTRY_RISING: '0' }
     expect(loadConfig({ ...off, OPERADOR_MIN_COST_EFFICIENCY_PCT: '70' }).minComponents).toEqual({ costEfficiency: { above: 0.7 } })
     expect(loadConfig({ ...off, OPERADOR_MIN_COST_EFFICIENCY_PCT: '0', OPERADOR_ENTRY_RISING: '1' }).minComponents).toEqual({ costEfficiency: { above: 0 }, risingHour: 1 })
     expect(loadConfig({ ...off, OPERADOR_MIN_BUY_PRESSURE_PCT: '20' }).minComponents).toEqual({})

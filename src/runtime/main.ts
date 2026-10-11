@@ -209,6 +209,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
     ...DEFAULT_GATE_POLICY,
     maxPumpPct: config.pumpDump.maxPumpPct,
     maxHourFallPct: config.pumpDump.maxHourFallPct,
+    maxDayRisePct: config.maxDayRisePct,
     // The operator's volatility door: only tokens that MOVE may enter.
     minVolatility5mPct: config.minVolatilityPct,
     minAgeHours: Math.max(

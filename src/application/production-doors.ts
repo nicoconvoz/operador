@@ -135,7 +135,10 @@ const risingDoor: ComponentFloors = { risingHour: 1 }
  * ladder buys the falls anyway. `OPERADOR_ENTRY_RISING=1` brings it back;
  * only an explicit on does, so a mistyped value keeps the operator's rule.
  */
-export const DEFAULT_ENTRY_RISING = false
+//
+// ON again since 2026-10-10: *última hora > 0%*, beside the 26/09 floors.
+// Only an explicit off removes it.
+export const DEFAULT_ENTRY_RISING = true
 
 /**
  * Who wins when there are more candidates than free slots.
