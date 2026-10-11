@@ -28,7 +28,7 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
+| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours old** or more, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
 | **The book** | **$15 a token**, one buy: $5,000 holds 333 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
 | **The buy** | **one $15 buy the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 10% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
@@ -165,6 +165,17 @@ unreported hour fails the rising door, as it always did.
 recién después del 10% de ganancia.* `OPERADOR_PRESSURE_TP_ARM_PCT` is 10: the
 TP on buy pressure arms once the holding is up more than 10% and, as before,
 disarms only once it is no longer up by more than its round trip.
+
+Then the winners and the losers, studied: 404 positions, 226 up (+$451) and
+178 down (−$466), 37 of them carrying more than half the loss. Three traits
+separated them, and each is now an opportunity gate (it decides what enters,
+never what is held): a **pump.fun token still on its bonding curve** (31, won
+35%, −$80 — `curve`, `refuseBondingCurve`), a **pool under six hours old** (47,
+won 43%, −$57 — `minAgeHours` 6, an unknown age refused), and a **Jupiter
+organic score under 50** (150, won 48%, −$59 — `organic`, `minOrganicScore`).
+Jupiter's `launchpad`, `graduatedPool` and `organicScore` now reach the
+snapshot; an unreported launchpad or score refuses nothing. Measured on the
+traits Jupiter reported the next day, open losses included.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

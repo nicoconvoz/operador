@@ -30,6 +30,9 @@ export interface JupiterTokenInfo {
   readonly usdPrice?: number
   readonly fdv?: number
   readonly firstPool?: { readonly id?: string; readonly createdAt?: string }
+  readonly launchpad?: string
+  /** The pool a launchpad token graduated to; absent while it is on its bonding curve. */
+  readonly graduatedPool?: string
   readonly stats5m?: JupiterWindow
   readonly stats1h?: JupiterWindow
   readonly stats6h?: JupiterWindow
@@ -114,6 +117,11 @@ export function jupiterMarket(info: JupiterTokenInfo, observedAt: number): Marke
     // hour and a silent one are different answers.
     liquidityChangePct: { h1: liquidityChangeOf(info.stats1h) },
     pairCreatedAt: Number.isFinite(created) ? created : null,
+    // Unreported is null. A token with a launchpad and no graduated pool is
+    // still on its bonding curve; one with no launchpad at all says nothing.
+    launchpad: typeof info.launchpad === 'string' && info.launchpad !== '' ? info.launchpad : null,
+    graduated: typeof info.launchpad === 'string' && info.launchpad !== '' ? typeof info.graduatedPool === 'string' && info.graduatedPool !== '' : null,
+    organicScore: typeof info.organicScore === 'number' && Number.isFinite(info.organicScore) ? info.organicScore : null,
   }
 }
 

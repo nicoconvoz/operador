@@ -597,15 +597,16 @@ describe('history is ZERO, because door 3 asks for no indicator', () => {
     expect(DEFAULT_GATE_POLICY.minHistoryBars).toBe(0)
   })
 
-  it('asks no age: *no pongas puerta de entrada, hacé que entren todos los tokens que existan*', () => {
-    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(0)
-    expect(evaluateGates(clean({ pairCreatedAt: NOW - 3 * HOUR }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  it('asks six hours of age — the newborn pools lost $57 on 2026-10-11', () => {
+    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(6)
+    expect(evaluateGates(clean({ pairCreatedAt: NOW - 3 * HOUR }), DEFAULT_GATE_POLICY).passed).toBe(false)
+    expect(evaluateGates(clean({ pairCreatedAt: NOW - 7 * HOUR }), DEFAULT_GATE_POLICY).passed).toBe(true)
     expect(STRICT_GATE_POLICY.minAgeHours).toBe(24)
     expect(failedGates(clean({ pairCreatedAt: NOW - 3 * HOUR }))).toEqual(['age:failed'])
   })
 
-  it('an unknown age is not refused by a gate that asks for none', () => {
-    expect(evaluateGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).passed).toBe(true)
+  it('an unknown age is refused once an age is asked — production asks six hours', () => {
+    expect(evaluateGates(clean({ pairCreatedAt: null }), DEFAULT_GATE_POLICY).failures.map((f) => `${f.gate}:${f.reason}`)).toEqual(['age:unknown'])
     expect(failedGates(clean({ pairCreatedAt: null }))).toEqual(['age:unknown'])
   })
 
@@ -741,9 +742,9 @@ describe('gates — the taste gates step aside; the structural ones do not', () 
     expect(evaluateMarketGates(dip, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('freefall')
   })
 
-  it('lets a newborn pool through — no door', () => {
+  it('refuses a newborn pool again — six hours since 2026-10-11', () => {
     const newborn = gentle({ pairCreatedAt: NOW - 60 * 60 * 1000 })
-    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).not.toContain('age')
+    expect(evaluateMarketGates(newborn, DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
     expect(evaluateMarketGates(newborn, STRICT_GATE_POLICY).failures.map((f) => f.gate)).toContain('age')
   })
 
@@ -1034,8 +1035,8 @@ describe('the 26/09 door, as the operator redrew it (2026-10-10)', () => {
   const P = DEFAULT_GATE_POLICY
   const gates = (snapshot: TokenSnapshot) => evaluateGates(snapshot, P).failures.map((f) => f.gate)
 
-  it('lets a thin, young, concentrated token through', () => {
-    expect(gates(clean({ liquidityUsd: 2_000, pairCreatedAt: NOW - HOUR }, { topHoldersPct: 95, hasBlacklist: true }))).toEqual([])
+  it('lets a thin, concentrated token through', () => {
+    expect(gates(clean({ liquidityUsd: 2_000 }, { topHoldersPct: 95, hasBlacklist: true }))).toEqual([])
   })
 
   it('refuses a creator over 30%, a tax over 5%, and an active mint or freeze authority', () => {
@@ -1085,5 +1086,43 @@ describe('the day it already ran — *últimas 24 horas < 100%* (2026-10-10)', (
 
   it('is off under STRICT, so the older pump-and-dump logic stays tested alone', () => {
     expect(STRICT_GATE_POLICY.maxDayRisePct).toBe(Infinity)
+  })
+})
+
+describe('the losers of 2026-10-11 — a newborn pool, a pump.fun curve, a low organic score', () => {
+  // 404 positions studied: pump.fun tokens still on the bonding curve won 35%
+  // and lost $80; pools under six hours old won 43% and lost $57; an organic
+  // score under 50 won 48% and lost $59. Opportunity gates: they decide what
+  // enters, never what is held.
+  const gates = (over: Partial<TokenSnapshot>) => evaluateGates(clean(over), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)
+
+  it('refuses a pool younger than six hours', () => {
+    expect(DEFAULT_GATE_POLICY.minAgeHours).toBe(6)
+    expect(gates({ pairCreatedAt: NOW - 5 * HOUR })).toEqual(['age'])
+    expect(gates({ pairCreatedAt: NOW - 7 * HOUR })).toEqual([])
+  })
+
+  it('refuses a pump.fun token still on its bonding curve, and lets a graduated one through', () => {
+    expect(gates({ launchpad: 'pump.fun', graduated: false })).toEqual(['curve'])
+    expect(gates({ launchpad: 'pump.fun', graduated: true })).toEqual([])
+    expect(gates({ launchpad: 'stonkfun', graduated: false })).toEqual([])
+    expect(gates({ launchpad: null, graduated: null })).toEqual([])
+  })
+
+  it('refuses an organic score under 50, and says nothing when it is unreported', () => {
+    expect(DEFAULT_GATE_POLICY.minOrganicScore).toBe(50)
+    expect(gates({ organicScore: 49.9 })).toEqual(['organic'])
+    expect(gates({ organicScore: 50 })).toEqual([])
+    expect(gates({ organicScore: null })).toEqual([])
+  })
+
+  it('never touches what is held: the safety half asks none of them', () => {
+    const newborn = clean({ pairCreatedAt: NOW - HOUR, launchpad: 'pump.fun', graduated: false, organicScore: 10 })
+    expect(evaluateSafetyGates(newborn, DEFAULT_GATE_POLICY).passed).toBe(true)
+  })
+
+  it('is off under STRICT, so the older logic stays tested alone', () => {
+    expect(STRICT_GATE_POLICY.minOrganicScore).toBe(0)
+    expect(STRICT_GATE_POLICY.refuseBondingCurve).toBe(false)
   })
 })

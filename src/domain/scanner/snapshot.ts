@@ -87,6 +87,12 @@ export interface TokenSnapshot {
   readonly liquidityChangePct?: { readonly h1: number | null }
   /** When the pair was created, or null when the source does not know. */
   readonly pairCreatedAt: number | null
+  /** The launchpad that minted it (`pump.fun`, …). Null or absent: not reported. */
+  readonly launchpad?: string | null
+  /** Whether a launchpad token left its bonding curve for a real pool. Null or absent: not reported. */
+  readonly graduated?: boolean | null
+  /** Jupiter's organic score, 0..100: how much of the trading looks real. Null or absent: not reported. */
+  readonly organicScore?: number | null
   /**
    * Whether the expensive security pass actually ran on this token.
    *

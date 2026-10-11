@@ -67,6 +67,16 @@ export interface GatePolicy {
    */
   readonly maxDayRisePct?: number
   /**
+   * The lowest Jupiter organic score a token may enter with. Zero: off.
+   * 2026-10-11: under 50 won 48% of 150 positions and lost $59.
+   */
+  readonly minOrganicScore?: number
+  /**
+   * Refuse a pump.fun token still on its bonding curve. 2026-10-11: 31
+   * positions, 35% won, $80 lost — $2.59 each.
+   */
+  readonly refuseBondingCurve?: boolean
+  /**
    * 24h volume over liquidity: how many times the pool trades itself in a day.
    *
    * `minVolume24hUsd` is an absolute floor, and an absolute floor cannot tell
@@ -217,6 +227,8 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
   maxDayRisePct: 100,
+  minOrganicScore: 50,
+  refuseBondingCurve: true,
   // THE TASTE GATES STEP ASIDE.
   //
   // The operator narrowed what a gate is allowed to be: *tendencia reciente
@@ -285,7 +297,9 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // *No pongas puerta de entrada, hacé que entren todos los tokens que
   // existan* (2026-10-09): the opportunity gates are off again; the SAFETY
   // gates below never were doors.
-  minAgeHours: 0,
+  // SIX hours since 2026-10-11: of 404 positions, pools under six hours old
+  // won 43% and lost $57; the rest won 58% and made $41.
+  minAgeHours: 6,
   minVolume24hUsd: 0,
   // The hour decides a collapse now, through the `headroom` floor at -3%. A
   // daily threshold on top was belt and braces against the same accident.
@@ -470,6 +484,8 @@ export const STRICT_GATE_POLICY: GatePolicy = {
   maxPumpPct: Infinity,
   maxHourFallPct: Infinity,
   maxDayRisePct: Infinity,
+  minOrganicScore: 0,
+  refuseBondingCurve: false,
   // Kept ON, so the gate's logic stays tested after production stopped asking.
   requireLpLock: true,
   minLiquidityUsd: 20_000,
@@ -548,6 +564,8 @@ export type GateName =
   | 'priceMismatch'
   | 'volatility'
   | 'pumpDump'
+  | 'curve'
+  | 'organic'
 
 export interface GateFailure {
   readonly gate: GateName
@@ -644,6 +662,7 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
   if (fall) failures.push(fall)
   const dump = pumpDump(snapshot, policy)
   if (dump) failures.push(dump)
+  failures.push(...launchQuality(snapshot, policy))
 
   // Activity measured against the pool, not in dollars. Zero liquidity is
   // already a liquidity failure; dividing by it here would only add noise.
@@ -731,7 +750,7 @@ export function forgivableFailures(gates: GateResult): readonly GateFailure[] | 
 }
 
 export function evaluateSafetyGates(snapshot: TokenSnapshot, policy: GatePolicy): GateResult {
-  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history', 'volatility', 'pumpDump'])
+  const opportunityOnly = new Set<GateName>(['freefall', 'turnover', 'idle', 'volume', 'marketCap', 'age', 'history', 'volatility', 'pumpDump', 'curve', 'organic'])
   const { failures } = evaluateGates(snapshot, policy)
   const kept = failures.filter((failure) => !opportunityOnly.has(failure.gate))
   return { passed: kept.length === 0, failures: kept }
@@ -873,6 +892,7 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   if (fall) failures.push(fall)
   const dump = pumpDump(snapshot, policy)
   if (dump) failures.push(dump)
+  failures.push(...launchQuality(snapshot, policy))
 
   // Activity measured against the pool, not in dollars. Zero liquidity is
   // already a liquidity failure; dividing by it here would only add noise.
@@ -922,6 +942,24 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
 function isAsked(failure: GateFailure, snapshot: TokenSnapshot, policy: GatePolicy): boolean {
   if (failure.gate === 'liquidity' && !(snapshot.liquidityUsd > 0)) return true
   return !policy.ignoredGates.includes(failure.gate)
+}
+
+/**
+ * What a token's launch says about it: still on a pump.fun bonding curve, or
+ * traded mostly by bots. Fires on evidence only — an unreported launchpad or
+ * score says nothing.
+ */
+function launchQuality(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure[] {
+  const failures: GateFailure[] = []
+  if (policy.refuseBondingCurve === true && snapshot.launchpad === 'pump.fun' && snapshot.graduated === false) {
+    failures.push(fail('curve', 'failed', 'pump.fun sin graduar — todavía en su curva de lanzamiento'))
+  }
+  const floor = policy.minOrganicScore ?? 0
+  const score = snapshot.organicScore
+  if (floor > 0 && typeof score === 'number' && score < floor) {
+    failures.push(fail('organic', 'failed', `organic score ${score.toFixed(0)} < ${floor}`))
+  }
+  return failures
 }
 
 function pumpDump(snapshot: TokenSnapshot, policy: GatePolicy): GateFailure | null {

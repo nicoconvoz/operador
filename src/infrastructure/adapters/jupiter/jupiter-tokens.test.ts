@@ -191,6 +191,16 @@ describe('jupiterMarket — the market half, from the same source as the candles
     expect(jupiterMarket(live, 1)!.liquidityChangePct).toEqual({ h1: null })
   })
 
+  it('carries the launchpad, whether it graduated, and the organic score — unreported is null', () => {
+    const m = jupiterMarket({ ...live, launchpad: 'pump.fun', graduatedPool: 'Pool111', organicScore: 61.5 }, 1)!
+    expect([m.launchpad, m.graduated, m.organicScore]).toEqual(['pump.fun', true, 61.5])
+    const { organicScore: _o, ...unscored } = { ...live, organicScore: 0 }
+    const curve = jupiterMarket({ ...unscored, launchpad: 'pump.fun' }, 1)!
+    expect([curve.launchpad, curve.graduated, curve.organicScore]).toEqual(['pump.fun', false, null])
+    const none = jupiterMarket(unscored, 1)!
+    expect([none.launchpad, none.graduated, none.organicScore]).toEqual([null, null, null])
+  })
+
   it('has no market for a token with no price', () => {
     // Not a zero: a token nobody prices is not a token anyone can trade.
     const { usdPrice: _unpriced, ...noPrice } = live
