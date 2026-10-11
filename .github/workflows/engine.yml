@@ -61,6 +61,11 @@ jobs:
     # Ten minutes under GitHub's 6-hour ceiling, so the loop's own budget is
     # what ends the run and the cancel is never what ends a cycle mid-write.
     timeout-minutes: 350
+    # The engine publishes the view the dashboard reads onto the `view`
+    # branch (see main.ts, VIEW_BRANCH), so Vercel reads GitHub and not the
+    # database. It needs to write that one branch.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -78,6 +83,9 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPERADOR_CONTROL_TOKEN: ${{ secrets.OPERADOR_CONTROL_TOKEN }}
+          # *Que Vercel sólo sea un visor de lo que hace GitHub.*
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPERADOR_VIEW_REPO: ${{ github.repository }}
           OPERADOR_MODE: paper
           # SOLANA ONLY, and it is a measurement rather than a preference.
           # One run, both chains, same commit:

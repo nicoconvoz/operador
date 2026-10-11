@@ -46,6 +46,8 @@ import { recallCandidates } from '../application/recall.js'
 import { healthForCycle, UNMEASURED } from '../application/health-from-scan.js'
 import { hoursSinceLastTrade } from '../application/idle-hours.js'
 import { confirmEntry } from '../application/confirm-entry.js'
+import { takeViewSnapshot, viewPublisher } from '../application/view-snapshot.js'
+import { GitHubPublisher } from '../infrastructure/adapters/github/github-publisher.js'
 import { CachedDiscovery } from '../infrastructure/adapters/geckoterminal/cached-discovery.js'
 import { readOnlyRegistry } from '../application/read-only-registry.js'
 import { cachedTape } from '../application/cached-tape.js'
@@ -1320,6 +1322,20 @@ export const schemaSql = (): string =>
  */
 const POOL_CANDLES = 60
 
+/** Where the engine publishes the view the dashboard reads, and how often. */
+export const VIEW_BRANCH = 'view'
+export const VIEW_FILE = 'view.json'
+const VIEW_EVERY_MS = 120_000
+/**
+ * Vercel deploys every branch pushed, and this one moves every two minutes.
+ * Each publish carries its own `vercel.json` saying not to, at the root and
+ * at the dashboard's directory, so the setting travels with the commit.
+ */
+const VIEW_NO_DEPLOY = {
+  'vercel.json': '{ "git": { "deploymentEnabled": false } }\n',
+  'dashboard/vercel.json': '{ "git": { "deploymentEnabled": false } }\n',
+}
+
 /** How long an alert is kept: three days, pruned at every engine start. */
 export const ALERT_RETENTION_MS = 3 * 86_400_000
 
@@ -1335,6 +1351,22 @@ export async function main(ports: RuntimePorts): Promise<void> {
   await store.pruneAlerts(Date.now() - ALERT_RETENTION_MS).catch((error) => console.error('[alerts:prune]', error))
 
   const { deps, cycleConfig, throttle } = buildRuntime(config, ports)
+
+  // *Que esto lo maneje GitHub y que Vercel sólo sea un visor* (2026-10-11).
+  // The view the dashboard reads, published onto its own branch from the
+  // engine's memory every two minutes, so the screen never asks Postgres.
+  // Only when the workflow hands a token over; never fatal.
+  const viewRepo = process.env.OPERADOR_VIEW_REPO?.trim()
+  const githubToken = process.env.GITHUB_TOKEN?.trim()
+  const view = viewRepo && githubToken
+    ? viewPublisher({
+        take: () => takeViewSnapshot(deps.store, Date.now()),
+        publish: (content) => new GitHubPublisher({ repo: viewRepo, branch: VIEW_BRANCH, token: githubToken }).publish({ [VIEW_FILE]: content, ...VIEW_NO_DEPLOY }, `view ${new Date().toISOString()}`),
+        everyMs: VIEW_EVERY_MS,
+        now: () => Date.now(),
+        onError: (error) => console.warn('[view]', String(error).slice(0, 200)),
+      })
+    : null
 
   const stopSignal = shutdownSignal()
 
@@ -1352,6 +1384,7 @@ export async function main(ports: RuntimePorts): Promise<void> {
     // four minutes of empty log, which reads as a hung process rather than an
     // engine quietly advancing bars.
     onPass: (result, elapsedMs) => {
+      void view?.maybePublish()
       const bars = result.ticks.reduce((most, tick) => Math.max(most, tick.barsAdvanced), 0)
       console.log(
         `[${result.kind}]`,

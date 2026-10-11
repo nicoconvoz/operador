@@ -3,6 +3,7 @@ import { PostgresStore } from '../../src/infrastructure/persistence/postgres-sto
 import { cacheFor, type CachedRead } from '../../src/application/read-cache.js'
 import { LOG_READ_DAYS } from '../../src/application/daily-log.js'
 import { incrementalTape } from '../../src/application/incremental-tape.js'
+import { remoteViewReads, type ViewSnapshot } from '../../src/application/view-snapshot.js'
 
 /**
  * One pool for the whole app. Next.js reuses the module across requests, and
@@ -10,6 +11,7 @@ import { incrementalTape } from '../../src/application/incremental-tape.js'
  * connections at the worst possible moment.
  */
 let pool: Pool | null = null
+let remote: ReturnType<typeof remoteViewReads> | null = null
 let cached: {
   scans: () => Promise<Awaited<ReturnType<PostgresStore['latestScansByChain']>>>
   scan: () => Promise<Awaited<ReturnType<PostgresStore['latestScan']>>>
@@ -83,6 +85,23 @@ const CACHE_SCAN_MS = 120_000
 const CACHE_STATE_MS = 120_000
 
 /**
+ * Where the engine publishes the view this screen reads — *que Vercel sólo sea
+ * un visor de lo que hace GitHub* (2026-10-11). The dashboard alone had spent
+ * 5.1 of Supabase's 5 GB of monthly egress re-reading the book, the tape and
+ * the scan; the engine already holds all of it and writes it to the `view`
+ * branch every two minutes (`VIEW_BRANCH` in the runtime). GitHub's raw files
+ * are cached up to five minutes on its side, which the minute stamp in the URL
+ * asks it not to reuse. `OPERADOR_VIEW_SOURCE=db` reads the database again.
+ */
+const VIEW_URL = process.env.OPERADOR_VIEW_URL?.trim() || 'https://raw.githubusercontent.com/nicoconvoz/operador/view/view.json'
+const VIEW_READ_MS = 60_000
+const loadView = async (): Promise<ViewSnapshot> => {
+  const response = await fetch(`${VIEW_URL}?t=${Math.floor(Date.now() / VIEW_READ_MS)}`, { cache: 'no-store' })
+  if (!response.ok) throw new Error(`view ${response.status}`)
+  return (await response.json()) as ViewSnapshot
+}
+
+/**
  * When the fills behind the money figures were actually read.
  *
  * Null before the first read, and per INSTANCE — which is the whole reason it
@@ -137,6 +156,31 @@ export function openStore(): PostgresStore {
   // walking them, and they are the only cached read whose staleness looks like
   // money moving rather than like a list being short.
   lastFillsReadAt = memo.fills.readAt
+
+  const database = {
+    latestScansByChain: memo.scans,
+    latestScan: memo.scan,
+    blacklisted: memo.blacklist,
+    loadPositions: memo.positions,
+    allFills: memo.fills,
+    loadCheckpoint: memo.checkpoint,
+    dailyPnl: (limit: number) => (limit === LOG_READ_DAYS ? memo.days() : store.dailyPnl(limit)),
+  }
+  // The published view first; the database only while it cannot be read.
+  if (process.env.OPERADOR_VIEW_SOURCE?.trim().toLowerCase() !== 'db') {
+    remote ??= remoteViewReads({ load: loadView, fallback: database, everyMs: VIEW_READ_MS, now: () => Date.now() })
+    const view = remote
+    lastFillsReadAt = () => view.writtenAt() ?? memo.fills.readAt()
+    return Object.assign(Object.create(Object.getPrototypeOf(store) as object), store, {
+      latestScansByChain: view.latestScansByChain,
+      latestScan: view.latestScan,
+      blacklisted: view.blacklisted,
+      loadPositions: view.loadPositions,
+      allFills: view.allFills,
+      loadCheckpoint: view.loadCheckpoint,
+      dailyPnl: view.dailyPnl,
+    }) as PostgresStore
+  }
 
   return Object.assign(Object.create(Object.getPrototypeOf(store) as object), store, {
     latestScansByChain: memo.scans,

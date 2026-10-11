@@ -183,6 +183,22 @@ fresh Jupiter market and a patient sell quote each — so a full book opened a
 few at a time over minutes. `runCycle` now asks them `ENTRY_CONCURRENCY` (8)
 at a time and reads the answers in the plan's own order.
 
+*Que esto lo maneje GitHub y que Vercel sólo sea un visor de lo que hace
+GitHub.* Supabase's egress stood at 5.14 of 5 GB with a week of the cycle
+left, and the dashboard was the one spending it: a ten-second poll re-reading
+the book, the tape and the scan every two minutes on every Vercel instance.
+The engine now writes the view itself — `takeViewSnapshot`, from the store it
+already holds in memory — and publishes it every two minutes as `view.json`
+on the `view` branch (`GitHubPublisher`: one parentless commit force-moved
+each time, so the branch never grows a history; each commit also carries a
+`vercel.json` that turns its deploys off). The workflow grants `contents:
+write` and passes `GITHUB_TOKEN` and `OPERADOR_VIEW_REPO`. The dashboard
+answers its seven reads from that file (`remoteViewReads`, fetched at most
+once a minute), keeps the last good copy when GitHub does not answer, and
+goes to Postgres only while it has none. `OPERADOR_VIEW_SOURCE=db` reads the
+database again. The kill switch and the phone's alerts still use Postgres —
+they are tiny.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 
