@@ -31,7 +31,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
 | **The book** | **$15 a token**, one buy: $5,000 holds 333 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
 | **The buy** | **one $15 buy the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**, running the moment the holding is up by more than its round trip and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
+| **Exits** | the **TP on buy pressure**, armed once the holding is up more than 10% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
 
@@ -160,6 +160,11 @@ is on again (`DEFAULT_ENTRY_RISING`; `OPERADOR_ENTRY_RISING=0` removes it), and
 the `pumpDump` gate refuses a day up 100% or more (`maxDayRisePct`,
 `OPERADOR_MAX_DAY_RISE_PCT`, zero turns it off). An unreported day passes; an
 unreported hour fails the rising door, as it always did.
+
+*Funciona bien pero corta la ganancia muy rápido: que nuestro TP se habilite
+recién después del 10% de ganancia.* `OPERADOR_PRESSURE_TP_ARM_PCT` is 10: the
+TP on buy pressure arms once the holding is up more than 10% and, as before,
+disarms only once it is no longer up by more than its round trip.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

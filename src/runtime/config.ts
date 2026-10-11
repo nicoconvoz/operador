@@ -810,7 +810,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     pressureTp: {
       // *Después de entrar en ganancia* (2026-10-09): it runs the moment the
       // holding is up by more than its round trip. It was 12.
-      armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 0),
+      // TEN since 2026-10-11: *corta la ganancia muy rápido; que nuestro TP se
+      // habilite recién después del 10% de ganancia.* Zero arms it in profit.
+      armPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_ARM_PCT', 10),
       // ON again since 2026-10-09: *la salida de la última configuración, más
       // del 12% y caída de la presión compradora 10%.*
       dropPct: numberOrZero(env, 'OPERADOR_PRESSURE_TP_DROP_PCT', 10),
