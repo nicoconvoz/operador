@@ -177,6 +177,12 @@ Jupiter's `launchpad`, `graduatedPool` and `organicScore` now reach the
 snapshot; an unreported launchpad or score refuses nothing. Measured on the
 traits Jupiter reported the next day, open losses included.
 
+*Va cargando de a 5 posiciones cuando podría cargarlas todas juntas.* The
+cycle re-examined each chosen token at the door one behind the other — a
+fresh Jupiter market and a patient sell quote each — so a full book opened a
+few at a time over minutes. `runCycle` now asks them `ENTRY_CONCURRENCY` (8)
+at a time and reads the answers in the plan's own order.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

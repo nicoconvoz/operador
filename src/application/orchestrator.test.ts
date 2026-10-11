@@ -303,6 +303,30 @@ describe('runCycle — the chosen token is re-examined before money moves', () =
     expect(await deps.store.loadPositions()).toEqual([])
   })
 
+  it('re-examines every chosen token AT ONCE, not one behind the other', async () => {
+    // *Va cargando de a 5 posiciones cuando podría cargarlas todas juntas.*
+    // Each look waits on Jupiter; one after another, a full book took minutes.
+    const { deps, throttle } = rig({ scan: async () => [candidate('a', 90), candidate('b', 80), candidate('c', 70)] })
+    let inFlight = 0
+    let most = 0
+    await runCycle(
+      {
+        ...deps,
+        confirmEntry: async (snapshot) => {
+          inFlight += 1
+          most = Math.max(most, inFlight)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          inFlight -= 1
+          return { ok: true, snapshot }
+        },
+      },
+      config,
+      throttle,
+    )
+    expect(most).toBe(3)
+    expect((await deps.store.loadPositions()).map((p) => p.tokenAddress).sort()).toEqual(['a', 'b', 'c'])
+  })
+
   it('opens normally when the token still passes everything', async () => {
     const { deps, throttle } = rig()
     await runCycle(

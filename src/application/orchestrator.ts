@@ -380,6 +380,16 @@ const liveBar = (price: number, time: number): Candles => ({
   time: [time], open: [price], high: [price], low: [price], close: [price], volume: [1],
 })
 
+/** How many chosen tokens are re-examined at once before money moves. */
+const ENTRY_CONCURRENCY = 8
+
+/** Maps every item, `size` at a time, keeping the input's order. */
+async function inBatches<T, R>(items: readonly T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = []
+  for (let i = 0; i < items.length; i += size) out.push(...(await Promise.all(items.slice(i, i + size).map(fn))))
+  return out
+}
+
 export async function runCycle(
   deps: CycleDeps,
   config: CycleConfig,
@@ -1335,13 +1345,21 @@ export async function runCycle(
         if (throttle.shouldSend(concentrated)) await deps.alerts.send(concentrated)
       }
 
-      for (const allocation of plan.allocations) {
+      // Every chosen token re-examined AT ONCE, a few at a time, not one behind
+      // the other: each look waits on Jupiter, and in a row a full book took
+      // minutes — *va cargando de a 5 cuando podría cargarlas todas juntas.*
+      // The answers are then read in the plan's own order, so what opens and
+      // in which order is exactly as before.
+      const confirmations = await inBatches(plan.allocations, ENTRY_CONCURRENCY, async (allocation) =>
+        allocation.quality.liquidityUsd > 0 && deps.confirmEntry ? deps.confirmEntry(allocation.snapshot) : null,
+      )
+      for (const [index, allocation] of plan.allocations.entries()) {
         // An empty pool cannot be watched — the death watch measures every
         // collapse against the liquidity at entry — and one at $0 once threw
         // and cost the whole cycle. Skipped, never fatal.
         if (!(allocation.quality.liquidityUsd > 0)) continue
         if (deps.confirmEntry) {
-          const confirmation = await deps.confirmEntry(allocation.snapshot)
+          const confirmation = confirmations[index]!
           if (!confirmation.ok) {
             // Collected, not announced. One refusal per token meant a cycle
             // that declined a dozen candidates sent a dozen warnings — and a
