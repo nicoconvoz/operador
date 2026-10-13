@@ -29,8 +29,8 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours old** or more, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
-| **The book** | **$15 a token**, one buy: $5,000 holds 333 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **one $15 buy the moment the token enters**, in the pass that opens the slot. No DCA | `buyOnSelection`, `stop-sweep.ts` |
+| **The book** | **$30 a token**, up to ten buys of $3: $5,000 holds 166 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$3 the moment the token enters**, then **$3 on a 2% dip and a 7% bounce** off the low, never over the buy before — about a 6.6% fall in practice — nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 10% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -203,6 +203,15 @@ branch, written by `/api/control` (control token, and `BORRAR` typed for a
 reset; it needs `GITHUB_TOKEN` in Vercel) and applied once by the engine after
 every pass (`applyControl`, the stamp kept in the state so a restart never
 wipes twice). The repository is public, so the state is too.
+
+The book on 2026-10-12: +$330 realised, −$76 of costs, and −$870 unrealised
+over 218 single-buy positions, 214 of them red — the TP sells the winners and
+a loser has no way out. *30 USD totales por token, 10 compras, para cada
+compra una caída primero del 2% y un rebote del 7%* — *confiá en mí.* `DEFAULT_STEP_USD`
+3, `DEFAULT_MAX_STEPS` 10, `DEFAULT_DIP_PCT` 2, `DEFAULT_BOUNCE_PCT` 7. Stated
+before it shipped: the bounce is measured off the low and a buy never lands
+over the buy before, so each DCA waits for a fall of about 6.6% and lands just
+under the last.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
