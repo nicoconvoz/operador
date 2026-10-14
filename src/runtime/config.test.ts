@@ -269,7 +269,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.maxDayRisePct).toBe(100)
     expect(loadConfig({ ...valid, OPERADOR_MAX_DAY_RISE_PCT: '0' }).maxDayRisePct).toBe(Infinity)
     expect(loadConfig({ ...valid, OPERADOR_MAX_DAY_RISE_PCT: '200' }).maxDayRisePct).toBe(200)
-    expect(config.pressureTp).toEqual({ armPct: 10, dropPct: 10 })
+    expect(config.pressureTp).toEqual({ armPct: 20, dropPct: 10 })
     expect(config.strategyExit).toBe(false)
     expect(config.pumpDump).toEqual({ maxPumpPct: Infinity, maxHourFallPct: Infinity })
     expect(loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000', OPERADOR_BOOK_TOKENS: '70' }).stepUsd).toBeCloseTo(5000 / 70, 9)
@@ -310,9 +310,9 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_CRASH_STOP_SECONDS: '90' }).crashStop.windowMs).toBe(90_000)
   })
 
-  it('sells on buy pressure once the holding is up more than 10% — *recién después del 10%* — zero arms it in profit', () => {
+  it('sells on buy pressure once the holding is up more than 20% (2026-10-14) — zero arms it in profit', () => {
     const config = loadConfig(valid)
-    expect(config.pressureTp).toEqual({ armPct: 10, dropPct: 10 })
+    expect(config.pressureTp).toEqual({ armPct: 20, dropPct: 10 })
     expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).pressureTp.dropPct).toBe(0)
     expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '12' }).pressureTp.armPct).toBe(12)
     expect(loadConfig({ ...valid, OPERADOR_PRESSURE_TP_ARM_PCT: '0' }).pressureTp.armPct).toBe(0)

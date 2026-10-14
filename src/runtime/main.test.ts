@@ -211,7 +211,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
 
   it('wires the TP on buy pressure — in profit, on a 10% fall from its peak — and no other TP', () => {
     const { deps, cycleConfig } = runtime()
-    expect(deps.pressureTp).toMatchObject({ armPct: 10, dropPct: 10 })
+    expect(deps.pressureTp).toMatchObject({ armPct: 20, dropPct: 10 })
     expect(deps.pressureTp?.hourCounts).toBeDefined()
     expect(exitLevelsFor(held, exitSizingFrom(cycleConfig)).fixedTpPct).toBeNull()
     expect(runtime({ OPERADOR_PRESSURE_TP_DROP_PCT: '0' }).deps.pressureTp).toBeUndefined()

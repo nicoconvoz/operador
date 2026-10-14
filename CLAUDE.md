@@ -31,7 +31,7 @@ the first configuration whose launch did not start by falling into a hole:
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours old** or more, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
 | **The book** | **$30 a token**, up to thirty buys of $1: $5,000 holds 166 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
 | **The buy** | **$1 the moment the token enters**, then **$1 on a 1% dip and a 2% bounce** off the low, never over the buy before — about a 2% fall in practice — twenty-nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
-| **Exits** | the **TP on buy pressure**, armed once the holding is up more than 10% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits, and a **$5 stop**. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
+| **Exits** | the **TP on buy pressure**, armed once the holding is up more than 20% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits, and a **$5 stop**. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
 
@@ -224,6 +224,9 @@ Zero turns it off.
 `DEFAULT_BOUNCE_PCT` 2: still $30 a token. The same arithmetic as 2%/7%: a
 2% bounce never over the buy before asks a fall of about 2%. Stated: gas is
 $0.05 a swap, 5% of each $1 buy — what ate the $1 experiment of 29/09.
+
+*Para que se active el TP por presión compradora tiene que alcanzar más del 20%
+de ganancia* (2026-10-14): `OPERADOR_PRESSURE_TP_ARM_PCT` is 20.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
