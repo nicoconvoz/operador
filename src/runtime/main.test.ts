@@ -851,8 +851,9 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
   })
 
   it('sells everything the moment the holding is more than $5 under water — with production\u2019s own defaults', async () => {
-    // *Poné un SL a 5 USD de pérdida* (2026-10-14).
-    const { deps, cycleConfig, store } = onMemory(DEFAULTS)
+    // *Poné un SL a 5 USD de pérdida*, then *sacale el SL* (2026-10-14): the
+    // stop stays one variable away, and this proves it still works.
+    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STOP_MAX_LOSS_USD: '5' })
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000
