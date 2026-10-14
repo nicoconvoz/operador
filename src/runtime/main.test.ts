@@ -825,8 +825,9 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
 
   it('buys $3 on entry, then $3 on a 2% dip and a 7% bounce — which, never above the buy before, asks a fall of about 6.6% — ten at most, and never stops out', async () => {
     // *30 USD totales por token, 10 compras, para cada compra una caída
-    // primero del 2% y un rebote del 7%* — *confiá en mí* (2026-10-12).
-    const { deps, cycleConfig, store } = onMemory(DEFAULTS)
+    // primero del 2% y un rebote del 7%* — *confiá en mí* (2026-10-12). The
+    // ladder alone: the $5 stop has its own scenario below.
+    const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STOP_MAX_LOSS_USD: '0' })
     const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
     await store.savePosition(slot)
     let clock = 1_000
@@ -848,6 +849,33 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     for (let i = 0; i < 60; i++) { price *= i % 2 === 0 ? 0.9 : 1.075; await sweep(price) }
     expect(await buys()).toHaveLength(10)
     expect((await store.fillsFor(slot.id)).filter((f) => f.side === 'sell')).toEqual([])
+  })
+
+  it('sells everything the moment the holding is more than $5 under water — with production\u2019s own defaults', async () => {
+    // *Poné un SL a 5 USD de pérdida* (2026-10-14).
+    const { deps, cycleConfig, store } = onMemory(DEFAULTS)
+    const slot = { ...held, capitalUsd: cycleConfig.usdPerToken!, lastBarTime: 0 }
+    await store.savePosition(slot)
+    let clock = 1_000
+    const levels = (position: PersistedPosition) => exitLevelsFor(position, exitSizingFrom(cycleConfig))
+    const sweep = async (price: number) =>
+      sweepStops(deps, levels, new AlertThrottle(0), (await store.loadPositions()).map((p) => ({ ...p, lastPriceUsd: price })), new Map([['solana:T', price]]), (clock += 30_000))
+    expect(await sweep(1)).toEqual([])
+    // Ladder down to its ten buys, then keep falling until the stop takes it.
+    let price = 1
+    let sold: readonly string[] = []
+    for (let i = 0; i < 80 && sold.length === 0; i++) {
+      price *= i % 2 === 0 ? 0.92 : 1.075
+      sold = await sweep(price)
+    }
+    expect(sold).toEqual([slot.id])
+    const fills = await store.fillsFor(slot.id)
+    expect(fills.filter((f) => f.side === 'sell').every((f) => f.comment === '🛑 Stop')).toBe(true)
+    const paid = fills.filter((f) => f.side === 'buy').reduce((s, f) => s + f.price * f.qty, 0)
+    const got = fills.filter((f) => f.side === 'sell').reduce((s, f) => s + f.price * f.qty, 0)
+    // Cut just past the line — a sweep is thirty seconds, not a tick.
+    expect(paid - got).toBeGreaterThan(5)
+    expect(paid - got).toBeLessThan(9)
   })
 })
 

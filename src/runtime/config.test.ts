@@ -286,7 +286,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.gainLock).toBeNull()
     expect(config.fixedTpPct).toBe(0)
     expect(config.crashStop.dropPct).toBe(0)
-    expect(config.stopLoss.maxLossUsd).toBe(0)
+    expect(config.stopLoss.maxLossUsd).toBe(5)
     expect(config.tiers).toBe(false)
     expect(config.buyOnSelection).toBe(true)
   })
@@ -325,9 +325,12 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(loadConfig({ ...valid, OPERADOR_STOP_NEEDS_HISTORY: '1' }).stopLoss.onlyWhenHistoryCovers).toBe(true)
   })
 
-  it('has no stop — *que no haya SL, perdemos mucho con comisiones* — and $0.60 is one variable away', () => {
-    expect(loadConfig(valid).stopLoss.maxLossUsd).toBe(0)
-    expect(shouldStopOut({ entryPriceUsd: 1, marketPriceUsd: 0.1, openQty: 3, runAtEntryPct: null, buys: 1 }, loadConfig(valid).stopLoss)).toBe(false)
+  it('stops a holding more than $5 under water — *poné un SL a 5 USD de pérdida* (2026-10-14) — one variable away', () => {
+    expect(loadConfig(valid).stopLoss).toMatchObject({ maxLossUsd: 5, minBuys: 1 })
+    // $30 held: a 16% fall is $4.80 under water, a 17% fall $5.10.
+    const held = (to: number) => ({ entryPriceUsd: 1, marketPriceUsd: to, openQty: 30, runAtEntryPct: null, buys: 10 })
+    expect(shouldStopOut(held(0.84), loadConfig(valid).stopLoss)).toBe(false)
+    expect(shouldStopOut(held(0.83), loadConfig(valid).stopLoss)).toBe(true)
     const { stopLoss } = loadConfig({ ...valid, OPERADOR_STOP_MAX_LOSS_USD: '0.6' })
     expect(stopLoss).toMatchObject({ maxLossUsd: 0.6, minBuys: 1 })
     // $3 held: a 15% fall is $0.45 under water, a 25% fall $0.75.
