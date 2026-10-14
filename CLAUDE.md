@@ -228,6 +228,14 @@ $0.05 a swap, 5% of each $1 buy — what ate the $1 experiment of 29/09.
 *Para que se active el TP por presión compradora tiene que alcanzar más del 20%
 de ganancia* (2026-10-14): `OPERADOR_PRESSURE_TP_ARM_PCT` is 20.
 
+*Una sola venta que los englobe a todos los de ese token.* It already was one:
+the broker sells a position in one swap, one gas charge, impact on the total.
+What it records is one fill per buy closed, each with its own basis — thirty
+lines for one sale on a thirty-buy ladder. The readers fold them now
+(`mergeSales`: one position, one instant, one row, called `Venta`) on the
+Registro, the token search and the CSV; the stored fills are untouched, so
+recovery, the ledger and the broker's seed read what they always did.
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

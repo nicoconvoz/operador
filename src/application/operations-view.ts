@@ -7,6 +7,7 @@ import { fixedTpPrice } from '../domain/strategy/fixed-tp.js'
 import { type CascadeParams, DEFAULT_PARAMS, PYRAMIDING } from '../domain/strategy/params.js'
 import { type CascadeState } from '../domain/strategy/state.js'
 import { realisedBySell, commonFund, holdingBuys } from './ledger.js'
+import { mergeSales } from './merged-sales.js'
 import { bookNetUsd, valuePosition } from './book-value.js'
 import { type PersistedFill, type PersistedPosition, type StatePort } from '../domain/persistence/store.js'
 
@@ -375,7 +376,8 @@ export async function buildOperations(store: StatePort, options: OperationsOptio
   return {
     generatedAt,
     positions: built,
-    recentFills: tape.slice(0, options.tapeLength ?? 40),
+    // One sale is one line, however many buys it closed.
+    recentFills: mergeSales(tape).slice(0, options.tapeLength ?? 40),
     totals: {
       deployedUsd: built.reduce((s, p) => s + p.deployedUsd, 0),
       marketValueUsd: built.reduce((s, p) => s + (p.marketValueUsd ?? 0), 0),

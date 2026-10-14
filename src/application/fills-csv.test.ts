@@ -172,3 +172,22 @@ describe('tokenFileTag — the file says which token it holds', () => {
     expect(tokenFileTag('A'.repeat(80))).toHaveLength(44)
   })
 })
+
+describe('fillsCsv — one sale is one line', () => {
+  it('writes the sale that closed two buys as ONE row, with the quantity and the result of both', () => {
+    const csv = fillsCsv(
+      [
+        fill({ time: 1, side: 'buy', orderId: 'Entry', idempotencyKey: 'b1', qty: 1, price: 1 }),
+        fill({ time: 2, side: 'buy', orderId: 'DCA-1', idempotencyKey: 'b2', qty: 1, price: 1 }),
+        fill({ time: 3, side: 'sell', orderId: 'Entry', idempotencyKey: 's', qty: 1, price: 2, costUsd: 0.01 }),
+        fill({ time: 3, side: 'sell', orderId: 'DCA-1', idempotencyKey: 's#1', qty: 1, price: 2, costUsd: 0.01 }),
+      ],
+      () => 'X',
+    )
+    const sells = csv.split('\n').filter((line) => line.includes(',sell,'))
+    expect(sells).toHaveLength(1)
+    expect(sells[0]).toContain(',Venta,')
+    expect(sells[0]).toContain(',2,4.0000,')
+    expect(sells[0]).toContain(',2.0000,')
+  })
+})

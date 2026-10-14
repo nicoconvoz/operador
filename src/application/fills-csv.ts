@@ -1,4 +1,5 @@
 import { realisedBySell } from './ledger.js'
+import { mergeSales } from './merged-sales.js'
 import { matchesToken, normaliseTokenQuery } from './token-search.js'
 import { type PersistedFill } from '../domain/persistence/store.js'
 
@@ -102,8 +103,13 @@ export function fillsCsv(
   // the file cannot disagree with the screen about a number they both show.
   const made = realisedBySell(fills)
 
-  const rows = [...fills]
-    .sort((a, b) => b.time - a.time)
+  // One sale is one row: the fills of one sale share their instant, and
+  // `mergeSales` folds them with their results added up.
+  const rows = mergeSales(
+    [...fills]
+      .sort((a, b) => b.time - a.time)
+      .map((fill) => ({ ...fill, realisedUsd: made.get(fill.idempotencyKey) ?? null })),
+  )
     .map((fill) =>
       [
         new Date(fill.time).toISOString(),
@@ -117,7 +123,7 @@ export function fillsCsv(
         cell(fill.comment ?? ''),
         // BLANK on a buy, never zero: a zero reads as a trade that broke even,
         // and a purchase has made nothing YET. Those are different statements.
-        made.has(fill.idempotencyKey) ? made.get(fill.idempotencyKey)!.toFixed(4) : '',
+        fill.realisedUsd === null ? '' : fill.realisedUsd.toFixed(4),
         cell(fill.positionId),
       ].join(','),
     )

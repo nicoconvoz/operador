@@ -1,4 +1,5 @@
 import { realisedBySell } from './ledger.js'
+import { mergeSales } from './merged-sales.js'
 import { type OperationsView, type PositionOperations } from './operations-view.js'
 import { type UniverseToken } from './universe-view.js'
 
@@ -178,9 +179,11 @@ export function searchTape(sources: TapeSources, query: string, limit: number): 
     }
   }
 
-  return [...rows.values()]
-    .map(named)
-    .filter((row) => matchesToken(query, { symbol: row.symbol, positionId: row.positionId }))
-    .sort((a, b) => b.time - a.time)
-    .slice(0, limit)
+  // Folded again here: a token's own fills are added one by one above.
+  return mergeSales(
+    [...rows.values()]
+      .map(named)
+      .filter((row) => matchesToken(query, { symbol: row.symbol, positionId: row.positionId }))
+      .sort((a, b) => b.time - a.time),
+  ).slice(0, limit)
 }
