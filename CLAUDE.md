@@ -29,8 +29,8 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours old** or more, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
-| **The book** | **$30 a token**, up to ten buys of $3: $5,000 holds 166 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$3 the moment the token enters**, then **$3 on a 2% dip and a 7% bounce** off the low, never over the buy before — about a 6.6% fall in practice — nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
+| **The book** | **$30 a token**, up to thirty buys of $1: $5,000 holds 166 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$1 the moment the token enters**, then **$1 on a 1% dip and a 2% bounce** off the low, never over the buy before — about a 2% fall in practice — twenty-nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 10% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits, and a **$5 stop**. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -218,6 +218,12 @@ is 5, armed from the first buy: the sweep sells everything, at a loss, the
 moment a holding is more than $5 under water on price — `🛑 Stop` on the
 tape. On a full $30 ladder that is a fall of about 17% under its average.
 Zero turns it off.
+
+*30 compras de 1 USD; la regla es que caiga 1% y rebote 2%* (2026-10-14).
+`DEFAULT_STEP_USD` 1, `DEFAULT_MAX_STEPS` 30, `DEFAULT_DIP_PCT` 1,
+`DEFAULT_BOUNCE_PCT` 2: still $30 a token. The same arithmetic as 2%/7%: a
+2% bounce never over the buy before asks a fall of about 2%. Stated: gas is
+$0.05 a swap, 5% of each $1 buy — what ate the $1 experiment of 29/09.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

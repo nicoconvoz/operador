@@ -43,7 +43,8 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
  */
 //
 // $3 since 2026-10-12, ten times: *30 USD totales por token, 10 compras.*
-export const DEFAULT_STEP_USD = 3
+// $1 since 2026-10-14, thirty times: *30 compras de 1 USD.*
+export const DEFAULT_STEP_USD = 1
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -73,8 +74,8 @@ export const DEFAULT_STEP_GROWTH = 1
  * 2026-10-10: the entry and one buy 90% under it. TEN the same day: the
  * entry and nine DCAs. ONE again that evening: *una sola compra.*
  */
-// TEN since 2026-10-12: the entry and nine DCAs, $30 a token.
-export const DEFAULT_MAX_STEPS = 10
+// TEN since 2026-10-12, THIRTY since 2026-10-14: still $30 a token.
+export const DEFAULT_MAX_STEPS = 30
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -107,8 +108,11 @@ export const DEFAULT_MAX_STEPS = 10
 // measured off the low and a buy never lands over the buy before it, so a 7%
 // bounce only buys after a fall of about 6.6%, and each buy lands just under
 // the last.
-export const DEFAULT_DIP_PCT = 2
-export const DEFAULT_BOUNCE_PCT = 7
+//
+// 1% and 2% since 2026-10-14: *la regla es que caiga 1% y rebote 2%.* The same
+// arithmetic: a 2% bounce never over the buy before asks a fall of about 2%.
+export const DEFAULT_DIP_PCT = 1
+export const DEFAULT_BOUNCE_PCT = 2
 
 /**
  * How many points each DCA adds to the dip it asks — and to its collapse
