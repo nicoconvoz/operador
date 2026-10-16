@@ -46,7 +46,9 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
 // $1 since 2026-10-14, thirty times: *30 compras de 1 USD.*
 // $3 again since 2026-10-16, ten times: of 341 positions, the 15 ladders that
 // reached 21–30 buys won none and lost $119.60; up to ten buys won 58–65%.
-export const DEFAULT_STEP_USD = 3
+// $250 a token since the same evening, in thirty buys: *250 USD por token en
+// 30 compras de aproximadamente 8* — $8.33 each, so $5,000 holds twenty.
+export const DEFAULT_STEP_USD = 250 / 30
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -76,9 +78,9 @@ export const DEFAULT_STEP_GROWTH = 1
  * 2026-10-10: the entry and one buy 90% under it. TEN the same day: the
  * entry and nine DCAs. ONE again that evening: *una sola compra.*
  */
-// TEN since 2026-10-12, THIRTY since 2026-10-14, TEN again since 2026-10-16:
-// still $30 a token.
-export const DEFAULT_MAX_STEPS = 10
+// TEN since 2026-10-12, THIRTY since 2026-10-14, TEN again since 2026-10-16,
+// and THIRTY that evening: $250 a token.
+export const DEFAULT_MAX_STEPS = 30
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
