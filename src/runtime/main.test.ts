@@ -325,9 +325,9 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(runtime({ OPERADOR_LIVE_PRICE: '0' }).deps.liveBars).toBeUndefined()
   })
 
-  it('does not blacklist a frozen token on release, as on 24/09, unless told to', () => {
-    expect(runtime().cycleConfig.blacklistOnFreeze).toBe(false)
-    expect(runtime({ OPERADOR_BLACKLIST_ON_FREEZE: '1' }).cycleConfig.blacklistOnFreeze).toBe(true)
+  it('blacklists a frozen token once it is sold, unless told not to', () => {
+    expect(runtime().cycleConfig.blacklistOnFreeze).toBe(true)
+    expect(runtime({ OPERADOR_BLACKLIST_ON_FREEZE: '0' }).cycleConfig.blacklistOnFreeze).toBe(false)
   })
 
   it('rebuilds a position’s broker once a rung has raised its capital', async () => {

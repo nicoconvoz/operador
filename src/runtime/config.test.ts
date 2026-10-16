@@ -251,9 +251,9 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     })
   })
 
-  it('does not blacklist a frozen token on release, as on 24/09 — one variable away', () => {
-    expect(loadConfig(valid).blacklistOnFreeze).toBe(false)
-    expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '1' }).blacklistOnFreeze).toBe(true)
+  it('blacklists a frozen token once it is sold — *que pasen a lista negra* (2026-10-16) — one variable away', () => {
+    expect(loadConfig(valid).blacklistOnFreeze).toBe(true)
+    expect(loadConfig({ ...valid, OPERADOR_BLACKLIST_ON_FREEZE: '0' }).blacklistOnFreeze).toBe(false)
   })
 
   it('buys every safe token for $3, once, and sells on a 10% fall of buy pressure once in profit', () => {
@@ -283,7 +283,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     expect(config.deathWatch).toBe(true)
     expect(config.exitOnFreeze).toBe(true)
     expect(config.abandonFreezeHours).toBe(3)
-    expect(config.blacklistOnFreeze).toBe(false)
+    expect(config.blacklistOnFreeze).toBe(true)
     // *No quiero almacenar velas, nos movemos por precio* (2026-10-09).
     expect(config.livePrice).toBe(true)
     expect(config.gainLock).toBeNull()

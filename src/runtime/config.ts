@@ -618,7 +618,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // turns it off.
     // 24/09 (2026-10-08): a frozen token is not banned, and three hours
     // without a trade freezes.
-    blacklistOnFreeze: onlyIf(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
+    // ON again since 2026-10-16: *las que se congelen, que se vendan y pasen a
+    // lista negra para no volverse a comprar.*
+    blacklistOnFreeze: onUnless(env, 'OPERADOR_BLACKLIST_ON_FREEZE'),
     abandonFreezeHours: number(env, 'OPERADOR_ABANDON_FREEZE_HOURS', 3),
     // One step, from the module the dashboard reads: the ladder a slot is
     // priced with is the ladder the sweep buys.
