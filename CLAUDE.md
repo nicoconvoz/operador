@@ -246,7 +246,7 @@ older ones 32%, at every ladder depth — market cap, holders and verification
 said the same thing more weakly, so age is the one rule. **Depth**: the 15
 ladders that reached 21–30 buys won none and lost $119.60, nearly half the
 loss; young tokens with up to ten buys won 81–94% and made +$60. The age gate
-is a window now (,  30, zero turns it
+is a window now (`maxAgeHours`, `OPERADOR_MAX_AGE_DAYS` 30, zero turns it
 off), an opportunity gate that never touches what is held; and the ladder is
 ten buys of $3, still $30 a token, which also cuts gas from 5% to 1.7% of a
 buy — costs ($137) had passed the realised gross ($118.79). The scores did
