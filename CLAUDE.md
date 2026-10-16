@@ -28,9 +28,9 @@ the first configuration whose launch did not start by falling into a hole:
 
 | | Rule | Where it lives |
 |---|---|---|
-| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours old** or more, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
-| **The book** | **$30 a token**, up to thirty buys of $1: $5,000 holds 166 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$1 the moment the token enters**, then **$1 on a 1% dip and a 2% bounce** off the low, never over the buy before — about a 2% fall in practice — twenty-nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
+| **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours to thirty days old**, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
+| **The book** | **$30 a token**, up to ten buys of $3: $5,000 holds 166 | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$3 the moment the token enters**, then **$3 on a 1% dip and a 2% bounce** off the low, never over the buy before — about a 2% fall in practice — nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 20% and selling on a **10% fall of buyers' share from its peak**; the **freeze** and **death** exits. No stop. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -238,6 +238,19 @@ recovery, the ledger and the broker's seed read what they always did.
 
 *Sacale el SL* (2026-10-14), the same day it came: `OPERADOR_STOP_MAX_LOSS_USD`
 is 0 again; 5 brings it back.
+
+*Mostrame cuáles prosperan y cuáles se caen* — then *armalo con las que
+ganan más* (2026-10-16). 341 positions, 186 up (+$167) and 155 down (−$259).
+Two traits split them. **Age**: pools in their first thirty days won 73%,
+older ones 32%, at every ladder depth — market cap, holders and verification
+said the same thing more weakly, so age is the one rule. **Depth**: the 15
+ladders that reached 21–30 buys won none and lost $119.60, nearly half the
+loss; young tokens with up to ten buys won 81–94% and made +$60. The age gate
+is a window now (,  30, zero turns it
+off), an opportunity gate that never touches what is held; and the ladder is
+ten buys of $3, still $30 a token, which also cuts gas from 5% to 1.7% of a
+buy — costs ($137) had passed the realised gross ($118.79). The scores did
+not separate at entry; the organic score did not either.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

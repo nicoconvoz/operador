@@ -340,6 +340,8 @@ export interface RuntimeConfig {
   readonly pumpDump: { readonly maxPumpPct: number; readonly maxHourFallPct: number }
   /** A rise on the day at or past which nothing enters. *Últimas 24 horas < 100%*. Infinity: off. */
   readonly maxDayRisePct: number
+  /** The oldest pool that may enter, in days. *Armalo con las que ganan más*. Infinity: off. */
+  readonly maxAgeDays: number
   /** How far under its anchor each DCA rung buys, in percent, DCA-1 first. */
   readonly dcaDropsPct: readonly number[]
   /** What each DCA rung buys, in dollars, DCA-1 first — one per drop. */
@@ -804,6 +806,9 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     // peligroso* (2026-10-09). Zero turns either half off.
     // *Últimas 24 horas < 100%* (2026-10-10). Zero turns it off.
     maxDayRisePct: numberOrZero(env, 'OPERADOR_MAX_DAY_RISE_PCT', 100) || Infinity,
+    // *Armalo con las que ganan más* (2026-10-16): the first thirty days. Zero
+    // turns it off.
+    maxAgeDays: numberOrZero(env, 'OPERADOR_MAX_AGE_DAYS', 30) || Infinity,
     pumpDump: {
       // OFF since the same afternoon: *no pongas puerta de entrada.* 100 and 5
       // bring it back.

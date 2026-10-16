@@ -1121,7 +1121,17 @@ describe('the losers of 2026-10-11 — a newborn pool, a pump.fun curve, a low o
     expect(evaluateSafetyGates(newborn, DEFAULT_GATE_POLICY).passed).toBe(true)
   })
 
+  // 341 positions, 2026-10-14 to 10-16: pools in their first thirty days won
+  // 73%, older ones 32% at every ladder depth. The age gate is a WINDOW now.
+  it('refuses a pool older than thirty days', () => {
+    expect(DEFAULT_GATE_POLICY.maxAgeHours).toBe(30 * 24)
+    expect(gates({ pairCreatedAt: NOW - 31 * 24 * HOUR })).toEqual(['age'])
+    expect(gates({ pairCreatedAt: NOW - 29 * 24 * HOUR })).toEqual([])
+    expect(evaluateMarketGates(clean({ pairCreatedAt: NOW - 31 * 24 * HOUR }), DEFAULT_GATE_POLICY).failures.map((f) => f.gate)).toEqual(['age'])
+  })
+
   it('is off under STRICT, so the older logic stays tested alone', () => {
+    expect(STRICT_GATE_POLICY.maxAgeHours).toBe(Infinity)
     expect(STRICT_GATE_POLICY.minOrganicScore).toBe(0)
     expect(STRICT_GATE_POLICY.refuseBondingCurve).toBe(false)
   })

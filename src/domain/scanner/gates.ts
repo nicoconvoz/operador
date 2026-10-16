@@ -13,6 +13,13 @@ import { hoursOld, type TokenSnapshot } from './snapshot.js'
 export interface GatePolicy {
   readonly minLiquidityUsd: number
   readonly minAgeHours: number
+  /**
+   * The other end of the age window: a pool older than this is refused.
+   * Absent or Infinity is off. *Armalo con las que ganan más* (2026-10-16):
+   * of 341 positions, pools in their first thirty days won 73% and older
+   * ones 32%, at every ladder depth. An opportunity gate, never a safety one.
+   */
+  readonly maxAgeHours?: number
   readonly minVolume24hUsd: number
   /**
    * A fall this deep, in a window this short, and the token is not an
@@ -300,6 +307,7 @@ export const DEFAULT_GATE_POLICY: GatePolicy = {
   // SIX hours since 2026-10-11: of 404 positions, pools under six hours old
   // won 43% and lost $57; the rest won 58% and made $41.
   minAgeHours: 6,
+  maxAgeHours: 30 * 24,
   minVolume24hUsd: 0,
   // The hour decides a collapse now, through the `headroom` floor at -3%. A
   // daily threshold on top was belt and braces against the same accident.
@@ -505,6 +513,7 @@ export const STRICT_GATE_POLICY: GatePolicy = {
   // them off in production, and spreading the default would carry the zero
   // here and quietly delete the coverage with the behaviour.
   minAgeHours: 24,
+  maxAgeHours: Infinity,
   minHourlyTxns: 4,
 }
 
@@ -617,6 +626,7 @@ export function evaluateMarketGates(snapshot: TokenSnapshot, policy: GatePolicy)
   const age = hoursOld(snapshot)
   if (policy.minAgeHours > 0 && age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
   else if (age !== null && age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+  else if (age !== null && age > (policy.maxAgeHours ?? Infinity)) failures.push(fail('age', 'failed', `pair is ${(age / 24).toFixed(0)} days old >  days`))
 
   // Can this engine SEE it trade? Only on a measured value: a scan that has not
   // asked the candle feed says nothing, and the entry confirmation asks again
@@ -830,6 +840,7 @@ export function evaluateGates(snapshot: TokenSnapshot, policy: GatePolicy): Gate
   const age = hoursOld(snapshot)
   if (policy.minAgeHours > 0 && age === null) failures.push(fail('age', 'unknown', 'pair creation time unknown'))
   else if (age !== null && age < policy.minAgeHours) failures.push(fail('age', 'failed', `pair is ${age.toFixed(1)}h old < ${policy.minAgeHours}h`))
+  else if (age !== null && age > (policy.maxAgeHours ?? Infinity)) failures.push(fail('age', 'failed', `pair is ${(age / 24).toFixed(0)} days old >  days`))
 
   // Only fires on a measured count: a scanner pass that has not fetched
   // candles yet says nothing, and the executor checks again before trading.
