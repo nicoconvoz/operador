@@ -377,6 +377,20 @@ describe('buildUniverse — a position that turned unsafe', () => {
     expect((await buildUniverse(store, options)).tokens[0]!.turnedUnsafe).toBe(false)
   })
 
+  it('never cries unsafe over a sale nobody asked about', async () => {
+    // *¿Por qué se ven rojas?* (2026-10-16). A held token's sale is quoted
+    // only when something is wrong, so its honeypot answer is usually
+    // UNKNOWN — unasked, not failed. Only a gate that FAILED turns it, the
+    // death watch's own rule (`health-from-scan`).
+    const store = await seed([token('Ours', {}, { honeypot: null })])
+    await store.savePosition(position('Ours'))
+
+    const [drawn] = (await buildUniverse(store, options)).tokens
+
+    expect(drawn!.tier).toBe('held')
+    expect(drawn!.turnedUnsafe).toBe(false)
+  })
+
   it('does not raise it on a token that is not ours', async () => {
     // A dangerous candidate is already drawn as 'unsafe'. The flag is about the
     // one case the tier cannot express: danger inside a position.

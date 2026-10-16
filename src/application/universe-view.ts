@@ -430,7 +430,11 @@ export async function buildUniverse(store: StatePort, options: UniverseOptions):
 
     return {
       id: key,
-      turnedUnsafe: held !== undefined && snapshot.securityChecked !== false && unsafe,
+      // Only a gate that FAILED turns a token we hold, never one nobody could
+      // answer: a held token's sale is asked only when something is wrong, so
+      // its honeypot is usually unknown — unasked, not unsellable. The death
+      // watch's own rule (`health-from-scan`).
+      turnedUnsafe: held !== undefined && snapshot.securityChecked !== false && gateResult.failures.some((f) => SAFETY_GATES.has(f.gate) && f.reason === 'failed'),
       symbol: snapshot.symbol,
       chain: snapshot.chain,
       address: snapshot.address,
