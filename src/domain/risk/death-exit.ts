@@ -188,6 +188,23 @@ export function liquidityBelowFreeze(
   return liquidityUsd / entryLiquidityUsd < policy.liquidityFreezeRatio
 }
 
+/**
+ * Whether a held token's sale is worth asking the venue about now.
+ *
+ * *Que la venta se revise por el precio y moleste a Jupiter sólo cuando sea
+ * necesario* (2026-10-16). The quote is the one expensive reading: one request
+ * a token against a provider that refuses five in a row, while price,
+ * liquidity and the scan's verdict arrive a hundred tokens a request. So the
+ * two stages keep their own rule — *freeze is cheap, exit is not*: the cheap
+ * readings decide whether anything is wrong, and only then is the sale asked,
+ * to confirm a death or to clear a freeze. A healthy watch with no signal is
+ * not asked, and an unasked quote is inconclusive: it neither confirms nor
+ * clears. Pure.
+ */
+export function needsSellProbe(state: DeathWatchState, policy: DeathExitPolicy, cheap: AssetHealthObservation): boolean {
+  return state.stage !== 'healthy' || evaluateSignals(cheap, state, policy).length > 0
+}
+
 /** Pure: which invalidation signals does this observation carry? */
 export function evaluateSignals(
   obs: AssetHealthObservation,

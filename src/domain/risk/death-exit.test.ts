@@ -7,6 +7,7 @@ import {
   assessAssetHealth,
   evaluateSignals,
   liquidityBelowFreeze,
+  needsSellProbe,
   startDeathWatch,
   type AssetHealthObservation,
   type DeathWatchState,
@@ -363,5 +364,32 @@ describe('death watch — a SAFETY gate that turns on a token we hold', () => {
     // every position the security budget had not reached.
     const { state } = run([healthy({ safetyFailed: null })])
     expect(state.stage).toBe('healthy')
+  })
+})
+
+describe('needsSellProbe — Jupiter is asked about a sale only when something is wrong', () => {
+  // *Que la venta se revise por el precio y moleste a Jupiter sólo cuando sea
+  // necesario* (2026-10-16). A quote per held token per pass was 160 quotes
+  // against a provider that refuses five in a row; the cheap readings — price,
+  // liquidity, the scan's verdict — arrive a hundred tokens a request.
+  const watch = startDeathWatch(ENTRY_LIQ, 0)
+
+  it('leaves a healthy token alone while the cheap readings say nothing', () => {
+    expect(needsSellProbe(watch, P, healthy({ sellQuote: 'unknown' }))).toBe(false)
+  })
+
+  it('asks once the cheap readings carry a signal', () => {
+    expect(needsSellProbe(watch, P, healthy({ sellQuote: 'unknown', liquidityUsd: ENTRY_LIQ * 0.3 }))).toBe(true)
+    expect(needsSellProbe(watch, P, healthy({ sellQuote: 'unknown', mintAuthorityActive: true }))).toBe(true)
+  })
+
+  it('asks for every watch that is no longer healthy: a freeze is confirmed or cleared by the quote', () => {
+    expect(needsSellProbe({ ...watch, stage: 'frozen' }, P, healthy({ sellQuote: 'unknown' }))).toBe(true)
+  })
+
+  it('an unasked quote neither confirms nor clears', () => {
+    const { state, verdict } = assessAssetHealth(watch, P, healthy({ sellQuote: 'unknown' }))
+    expect(verdict).toBe('none')
+    expect(state).toEqual(watch)
   })
 })

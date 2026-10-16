@@ -258,6 +258,20 @@ negra para no volverse a comprar* (2026-10-16). The sale already happened
 (`OPERADOR_BLACKLIST_ON_FREEZE=0` turns it off). It lands at the release, once
 the slot holds nothing, with the freeze's evidence as its reason.
 
+*¿Está bien que esté clavado ahí?* No: a pass took **95 minutes**, measured
+on the runner and rebuilt at home (`tools/time-pass.ts`, a real pass on a
+saved state, every request tallied by provider). Every request answered in
+under a second; the time was the wait between them. Each held token was
+quote-checked TWICE a pass — once by the scan, once by the death watch — about
+320 sale quotes against a Jupiter endpoint that refuses five in a row. The
+operator's rule: *que la venta se revise por el precio y moleste a Jupiter
+sólo cuando sea necesario; que se regule solo.* The scan never quotes what is
+held, and the death watch asks only when the cheap readings — live price,
+liquidity, the scan's verdict, all a hundred tokens a request — carry a
+signal, or the watch is no longer healthy (`needsSellProbe`). An unasked
+quote is inconclusive: it neither confirms nor clears. The same pass on the
+same 163 positions: **87 seconds, 17 quotes.**
+
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
 

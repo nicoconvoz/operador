@@ -1,6 +1,5 @@
 import { marketVolatilityPct } from '../domain/scanner/market-volatility.js'
 import { estimatePriceImpactPct, type MarketQuality } from '../domain/market/market-quality.js'
-import { patientSellProbe } from './patient-sell-probe.js'
 import { type RememberedToken, type StatePort } from '../domain/persistence/store.js'
 import { type MarketSnapshot } from '../infrastructure/adapters/dexscreener/dexscreener.js'
 import { rankUniverse, tokenKey, type RankingPolicy, type ScanResult } from '../domain/scanner/ranking.js'
@@ -917,12 +916,11 @@ export async function scanOnce(
     const one = async (market: MarketSnapshot): Promise<void> => {
       const record = (stage: ScanError['stage'], error: unknown) =>
         errors.push({ address: market.address, stage, error: String(error) })
-      // A token we HOLD waits for its sale quote; a stranger gets one try.
-      const probing =
-        deps.patience && deps.sellProbe && held.has(market.address)
-          ? { ...deps, sellProbe: patientSellProbe(deps.sellProbe, deps.patience) }
-          : deps
-      const { snapshot, slippagePct } = await examineToken(probing, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe }, market, scannedAt, record)
+      // A token we HOLD is never quoted here: the death watch asks for its
+      // sale when the cheap readings say something is wrong (`needsSellProbe`).
+      // *Que moleste a Jupiter sólo cuando sea necesario* (2026-10-16).
+      const holding = held.has(market.address)
+      const { snapshot, slippagePct } = await examineToken(deps, { chain: config.chain, referenceUsd: config.referenceUsd, shouldProbe: holding ? () => false : shouldProbe }, market, scannedAt, record)
       snapshots.push({ ...snapshot, ...withVolatility(market.address) })
       quality.set(tokenKey(snapshot), {
         liquidityUsd: market.liquidityUsd,

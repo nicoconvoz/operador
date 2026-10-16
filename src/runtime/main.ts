@@ -7,7 +7,7 @@ import { DEFAULT_GATE_POLICY, minAgeForHistory, type GatePolicy } from '../domai
 import { DEFAULT_OPPORTUNITY_POLICY } from '../domain/scanner/opportunity.js'
 import { DEFAULT_PORTFOLIO_POLICY } from '../domain/risk/portfolio.js'
 import { DEFAULT_PARAMS } from '../domain/strategy/params.js'
-import { DEFAULT_DEATH_EXIT_POLICY } from '../domain/risk/death-exit.js'
+import { DEFAULT_DEATH_EXIT_POLICY, needsSellProbe } from '../domain/risk/death-exit.js'
 import { admittedUsd } from '../domain/risk/token-tier.js'
 import { type SwitchedOff, type Rejected } from '../domain/scanner/ranking.js'
 import { fundRungsFromFreeCapital, fundStepFromFreeCapital } from '../application/free-capital.js'
@@ -735,6 +735,22 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         // to arrive after the pool had already emptied.
         const live = liveMarkets.get(`${position.chain}:${position.tokenAddress}`)
         const scanner = healthForCycle(snapshot, DEFAULT_GATE_POLICY, live, fresh)
+
+        // The cheap readings first: price, liquidity and the scan's verdict,
+        // already here. The sale is asked of Jupiter only when they say
+        // something is wrong, or the watch is no longer healthy — *que moleste
+        // a Jupiter sólo cuando sea necesario* (2026-10-16). Unasked, the
+        // quote is 'unknown', which neither confirms nor clears.
+        const cheap = {
+          observedAt: Date.now(),
+          source: scanner === UNMEASURED ? 'live' : 'live+scan',
+          sellQuote: 'unknown' as const,
+          ...scanner,
+          transfersBlocked: null,
+          topHolderMovedPct: null,
+          hoursSinceLastTrade: hoursSinceLastTrade(candles, Date.now()),
+        }
+        if (!needsSellProbe(position.deathWatch, deathPolicy, cheap)) return cheap
 
         const decimals = await decimalsFor.decimals(position.chain, position.tokenAddress)
         // Without decimals or a price there is no way to size a meaningful

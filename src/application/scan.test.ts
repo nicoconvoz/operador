@@ -807,11 +807,12 @@ describe('scanOnce — the same scan, over a smaller universe', () => {
     expect(http.calls.some((u) => u.includes('token-profiles') || u.includes('token-boosts'))).toBe(false)
   })
 
-  it('still examines it properly — this is not a cheaper check', async () => {
+  it('still examines it — every reading but the sale quote, which the death watch asks when needed', async () => {
     const { deps } = build(table)
     const out = await scanOnce(deps, { ...config, held: ['ours'], discover: false })
     expect(out.snapshots[0]!.securityChecked).toBe(true)
-    expect(out.snapshots[0]!.security.honeypot).toBe(false)
+    // Unasked, not unsellable: an unknown verdict never turns a held token.
+    expect(out.snapshots[0]!.security.honeypot).toBeNull()
   })
 
   it('discovers by default, so no existing caller changes behaviour', async () => {
@@ -1143,27 +1144,13 @@ describe('scanOnce — Jupiter and the chain, no GoPlus', () => {
     expect([...prefetched[0]!].sort()).toEqual(['good', 'minty'])
   })
 
-  it('WAITS for the sale quote of a token we hold — an unanswered quote is not an unsafe token', async () => {
-    // *Observá a three... igual es insegura.* It was not: its sale quoted fine
-    // from anywhere but the runner, whose shared IP Jupiter refuses. The scan
-    // read the silence as an unknown honeypot, painted our position red, and
-    // dropped it before scoring it — so the score stop never saw it fall.
-    const { scanDeps } = rig()
-    const tries = new Map<string, number>()
-    const flaky: ScanDeps = {
-      ...scanDeps,
-      sellProbe: {
-        assessSell: async (address) => {
-          const n = (tries.get(address) ?? 0) + 1
-          tries.set(address, n)
-          return n === 1 ? { sellQuote: 'unknown', priceImpactPct: null } : { sellQuote: 'ok', priceImpactPct: 0.1 }
-        },
-      },
-      patience: { budgetMs: 60_000, backoffMs: 1_000, sleep: async () => {} },
-    }
-    const outcome = await scanOnce(flaky, { ...config, held: ['good'] })
-    expect(outcome.candidates.map((c) => c.snapshot.address)).toContain('good')
-    expect(tries.get('good')).toBe(2)
+  it('never quotes the sale of a token we hold — the death watch asks when something is wrong', async () => {
+    // *Que moleste a Jupiter sólo cuando sea necesario* (2026-10-16): a quote
+    // per held token per scan was half of what made a pass last 95 minutes.
+    const { scanDeps, probed } = rig()
+    const outcome = await scanOnce(scanDeps, { ...config, held: ['good'] })
+    expect(probed).not.toContain('good')
+    expect(outcome.snapshots.find((s) => s.address === 'good')?.securityChecked).toBe(true)
   })
 
   it('does not wait for a stranger — one try, and the scan stays fast', async () => {
@@ -1298,9 +1285,9 @@ describe('scanOnce — only as far as the free slots need', () => {
     })
     expect(discoveries()).toBe(0)
     expect(registryReads).toEqual([])
-    expect(quoted).toEqual(['ours'])
-    // Ours is never a candidate that takes a slot, and nothing else is one.
-    expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual(['ours'])
+    // Not even ours: its sale is the death watch's question (2026-10-16).
+    expect(quoted).toEqual([])
+    expect(outcome.candidates.map((c) => c.snapshot.address)).toEqual([])
   })
 
   it('with three free slots, stops examining after the third stranger passes — the cheapest first', async () => {
