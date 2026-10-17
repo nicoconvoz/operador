@@ -149,6 +149,10 @@ export const DEFAULT_DIP_STEP_PCT = 0
 // ONE since 2026-10-17: *con cada compra el rebote incrementa 1%: el primero
 // 2%, el segundo 3% y así.* The dip stays at 1%.
 export const DEFAULT_BOUNCE_STEP_PCT = 1
+// *A partir del 5 DCA multiplicá por 2 el % de rebote: 5 → 5%, 6 → 12%, 7 →
+// 14%* (2026-10-17). OPERADOR_LATE_BOUNCE_FROM_DCA=0 turns it off.
+export const DEFAULT_LATE_BOUNCE_FROM_DCA = 5
+export const DEFAULT_LATE_BOUNCE_FACTOR = 2
 
 /**
  * The deepest fall a step still buys on, in percent under the reference. "If
@@ -636,6 +640,10 @@ export interface ProductionLadder {
   readonly dipStepPct: number
   /** Points each later DCA adds to the bounce. Zero: flat. */
   readonly bounceStepPct: number
+  /** The DCA from which the bounce is multiplied. Zero: off. */
+  readonly lateBounceFromDca: number
+  /** What the bounce is multiplied by from that DCA on. */
+  readonly lateBounceFactor: number
   /**
    * What a slot is given, exactly: steps × step. No gas, no price headroom and
    * no floor raise it, and no haircut shrinks the count — *el tope son 5000
@@ -806,6 +814,9 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     // `percent`, never `positive`; nonsense keeps the operator's steps.
     dipStepPct: percent(env.OPERADOR_DIP_STEP_PCT, DEFAULT_DIP_STEP_PCT),
     bounceStepPct: percent(env.OPERADOR_BOUNCE_STEP_PCT, DEFAULT_BOUNCE_STEP_PCT),
+    // Zero is a REAL value — off — so it reads through `percent`.
+    lateBounceFromDca: percent(env.OPERADOR_LATE_BOUNCE_FROM_DCA, DEFAULT_LATE_BOUNCE_FROM_DCA),
+    lateBounceFactor: positive(env.OPERADOR_LATE_BOUNCE_FACTOR, DEFAULT_LATE_BOUNCE_FACTOR),
     // Derived from the variables, never written down on its own: every step
     // added up — $1 + $2 + $4 + $8 + $16 + $32 is $63 — and nothing grossed up.
     slotUsd: ladderTotalUsd(stepUsd, stepGrowth, maxSteps),

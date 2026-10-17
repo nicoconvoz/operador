@@ -30,7 +30,7 @@ the first configuration whose launch did not start by falling into a hole:
 |---|---|---|
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours to thirty days old**, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
 | **The book** | **about $83 a token**, up to ten buys of $8.33: $5,000 holds sixty | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$8.33 the moment the token enters**, then **$8.33 on a 1% dip and a bounce of 2%, 3%, 4%…** off the low — one more point each buy — never over the buy before, nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
+| **The buy** | **$8.33 the moment the token enters**, then **$8.33 on a 1% dip and a bounce of 2%, 3%, 4%, 5%**, then **12%, 14%, 16%, 18%, 20%** — one more point each buy, doubled from DCA 5 — never over the buy before, nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 20% and selling on a **10% fall of buyers' share from its peak**; the **freeze** exit, which sells and bans the token for good, and the **death** exit. No stop. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -285,6 +285,12 @@ primero 2%, el segundo 3% y así* (2026-10-17). `DEFAULT_MAX_STEPS` 10 and
 `DEFAULT_BOUNCE_STEP_PCT` 1; the dip stays at 1% and the step at $8.33, so a
 token holds about $83 and $5,000 sixty. Never over the buy before, so each DCA
 asks a fall of about its bounce: 2% for the first, 10% for the ninth.
+
+*A partir del 5 DCA multiplicá por 2 el % de rebote: 5 → 5%, 6 → 12%, 7 →
+14%* (2026-10-17). Counted in buys, the fifth asks 5% and the sixth — DCA 5 —
+12%. One rule with two numbers, `lateBounceFromDca` 5 and `lateBounceFactor`
+2 on `DipBouncePolicy` (`OPERADOR_LATE_BOUNCE_FROM_DCA=0` turns it off): the
+deepest buys wait for a real turn, up to 20% for the ninth.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

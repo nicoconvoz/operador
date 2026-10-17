@@ -592,6 +592,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         maxDipPct: config.maxDipPct,
         dipStepPct: config.dipStepPct,
         bounceStepPct: config.bounceStepPct,
+        lateBounceFromDca: config.lateBounceFromDca,
+        lateBounceFactor: config.lateBounceFactor,
       },
       stepUsd: config.stepUsd,
       // *1, 2, 4, 8, 16, 32* — each step doubles the one before.

@@ -180,7 +180,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('wires the dip-bounce as the ONE buyer: ONE $3 buy the moment a slot opens, and nothing after it', () => {
     // *Que compre inmediatamente que ingrese.*
     const { deps, cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 1, bouncePct: 2, maxSteps: 10, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1 })
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 1, bouncePct: 2, maxSteps: 10, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 5, lateBounceFactor: 2 })
     expect(deps.dipBounce?.stepUsd).toBe(250 / 30)
     expect(deps.dipBounce?.onSelection).toBe(true)
     expect(deps.dipBounce?.firstStepFromCapital).toBeUndefined()
@@ -824,7 +824,7 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     expect(await store.loadPositions()).toEqual([])
   })
 
-  it('buys about $8 on entry, then again on a 1% dip and a bounce of 2%, 3%, 4%… — never above the buy before — ten at most', async () => {
+  it('buys about $8 on entry, then again on a 1% dip and a bounce of 2%, 3%, 4%… doubled from DCA 5 — never above the buy before — ten at most', async () => {
     // *30 compras de 1 USD; la regla es que caiga 1% y rebote 2%* (2026-10-14).
     // The ladder alone: the $5 stop has its own scenario below.
     const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STOP_MAX_LOSS_USD: '0' })
@@ -844,10 +844,10 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     for (const price of [0.97, 0.99]) expect(await sweep(price)).toEqual([])
     expect(await buys()).toHaveLength(2)
     for (const f of await buys()) expect(f.price * f.qty).toBeCloseTo(250 / 30, 0)
-    // Ten buys at most, each bounce 1% bigger than the last: a 12% bounce
-    // clears even the ninth DCA's 10%.
+    // Ten buys at most, each bounce 1% bigger than the last and doubled from
+    // DCA 5: a 25% bounce clears even the ninth DCA's 20%.
     let price = 0.99
-    for (let i = 0; i < 200; i++) { price *= i % 2 === 0 ? 0.85 : 1.12; await sweep(price) }
+    for (let i = 0; i < 200; i++) { price *= i % 2 === 0 ? 0.7 : 1.25; await sweep(price) }
     expect(await buys()).toHaveLength(10)
     expect((await store.fillsFor(slot.id)).filter((f) => f.side === 'sell')).toEqual([])
   })

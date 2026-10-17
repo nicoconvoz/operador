@@ -642,3 +642,24 @@ describe('stepSizeUsd — each step doubles the one before', () => {
     expect(ladderTotalUsd(5, 1, 6)).toBe(30)
   })
 })
+
+describe('the late bounce — from DCA 5 the bounce doubles (2026-10-17)', () => {
+  // *A partir del 5 DCA multiplicá por 2 el % de rebote: 5 → 5%, 6 → 12%,
+  // 7 → 14%.* Counted in buys, the fifth asks 5% and the sixth — DCA 5 — 12%.
+  const late: DipBouncePolicy = { dipPct: 1, bouncePct: 2, maxSteps: 10, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 5, lateBounceFactor: 2 }
+  const bounce = (step: number) => dipBounceThresholds(step, late).bouncePct
+
+  it('leaves DCA 1 to 4 on their growing bounce', () => {
+    expect([2, 3, 4, 5].map(bounce)).toEqual([2, 3, 4, 5])
+  })
+
+  it('multiplies the bounce from DCA 5 on', () => {
+    expect([6, 7, 8, 9, 10].map(bounce)).toEqual([12, 14, 16, 18, 20])
+  })
+
+  it('is off when absent or at zero, so every older policy reads as before', () => {
+    expect(dipBounceThresholds(8, { ...late, lateBounceFromDca: 0 }).bouncePct).toBe(8)
+    const { lateBounceFromDca: _a, lateBounceFactor: _b, ...plain } = late
+    expect(dipBounceThresholds(8, plain).bouncePct).toBe(8)
+  })
+})

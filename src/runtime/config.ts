@@ -231,6 +231,10 @@ export interface RuntimeConfig {
   readonly dipStepPct: number
   /** Points each DCA after the first adds to the bounce. Zero: flat. OPERADOR_BOUNCE_STEP_PCT. */
   readonly bounceStepPct: number
+  /** The DCA from which the bounce is multiplied. Zero: off. OPERADOR_LATE_BOUNCE_FROM_DCA. */
+  readonly lateBounceFromDca: number
+  /** What the bounce is multiplied by from that DCA on. OPERADOR_LATE_BOUNCE_FACTOR. */
+  readonly lateBounceFactor: number
   /**
    * What one slot is given, exactly: steps × step. *El tope son 5000 dividido
    * 50, que es lo que tengo* — the book holds capital / slot tokens, and no
@@ -649,6 +653,8 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     maxDipPct: productionLadder(env).maxDipPct,
     dipStepPct: productionLadder(env).dipStepPct,
     bounceStepPct: productionLadder(env).bounceStepPct,
+    lateBounceFromDca: productionLadder(env).lateBounceFromDca,
+    lateBounceFactor: productionLadder(env).lateBounceFactor,
     slotUsd: productionLadder(env).slotUsd,
     deepRung: productionLadder(env).deepRung,
     cascadeEntries: productionLadder(env).cascadeEntries,
