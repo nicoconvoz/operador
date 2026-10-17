@@ -79,8 +79,9 @@ export const DEFAULT_STEP_GROWTH = 1
  * entry and nine DCAs. ONE again that evening: *una sola compra.*
  */
 // TEN since 2026-10-12, THIRTY since 2026-10-14, TEN again since 2026-10-16,
-// and THIRTY that evening: $250 a token.
-export const DEFAULT_MAX_STEPS = 30
+// and THIRTY that evening: $250 a token. TEN since 2026-10-17, the step kept:
+// *que sólo sean 10 compras* — about $83 a token.
+export const DEFAULT_MAX_STEPS = 10
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -145,7 +146,9 @@ export const DEFAULT_BOUNCE_PCT = 2
 // ZERO since 2026-10-10: every DCA asks the same 3% and 2%, the flat rule of
 // 29/09. The domain policy keeps the growing steps.
 export const DEFAULT_DIP_STEP_PCT = 0
-export const DEFAULT_BOUNCE_STEP_PCT = 0
+// ONE since 2026-10-17: *con cada compra el rebote incrementa 1%: el primero
+// 2%, el segundo 3% y así.* The dip stays at 1%.
+export const DEFAULT_BOUNCE_STEP_PCT = 1
 
 /**
  * The deepest fall a step still buys on, in percent under the reference. "If
