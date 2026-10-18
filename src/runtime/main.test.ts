@@ -180,12 +180,13 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('wires the dip-bounce as the ONE buyer: ONE $3 buy the moment a slot opens, and nothing after it', () => {
     // *Que compre inmediatamente que ingrese.*
     const { deps, cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 1, bouncePct: 2, maxSteps: 30, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 0, lateBounceFromDca: 0, lateBouncePct: 25 })
-    expect(deps.dipBounce?.stepUsd).toBe(250 / 90)
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 1, bouncePct: 1, maxSteps: 71, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 0, lateBounceFromDca: 0, lateBouncePct: 25 })
+    expect(deps.dipBounce?.stepUsd).toBe(1)
+    expect(deps.dipBounce?.firstStepUsd).toBe(10)
     expect(deps.dipBounce?.onSelection).toBe(true)
     expect(deps.dipBounce?.firstStepFromCapital).toBeUndefined()
     expect(deps.dipBounce?.fund).toBeDefined()
-    expect(cycleConfig.maxOpenEntries).toBe(30)
+    expect(cycleConfig.maxOpenEntries).toBe(71)
   })
 
   it('wires the crash stop only when asked: more than 5% down in under a minute', () => {
@@ -262,12 +263,12 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(deps.dropLadder?.fund).toBeDefined()
   })
 
-  it('reserves all thirty buys of about $2.78, with nothing grossed up', () => {
+  it('reserves the whole $80 — $10 and seventy $1 buys — with nothing grossed up', () => {
     const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(cycleConfig.reservedEntries).toBe(30)
-    expect(cycleConfig.params.maxUsdPerLevel).toBe(250 / 90)
-    expect(cycleConfig.slotUsd).toBeCloseTo(250 / 3, 9)
-    expect(cycleConfig.usdPerToken).toBeCloseTo(250 / 3, 9)
+    expect(cycleConfig.reservedEntries).toBe(71)
+    expect(cycleConfig.params.maxUsdPerLevel).toBe(10)
+    expect(cycleConfig.slotUsd).toBe(80)
+    expect(cycleConfig.usdPerToken).toBe(80)
     expect(cycleConfig.portfolio.reservePct).toBe(0)
   })
 
@@ -312,11 +313,11 @@ describe('the ladder, the reservation and the ban, as wired', () => {
     expect(funded?.capitalUsd).toBeCloseTo(capitalForFillsUsd([10, 15, 20, 25, 30, 35], 0.05), 9)
   })
 
-  it('builds a broker that holds thirty entries and refuses a thirty-first', async () => {
+  it('builds a broker that holds seventy-one entries and refuses a seventy-second', async () => {
     const { deps } = runtime()
     const broker = await deps.brokerFor({ ...held, capitalUsd: 200 })
-    const entries = Array.from({ length: 31 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
-    expect(broker.execute(entries, 1, 0)).toHaveLength(30)
+    const entries = Array.from({ length: 72 }, (_, i) => ({ kind: 'entry' as const, id: i === 0 ? 'Entry' : `DCA-${i}`, level: i, usd: 1, qty: 1, comment: 'x' }))
+    expect(broker.execute(entries, 1, 0)).toHaveLength(71)
   })
 
   it('ticks on the live price by default, and reads candles only for a position idle six hours', () => {
@@ -824,7 +825,7 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     expect(await store.loadPositions()).toEqual([])
   })
 
-  it('buys about $8 on entry, then again on a 1% dip and a 2% bounce, every one the same — never above the buy before — thirty at most', async () => {
+  it('buys $10 on entry, then $1 on every 1% dip and 1% bounce — never above the buy before — up to $80 a token', async () => {
     // *30 compras de 1 USD; la regla es que caiga 1% y rebote 2%* (2026-10-14).
     // The ladder alone: the $5 stop has its own scenario below.
     const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STOP_MAX_LOSS_USD: '0' })
@@ -837,17 +838,14 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     const buys = async () => (await store.fillsFor(slot.id)).filter((f) => f.side === 'buy')
     expect(await sweep(1)).toEqual([])
     expect(await buys()).toHaveLength(1)
-    // 1% down arms; a 2% bounce from there would be over the last buy, so it disarms.
-    for (const price of [0.99, 1.0098]) expect(await sweep(price)).toEqual([])
-    expect(await buys()).toHaveLength(1)
-    // 3% down, then 2% up off that low and still under the last buy: the second step.
-    for (const price of [0.97, 0.99]) expect(await sweep(price)).toEqual([])
+    // 1.5% down arms, then 1% up off that low and still under the last buy: the second step.
+    for (const price of [0.985, 0.995]) expect(await sweep(price)).toEqual([])
     expect(await buys()).toHaveLength(2)
-    for (const f of await buys()) expect(f.price * f.qty).toBeCloseTo(250 / 90, 0)
-    // Thirty buys at most, every one on the same 1% dip and 2% bounce.
-    let price = 0.99
-    for (let i = 0; i < 200; i++) { price *= i % 2 === 0 ? 0.96 : 1.021; await sweep(price) }
-    expect(await buys()).toHaveLength(30)
+    expect((await buys()).map((f) => Math.round(f.price * f.qty))).toEqual([10, 1])
+    // Seventy-one buys at most — $10 and seventy $1 — every one on the same 1% and 1%.
+    let price = 0.995
+    for (let i = 0; i < 300; i++) { price *= i % 2 === 0 ? 0.97 : 1.015; await sweep(price) }
+    expect(await buys()).toHaveLength(71)
     expect((await store.fillsFor(slot.id)).filter((f) => f.side === 'sell')).toEqual([])
   })
 
@@ -1194,7 +1192,7 @@ describe('the FIRST step is bought on selection, through the cycle the engine ru
     )
     const buys = (await setup.store.fillsFor(reserved.id)).filter((f) => f.side === 'buy')
     expect(buys.map((f) => f.orderId)).toEqual(['Entry'])
-    expect(buys[0]!.qty * buys[0]!.price).toBeCloseTo(250 / 90, 0)
+    expect(buys[0]!.qty * buys[0]!.price).toBeCloseTo(10, 0)
   })
 
   it('doubles each step: $1 on the first buy, $2 on the first DCA', async () => {
@@ -1299,9 +1297,9 @@ describe('the book holds capital / $100 tokens and no other ceiling, through the
     return { result, asked, store }
   }
 
-  it('counts the free slots as capital over about $83: $5,000 is 60', () => {
+  it('counts the free slots as capital over $80: $5,000 is 62', () => {
     const { cycleConfig: c } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(freeSlots(bookCapital(c.portfolio.totalCapitalUsd, [], []), c.slotUsd!)).toBe(60)
+    expect(freeSlots(bookCapital(c.portfolio.totalCapitalUsd, [], []), c.slotUsd!)).toBe(62)
     const { cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000', OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })
     expect(freeSlots(bookCapital(cycleConfig.portfolio.totalCapitalUsd, [], []), cycleConfig.slotUsd!)).toBe(20)
   })

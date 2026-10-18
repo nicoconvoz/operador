@@ -641,6 +641,13 @@ describe('stepSizeUsd — each step doubles the one before', () => {
     expect(ladderTotalUsd(1, 2, 6)).toBe(63)
     expect(ladderTotalUsd(5, 1, 6)).toBe(30)
   })
+
+  // *La primera compra de 10 USD, y luego de a 1 USD hasta alcanzar los 80
+  // USD por token* (2026-10-18).
+  it('gives the first buy its own size, and leaves every later one to the base', () => {
+    expect([0, 1, 2, 70].map((i) => stepSizeUsd(i, 1, 1, 10))).toEqual([10, 1, 1, 1])
+    expect(ladderTotalUsd(1, 1, 71, 10)).toBe(80)
+  })
 })
 
 describe('the late bounce — every DCA from the fifth asks 25% (2026-10-18)', () => {

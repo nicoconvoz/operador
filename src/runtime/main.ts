@@ -596,6 +596,8 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
         lateBouncePct: config.lateBouncePct,
       },
       stepUsd: config.stepUsd,
+      // *La primera compra de 10 USD, y luego de a 1 USD* (2026-10-18).
+      firstStepUsd: config.firstStepUsd,
       // *1, 2, 4, 8, 16, 32* — each step doubles the one before.
       stepGrowth: config.stepGrowth,
       gasUsdPerSwap: config.gasUsdPerSwap,

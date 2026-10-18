@@ -161,12 +161,13 @@ export const DEFAULT_DIP_BOUNCE_POLICY: DipBouncePolicy = {
  * of two each DCA doubles the last, so the deepest buys carry most of the
  * money and pull the average down hardest; a growth of one is the flat ladder.
  */
-export const stepSizeUsd = (index: number, base: number, growth: number): number => base * growth ** index
+export const stepSizeUsd = (index: number, base: number, growth: number, first?: number): number =>
+  index === 0 && first !== undefined ? first : base * growth ** index
 
 /** What a whole ladder of `steps` buys costs: the sum of every step. */
-export function ladderTotalUsd(base: number, growth: number, steps: number): number {
+export function ladderTotalUsd(base: number, growth: number, steps: number, first?: number): number {
   let total = 0
-  for (let i = 0; i < steps; i++) total += stepSizeUsd(i, base, growth)
+  for (let i = 0; i < steps; i++) total += stepSizeUsd(i, base, growth, first)
   return total
 }
 

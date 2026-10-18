@@ -217,6 +217,8 @@ export interface RuntimeConfig {
   readonly maxDcaPerToken: number
   /** What the first dip-bounce buy is, in dollars; later ones grow by `stepGrowth`. */
   readonly stepUsd: number
+  /** The first buy's own size, in dollars. OPERADOR_FIRST_STEP_USD. */
+  readonly firstStepUsd: number
   /** How much each step grows over the one before: two doubles them. */
   readonly stepGrowth: number
   /** Dip-bounce buys per holding, the first included. */
@@ -646,6 +648,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
       number(env, 'OPERADOR_MAX_DCA', productionLadder(env).maxOpenEntries - 1) + 1,
     ),
     stepUsd: productionLadder(env).stepUsd,
+    firstStepUsd: productionLadder(env).firstStepUsd,
     stepGrowth: productionLadder(env).stepGrowth,
     maxSteps: productionLadder(env).maxSteps,
     dipPct: productionLadder(env).dipPct,
