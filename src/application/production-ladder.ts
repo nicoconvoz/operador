@@ -48,7 +48,10 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
 // reached 21–30 buys won none and lost $119.60; up to ten buys won 58–65%.
 // $250 a token since the same evening, in thirty buys: *250 USD por token en
 // 30 compras de aproximadamente 8* — $8.33 each, so $5,000 holds twenty.
-export const DEFAULT_STEP_USD = 250 / 30
+// $2.78 since 2026-10-18, thirty times: *30 compras, pero recalculá los
+// valores para que nos siga dando el mismo saldo destinado a cada token* —
+// the $83.33 of ten $8.33 buys, spread over thirty.
+export const DEFAULT_STEP_USD = 250 / 90
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -80,8 +83,9 @@ export const DEFAULT_STEP_GROWTH = 1
  */
 // TEN since 2026-10-12, THIRTY since 2026-10-14, TEN again since 2026-10-16,
 // and THIRTY that evening: $250 a token. TEN since 2026-10-17, the step kept:
-// *que sólo sean 10 compras* — about $83 a token.
-export const DEFAULT_MAX_STEPS = 10
+// *que sólo sean 10 compras* — about $83 a token. THIRTY since 2026-10-18,
+// still about $83 a token.
+export const DEFAULT_MAX_STEPS = 30
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -147,12 +151,15 @@ export const DEFAULT_BOUNCE_PCT = 2
 // 29/09. The domain policy keeps the growing steps.
 export const DEFAULT_DIP_STEP_PCT = 0
 // ONE since 2026-10-17: *con cada compra el rebote incrementa 1%: el primero
-// 2%, el segundo 3% y así.* The dip stays at 1%.
-export const DEFAULT_BOUNCE_STEP_PCT = 1
+// 2%, el segundo 3% y así.* The dip stays at 1%. ZERO again since
+// 2026-10-18: *volvamos al modelo antiguo, que baje 1% y rebote 2% por cada
+// DCA.*
+export const DEFAULT_BOUNCE_STEP_PCT = 0
 // *Aplicá sólo un rebote del 25% para cada DCA a partir del 5* (2026-10-18);
 // the day before it was the growing bounce doubled.
-// OPERADOR_LATE_BOUNCE_FROM_DCA=0 turns it off.
-export const DEFAULT_LATE_BOUNCE_FROM_DCA = 5
+// OPERADOR_LATE_BOUNCE_FROM_DCA=0 turns it off. OFF since the same day, with
+// the flat 1%/2% ladder; 5 brings it back.
+export const DEFAULT_LATE_BOUNCE_FROM_DCA = 0
 export const DEFAULT_LATE_BOUNCE_PCT = 25
 
 /**

@@ -29,8 +29,8 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours to thirty days old**, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
-| **The book** | **about $83 a token**, up to ten buys of $8.33: $5,000 holds sixty | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$8.33 the moment the token enters**, then **$8.33 on a 1% dip and a bounce of 2%, 3%, 4%, 5%**, then **25% for every DCA from the fifth** — never over the buy before, nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
+| **The book** | **about $83 a token**, up to thirty buys of $2.78: $5,000 holds sixty | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$2.78 the moment the token enters**, then **$2.78 on a 1% dip and a 2% bounce** off the low, never over the buy before — about a 2% fall in practice — twenty-nine DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 20% and selling on a **10% fall of buyers' share from its peak**; the **freeze** exit, which sells and bans the token for good, and the **death** exit. No stop. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -292,6 +292,13 @@ asks a fall of about its bounce: 2% for the first, 10% for the ninth.
 cada DCA a partir del 5.* One rule with two numbers on `DipBouncePolicy`,
 `lateBounceFromDca` 5 and `lateBouncePct` 25 (`OPERADOR_LATE_BOUNCE_FROM_DCA=0`
 turns it off): the deepest buys wait for a real turn.
+
+*Volvamos al modelo antiguo: que baje 1% y rebote 2% por cada DCA, pero en vez
+de 10 compras, 30 — recalculá los valores para que nos siga dando el mismo
+saldo por token* (2026-10-18). `DEFAULT_MAX_STEPS` 30, `DEFAULT_STEP_USD`
+250/90 ($2.78), `DEFAULT_BOUNCE_STEP_PCT` 0 and the late bounce off: still
+about $83 a token and sixty at $5,000. Stated: gas is $0.05 a swap, 1.8% of a
+$2.78 buy against 0.6% of $8.33.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door
