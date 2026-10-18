@@ -116,7 +116,7 @@ export async function buildView(store: StatePort): Promise<ViewData> {
       dipBounce: {
         dipPct: ladder.dipPct, bouncePct: ladder.bouncePct, maxSteps: ladder.maxSteps, maxDipPct: ladder.maxDipPct,
         dipStepPct: ladder.dipStepPct, bounceStepPct: ladder.bounceStepPct, stepUsd: ladder.stepUsd,
-        lateBounceFromDca: ladder.lateBounceFromDca, lateBounceFactor: ladder.lateBounceFactor,
+        lateBounceFromDca: ladder.lateBounceFromDca, lateBouncePct: ladder.lateBouncePct,
       },
       // The fixed TP the sweep sells at — *TP fijo en $P (+12.5% del
       // promedio)* — from the same module the engine reads. Zero: no line.

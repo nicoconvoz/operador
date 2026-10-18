@@ -643,23 +643,23 @@ describe('stepSizeUsd — each step doubles the one before', () => {
   })
 })
 
-describe('the late bounce — from DCA 5 the bounce doubles (2026-10-17)', () => {
-  // *A partir del 5 DCA multiplicá por 2 el % de rebote: 5 → 5%, 6 → 12%,
-  // 7 → 14%.* Counted in buys, the fifth asks 5% and the sixth — DCA 5 — 12%.
-  const late: DipBouncePolicy = { dipPct: 1, bouncePct: 2, maxSteps: 10, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 5, lateBounceFactor: 2 }
+describe('the late bounce — every DCA from the fifth asks 25% (2026-10-18)', () => {
+  // *Aplicá sólo un rebote del 25% para cada DCA a partir del 5.* The day
+  // before it was the growing bounce doubled.
+  const late: DipBouncePolicy = { dipPct: 1, bouncePct: 2, maxSteps: 10, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 5, lateBouncePct: 25 }
   const bounce = (step: number) => dipBounceThresholds(step, late).bouncePct
 
   it('leaves DCA 1 to 4 on their growing bounce', () => {
     expect([2, 3, 4, 5].map(bounce)).toEqual([2, 3, 4, 5])
   })
 
-  it('multiplies the bounce from DCA 5 on', () => {
-    expect([6, 7, 8, 9, 10].map(bounce)).toEqual([12, 14, 16, 18, 20])
+  it('asks 25% of every DCA from the fifth on', () => {
+    expect([6, 7, 8, 9, 10].map(bounce)).toEqual([25, 25, 25, 25, 25])
   })
 
   it('is off when absent or at zero, so every older policy reads as before', () => {
     expect(dipBounceThresholds(8, { ...late, lateBounceFromDca: 0 }).bouncePct).toBe(8)
-    const { lateBounceFromDca: _a, lateBounceFactor: _b, ...plain } = late
+    const { lateBounceFromDca: _a, lateBouncePct: _b, ...plain } = late
     expect(dipBounceThresholds(8, plain).bouncePct).toBe(8)
   })
 })

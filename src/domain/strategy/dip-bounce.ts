@@ -130,13 +130,13 @@ export interface DipBouncePolicy {
   /** How many points each DCA adds to the bounce that buys. Zero: every buy asks `bouncePct`. */
   readonly bounceStepPct: number
   /**
-   * The DCA from which the bounce is multiplied by `lateBounceFactor`: the
-   * deep buys wait for a real turn. *A partir del 5 DCA multiplicá por 2 el %
-   * de rebote* (2026-10-17). Absent or zero: off.
+   * The DCA from which every bounce is `lateBouncePct`: the deep buys wait for
+   * a real turn. *Aplicá sólo un rebote del 25% para cada DCA a partir del 5*
+   * (2026-10-18). Absent or zero: off.
    */
   readonly lateBounceFromDca?: number
-  /** What the bounce is multiplied by from `lateBounceFromDca` on. Absent: 1. */
-  readonly lateBounceFactor?: number
+  /** The bounce, in percent over the low, of every DCA from `lateBounceFromDca` on. */
+  readonly lateBouncePct?: number
 }
 
 /**
@@ -185,10 +185,10 @@ export interface DipBounceThresholds {
 export function dipBounceThresholds(step: number, policy: DipBouncePolicy): DipBounceThresholds {
   const dcas = Math.max(0, step - 2)
   const from = policy.lateBounceFromDca ?? 0
-  const late = from > 0 && step - 1 >= from ? (policy.lateBounceFactor ?? 1) : 1
+  const late = from > 0 && step - 1 >= from ? policy.lateBouncePct : undefined
   return {
     dipPct: policy.dipPct + policy.dipStepPct * dcas,
-    bouncePct: (policy.bouncePct + policy.bounceStepPct * dcas) * late,
+    bouncePct: late ?? policy.bouncePct + policy.bounceStepPct * dcas,
     // Off stays off: a ceiling of zero does not grow into one.
     maxDipPct: policy.maxDipPct > 0 ? policy.maxDipPct + policy.dipStepPct * dcas : 0,
   }

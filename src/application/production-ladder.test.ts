@@ -33,7 +33,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 10,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 250 / 30, stepGrowth: 1, maxSteps: 10, dipPct: 1, bouncePct: 2, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 5, lateBounceFactor: 2, slotUsd: expect.closeTo(250 / 3, 9), cascadeEntries: false,
+      stepUsd: 250 / 30, stepGrowth: 1, maxSteps: 10, dipPct: 1, bouncePct: 2, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 5, lateBouncePct: 25, slotUsd: expect.closeTo(250 / 3, 9), cascadeEntries: false,
     })
     expect([DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([10, 1, 2, 0])
   })
@@ -390,11 +390,11 @@ describe('productionLadder — the deep rung', () => {
   })
 })
 
-describe('the late bounce in production — from DCA 5 the bounce doubles', () => {
-  it('defaults to DCA 5 and a factor of 2, and zero turns it off', () => {
-    expect(productionLadder({})).toMatchObject({ lateBounceFromDca: 5, lateBounceFactor: 2 })
+describe('the late bounce in production — 25% for every DCA from the fifth', () => {
+  it('defaults to DCA 5 and 25%, and zero turns it off', () => {
+    expect(productionLadder({})).toMatchObject({ lateBounceFromDca: 5, lateBouncePct: 25 })
     expect(productionLadder({ OPERADOR_LATE_BOUNCE_FROM_DCA: '0' }).lateBounceFromDca).toBe(0)
-    expect(productionLadder({ OPERADOR_LATE_BOUNCE_FACTOR: '3' }).lateBounceFactor).toBe(3)
-    for (const bad of ['dos', '-1', '0']) expect(productionLadder({ OPERADOR_LATE_BOUNCE_FACTOR: bad }).lateBounceFactor, bad).toBe(2)
+    expect(productionLadder({ OPERADOR_LATE_BOUNCE_PCT: '30' }).lateBouncePct).toBe(30)
+    for (const bad of ['dos', '-1', '0']) expect(productionLadder({ OPERADOR_LATE_BOUNCE_PCT: bad }).lateBouncePct, bad).toBe(25)
   })
 })
