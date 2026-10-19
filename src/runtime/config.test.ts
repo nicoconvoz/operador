@@ -192,14 +192,14 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     for (const on of ['1', 'true', 'yes', 'sí']) expect(loadConfig({ ...valid, OPERADOR_BUY_ON_SELECTION: on }).buyOnSelection).toBe(true)
   })
 
-  it('gives every token $9 and then $1, $2, … $13, and counts slots of their $100', () => {
+  it('gives every token $3, $4, … $13, and counts slots of their $88', () => {
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 1, firstStepUsd: 9, maxSteps: 14, bounceStepPct: 0, stepSchedule: [9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] })
-    expect(config.slotUsd).toBe(100)
+    expect(config).toMatchObject({ stepUsd: 3, firstStepUsd: 3, maxSteps: 11, bounceStepPct: 0, stepSchedule: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] })
+    expect(config.slotUsd).toBe(88)
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
-    expect(config.maxDcaPerToken + 1).toBe(14)
-    expect(config.reservedEntries).toBe(14)
-    expect(config.usdPerToken).toBe(100)
+    expect(config.maxDcaPerToken + 1).toBe(11)
+    expect(config.reservedEntries).toBe(11)
+    expect(config.usdPerToken).toBe(88)
     expect(config).toMatchObject({ deepRung: false, dropLadder: false, dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, pressure: false, cascadeEntries: false })
     expect(loadConfig({ ...valid, OPERADOR_MAX_STEPS: '50', OPERADOR_STEP_USD: '5', OPERADOR_STEP_GROWTH: '1' })).toMatchObject({ slotUsd: 250, usdPerToken: 250, reservedEntries: 50 })
   })
@@ -262,9 +262,9 @@ describe('two rules stand, and the doors they need are separate switches', () =>
     // caída de la presión compradora de 10%, y no pongas puerta de entrada:
     // hacé que entren todos los tokens que existan* (2026-10-09).
     const config = loadConfig({ ...valid, OPERADOR_CAPITAL_USD: '5000' })
-    expect(config.stepUsd).toBe(1)
-    expect(config.slotUsd).toBe(100)
-    expect(config.maxSteps).toBe(14)
+    expect(config.stepUsd).toBe(3)
+    expect(config.slotUsd).toBe(88)
+    expect(config.maxSteps).toBe(11)
     // *Armalo con las que ganan más* (2026-10-16): the first thirty days.
     expect(config.maxAgeDays).toBe(30)
     expect(loadConfig({ ...valid, OPERADOR_MAX_AGE_DAYS: '0' }).maxAgeDays).toBe(Infinity)

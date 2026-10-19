@@ -54,7 +54,9 @@ import { DEFAULT_DIP_BOUNCE_POLICY, stepScheduleUsd } from '../domain/strategy/d
 // $1 since 2026-10-18 that evening, after a first buy of its own: *que la
 // primera compra sea de 10 USD y que luego vaya comprando de a 1 USD hasta
 // alcanzar los 80 USD totales por token.* See `DEFAULT_FIRST_STEP_USD`.
-export const DEFAULT_STEP_USD = 1
+// $3 since that night, growing a dollar a buy: *en vez de 9, 1, 2, 3… que sea
+// 3, 4, 5, 6* — and *dejala en 88 por token*: 3 + 4 + … + 13.
+export const DEFAULT_STEP_USD = 3
 
 /**
  * The first buy's own size, in dollars, and every later buy the step.
@@ -62,9 +64,10 @@ export const DEFAULT_STEP_USD = 1
  * $10 on 2026-10-18; $8 that night: *la primera compra de 8, la segunda de 1,
  * la tercera de 2, la cuarta de 3, y que vaya sumando hasta completar los 100
  * USD por token* — and then *sumale a la primera compra el 1 de la 15, así no
- * queda desparejo*: .
+ * queda desparejo*: $9. ZERO since the same night — the first buy is a step
+ * like the rest, $3, and every buy grows a dollar.
  */
-export const DEFAULT_FIRST_STEP_USD = 9
+export const DEFAULT_FIRST_STEP_USD = 0
 
 /**
  * What each DCA adds to the one before, in dollars: $1, $2, $3… One since
@@ -74,10 +77,11 @@ export const DEFAULT_STEP_INCREMENT_USD = 1
 
 /**
  * What a token holds at most, in dollars: the buys stop there and the last one
- * is trimmed to what is left. $9 + $1 + … + $13 is exactly $100, fourteen
- * buys. OPERADOR_TOKEN_USD; zero: no target, the steps alone decide.
+ * is trimmed to what is left. $88 since 2026-10-18: $3 + $4 + … + $13, eleven
+ * buys, nothing trimmed. OPERADOR_TOKEN_USD; zero: no target, the steps alone
+ * decide.
  */
-export const DEFAULT_TOKEN_USD = 100
+export const DEFAULT_TOKEN_USD = 88
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -112,8 +116,9 @@ export const DEFAULT_STEP_GROWTH = 1
 // *que sólo sean 10 compras* — about $83 a token. THIRTY since 2026-10-18,
 // still about $83 a token. SEVENTY-ONE since that evening: $10 and seventy $1
 // buys, $80 a token. Since that night the $100 target decides how many —
-// fourteen — and this is only the depth of a ladder with no target.
-export const DEFAULT_MAX_STEPS = 14
+// fourteen — and this is only the depth of a ladder with no target. ELEVEN
+// at $88.
+export const DEFAULT_MAX_STEPS = 11
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in

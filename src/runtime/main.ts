@@ -598,7 +598,7 @@ export function buildRuntime(config: RuntimeConfig, ports: RuntimePorts): Runtim
       stepUsd: config.stepUsd,
       // *La primera compra de 10 USD, y luego de a 1 USD* (2026-10-18).
       firstStepUsd: config.firstStepUsd,
-      // Every buy written down once: $9, then $1, $2, … $13 — $100 a token.
+      // Every buy written down once: $3, $4, … $13 — $88 a token.
       stepSchedule: config.stepSchedule,
       // *1, 2, 4, 8, 16, 32* — each step doubles the one before.
       stepGrowth: config.stepGrowth,
