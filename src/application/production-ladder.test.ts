@@ -33,7 +33,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
       dropLadder: false,
       dcaDropsPct: [10, 15, 20, 25, 30], dcaRungsUsd: [15, 20, 25, 30, 35], dcaFrom: 'previous', dcaAdaptive: false, dcaRealtime: false, liquidityBrakePct: 0, reservedEntries: 11,
       deepRung: false, deepRungFallPct: 80, deepRungReboundPct: 10, deepRungUsd: 20,
-      stepUsd: 3, firstStepUsd: 3, stepIncrementUsd: 1, tokenUsd: 88, stepSchedule: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], stepGrowth: 1, maxSteps: 11, dipPct: 1, bouncePct: 1, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 0, lateBounceFromDca: 0, lateBouncePct: 25, slotUsd: 88, cascadeEntries: false,
+      stepUsd: 3, firstStepUsd: 3, stepIncrementUsd: 1, tokenUsd: 88, stepSchedule: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], stepGrowth: 1, maxSteps: 11, dipPct: 1, bouncePct: 1, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 0, lateBouncePct: 25, slotUsd: 88, cascadeEntries: false,
     })
     expect([DEFAULT_MAX_STEPS, DEFAULT_DIP_PCT, DEFAULT_BOUNCE_PCT, DEFAULT_MAX_DIP_PCT]).toEqual([11, 1, 1, 0])
   })
@@ -51,8 +51,8 @@ describe('productionLadder — one place for the numbers that differ', () => {
     }
   })
 
-  it('asks every DCA the same 1% dip and 2% bounce — *volvamos al modelo antiguo* — and the growing steps are a variable away', () => {
-    expect([DEFAULT_DIP_STEP_PCT, DEFAULT_BOUNCE_STEP_PCT]).toEqual([0, 0])
+  it('grows the bounce a point a DCA and keeps the dip flat — *el primero 1%, el segundo 2% y así* — each a variable away', () => {
+    expect([DEFAULT_DIP_STEP_PCT, DEFAULT_BOUNCE_STEP_PCT]).toEqual([0, 1])
     expect(productionLadder({ OPERADOR_DIP_STEP_PCT: '1.5', OPERADOR_BOUNCE_STEP_PCT: '0.5' })).toMatchObject({ dipStepPct: 1.5, bounceStepPct: 0.5 })
   })
 
@@ -60,7 +60,7 @@ describe('productionLadder — one place for the numbers that differ', () => {
     expect(productionLadder({ OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
     for (const bad of ['dos', '-2', '100', ' ', 'NaN']) {
       expect(productionLadder({ OPERADOR_DIP_STEP_PCT: bad }).dipStepPct, bad).toBe(0)
-      expect(productionLadder({ OPERADOR_BOUNCE_STEP_PCT: bad }).bounceStepPct, bad).toBe(0)
+      expect(productionLadder({ OPERADOR_BOUNCE_STEP_PCT: bad }).bounceStepPct, bad).toBe(1)
     }
   })
 
@@ -96,9 +96,9 @@ describe('productionLadder — one place for the numbers that differ', () => {
     for (const bad of ['dos', '0', '0.5', '-2', ' ']) expect(productionLadder({ OPERADOR_STEP_GROWTH: bad }).stepGrowth, bad).toBe(1)
   })
 
-  it('asks every DCA for a 1% dip and a 1% bounce — *cada vez que baja 1% y rebota 1%*', () => {
+  it('asks every DCA for a 1% dip, and a bounce of 1% that grows a point a DCA', () => {
     const ladder = productionLadder({})
-    expect([ladder.dipPct, ladder.bouncePct, ladder.dipStepPct, ladder.bounceStepPct]).toEqual([1, 1, 0, 0])
+    expect([ladder.dipPct, ladder.bouncePct, ladder.dipStepPct, ladder.bounceStepPct]).toEqual([1, 1, 0, 1])
   })
 
   it('derives the slot from the two variables, never from a constant', () => {

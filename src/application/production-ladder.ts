@@ -187,8 +187,9 @@ export const DEFAULT_DIP_STEP_PCT = 0
 // ONE since 2026-10-17: *con cada compra el rebote incrementa 1%: el primero
 // 2%, el segundo 3% y así.* The dip stays at 1%. ZERO again since
 // 2026-10-18: *volvamos al modelo antiguo, que baje 1% y rebote 2% por cada
-// DCA.*
-export const DEFAULT_BOUNCE_STEP_PCT = 0
+// DCA.* ONE again that night: *el rebote sumale 1 también, el primero 1%, el
+// segundo 2% y así* — DCA 1 asks 1%, DCA 10 asks 10%.
+export const DEFAULT_BOUNCE_STEP_PCT = 1
 // *Aplicá sólo un rebote del 25% para cada DCA a partir del 5* (2026-10-18);
 // the day before it was the growing bounce doubled.
 // OPERADOR_LATE_BOUNCE_FROM_DCA=0 turns it off. OFF since the same day, with

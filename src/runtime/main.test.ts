@@ -180,7 +180,7 @@ describe('the ladder, the reservation and the ban, as wired', () => {
   it('wires the dip-bounce as the ONE buyer: ONE $3 buy the moment a slot opens, and nothing after it', () => {
     // *Que compre inmediatamente que ingrese.*
     const { deps, cycleConfig } = runtime({ OPERADOR_CAPITAL_USD: '5000' })
-    expect(deps.dipBounce?.policy).toEqual({ dipPct: 1, bouncePct: 1, maxSteps: 11, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 0, lateBounceFromDca: 0, lateBouncePct: 25 })
+    expect(deps.dipBounce?.policy).toEqual({ dipPct: 1, bouncePct: 1, maxSteps: 11, maxDipPct: 0, dipStepPct: 0, bounceStepPct: 1, lateBounceFromDca: 0, lateBouncePct: 25 })
     expect(deps.dipBounce?.stepUsd).toBe(3)
     expect(deps.dipBounce?.firstStepUsd).toBe(3)
     expect(deps.dipBounce?.stepSchedule).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
@@ -826,7 +826,7 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     expect(await store.loadPositions()).toEqual([])
   })
 
-  it('buys $3 on entry, then $4, $5, $6… on every 1% dip and 1% bounce — never above the buy before — up to $88 a token', async () => {
+  it('buys $3 on entry, then $4, $5, $6… on a 1% dip and a bounce of 1%, 2%, 3%… — never above the buy before — up to $88 a token', async () => {
     // *30 compras de 1 USD; la regla es que caiga 1% y rebote 2%* (2026-10-14).
     // The ladder alone: the $5 stop has its own scenario below.
     const { deps, cycleConfig, store } = onMemory({ ...DEFAULTS, OPERADOR_STOP_MAX_LOSS_USD: '0' })
@@ -843,9 +843,10 @@ describe('the $1.20 stop after the second buy, through the path the engine runs'
     for (const price of [0.985, 0.995]) expect(await sweep(price)).toEqual([])
     expect(await buys()).toHaveLength(2)
     expect((await buys()).map((f) => Math.round(f.price * f.qty))).toEqual([3, 4])
-    // Eleven buys at most — $3 to $13 — every one on the same 1% and 1%.
+    // Eleven buys at most — $3 to $13 — each bounce a point bigger: a 12%
+    // bounce clears even DCA 10's 10%.
     let price = 0.995
-    for (let i = 0; i < 300; i++) { price *= i % 2 === 0 ? 0.97 : 1.015; await sweep(price) }
+    for (let i = 0; i < 300; i++) { price *= i % 2 === 0 ? 0.85 : 1.12; await sweep(price) }
     expect((await buys()).map((f) => Math.round(f.price * f.qty))).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
     expect((await store.fillsFor(slot.id)).filter((f) => f.side === 'sell')).toEqual([])
   })

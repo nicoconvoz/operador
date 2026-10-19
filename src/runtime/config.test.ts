@@ -194,7 +194,7 @@ describe('two rules stand, and the doors they need are separate switches', () =>
 
   it('gives every token $3, $4, … $13, and counts slots of their $88', () => {
     const config = loadConfig(valid)
-    expect(config).toMatchObject({ stepUsd: 3, firstStepUsd: 3, maxSteps: 11, bounceStepPct: 0, stepSchedule: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] })
+    expect(config).toMatchObject({ stepUsd: 3, firstStepUsd: 3, maxSteps: 11, bounceStepPct: 1, stepSchedule: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] })
     expect(config.slotUsd).toBe(88)
     expect(loadConfig({ ...valid, OPERADOR_DIP_STEP_PCT: '0', OPERADOR_BOUNCE_STEP_PCT: '0' })).toMatchObject({ dipStepPct: 0, bounceStepPct: 0 })
     expect(config.maxDcaPerToken + 1).toBe(11)
