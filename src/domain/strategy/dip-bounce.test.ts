@@ -13,6 +13,7 @@ import {
   type DipWatch,
   stepSizeUsd,
   ladderTotalUsd,
+  stepScheduleUsd,
 } from './dip-bounce.js'
 
 /**
@@ -668,5 +669,25 @@ describe('the late bounce — every DCA from the fifth asks 25% (2026-10-18)', (
     expect(dipBounceThresholds(8, { ...late, lateBounceFromDca: 0 }).bouncePct).toBe(8)
     const { lateBounceFromDca: _a, lateBouncePct: _b, ...plain } = late
     expect(dipBounceThresholds(8, plain).bouncePct).toBe(8)
+  })
+})
+
+describe('stepScheduleUsd — every buy of a holding, written down once', () => {
+  // *La primera compra de 8, la segunda de 1, la tercera de 2, la cuarta de 3,
+  // y que vaya sumando hasta completar los 100 USD por token* (2026-10-18).
+  it('buys the first, then the base growing by the increment, and trims the last to the target', () => {
+    const schedule = stepScheduleUsd({ firstUsd: 8, baseUsd: 1, growth: 1, incrementUsd: 1, maxSteps: 1000, targetUsd: 100 })
+    expect(schedule).toEqual([8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1])
+    expect(schedule.reduce((a, b) => a + b, 0)).toBe(100)
+  })
+
+  it('stops at the steps named when they come first', () => {
+    expect(stepScheduleUsd({ firstUsd: 8, baseUsd: 1, growth: 1, incrementUsd: 1, maxSteps: 4, targetUsd: 100 })).toEqual([8, 1, 2, 3])
+  })
+
+  it('is the flat or doubling ladder as before with no first, no increment and no target', () => {
+    expect(stepScheduleUsd({ baseUsd: 5, growth: 1, incrementUsd: 0, maxSteps: 3, targetUsd: 0 })).toEqual([5, 5, 5])
+    expect(stepScheduleUsd({ baseUsd: 1, growth: 2, incrementUsd: 0, maxSteps: 4, targetUsd: 0 })).toEqual([1, 2, 4, 8])
+    expect(stepScheduleUsd({ firstUsd: 10, baseUsd: 1, growth: 1, incrementUsd: 0, maxSteps: 71, targetUsd: 0 }).reduce((a, b) => a + b, 0)).toBe(80)
   })
 })

@@ -18,7 +18,7 @@
  */
 
 import { DEFAULT_DEEP_RUNG_POLICY } from '../domain/strategy/deep-rung.js'
-import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domain/strategy/dip-bounce.js'
+import { DEFAULT_DIP_BOUNCE_POLICY, stepScheduleUsd } from '../domain/strategy/dip-bounce.js'
 
 /**
  * What the FIRST buy of a holding is, in dollars; every later one is this times
@@ -57,10 +57,27 @@ import { DEFAULT_DIP_BOUNCE_POLICY, ladderTotalUsd, stepSizeUsd } from '../domai
 export const DEFAULT_STEP_USD = 1
 
 /**
- * The first buy's own size, in dollars: $10, and every later buy the step.
+ * The first buy's own size, in dollars, and every later buy the step.
  * OPERADOR_FIRST_STEP_USD; zero makes the first buy the step like the rest.
+ * $10 on 2026-10-18; $8 that night: *la primera compra de 8, la segunda de 1,
+ * la tercera de 2, la cuarta de 3, y que vaya sumando hasta completar los 100
+ * USD por token* — and then *sumale a la primera compra el 1 de la 15, así no
+ * queda desparejo*: .
  */
-export const DEFAULT_FIRST_STEP_USD = 10
+export const DEFAULT_FIRST_STEP_USD = 9
+
+/**
+ * What each DCA adds to the one before, in dollars: $1, $2, $3… One since
+ * 2026-10-18. OPERADOR_STEP_INCREMENT_USD; zero is the flat step.
+ */
+export const DEFAULT_STEP_INCREMENT_USD = 1
+
+/**
+ * What a token holds at most, in dollars: the buys stop there and the last one
+ * is trimmed to what is left. $9 + $1 + … + $13 is exactly $100, fourteen
+ * buys. OPERADOR_TOKEN_USD; zero: no target, the steps alone decide.
+ */
+export const DEFAULT_TOKEN_USD = 100
 
 /**
  * How many tokens the book holds, each with ONE buy of capital / this.
@@ -94,8 +111,9 @@ export const DEFAULT_STEP_GROWTH = 1
 // and THIRTY that evening: $250 a token. TEN since 2026-10-17, the step kept:
 // *que sólo sean 10 compras* — about $83 a token. THIRTY since 2026-10-18,
 // still about $83 a token. SEVENTY-ONE since that evening: $10 and seventy $1
-// buys, $80 a token.
-export const DEFAULT_MAX_STEPS = 71
+// buys, $80 a token. Since that night the $100 target decides how many —
+// fourteen — and this is only the depth of a ladder with no target.
+export const DEFAULT_MAX_STEPS = 14
 
 /**
  * The dip that arms DCA 1's watch and the bounce off its low that buys, in
@@ -647,6 +665,12 @@ export interface ProductionLadder {
   readonly stepUsd: number
   /** The first buy's own size, in dollars; every later buy is the step. */
   readonly firstStepUsd: number
+  /** What each DCA adds to the one before, in dollars. */
+  readonly stepIncrementUsd: number
+  /** What a token holds at most, in dollars; zero: no target. */
+  readonly tokenUsd: number
+  /** Every buy of a holding, in dollars, first to last. */
+  readonly stepSchedule: readonly number[]
   /** How much each step grows over the one before. See `DEFAULT_STEP_GROWTH`. */
   readonly stepGrowth: number
   /** Buys per holding, the first included. */
@@ -764,7 +788,17 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
   const bookRaw = env.OPERADOR_BOOK_TOKENS?.trim()
   const fromBook = bookRaw ? positive(env.OPERADOR_CAPITAL_USD, 1_000) / positive(bookRaw, DEFAULT_BOOK_TOKENS) : DEFAULT_STEP_USD
   const stepUsd = positive(env.OPERADOR_STEP_USD, fromBook)
-  const maxSteps = entries(env.OPERADOR_MAX_STEPS, DEFAULT_MAX_STEPS)
+  // A step named on its own names the whole ladder: no first buy of its own,
+  // no increment and no target unless those are named too.
+  const stepNamed = Boolean(env.OPERADOR_STEP_USD?.trim() || bookRaw)
+  const amount = (raw: string | undefined, fallback: number) => {
+    const value = Number(raw?.trim())
+    return raw?.trim() && Number.isFinite(value) && value >= 0 ? value : fallback
+  }
+  const incrementUsd = amount(env.OPERADOR_STEP_INCREMENT_USD, stepNamed ? 0 : DEFAULT_STEP_INCREMENT_USD)
+  const targetUsd = amount(env.OPERADOR_TOKEN_USD, stepNamed ? 0 : DEFAULT_TOKEN_USD)
+  // With a target the target decides the depth; named steps still cap it.
+  const stepsCap = env.OPERADOR_MAX_STEPS?.trim() ? entries(env.OPERADOR_MAX_STEPS, DEFAULT_MAX_STEPS) : targetUsd > 0 ? 1_000 : DEFAULT_MAX_STEPS
   // A growth under one would SHRINK the deep buys, the opposite of a ladder;
   // nonsense keeps the operator's doubling.
   const growthRaw = env.OPERADOR_STEP_GROWTH?.trim()
@@ -772,21 +806,27 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
   const stepGrowth = growthRaw && Number.isFinite(growth) && growth >= 1 ? growth : DEFAULT_STEP_GROWTH
   // The venue holds every step unless someone asked for another depth: the
   // steps are what the sweep buys, so they are what the broker must hold.
-  const maxOpenEntries = env.OPERADOR_MAX_DCA?.trim() ? rungs(env.OPERADOR_MAX_DCA, maxSteps - 1) + 1 : maxSteps
   // The first buy's own size. Zero is a real value — the first buy is a step
-  // like the rest. A step named on its own names the whole ladder, so the
-  // default ten is the default ladder's alone; nonsense keeps the default.
-  const firstRaw = env.OPERADOR_FIRST_STEP_USD?.trim()
-  const firstValue = Number(firstRaw)
-  const stepNamed = Boolean(env.OPERADOR_STEP_USD?.trim() || bookRaw)
-  const firstNamed = firstRaw && Number.isFinite(firstValue) && firstValue >= 0 ? firstValue : stepNamed ? 0 : DEFAULT_FIRST_STEP_USD
+  // like the rest; nonsense keeps the default.
+  const firstNamed = amount(env.OPERADOR_FIRST_STEP_USD, stepNamed ? 0 : DEFAULT_FIRST_STEP_USD)
   const firstStepUsd = firstNamed > 0 ? firstNamed : stepUsd
+  // Every buy, written down once: the engine, the slot and the screen read it.
+  const stepSchedule = stepScheduleUsd({
+    ...(firstNamed > 0 ? { firstUsd: firstNamed } : {}),
+    baseUsd: stepUsd,
+    growth: stepGrowth,
+    incrementUsd,
+    maxSteps: stepsCap,
+    targetUsd,
+  })
+  const maxSteps = stepSchedule.length
+  const maxOpenEntries = env.OPERADOR_MAX_DCA?.trim() ? rungs(env.OPERADOR_MAX_DCA, maxSteps - 1) + 1 : maxSteps
   const dcaDropsPct = drops(env.OPERADOR_DCA_DROPS_PCT, DEFAULT_DCA_DROPS_PCT)
 
   return {
     // The LARGEST step unless someone asks otherwise: the ladder the slot is
     // priced with is the ladder the sweep buys, and its deepest buy is its biggest.
-    maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, Math.max(firstStepUsd, stepSizeUsd(maxSteps - 1, stepUsd, stepGrowth))),
+    maxUsdPerLevel: positive(env.OPERADOR_MAX_USD_PER_LEVEL, Math.max(...stepSchedule)),
     // ZERO is a real value: one entry and no ladder at all, which is the
     // operator's structural change. Read through `positive` it would fall back
     // to the default and silently run a five-rung ladder — his decision
@@ -832,6 +872,9 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     deepRung: onlyIf(env.OPERADOR_DEEP_RUNG) || DEFAULT_DEEP_RUNG,
     stepUsd,
     firstStepUsd,
+    stepIncrementUsd: incrementUsd,
+    tokenUsd: targetUsd,
+    stepSchedule,
     stepGrowth,
     maxSteps,
     dipPct: share(env.OPERADOR_DIP_PCT, DEFAULT_DIP_PCT),
@@ -849,7 +892,7 @@ export function productionLadder(env: Readonly<Record<string, string | undefined
     lateBouncePct: positive(env.OPERADOR_LATE_BOUNCE_PCT, DEFAULT_LATE_BOUNCE_PCT),
     // Derived from the variables, never written down on its own: every step
     // added up — $1 + $2 + $4 + $8 + $16 + $32 is $63 — and nothing grossed up.
-    slotUsd: ladderTotalUsd(stepUsd, stepGrowth, maxSteps, firstStepUsd),
+    slotUsd: stepSchedule.reduce((sum, step) => sum + step, 0),
     cascadeEntries: onlyIf(env.OPERADOR_CASCADE_ENTRIES) || DEFAULT_CASCADE_ENTRIES,
   }
 }

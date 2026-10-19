@@ -29,8 +29,8 @@ the first configuration whose launch did not start by falling into a hole:
 | | Rule | Where it lives |
 |---|---|---|
 | **Candidate** | the **26/09 door, redrawn**: activity of 50% and liquidity grown in the hour; **up in the last hour** and **up less than 100% on the day**; a pool **six hours to thirty days old**, **not on a pump.fun bonding curve**, with an **organic score of 50** or more; 4 trades an hour, no more than 30% down on the day; creator 30% at most, tax 5% at most, no mint or freeze authority, a route to sell. Liquidity, age and holder concentration refuse nothing | `production-doors.ts`, `gates.ts` |
-| **The book** | **$80 a token**: a first buy of $10 and up to seventy of $1 — $5,000 holds sixty-two | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
-| **The buy** | **$10 the moment the token enters**, then **$1 on every 1% dip and 1% bounce** off the low, never over the buy before, seventy DCAs at most | `buyOnSelection`, `stop-sweep.ts` |
+| **The book** | **$100 a token**: $9, then $1, $2, $3 … $13 — fourteen buys, $5,000 holds fifty | `production-ladder.ts` (`DEFAULT_STEP_USD`) |
+| **The buy** | **$9 the moment the token enters**, then **one dollar more each DCA on every 1% dip and 1% bounce** off the low, never over the buy before, thirteen DCAs | `buyOnSelection`, `stop-sweep.ts` |
 | **Exits** | the **TP on buy pressure**, armed once the holding is up more than 20% and selling on a **10% fall of buyers' share from its peak**; the **freeze** exit, which sells and bans the token for good, and the **death** exit. No stop. The strategy's own TP is off | `pressure-tp.ts`, the stop sweep, `death-exit.ts` |
 
 ### 2026-10-08: back to the 24/09 configuration, with 70 one-buy tokens
@@ -308,6 +308,16 @@ and $80 a token, so $5,000 holds sixty-two. `DEFAULT_BOUNCE_PCT` is 1. A step
 named on its own (`OPERADOR_STEP_USD`) names the whole ladder, so the $10 is
 the default ladder's alone; `OPERADOR_FIRST_STEP_USD` names it, zero makes it
 a step like the rest. Stated: gas is $0.05 a swap, 5% of every $1 buy.
+
+*La primera de 8, la segunda de 1, la tercera de 2, la cuarta de 3, y que vaya
+sumando hasta completar los 100 USD por token* — then *sumale a la primera el 1
+de la 15, así no queda desparejo* (2026-10-18). Every buy is written down once,
+`stepScheduleUsd`: the first buy's own size, then the step growing by
+`OPERADOR_STEP_INCREMENT_USD` (1) up to `OPERADOR_TOKEN_USD` (100), the last
+buy trimmed to what is left. $9, then $1 to $13: fourteen buys, exactly $100,
+fifty tokens at $5,000. The engine (`stepSchedule` on the sweep), the slot and
+the screen read the same list. A step named on its own still names a flat
+ladder with no target.
 
 
 ### 2026-09-30: five DCAs from 15%/8%, and one door

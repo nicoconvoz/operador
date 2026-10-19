@@ -164,6 +164,39 @@ export const DEFAULT_DIP_BOUNCE_POLICY: DipBouncePolicy = {
 export const stepSizeUsd = (index: number, base: number, growth: number, first?: number): number =>
   index === 0 && first !== undefined ? first : base * growth ** index
 
+/**
+ * Every buy of a holding, in dollars, written down once: the first buy's own
+ * size, then the base — grown by `growth` and by `incrementUsd` each DCA —
+ * until `maxSteps` or until the holding reaches `targetUsd`, the last buy
+ * trimmed to what is left. *La primera de 8, la segunda de 1, la tercera de 2,
+ * la cuarta de 3, y que vaya sumando hasta completar los 100 USD por token*
+ * (2026-10-18). The engine, the slot and the screen read the same list.
+ * A target of zero: no target.
+ */
+export function stepScheduleUsd(ladder: {
+  readonly firstUsd?: number
+  readonly baseUsd: number
+  readonly growth: number
+  readonly incrementUsd: number
+  readonly maxSteps: number
+  readonly targetUsd: number
+}): number[] {
+  const schedule: number[] = []
+  let total = 0
+  for (let i = 0; i < ladder.maxSteps; i++) {
+    const dca = ladder.firstUsd !== undefined ? i - 1 : i
+    let size = i === 0 && ladder.firstUsd !== undefined ? ladder.firstUsd : ladder.baseUsd * ladder.growth ** Math.max(0, dca) + ladder.incrementUsd * Math.max(0, dca)
+    if (ladder.targetUsd > 0) {
+      const left = Math.round((ladder.targetUsd - total) * 1e9) / 1e9
+      if (left <= 0) break
+      size = Math.min(size, left)
+    }
+    schedule.push(size)
+    total += size
+  }
+  return schedule
+}
+
 /** What a whole ladder of `steps` buys costs: the sum of every step. */
 export function ladderTotalUsd(base: number, growth: number, steps: number, first?: number): number {
   let total = 0

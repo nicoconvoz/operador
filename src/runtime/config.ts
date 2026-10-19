@@ -219,6 +219,8 @@ export interface RuntimeConfig {
   readonly stepUsd: number
   /** The first buy's own size, in dollars. OPERADOR_FIRST_STEP_USD. */
   readonly firstStepUsd: number
+  /** Every buy of a holding, in dollars, first to last: the first, then the step growing by OPERADOR_STEP_INCREMENT_USD up to OPERADOR_TOKEN_USD. */
+  readonly stepSchedule: readonly number[]
   /** How much each step grows over the one before: two doubles them. */
   readonly stepGrowth: number
   /** Dip-bounce buys per holding, the first included. */
@@ -649,6 +651,7 @@ export function loadConfig(env: Env = process.env): RuntimeConfig {
     ),
     stepUsd: productionLadder(env).stepUsd,
     firstStepUsd: productionLadder(env).firstStepUsd,
+    stepSchedule: productionLadder(env).stepSchedule,
     stepGrowth: productionLadder(env).stepGrowth,
     maxSteps: productionLadder(env).maxSteps,
     dipPct: productionLadder(env).dipPct,
